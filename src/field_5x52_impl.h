@@ -7,6 +7,10 @@
 #ifndef SECP256K1_FIELD_REPR_IMPL_H
 #define SECP256K1_FIELD_REPR_IMPL_H
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
 #include "checkmem.h"
 #include "util.h"
 #include "field.h"
@@ -420,10 +424,25 @@ static SECP256K1_INLINE void secp256k1_fe_storage_cmov(secp256k1_fe_storage *r, 
     VERIFY_CHECK(flag == 0 || flag == 1);
     SECP256K1_CHECKMEM_CHECK_VERIFY(r->n, sizeof(r->n));
     mask = -(uint64_t)vflag;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    /* AArch64 always has NEON; use it to blend 2x u64 at a time. */
+    {
+        uint64x2_t maskv = vdupq_n_u64(mask);
+        uint64x2_t r01 = vld1q_u64(&r->n[0]);
+        uint64x2_t a01 = vld1q_u64(&a->n[0]);
+        uint64x2_t r23 = vld1q_u64(&r->n[2]);
+        uint64x2_t a23 = vld1q_u64(&a->n[2]);
+        r01 = veorq_u64(r01, vandq_u64(maskv, veorq_u64(r01, a01)));
+        r23 = veorq_u64(r23, vandq_u64(maskv, veorq_u64(r23, a23)));
+        vst1q_u64(&r->n[0], r01);
+        vst1q_u64(&r->n[2], r23);
+    }
+#else
     r->n[0] ^= mask & (r->n[0] ^ a->n[0]);
     r->n[1] ^= mask & (r->n[1] ^ a->n[1]);
     r->n[2] ^= mask & (r->n[2] ^ a->n[2]);
     r->n[3] ^= mask & (r->n[3] ^ a->n[3]);
+#endif
 }
 
 static void secp256k1_fe_impl_to_storage(secp256k1_fe_storage *r, const secp256k1_fe *a) {
