@@ -355,11 +355,27 @@ SECP256K1_INLINE static void secp256k1_fe_impl_cmov(secp256k1_fe *r, const secp2
     VERIFY_CHECK(flag == 0 || flag == 1);
     SECP256K1_CHECKMEM_CHECK_VERIFY(r->n, sizeof(r->n));
     mask = -(uint64_t)flag;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    /* Use NEON to blend 2x u64 at a time (limbs 0..3). */
+    {
+        uint64x2_t maskv = vdupq_n_u64(mask);
+        uint64x2_t r01 = vld1q_u64(&r->n[0]);
+        uint64x2_t a01 = vld1q_u64(&a->n[0]);
+        uint64x2_t r23 = vld1q_u64(&r->n[2]);
+        uint64x2_t a23 = vld1q_u64(&a->n[2]);
+        r01 = vbslq_u64(maskv, a01, r01);
+        r23 = vbslq_u64(maskv, a23, r23);
+        vst1q_u64(&r->n[0], r01);
+        vst1q_u64(&r->n[2], r23);
+    }
+    r->n[4] ^= mask & (r->n[4] ^ a->n[4]);
+#else
     r->n[0] ^= mask & (r->n[0] ^ a->n[0]);
     r->n[1] ^= mask & (r->n[1] ^ a->n[1]);
     r->n[2] ^= mask & (r->n[2] ^ a->n[2]);
     r->n[3] ^= mask & (r->n[3] ^ a->n[3]);
     r->n[4] ^= mask & (r->n[4] ^ a->n[4]);
+#endif
 }
 
 static SECP256K1_INLINE void secp256k1_fe_impl_half(secp256k1_fe *r) {
