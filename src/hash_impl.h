@@ -219,6 +219,7 @@ static void secp256k1_hmac_sha256_initialize(const secp256k1_hash_ctx *hash_ctx,
         secp256k1_sha256_initialize(&sha256);
         secp256k1_sha256_write(hash_ctx, &sha256, key, keylen);
         secp256k1_sha256_finalize(hash_ctx, &sha256, rkey);
+        secp256k1_sha256_clear(&sha256);
         memset(rkey + 32, 0, 32);
     }
 
@@ -246,6 +247,7 @@ static void secp256k1_hmac_sha256_finalize(const secp256k1_hash_ctx *hash_ctx, s
     secp256k1_sha256_write(hash_ctx, &hash->outer, temp, 32);
     secp256k1_memclear_explicit(temp, sizeof(temp));
     secp256k1_sha256_finalize(hash_ctx, &hash->outer, out32);
+    secp256k1_hmac_sha256_clear(hash);
 }
 
 static void secp256k1_hmac_sha256_clear(secp256k1_hmac_sha256 *hash) {
@@ -314,7 +316,7 @@ static void secp256k1_rfc6979_hmac_sha256_generate(const secp256k1_hash_ctx *has
 }
 
 static void secp256k1_rfc6979_hmac_sha256_finalize(secp256k1_rfc6979_hmac_sha256 *rng) {
-    (void) rng;
+    secp256k1_rfc6979_hmac_sha256_clear(rng);
 }
 
 static void secp256k1_rfc6979_hmac_sha256_clear(secp256k1_rfc6979_hmac_sha256 *rng) {
