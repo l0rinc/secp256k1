@@ -651,17 +651,19 @@ int secp256k1_musig_partial_sign(const secp256k1_context* ctx, secp256k1_musig_p
         return 0;
     }
 
-    ARG_CHECK(partial_sig != NULL);
-    ARG_CHECK(keypair != NULL);
-    ARG_CHECK(keyagg_cache != NULL);
-    ARG_CHECK(session != NULL);
+    if (!(partial_sig != NULL && keypair != NULL && keyagg_cache != NULL && session != NULL)) {
+        secp256k1_musig_partial_sign_clear(&sk, k);
+        ARG_CHECK(partial_sig != NULL && keypair != NULL && keyagg_cache != NULL && session != NULL);
+    }
 
     if (!secp256k1_keypair_load(ctx, &sk, &keypair_pk, keypair)) {
         secp256k1_musig_partial_sign_clear(&sk, k);
         return 0;
     }
-    ARG_CHECK(secp256k1_fe_equal(&pk.x, &keypair_pk.x)
-              && secp256k1_fe_equal(&pk.y, &keypair_pk.y));
+    if (!(secp256k1_fe_equal(&pk.x, &keypair_pk.x) && secp256k1_fe_equal(&pk.y, &keypair_pk.y))) {
+        secp256k1_musig_partial_sign_clear(&sk, k);
+        ARG_CHECK(secp256k1_fe_equal(&pk.x, &keypair_pk.x) && secp256k1_fe_equal(&pk.y, &keypair_pk.y));
+    }
     if (!secp256k1_keyagg_cache_load(ctx, &cache_i, keyagg_cache)) {
         secp256k1_musig_partial_sign_clear(&sk, k);
         return 0;
