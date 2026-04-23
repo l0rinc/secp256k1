@@ -412,6 +412,7 @@ static void run_scratch_tests(void) {
     CHECK_ERROR_VOID(CTX, secp256k1_scratch_apply_checkpoint(&CTX->error_callback, scratch, (size_t) -1)); /* this is just wildly invalid */
 
     /* Test that large integers do not wrap around in a bad way */
+    CHECK(secp256k1_scratch_space_create(CTX, SIZE_MAX) == NULL);
     /* Try max allocation with a large number of objects. Only makes sense if
      * ALIGNMENT is greater than 1 because otherwise the objects take no extra
      * space. */
