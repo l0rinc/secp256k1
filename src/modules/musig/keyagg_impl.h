@@ -235,6 +235,7 @@ static int secp256k1_musig_pubkey_tweak_add_internal(const secp256k1_context* ct
     secp256k1_keyagg_cache_internal cache_i;
     int overflow = 0;
     secp256k1_scalar tweak;
+    int ret = 0;
 
     VERIFY_CHECK(ctx != NULL);
     if (output_pubkey != NULL) {
@@ -248,7 +249,7 @@ static int secp256k1_musig_pubkey_tweak_add_internal(const secp256k1_context* ct
     }
     secp256k1_scalar_set_b32(&tweak, tweak32, &overflow);
     if (overflow) {
-        return 0;
+        goto cleanup;
     }
     if (xonly && secp256k1_extrakeys_ge_even_y(&cache_i.pk)) {
         cache_i.parity_acc ^= 1;
@@ -256,7 +257,7 @@ static int secp256k1_musig_pubkey_tweak_add_internal(const secp256k1_context* ct
     }
     secp256k1_scalar_add(&cache_i.tweak, &cache_i.tweak, &tweak);
     if (!secp256k1_eckey_pubkey_tweak_add(&cache_i.pk, &tweak)) {
-        return 0;
+        goto cleanup;
     }
     /* eckey_pubkey_tweak_add fails if cache_i.pk is infinity */
     VERIFY_CHECK(!secp256k1_ge_is_infinity(&cache_i.pk));
@@ -264,7 +265,11 @@ static int secp256k1_musig_pubkey_tweak_add_internal(const secp256k1_context* ct
     if (output_pubkey != NULL) {
         secp256k1_pubkey_save(output_pubkey, &cache_i.pk);
     }
-    return 1;
+    ret = 1;
+
+cleanup:
+    secp256k1_scalar_clear(&tweak);
+    return ret;
 }
 
 int secp256k1_musig_pubkey_ec_tweak_add(const secp256k1_context* ctx, secp256k1_pubkey *output_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *tweak32) {
