@@ -815,6 +815,7 @@ static void run_hmac_sha256_tests(void) {
         secp256k1_hmac_sha256_write(hash_ctx, &hasher, (const unsigned char*)(inputs[i]), strlen(inputs[i]));
         secp256k1_hmac_sha256_finalize(hash_ctx, &hasher, out);
         CHECK(secp256k1_memcmp_var(out, outputs[i], 32) == 0);
+        CHECK(all_bytes_equal(&hasher, 0, sizeof(hasher)));
         if (strlen(inputs[i]) > 0) {
             int split = testrand_int(strlen(inputs[i]));
             secp256k1_hmac_sha256_initialize(hash_ctx, &hasher, (const unsigned char*)(keys[i]), strlen(keys[i]));
@@ -822,6 +823,7 @@ static void run_hmac_sha256_tests(void) {
             secp256k1_hmac_sha256_write(hash_ctx, &hasher, (const unsigned char*)(inputs[i] + split), strlen(inputs[i]) - split);
             secp256k1_hmac_sha256_finalize(hash_ctx, &hasher, out);
             CHECK(secp256k1_memcmp_var(out, outputs[i], 32) == 0);
+            CHECK(all_bytes_equal(&hasher, 0, sizeof(hasher)));
         }
     }
 }
@@ -852,6 +854,7 @@ static void run_rfc6979_hmac_sha256_tests(void) {
         CHECK(secp256k1_memcmp_var(out, out1[i], 32) == 0);
     }
     secp256k1_rfc6979_hmac_sha256_finalize(&rng);
+    CHECK(all_bytes_equal(&rng, 0, sizeof(rng)));
 
     secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &rng, key1, 65);
     for (i = 0; i < 3; i++) {
@@ -859,6 +862,7 @@ static void run_rfc6979_hmac_sha256_tests(void) {
         CHECK(secp256k1_memcmp_var(out, out1[i], 32) != 0);
     }
     secp256k1_rfc6979_hmac_sha256_finalize(&rng);
+    CHECK(all_bytes_equal(&rng, 0, sizeof(rng)));
 
     secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &rng, key2, 64);
     for (i = 0; i < 3; i++) {
@@ -866,6 +870,7 @@ static void run_rfc6979_hmac_sha256_tests(void) {
         CHECK(secp256k1_memcmp_var(out, out2[i], 32) == 0);
     }
     secp256k1_rfc6979_hmac_sha256_finalize(&rng);
+    CHECK(all_bytes_equal(&rng, 0, sizeof(rng)));
 }
 
 static void run_tagged_sha256_tests(void) {
