@@ -364,6 +364,7 @@ static void secp256k1_ellswift_xelligatorswift_var(const secp256k1_context *ctx,
         /* Find a remainder t, and return it if found. */
         if (EXPECT(secp256k1_ellswift_xswiftec_inv_var(t, x, &u, branch), 0)) break;
     }
+    secp256k1_memclear_explicit(branch_hash, sizeof(branch_hash));
 }
 
 /** Find an ElligatorSwift encoding (u, t) for point P.
@@ -412,6 +413,8 @@ int secp256k1_ellswift_encode(const secp256k1_context *ctx, unsigned char *ell64
         /* Compute ElligatorSwift encoding and construct output. */
         secp256k1_ellswift_elligatorswift_var(ctx, ell64, &t, &p, &hash); /* puts u in ell64[0..32] */
         secp256k1_fe_get_b32(ell64 + 32, &t); /* puts t in ell64[32..64] */
+        secp256k1_sha256_clear(&hash);
+        secp256k1_fe_clear(&t);
         return 1;
     }
     /* Only reached in case the provided pubkey is invalid. */
@@ -461,6 +464,8 @@ int secp256k1_ellswift_create(const secp256k1_context *ctx, unsigned char *ell64
     secp256k1_ellswift_elligatorswift_var(ctx, ell64, &t, &p, &hash); /* puts u in ell64[0..32] */
     secp256k1_fe_get_b32(ell64 + 32, &t); /* puts t in ell64[32..64] */
 
+    secp256k1_sha256_clear(&hash);
+    secp256k1_fe_clear(&t);
     secp256k1_memczero(ell64, 64, !ret);
     secp256k1_scalar_clear(&seckey_scalar);
 
