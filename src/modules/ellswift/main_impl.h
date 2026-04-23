@@ -322,6 +322,7 @@ static void secp256k1_ellswift_prng(const secp256k1_hash_ctx *hash_ctx, unsigned
 
     /* Writing and finalizing together should trigger exactly one SHA256 compression. */
     VERIFY_CHECK(((hash.bytes) >> 6) == (blocks + 1));
+    secp256k1_sha256_clear(&hash);
 }
 
 /** Find an ElligatorSwift encoding (u, t) for X coordinate x, and random Y coordinate.
