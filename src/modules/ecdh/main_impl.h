@@ -11,10 +11,17 @@
 #include "../../ecmult_const_impl.h"
 
 static int ecdh_hash_function_sha256_impl(const secp256k1_hash_ctx *hash_ctx, unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
-    unsigned char version = (y32[31] & 0x01) | 0x02;
+    unsigned char version;
     secp256k1_sha256 sha;
     (void)data;
 
+    if (output == NULL || x32 == NULL || y32 == NULL) {
+        if (output != NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
+    version = (y32[31] & 0x01) | 0x02;
     secp256k1_sha256_initialize(&sha);
     secp256k1_sha256_write(hash_ctx, &sha, &version, 1);
     secp256k1_sha256_write(hash_ctx, &sha, x32, 32);
