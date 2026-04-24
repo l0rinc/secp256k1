@@ -239,6 +239,19 @@ void ellswift_xdh_test_vectors_tests(void) {
 /* Verify that secp256k1_ellswift_encode + decode roundtrips */
 void ellswift_encode_decode_roundtrip_tests(void) {
     int i;
+    {
+        unsigned char rnd32[32];
+        unsigned char ell64[64];
+        unsigned char zeros64[64] = { 0 };
+        secp256k1_pubkey pubkey;
+        testrand256(rnd32);
+        memset(ell64, 1, sizeof(ell64));
+        CHECK_ILLEGAL(CTX, secp256k1_ellswift_encode(CTX, ell64, NULL, rnd32));
+        CHECK(secp256k1_memcmp_var(ell64, zeros64, sizeof(ell64)) == 0);
+        memset(&pubkey, 1, sizeof(pubkey));
+        CHECK_ILLEGAL(CTX, secp256k1_ellswift_decode(CTX, &pubkey, NULL));
+        CHECK(secp256k1_memcmp_var(&pubkey, zeros64, sizeof(pubkey)) == 0);
+    }
     for (i = 0; i < 1000 * COUNT; i++) {
         unsigned char rnd32[32];
         unsigned char ell64[64];

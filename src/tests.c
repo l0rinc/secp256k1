@@ -878,6 +878,7 @@ static void run_tagged_sha256_tests(void) {
     unsigned char tag[32] = { 0 };
     unsigned char msg[32] = { 0 };
     unsigned char hash32[32];
+    unsigned char zeros32[32] = { 0 };
     unsigned char hash_expected[32] = {
         0x04, 0x7A, 0x5E, 0x17, 0xB5, 0x86, 0x47, 0xC1,
         0x3C, 0xC6, 0xEB, 0xC0, 0xAA, 0x58, 0x3B, 0x62,
@@ -888,11 +889,19 @@ static void run_tagged_sha256_tests(void) {
     /* API test */
     CHECK(secp256k1_tagged_sha256(CTX, hash32, tag, sizeof(tag), msg, sizeof(msg)) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, NULL, tag, sizeof(tag), msg, sizeof(msg)));
+    memset(hash32, 0x2a, sizeof(hash32));
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, NULL, 0, msg, sizeof(msg)));
+    CHECK(secp256k1_memcmp_var(hash32, zeros32, sizeof(hash32)) == 0);
+    memset(hash32, 0x2a, sizeof(hash32));
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, tag, sizeof(tag), NULL, 0));
+    CHECK(secp256k1_memcmp_var(hash32, zeros32, sizeof(hash32)) == 0);
 #if SIZE_MAX > 0xffffffff
+    memset(hash32, 0x2a, sizeof(hash32));
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, tag, (size_t)SECP256K1_SHA256_MAX_SIZE, msg, sizeof(msg)));
+    CHECK(secp256k1_memcmp_var(hash32, zeros32, sizeof(hash32)) == 0);
+    memset(hash32, 0x2a, sizeof(hash32));
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, tag, sizeof(tag), msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 64));
+    CHECK(secp256k1_memcmp_var(hash32, zeros32, sizeof(hash32)) == 0);
 #endif
 
     /* Static test vector */
@@ -7605,6 +7614,7 @@ static void run_ecdsa_edge_cases(void) {
         secp256k1_pubkey pubkey;
         size_t siglen;
         unsigned char signature[72];
+        unsigned char zeros64[64] = { 0 };
         static const unsigned char nonce[32] = {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -7635,7 +7645,10 @@ static void run_ecdsa_edge_cases(void) {
         CHECK(secp256k1_ecdsa_sign(CTX, &sig, msg, key, precomputed_nonce_function, nonce) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_sign(CTX, NULL, msg, key, precomputed_nonce_function, nonce2));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_sign(CTX, &sig, NULL, key, precomputed_nonce_function, nonce2));
+        CHECK(is_empty_signature(&sig));
+        CHECK(secp256k1_ecdsa_sign(CTX, &sig, msg, key, precomputed_nonce_function, nonce) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_sign(CTX, &sig, msg, NULL, precomputed_nonce_function, nonce2));
+        CHECK(is_empty_signature(&sig));
         CHECK(secp256k1_ecdsa_sign(CTX, &sig, msg, key, precomputed_nonce_function, nonce2) == 1);
         CHECK(secp256k1_ec_pubkey_create(CTX, &pubkey, key) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_verify(CTX, NULL, msg, &pubkey));
@@ -7652,16 +7665,20 @@ static void run_ecdsa_edge_cases(void) {
         CHECK(secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, &sig) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_der(CTX, NULL, signature, siglen));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_der(CTX, &sig, NULL, siglen));
+        CHECK(is_empty_signature(&sig));
         CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &sig, signature, siglen) == 1);
         siglen = 10;
         /* Too little room for a signature does not fail via ARGCHECK. */
         CHECK(secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, &sig) == 0);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_normalize(CTX, NULL, NULL));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_compact(CTX, NULL, &sig));
+        memset(signature, 0x2a, sizeof(signature));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_compact(CTX, signature, NULL));
+        CHECK(secp256k1_memcmp_var(signature, zeros64, sizeof(zeros64)) == 0);
         CHECK(secp256k1_ecdsa_signature_serialize_compact(CTX, signature, &sig) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_compact(CTX, NULL, signature));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_compact(CTX, &sig, NULL));
+        CHECK(is_empty_signature(&sig));
         CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, signature) == 1);
         memset(signature, 255, 64);
         CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, signature) == 0);

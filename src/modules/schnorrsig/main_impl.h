@@ -134,8 +134,14 @@ static int secp256k1_schnorrsig_sign_internal(const secp256k1_context* ctx, unsi
     int ret = 1;
 
     VERIFY_CHECK(ctx != NULL);
-    ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(sig64 != NULL);
+    if (!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
+        || (msg == NULL && msglen != 0)
+        || msglen >= SECP256K1_SHA256_MAX_SIZE - 128
+        || keypair == NULL) {
+        memset(sig64, 0, 64);
+    }
+    ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(msg != NULL || msglen == 0);
     ARG_CHECK(msglen < SECP256K1_SHA256_MAX_SIZE - 128);
     ARG_CHECK(keypair != NULL);
@@ -204,6 +210,13 @@ int secp256k1_schnorrsig_sign_custom(const secp256k1_context* ctx, unsigned char
     VERIFY_CHECK(ctx != NULL);
 
     if (extraparams != NULL) {
+        if (secp256k1_memcmp_var(extraparams->magic,
+                                 schnorrsig_extraparams_magic,
+                                 sizeof(extraparams->magic)) != 0) {
+            if (sig64 != NULL) {
+                memset(sig64, 0, 64);
+            }
+        }
         ARG_CHECK(secp256k1_memcmp_var(extraparams->magic,
                                        schnorrsig_extraparams_magic,
                                        sizeof(extraparams->magic)) == 0);

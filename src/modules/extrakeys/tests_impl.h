@@ -34,9 +34,16 @@ static void test_xonly_pubkey(void) {
     CHECK(secp256k1_xonly_pubkey_from_pubkey(CTX, &xonly_pk, &pk_parity, &pk) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_from_pubkey(CTX, NULL, &pk_parity, &pk));
     CHECK(secp256k1_xonly_pubkey_from_pubkey(CTX, &xonly_pk, NULL, &pk) == 1);
+    pk_parity = 1;
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_from_pubkey(CTX, &xonly_pk, &pk_parity, NULL));
+    CHECK(secp256k1_memcmp_var(&xonly_pk, zeros64, sizeof(xonly_pk)) == 0);
+    CHECK(pk_parity == 0);
+    CHECK(secp256k1_ec_pubkey_create(CTX, &pk, sk) == 1);
+    CHECK(secp256k1_xonly_pubkey_from_pubkey(CTX, &xonly_pk, &pk_parity, &pk) == 1);
     memset(&pk, 0, sizeof(pk));
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_from_pubkey(CTX, &xonly_pk, &pk_parity, &pk));
+    CHECK(secp256k1_memcmp_var(&xonly_pk, zeros64, sizeof(xonly_pk)) == 0);
+    CHECK(pk_parity == 0);
 
     /* Choose a secret key such that the resulting pubkey and xonly_pubkey match. */
     memset(sk, 0, sizeof(sk));
@@ -338,12 +345,14 @@ static void test_keypair(void) {
     CHECK(secp256k1_keypair_xonly_pub(CTX, &xonly_pk, NULL, &keypair) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_pub(CTX, &xonly_pk, &pk_parity, NULL));
     CHECK(secp256k1_memcmp_var(zeros96, &xonly_pk, sizeof(xonly_pk)) == 0);
+    CHECK(pk_parity == 0);
     /* Using an invalid keypair will set the xonly_pk to 0 (first reset
      * xonly_pk). */
     CHECK(secp256k1_keypair_xonly_pub(CTX, &xonly_pk, &pk_parity, &keypair) == 1);
     memset(&keypair, 0, sizeof(keypair));
     CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_pub(CTX, &xonly_pk, &pk_parity, &keypair));
     CHECK(secp256k1_memcmp_var(zeros96, &xonly_pk, sizeof(xonly_pk)) == 0);
+    CHECK(pk_parity == 0);
 
     /** keypair holds the same xonly pubkey as pubkey_create **/
     CHECK(secp256k1_ec_pubkey_create(CTX, &pk, sk) == 1);

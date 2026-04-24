@@ -398,6 +398,9 @@ int secp256k1_ecdsa_signature_parse_der(const secp256k1_context* ctx, secp256k1_
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig != NULL);
+    if (input == NULL) {
+        memset(sig, 0, sizeof(*sig));
+    }
     ARG_CHECK(input != NULL);
 
     if (secp256k1_ecdsa_sig_parse(&r, &s, input, inputlen)) {
@@ -416,6 +419,9 @@ int secp256k1_ecdsa_signature_parse_compact(const secp256k1_context* ctx, secp25
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig != NULL);
+    if (input64 == NULL) {
+        memset(sig, 0, sizeof(*sig));
+    }
     ARG_CHECK(input64 != NULL);
 
     secp256k1_scalar_set_b32(&r, &input64[0], &overflow);
@@ -447,6 +453,9 @@ int secp256k1_ecdsa_signature_serialize_compact(const secp256k1_context* ctx, un
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output64 != NULL);
+    if (sig == NULL) {
+        memset(output64, 0, 64);
+    }
     ARG_CHECK(sig != NULL);
 
     secp256k1_ecdsa_signature_load(ctx, &r, &s, sig);
@@ -603,9 +612,14 @@ int secp256k1_ecdsa_sign(const secp256k1_context* ctx, secp256k1_ecdsa_signature
     secp256k1_scalar r, s;
     int ret;
     VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(signature != NULL);
+    if (!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
+        || msghash32 == NULL
+        || seckey == NULL) {
+        memset(signature, 0, sizeof(*signature));
+    }
     ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(msghash32 != NULL);
-    ARG_CHECK(signature != NULL);
     ARG_CHECK(seckey != NULL);
 
     ret = secp256k1_ecdsa_sign_inner(ctx, &r, &s, NULL, msghash32, seckey, noncefp, noncedata);
@@ -825,6 +839,12 @@ int secp256k1_tagged_sha256(const secp256k1_context* ctx, unsigned char *hash32,
     secp256k1_sha256 sha;
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(hash32 != NULL);
+    if (tag == NULL
+        || msg == NULL
+        || taglen >= SECP256K1_SHA256_MAX_SIZE
+        || msglen >= SECP256K1_SHA256_MAX_SIZE - 64) {
+        memset(hash32, 0, 32);
+    }
     ARG_CHECK(tag != NULL);
     ARG_CHECK(msg != NULL);
     ARG_CHECK(taglen < SECP256K1_SHA256_MAX_SIZE);
