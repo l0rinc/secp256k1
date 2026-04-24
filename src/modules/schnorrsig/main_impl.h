@@ -45,6 +45,9 @@ static int nonce_function_bip340_impl(const secp256k1_hash_ctx *hash_ctx, unsign
     if (algo == NULL) {
         return 0;
     }
+    if (algolen >= SECP256K1_SHA256_MAX_SIZE || msglen >= SECP256K1_SHA256_MAX_SIZE - 128) {
+        return 0;
+    }
 
     if (data != NULL) {
         secp256k1_nonce_function_bip340_sha256_tagged_aux(&sha);
@@ -134,6 +137,7 @@ static int secp256k1_schnorrsig_sign_internal(const secp256k1_context* ctx, unsi
     ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(sig64 != NULL);
     ARG_CHECK(msg != NULL || msglen == 0);
+    ARG_CHECK(msglen < SECP256K1_SHA256_MAX_SIZE - 128);
     ARG_CHECK(keypair != NULL);
 
     ret &= secp256k1_keypair_load(ctx, &sk, &pk, keypair);
@@ -223,6 +227,7 @@ int secp256k1_schnorrsig_verify(const secp256k1_context* ctx, const unsigned cha
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig64 != NULL);
     ARG_CHECK(msg != NULL || msglen == 0);
+    ARG_CHECK(msglen < SECP256K1_SHA256_MAX_SIZE - 128);
     ARG_CHECK(pubkey != NULL);
 
     if (!secp256k1_fe_set_b32_limit(&rx, &sig64[0])) {

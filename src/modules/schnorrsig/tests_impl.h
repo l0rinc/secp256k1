@@ -78,6 +78,10 @@ static void run_nonce_function_bip340_tests(void) {
     /* NULL algo is disallowed */
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, NULL, 0, NULL) == 0);
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, algolen, NULL) == 1);
+#if SIZE_MAX > 0xffffffff
+    CHECK(nonce_function_bip340(nonce, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, key, pk, algo, algolen, NULL) == 0);
+    CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, (size_t)SECP256K1_SHA256_MAX_SIZE, NULL) == 0);
+#endif
     /* Other algo is fine */
     testrand_bytes_test(algo, algolen);
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, algolen, NULL) == 1);
@@ -148,6 +152,9 @@ static void test_schnorrsig_api(void) {
     CHECK(secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypairs[0], NULL) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypairs[0], &invalid_extraparams));
     CHECK_ILLEGAL(STATIC_CTX, secp256k1_schnorrsig_sign_custom(STATIC_CTX, sig, msg, sizeof(msg), &keypairs[0], &extraparams));
+#if SIZE_MAX > 0xffffffff
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, &keypairs[0], &extraparams));
+#endif
 
     CHECK(secp256k1_schnorrsig_sign32(CTX, sig, msg, &keypairs[0], NULL) == 1);
     CHECK(secp256k1_schnorrsig_verify(CTX, sig, msg, sizeof(msg), &pk[0]) == 1);
@@ -156,6 +163,9 @@ static void test_schnorrsig_api(void) {
     CHECK(secp256k1_schnorrsig_verify(CTX, sig, NULL, 0, &pk[0]) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_verify(CTX, sig, msg, sizeof(msg), NULL));
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_verify(CTX, sig, msg, sizeof(msg), &zero_pk));
+#if SIZE_MAX > 0xffffffff
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_verify(CTX, sig, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, &pk[0]));
+#endif
 }
 
 /* Checks that hash initialized by secp256k1_schnorrsig_sha256_tagged has the
