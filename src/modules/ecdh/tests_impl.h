@@ -36,17 +36,27 @@ static int ecdh_hash_function_custom(unsigned char *output, const unsigned char 
 
 static void test_ecdh_api(void) {
     secp256k1_pubkey point;
+    secp256k1_pubkey invalid_point;
+    unsigned char zeros[32] = { 0 };
     unsigned char res[32];
     unsigned char s_one[32] = { 0 };
     s_one[31] = 1;
 
     CHECK(secp256k1_ec_pubkey_create(CTX, &point, s_one) == 1);
+    memset(&invalid_point, 0, sizeof(invalid_point));
 
     /* Check all NULLs are detected */
     CHECK(secp256k1_ecdh(CTX, res, &point, s_one, NULL, NULL) == 1);
+    memset(res, 1, sizeof(res));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, NULL, &point, s_one, NULL, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, NULL, s_one, NULL, NULL));
+    CHECK(secp256k1_memcmp_var(res, zeros, sizeof(res)) == 0);
+    memset(res, 1, sizeof(res));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &point, NULL, NULL, NULL));
+    CHECK(secp256k1_memcmp_var(res, zeros, sizeof(res)) == 0);
+    memset(res, 1, sizeof(res));
+    CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &invalid_point, s_one, NULL, NULL));
+    CHECK(secp256k1_memcmp_var(res, zeros, sizeof(res)) == 0);
     CHECK(secp256k1_ecdh(CTX, res, &point, s_one, NULL, NULL) == 1);
 }
 
@@ -130,8 +140,12 @@ static void test_bad_scalar(void) {
 
     /* Try to multiply it by bad values */
     memcpy(s_overflow, secp256k1_group_order_bytes, 32);
+    memset(output, 1, sizeof(output));
     CHECK(secp256k1_ecdh(CTX, output, &point, s_zero, NULL, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
     CHECK(secp256k1_ecdh(CTX, output, &point, s_overflow, NULL, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
     /* ...and a good one */
     s_overflow[31] -= 1;
     CHECK(secp256k1_ecdh(CTX, output, &point, s_overflow, NULL, NULL) == 1);
