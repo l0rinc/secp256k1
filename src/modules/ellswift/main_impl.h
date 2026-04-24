@@ -396,6 +396,9 @@ int secp256k1_ellswift_encode(const secp256k1_context *ctx, unsigned char *ell64
     secp256k1_ge p;
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(ell64 != NULL);
+    if (pubkey == NULL || rnd32 == NULL) {
+        memset(ell64, 0, 64);
+    }
     ARG_CHECK(pubkey != NULL);
     ARG_CHECK(rnd32 != NULL);
 
@@ -478,6 +481,9 @@ int secp256k1_ellswift_decode(const secp256k1_context *ctx, secp256k1_pubkey *pu
     secp256k1_ge p;
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(pubkey != NULL);
+    if (ell64 == NULL) {
+        memset(pubkey, 0, sizeof(*pubkey));
+    }
     ARG_CHECK(ell64 != NULL);
 
     secp256k1_fe_set_b32_mod(&u, ell64);

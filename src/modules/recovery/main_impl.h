@@ -42,6 +42,9 @@ int secp256k1_ecdsa_recoverable_signature_parse_compact(const secp256k1_context*
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig != NULL);
+    if (input64 == NULL || recid < 0 || recid > 3) {
+        memset(sig, 0, sizeof(*sig));
+    }
     ARG_CHECK(input64 != NULL);
     ARG_CHECK(recid >= 0 && recid <= 3);
 
@@ -62,8 +65,14 @@ int secp256k1_ecdsa_recoverable_signature_serialize_compact(const secp256k1_cont
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output64 != NULL);
-    ARG_CHECK(sig != NULL);
+    if (recid == NULL || sig == NULL) {
+        memset(output64, 0, 64);
+    }
     ARG_CHECK(recid != NULL);
+    if (sig == NULL) {
+        *recid = 0;
+    }
+    ARG_CHECK(sig != NULL);
 
     secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, recid, sig);
     secp256k1_scalar_get_b32(&output64[0], &r);
@@ -77,6 +86,9 @@ int secp256k1_ecdsa_recoverable_signature_convert(const secp256k1_context* ctx, 
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig != NULL);
+    if (sigin == NULL) {
+        memset(sig, 0, sizeof(*sig));
+    }
     ARG_CHECK(sigin != NULL);
 
     secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, sigin);
@@ -124,9 +136,14 @@ int secp256k1_ecdsa_sign_recoverable(const secp256k1_context* ctx, secp256k1_ecd
     secp256k1_scalar r, s;
     int ret, recid;
     VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(signature != NULL);
+    if (!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
+        || msghash32 == NULL
+        || seckey == NULL) {
+        memset(signature, 0, sizeof(*signature));
+    }
     ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(msghash32 != NULL);
-    ARG_CHECK(signature != NULL);
     ARG_CHECK(seckey != NULL);
 
     ret = secp256k1_ecdsa_sign_inner(ctx, &r, &s, &recid, msghash32, seckey, noncefp, noncedata);
@@ -140,9 +157,12 @@ int secp256k1_ecdsa_recover(const secp256k1_context* ctx, secp256k1_pubkey *pubk
     secp256k1_scalar m;
     int recid;
     VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(pubkey != NULL);
+    if (msghash32 == NULL || signature == NULL) {
+        memset(pubkey, 0, sizeof(*pubkey));
+    }
     ARG_CHECK(msghash32 != NULL);
     ARG_CHECK(signature != NULL);
-    ARG_CHECK(pubkey != NULL);
 
     secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, signature);
     VERIFY_CHECK(recid >= 0 && recid < 4);  /* should have been caught in parse_compact */
