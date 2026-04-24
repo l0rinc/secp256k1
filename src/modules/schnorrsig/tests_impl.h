@@ -29,6 +29,7 @@ static void run_nonce_function_bip340_tests(void) {
     unsigned char algo[] = {'B', 'I', 'P', '0', '3', '4', '0', '/', 'n', 'o', 'n', 'c', 'e'};
     size_t algolen = sizeof(algo);
     secp256k1_sha256 sha_optimized;
+    const unsigned char zeros[32] = { 0 };
     unsigned char nonce[32], nonce_z[32];
     unsigned char msg[32];
     size_t msglen = sizeof(msg);
@@ -108,6 +109,20 @@ static void run_nonce_function_bip340_tests(void) {
     CHECK(nonce_function_bip340(nonce_z, msg, msglen, key, pk, algo, algolen, &aux_rand) == 1);
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, algolen, NULL) == 1);
     CHECK(secp256k1_memcmp_var(nonce_z, nonce, 32) == 0);
+
+    CHECK(nonce_function_bip340(NULL, msg, msglen, key, pk, algo, algolen, NULL) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, NULL, msglen, key, pk, algo, algolen, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, msg, msglen, NULL, pk, algo, algolen, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, msg, msglen, key, NULL, algo, algolen, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, NULL, 0, key, pk, algo, algolen, NULL) == 1);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) != 0);
 }
 
 static void test_schnorrsig_api(void) {

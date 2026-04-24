@@ -534,6 +534,12 @@ static int nonce_function_rfc6979_impl(const secp256k1_hash_ctx *hash_ctx, unsig
    unsigned int i;
    secp256k1_scalar msg;
    unsigned char msgmod32[32];
+   if (nonce32 == NULL || msg32 == NULL || key32 == NULL) {
+       if (nonce32 != NULL) {
+           memset(nonce32, 0, 32);
+       }
+       return 0;
+   }
    secp256k1_scalar_set_b32(&msg, msg32, NULL);
    secp256k1_scalar_get_b32(msgmod32, &msg);
    /* We feed a byte array to the PRNG as input, consisting of:
