@@ -291,6 +291,9 @@ int secp256k1_keypair_xonly_tweak_add(const secp256k1_context* ctx, secp256k1_ke
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(keypair != NULL);
+    if (tweak32 == NULL) {
+        memset(keypair, 0, sizeof(*keypair));
+    }
     ARG_CHECK(tweak32 != NULL);
 
     ret = secp256k1_keypair_load(ctx, &sk, &pk, keypair);

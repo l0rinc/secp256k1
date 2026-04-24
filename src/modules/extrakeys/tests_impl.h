@@ -401,8 +401,7 @@ static void test_keypair_add(void) {
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_tweak_add(CTX, NULL, tweak));
     CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_tweak_add(CTX, &keypair, NULL));
-    /* This does not set the keypair to zeroes */
-    CHECK(secp256k1_memcmp_var(&keypair, zeros96, sizeof(keypair)) != 0);
+    CHECK(secp256k1_memcmp_var(&keypair, zeros96, sizeof(keypair)) == 0);
 
     /* Invalid tweak zeroes the keypair */
     CHECK(secp256k1_keypair_create(CTX, &keypair, sk) == 1);
