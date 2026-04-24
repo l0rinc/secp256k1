@@ -836,6 +836,12 @@ static void test_schnorrsig_sign_internal(void) {
     /* Check that deprecated alias gives the same result */
     CHECK(secp256k1_schnorrsig_sign(CTX, sig2, msg, &keypair, NULL) == 1);
     CHECK(secp256k1_memcmp_var(sig, sig2, sizeof(sig)) == 0);
+    memset(sig, 1, sizeof(sig));
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign32(CTX, sig, NULL, &keypair, NULL));
+    CHECK(secp256k1_memcmp_var(sig, zeros64, sizeof(sig)) == 0);
+    memset(sig, 1, sizeof(sig));
+    CHECK_ILLEGAL(STATIC_CTX, secp256k1_schnorrsig_sign32(STATIC_CTX, sig, msg, &keypair, NULL));
+    CHECK(secp256k1_memcmp_var(sig, zeros64, sizeof(sig)) == 0);
 
     /* Test different nonce functions */
     CHECK(secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypair, &extraparams) == 1);
@@ -860,6 +866,11 @@ static void test_schnorrsig_sign_internal(void) {
     CHECK(secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypair, &extraparams) == 1);
     CHECK(secp256k1_schnorrsig_sign32(CTX, sig2, msg, &keypair, extraparams.ndata) == 1);
     CHECK(secp256k1_memcmp_var(sig, sig2, sizeof(sig)) == 0);
+
+    memset(sig, 1, sizeof(sig));
+    extraparams.magic[0] ^= 1;
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypair, &extraparams));
+    CHECK(secp256k1_memcmp_var(sig, zeros64, sizeof(sig)) == 0);
 }
 
 DEFINE_SHA256_TRANSFORM_PROBE(sha256_schnorrsig)
