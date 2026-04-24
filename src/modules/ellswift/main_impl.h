@@ -550,13 +550,22 @@ int secp256k1_ellswift_xdh(const secp256k1_context *ctx, unsigned char *output, 
     secp256k1_fe xn, xd, px, u, t;
     unsigned char sx[32];
     const unsigned char* theirs64;
+    int known_hashfp = hashfp == secp256k1_ellswift_xdh_hash_function_bip324
+                    || hashfp == secp256k1_ellswift_xdh_hash_function_prefix;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output != NULL);
+    if (known_hashfp && (ell_a64 == NULL
+        || ell_b64 == NULL
+        || seckey32 == NULL
+        || (hashfp == secp256k1_ellswift_xdh_hash_function_prefix && data == NULL))) {
+        memset(output, 0, 32);
+    }
     ARG_CHECK(ell_a64 != NULL);
     ARG_CHECK(ell_b64 != NULL);
     ARG_CHECK(seckey32 != NULL);
     ARG_CHECK(hashfp != NULL);
+    ARG_CHECK(hashfp != secp256k1_ellswift_xdh_hash_function_prefix || data != NULL);
 
     /* Load remote public key (as fraction). */
     theirs64 = party ? ell_a64 : ell_b64;
@@ -587,6 +596,9 @@ int secp256k1_ellswift_xdh(const secp256k1_context *ctx, unsigned char *output, 
     secp256k1_fe_clear(&px);
     secp256k1_scalar_clear(&s);
 
+    if (known_hashfp) {
+        secp256k1_memczero(output, 32, overflow || !ret);
+    }
     return !!ret & !overflow;
 }
 
