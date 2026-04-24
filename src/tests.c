@@ -7796,6 +7796,14 @@ static void run_ecdsa_edge_cases(void) {
         CHECK(secp256k1_memcmp_var(nonce2, nonce3, 32) != 0);
         CHECK(secp256k1_memcmp_var(nonce2, nonce4, 32) != 0);
         CHECK(secp256k1_memcmp_var(nonce3, nonce4, 32) != 0);
+
+        memset(nonce, 1, sizeof(nonce));
+        CHECK(nonce_function_rfc6979(NULL, zeros, zeros, NULL, NULL, 0) == 0);
+        CHECK(nonce_function_rfc6979(nonce, NULL, zeros, NULL, NULL, 0) == 0);
+        CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+        memset(nonce, 1, sizeof(nonce));
+        CHECK(nonce_function_rfc6979(nonce, zeros, NULL, NULL, NULL, 0) == 0);
+        CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
     }
 
 

@@ -42,10 +42,11 @@ static int nonce_function_bip340_impl(const secp256k1_hash_ctx *hash_ctx, unsign
     unsigned char masked_key[32];
     int i;
 
-    if (algo == NULL) {
-        return 0;
-    }
-    if (algolen >= SECP256K1_SHA256_MAX_SIZE || msglen >= SECP256K1_SHA256_MAX_SIZE - 128) {
+    if (nonce32 == NULL || (msg == NULL && msglen != 0) || key32 == NULL || xonly_pk32 == NULL || algo == NULL ||
+            algolen >= SECP256K1_SHA256_MAX_SIZE || msglen >= SECP256K1_SHA256_MAX_SIZE - 128) {
+        if (nonce32 != NULL) {
+            memset(nonce32, 0, 32);
+        }
         return 0;
     }
 
