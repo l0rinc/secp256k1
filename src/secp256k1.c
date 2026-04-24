@@ -827,6 +827,8 @@ int secp256k1_tagged_sha256(const secp256k1_context* ctx, unsigned char *hash32,
     ARG_CHECK(hash32 != NULL);
     ARG_CHECK(tag != NULL);
     ARG_CHECK(msg != NULL);
+    ARG_CHECK(taglen < SECP256K1_SHA256_MAX_SIZE);
+    ARG_CHECK(msglen < SECP256K1_SHA256_MAX_SIZE - 64);
 
     secp256k1_sha256_initialize_tagged(secp256k1_get_hash_context(ctx), &sha, tag, taglen);
     secp256k1_sha256_write(secp256k1_get_hash_context(ctx), &sha, msg, msglen);

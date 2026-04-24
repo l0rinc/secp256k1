@@ -890,6 +890,10 @@ static void run_tagged_sha256_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, NULL, tag, sizeof(tag), msg, sizeof(msg)));
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, NULL, 0, msg, sizeof(msg)));
     CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, tag, sizeof(tag), NULL, 0));
+#if SIZE_MAX > 0xffffffff
+    CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, tag, (size_t)SECP256K1_SHA256_MAX_SIZE, msg, sizeof(msg)));
+    CHECK_ILLEGAL(CTX, secp256k1_tagged_sha256(CTX, hash32, tag, sizeof(tag), msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 64));
+#endif
 
     /* Static test vector */
     memcpy(tag, "tag", 3);
