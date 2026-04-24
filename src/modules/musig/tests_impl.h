@@ -482,8 +482,13 @@ static void musig_api_tests(void) {
 
     CHECK(secp256k1_musig_partial_sig_serialize(CTX, buf, &partial_sig[0]) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, NULL, &partial_sig[0]));
+    memset(buf, 1, sizeof(buf));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, buf, NULL));
+    CHECK(secp256k1_memcmp_var(buf, zeros132, sizeof(buf)) == 0);
+    memset(buf, 1, sizeof(buf));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, buf, &invalid_partial_sig));
+    CHECK(secp256k1_memcmp_var(buf, zeros132, sizeof(buf)) == 0);
+    CHECK(secp256k1_musig_partial_sig_serialize(CTX, buf, &partial_sig[0]) == 1);
     CHECK(secp256k1_musig_partial_sig_parse(CTX, &partial_sig[0], buf) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_parse(CTX, NULL, buf));
     {
