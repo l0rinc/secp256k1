@@ -130,7 +130,9 @@ static void musig_api_tests(void) {
     secp256k1_keypair keypair[2];
     secp256k1_keypair invalid_keypair;
     unsigned char max64[64];
+    unsigned char max132[132];
     unsigned char zeros132[132] = { 0 };
+    unsigned char zeros197[197] = { 0 };
     unsigned char session_secrand[2][32];
     unsigned char nonrepeating_cnt = 0;
     secp256k1_musig_secnonce secnonce[2];
@@ -162,6 +164,7 @@ static void musig_api_tests(void) {
 
     /** setup **/
     memset(max64, 0xff, sizeof(max64));
+    memset(max132, 0xff, sizeof(max132));
     memset(&invalid_keypair, 0, sizeof(invalid_keypair));
     memset(&invalid_pk, 0, sizeof(invalid_pk));
     memset(&invalid_secnonce, 0, sizeof(invalid_secnonce));
@@ -210,14 +213,19 @@ static void musig_api_tests(void) {
     }
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, NULL, 2));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
+    CHECK(memcmp_and_randomize(keyagg_cache.data, zeros197, sizeof(keyagg_cache.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, invalid_pk_ptr2, 2));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
+    CHECK(memcmp_and_randomize(keyagg_cache.data, zeros197, sizeof(keyagg_cache.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, invalid_pk_ptr3, 3));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
+    CHECK(memcmp_and_randomize(keyagg_cache.data, zeros197, sizeof(keyagg_cache.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, pk_ptr, 0));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
+    CHECK(memcmp_and_randomize(keyagg_cache.data, zeros197, sizeof(keyagg_cache.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, NULL, 0));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
+    CHECK(memcmp_and_randomize(keyagg_cache.data, zeros197, sizeof(keyagg_cache.data)) == 0);
 
     CHECK(secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, pk_ptr, 2) == 1);
 
@@ -286,6 +294,7 @@ static void musig_api_tests(void) {
     /* invalid seckey */
     CHECK(secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], max64, &pk[0], msg, &keyagg_cache, max64) == 0);
     CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
 
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], sk[0], NULL, msg, &keyagg_cache, max64));
     CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
@@ -347,6 +356,7 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_parse(CTX, NULL, pubnonce_ser));
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], NULL));
     CHECK(secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], zeros132) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
     CHECK(secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], pubnonce_ser) == 1);
 
     {
@@ -370,6 +380,7 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, NULL, 2));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, pubnonce_ptr, 0));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, invalid_pubnonce_ptr, 1));
+    CHECK(memcmp_and_randomize(aggnonce.data, zeros132, sizeof(aggnonce.data)) == 0);
     CHECK(secp256k1_musig_nonce_agg(CTX, &aggnonce, inf_pubnonce_ptr, 2) == 1);
     {
         /* Check that the aggnonce encodes two points at infinity */
@@ -393,6 +404,8 @@ static void musig_api_tests(void) {
     CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, aggnonce_ser) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_aggnonce_parse(CTX, NULL, aggnonce_ser));
     CHECK_ILLEGAL(CTX, secp256k1_musig_aggnonce_parse(CTX, &aggnonce, NULL));
+    CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, max132) == 0);
+    CHECK(memcmp_and_randomize(aggnonce.data, zeros132, sizeof(aggnonce.data)) == 0);
     CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, zeros132) == 1);
     CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, aggnonce_ser) == 1);
 
@@ -409,9 +422,11 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, NULL, &aggnonce, msg, &keyagg_cache));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, NULL, msg, &keyagg_cache));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, (secp256k1_musig_aggnonce*) &invalid_pubnonce, msg, &keyagg_cache));
+    CHECK(memcmp_and_randomize(session.data, zeros197, sizeof(session.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &aggnonce, NULL, &keyagg_cache));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, &invalid_keyagg_cache));
+    CHECK(memcmp_and_randomize(session.data, zeros197, sizeof(session.data)) == 0);
 
     CHECK(secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, &keyagg_cache) == 1);
 
@@ -420,16 +435,20 @@ static void musig_api_tests(void) {
     /* The secnonce is set to 0 and subsequent signing attempts fail */
     CHECK(secp256k1_memcmp_var(&secnonce_tmp, zeros132, sizeof(secnonce_tmp)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], &keyagg_cache, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, NULL, &secnonce_tmp, &keypair[0], &keyagg_cache, &session));
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], NULL, &keypair[0], &keyagg_cache, &session));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &invalid_secnonce, &keypair[0], &keyagg_cache, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, NULL, &keyagg_cache, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &invalid_keypair, &keyagg_cache, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     {
@@ -438,19 +457,24 @@ static void musig_api_tests(void) {
         testrand256(sk_tmp);
         CHECK(secp256k1_keypair_create(CTX, &keypair_tmp, sk_tmp));
         CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair_tmp, &keyagg_cache, &session));
+        CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
         CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
         memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     }
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], NULL, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], &invalid_keyagg_cache, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], &keyagg_cache, NULL));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], &keyagg_cache, &invalid_session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros197, sizeof(partial_sig[0].data)) == 0);
     CHECK(memcmp_and_randomize(secnonce_tmp.data, zeros132, sizeof(secnonce_tmp.data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
 
@@ -517,10 +541,15 @@ static void musig_api_tests(void) {
     }
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, NULL, &session, partial_sig_ptr, 2));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, NULL, partial_sig_ptr, 2));
+    CHECK(memcmp_and_randomize(pre_sig, zeros197, sizeof(pre_sig)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
+    CHECK(memcmp_and_randomize(pre_sig, zeros197, sizeof(pre_sig)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, NULL, 2));
+    CHECK(memcmp_and_randomize(pre_sig, zeros197, sizeof(pre_sig)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, invalid_partial_sig_ptr, 2));
+    CHECK(memcmp_and_randomize(pre_sig, zeros197, sizeof(pre_sig)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 0));
+    CHECK(memcmp_and_randomize(pre_sig, zeros197, sizeof(pre_sig)) == 0);
     CHECK(secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 1) == 1);
     CHECK(secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 2) == 1);
 }
