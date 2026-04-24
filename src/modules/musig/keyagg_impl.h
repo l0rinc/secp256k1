@@ -163,6 +163,9 @@ int secp256k1_musig_pubkey_agg(const secp256k1_context* ctx, secp256k1_xonly_pub
     if (agg_pk != NULL) {
         memset(agg_pk, 0, sizeof(*agg_pk));
     }
+    if (keyagg_cache != NULL) {
+        memset(keyagg_cache, 0, sizeof(*keyagg_cache));
+    }
     ARG_CHECK(pubkeys != NULL);
     ARG_CHECK(n_pubkeys > 0);
     for (i = 0; i < n_pubkeys; i++) {

@@ -656,6 +656,9 @@ int secp256k1_musig_partial_sign(const secp256k1_context* ctx, secp256k1_musig_p
     int ret;
 
     VERIFY_CHECK(ctx != NULL);
+    if (partial_sig != NULL) {
+        memset(partial_sig, 0, sizeof(*partial_sig));
+    }
 
     ARG_CHECK(secnonce != NULL);
     /* Fails if the magic doesn't match */
