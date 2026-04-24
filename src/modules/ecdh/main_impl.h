@@ -45,7 +45,9 @@ int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const se
     ARG_CHECK(point != NULL);
     ARG_CHECK(scalar != NULL);
 
-    secp256k1_pubkey_load(ctx, &pt, point);
+    if (!secp256k1_pubkey_load(ctx, &pt, point)) {
+        return 0;
+    }
     secp256k1_scalar_set_b32(&s, scalar, &overflow);
 
     overflow |= secp256k1_scalar_is_zero(&s);

@@ -36,17 +36,20 @@ static int ecdh_hash_function_custom(unsigned char *output, const unsigned char 
 
 static void test_ecdh_api(void) {
     secp256k1_pubkey point;
+    secp256k1_pubkey invalid_point;
     unsigned char res[32];
     unsigned char s_one[32] = { 0 };
     s_one[31] = 1;
 
     CHECK(secp256k1_ec_pubkey_create(CTX, &point, s_one) == 1);
+    memset(&invalid_point, 0, sizeof(invalid_point));
 
     /* Check all NULLs are detected */
     CHECK(secp256k1_ecdh(CTX, res, &point, s_one, NULL, NULL) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, NULL, &point, s_one, NULL, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, NULL, s_one, NULL, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &point, NULL, NULL, NULL));
+    CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &invalid_point, s_one, NULL, NULL));
     CHECK(secp256k1_ecdh(CTX, res, &point, s_one, NULL, NULL) == 1);
 }
 
