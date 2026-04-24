@@ -497,6 +497,12 @@ int secp256k1_ellswift_decode(const secp256k1_context *ctx, secp256k1_pubkey *pu
 static int ellswift_xdh_hash_function_prefix_impl(const secp256k1_hash_ctx *hash_ctx, unsigned char *output, const unsigned char *x32, const unsigned char *ell_a64, const unsigned char *ell_b64, void *data) {
     secp256k1_sha256 sha;
 
+    if (output == NULL || x32 == NULL || ell_a64 == NULL || ell_b64 == NULL || data == NULL) {
+        if (output != NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
     secp256k1_sha256_initialize(&sha);
     secp256k1_sha256_write(hash_ctx, &sha, data, 64);
     secp256k1_sha256_write(hash_ctx, &sha, ell_a64, 64);
@@ -526,6 +532,12 @@ static int ellswift_xdh_hash_function_bip324_impl(const secp256k1_hash_ctx *hash
 
     (void)data;
 
+    if (output == NULL || x32 == NULL || ell_a64 == NULL || ell_b64 == NULL) {
+        if (output != NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
     secp256k1_ellswift_sha256_init_bip324(&sha);
     secp256k1_sha256_write(hash_ctx, &sha, ell_a64, 64);
     secp256k1_sha256_write(hash_ctx, &sha, ell_b64, 64);
