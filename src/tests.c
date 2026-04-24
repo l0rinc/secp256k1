@@ -6787,6 +6787,12 @@ static void test_ecdsa_end_to_end(void) {
     CHECK(ec_privkey_export_der(CTX, seckey, &seckeylen, privkey, testrand_bits(1) == 1));
     CHECK(ec_privkey_import_der(CTX, privkey2, seckey, seckeylen) == 1);
     CHECK(secp256k1_memcmp_var(privkey, privkey2, 32) == 0);
+    {
+        static const unsigned char overflow_len_der[] = {0x30, 0x82, 0xff, 0xff};
+        memset(privkey2, 0xaa, sizeof(privkey2));
+        CHECK(ec_privkey_import_der(CTX, privkey2, overflow_len_der, sizeof(overflow_len_der)) == 0);
+        CHECK(all_bytes_equal(privkey2, 0, sizeof(privkey2)));
+    }
 
     /* Optionally tweak the keys using addition. */
     if (testrand_int(3) == 0) {
