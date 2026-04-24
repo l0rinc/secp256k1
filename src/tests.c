@@ -6309,6 +6309,7 @@ static void run_ec_pubkey_parse_test(void) {
         0xB8, 0x00
     };
     unsigned char sout[65];
+    unsigned char zeros65[65] = { 0 };
     unsigned char shortkey[2] = { 0 };
     secp256k1_ge ge;
     secp256k1_pubkey pubkey;
@@ -6395,6 +6396,11 @@ static void run_ec_pubkey_parse_test(void) {
     len = 65;
     CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_serialize(CTX, sout, &len, &pubkey, ~0));
     CHECK(len == 0);
+    len = 32;
+    memset(sout, 0x2a, sizeof(sout));
+    CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_serialize(CTX, sout, &len, &pubkey, SECP256K1_EC_COMPRESSED));
+    CHECK(len == 0);
+    CHECK(secp256k1_memcmp_var(sout, zeros65, 32) == 0);
     len = 65;
     SECP256K1_CHECKMEM_UNDEFINE(sout, 65);
     CHECK(secp256k1_ec_pubkey_serialize(CTX, sout, &len, &pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
@@ -7623,6 +7629,7 @@ static void run_ecdsa_edge_cases(void) {
         size_t siglen;
         unsigned char signature[72];
         unsigned char zeros64[64] = { 0 };
+        unsigned char zeros72[72] = { 0 };
         static const unsigned char nonce[32] = {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -7669,7 +7676,10 @@ static void run_ecdsa_edge_cases(void) {
         siglen = 72;
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_der(CTX, NULL, &siglen, &sig));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_der(CTX, signature, NULL, &sig));
+        memset(signature, 0x2a, sizeof(signature));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, NULL));
+        CHECK(secp256k1_memcmp_var(signature, zeros72, sizeof(signature)) == 0);
+        siglen = 72;
         CHECK(secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, &sig) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_der(CTX, NULL, signature, siglen));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_der(CTX, &sig, NULL, siglen));
@@ -7677,8 +7687,16 @@ static void run_ecdsa_edge_cases(void) {
         CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &sig, signature, siglen) == 1);
         siglen = 10;
         /* Too little room for a signature does not fail via ARGCHECK. */
+        memset(signature, 0x2a, sizeof(signature));
         CHECK(secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, &sig) == 0);
+        CHECK(secp256k1_memcmp_var(signature, zeros64, 10) == 0);
+        CHECK(siglen > 10);
+        CHECK(secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, &sig) == 1);
+        memset(&sig, 0x2a, sizeof(sig));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_normalize(CTX, NULL, NULL));
+        CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_normalize(CTX, &sig, NULL));
+        CHECK(is_empty_signature(&sig));
+        CHECK(secp256k1_ecdsa_sign(CTX, &sig, msg, key, precomputed_nonce_function, nonce) == 1);
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_compact(CTX, NULL, &sig));
         memset(signature, 0x2a, sizeof(signature));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_compact(CTX, signature, NULL));

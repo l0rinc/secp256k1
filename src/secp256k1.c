@@ -287,10 +287,19 @@ int secp256k1_ec_pubkey_parse(const secp256k1_context* ctx, secp256k1_pubkey* pu
 int secp256k1_ec_pubkey_serialize(const secp256k1_context* ctx, unsigned char *output, size_t *outputlen, const secp256k1_pubkey* pubkey, unsigned int flags) {
     secp256k1_ge Q;
     size_t len;
+    size_t expected_outputlen;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(outputlen != NULL);
-    ARG_CHECK(*outputlen >= ((flags & SECP256K1_FLAGS_BIT_COMPRESSION) ? 33u : 65u));
+    expected_outputlen = (flags & SECP256K1_FLAGS_BIT_COMPRESSION) ? 33u : 65u;
+    if (EXPECT(*outputlen < expected_outputlen, 0)) {
+        if (output != NULL) {
+            memset(output, 0, *outputlen);
+        }
+        *outputlen = 0;
+        secp256k1_callback_call(&ctx->illegal_callback, "*outputlen >= ((flags & SECP256K1_FLAGS_BIT_COMPRESSION) ? 33u : 65u)");
+        return 0;
+    }
     len = *outputlen;
     *outputlen = 0;
     ARG_CHECK(output != NULL);
@@ -438,14 +447,25 @@ int secp256k1_ecdsa_signature_parse_compact(const secp256k1_context* ctx, secp25
 
 int secp256k1_ecdsa_signature_serialize_der(const secp256k1_context* ctx, unsigned char *output, size_t *outputlen, const secp256k1_ecdsa_signature* sig) {
     secp256k1_scalar r, s;
+    size_t len;
+    int ret;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output != NULL);
     ARG_CHECK(outputlen != NULL);
+    len = *outputlen;
+    if (sig == NULL) {
+        memset(output, 0, len);
+        *outputlen = 0;
+    }
     ARG_CHECK(sig != NULL);
 
     secp256k1_ecdsa_signature_load(ctx, &r, &s, sig);
-    return secp256k1_ecdsa_sig_serialize(output, outputlen, &r, &s);
+    ret = secp256k1_ecdsa_sig_serialize(output, outputlen, &r, &s);
+    if (!ret) {
+        memset(output, 0, len);
+    }
+    return ret;
 }
 
 int secp256k1_ecdsa_signature_serialize_compact(const secp256k1_context* ctx, unsigned char *output64, const secp256k1_ecdsa_signature* sig) {
@@ -469,6 +489,9 @@ int secp256k1_ecdsa_signature_normalize(const secp256k1_context* ctx, secp256k1_
     int ret = 0;
 
     VERIFY_CHECK(ctx != NULL);
+    if (sigout != NULL && sigin == NULL) {
+        memset(sigout, 0, sizeof(*sigout));
+    }
     ARG_CHECK(sigin != NULL);
 
     secp256k1_ecdsa_signature_load(ctx, &r, &s, sigin);
