@@ -22,6 +22,9 @@ typedef struct {
     uint64_t bytes;
 } secp256k1_sha256;
 
+/* SHA256 supports messages of less than 2^64 bits, which is less than 2^61 bytes. */
+#define SECP256K1_SHA256_MAX_SIZE ((uint64_t)1 << 61)
+
 static void secp256k1_sha256_initialize(secp256k1_sha256 *hash);
 /* Initialize a SHA256 hash state with a precomputed midstate.
  * The byte counter must be a multiple of 64, i.e., there must be no unwritten
