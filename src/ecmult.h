@@ -7,6 +7,8 @@
 #ifndef SECP256K1_ECMULT_H
 #define SECP256K1_ECMULT_H
 
+#include <limits.h>
+
 #include "group.h"
 #include "scalar.h"
 #include "scratch.h"
@@ -30,17 +32,20 @@
  * If WINDOW_G > 27 and size_t has 32 bits, then the code is incorrect
  * because the size of the memory object that we allocate (in bytes)
  * will not fit in a size_t.
- * If WINDOW_G > 31 and int has 32 bits, then the code is incorrect
- * because certain expressions will overflow.
+ * If ECMULT_WINDOW_SIZE is so large that WNAF digits no longer fit in an int,
+ * then the code is incorrect.
  */
 #if ECMULT_WINDOW_SIZE < 2 || ECMULT_WINDOW_SIZE > 24
 #  error Set ECMULT_WINDOW_SIZE to an integer in range [2..24].
+#endif
+#if INT_MAX < ((1LL << (ECMULT_WINDOW_SIZE - 1)) - 1)
+#  error Set ECMULT_WINDOW_SIZE to a value whose WNAF digits fit in int.
 #endif
 
 /** The number of entries a table with precomputed multiples needs to have. */
 #define ECMULT_TABLE_SIZE(w) ((size_t)1 << ((w)-2))
 
-/** Double multiply: R = na*A + ng*G */
+/** Double multiply: R = na*A + ng*G. The ng argument may be NULL for zero. */
 static void secp256k1_ecmult(secp256k1_gej *r, const secp256k1_gej *a, const secp256k1_scalar *na, const secp256k1_scalar *ng);
 
 typedef int (secp256k1_ecmult_multi_callback)(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *data);

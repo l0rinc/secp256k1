@@ -5426,8 +5426,8 @@ static int test_ecmult_accumulate_cb(secp256k1_scalar* sc, secp256k1_ge* pt, siz
 }
 
 static void test_ecmult_accumulate(secp256k1_sha256* acc, const secp256k1_scalar* x, secp256k1_scratch* scratch) {
-    /* Compute x*G in 6 different ways, serialize it uncompressed, and feed it into acc. */
-    secp256k1_gej rj1, rj2, rj3, rj4, rj5, rj6, gj, infj;
+    /* Compute x*G in 7 different ways, serialize it uncompressed, and feed it into acc. */
+    secp256k1_gej rj1, rj2, rj3, rj4, rj5, rj6, rj7, gj, infj;
     secp256k1_ge r;
     unsigned char bytes[65];
     secp256k1_gej_set_ge(&gj, &secp256k1_ge_const_g);
@@ -5438,12 +5438,14 @@ static void test_ecmult_accumulate(secp256k1_sha256* acc, const secp256k1_scalar
     CHECK(secp256k1_ecmult_multi_var(&CTX->error_callback, scratch, &rj4, x, NULL, NULL, 0));
     CHECK(secp256k1_ecmult_multi_var(&CTX->error_callback, scratch, &rj5, &secp256k1_scalar_zero, test_ecmult_accumulate_cb, (void*)x, 1));
     secp256k1_ecmult_const(&rj6, &secp256k1_ge_const_g, x);
+    secp256k1_ecmult(&rj7, &gj, x, NULL);
     secp256k1_ge_set_gej_var(&r, &rj1);
     CHECK(secp256k1_gej_eq_ge_var(&rj2, &r));
     CHECK(secp256k1_gej_eq_ge_var(&rj3, &r));
     CHECK(secp256k1_gej_eq_ge_var(&rj4, &r));
     CHECK(secp256k1_gej_eq_ge_var(&rj5, &r));
     CHECK(secp256k1_gej_eq_ge_var(&rj6, &r));
+    CHECK(secp256k1_gej_eq_ge_var(&rj7, &r));
     if (secp256k1_ge_is_infinity(&r)) {
         /* Store infinity as 0x00 */
         const unsigned char zerobyte[1] = {0};
@@ -7848,4 +7850,3 @@ int main(int argc, char **argv) {
     if (tf_init(&tf, argc, argv) != 0) return EXIT_FAILURE;
     return tf_run(&tf);
 }
-

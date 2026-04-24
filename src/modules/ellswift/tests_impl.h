@@ -431,6 +431,31 @@ void ellswift_xdh_correctness_tests(void) {
     }
 }
 
+void ellswift_xdh_invalid_secret_tests(void) {
+    unsigned char ell64a[64], ell64b[64], sec32a[32], sec32b[32], share32[32];
+    unsigned char sec32_order_minus1[32], sec32_order_plus1[32];
+    static const unsigned char sec32_zero[32] = {0};
+    secp256k1_scalar sec;
+
+    testutil_random_scalar_order_test(&sec);
+    secp256k1_scalar_get_b32(sec32a, &sec);
+    CHECK(secp256k1_ellswift_create(CTX, ell64a, sec32a, NULL) == 1);
+
+    testutil_random_scalar_order_test(&sec);
+    secp256k1_scalar_get_b32(sec32b, &sec);
+    CHECK(secp256k1_ellswift_create(CTX, ell64b, sec32b, NULL) == 1);
+
+    memcpy(sec32_order_minus1, secp256k1_group_order_bytes, 32);
+    sec32_order_minus1[31] -= 1;
+    memcpy(sec32_order_plus1, secp256k1_group_order_bytes, 32);
+    sec32_order_plus1[31] += 1;
+
+    CHECK(secp256k1_ellswift_xdh(CTX, share32, ell64a, ell64b, sec32_zero, 0, &ellswift_xdh_hash_x32, NULL) == 0);
+    CHECK(secp256k1_ellswift_xdh(CTX, share32, ell64a, ell64b, secp256k1_group_order_bytes, 0, &ellswift_xdh_hash_x32, NULL) == 0);
+    CHECK(secp256k1_ellswift_xdh(CTX, share32, ell64a, ell64b, sec32_order_plus1, 0, &ellswift_xdh_hash_x32, NULL) == 0);
+    CHECK(secp256k1_ellswift_xdh(CTX, share32, ell64a, ell64b, sec32_order_minus1, 0, &ellswift_xdh_hash_x32, NULL) == 1);
+}
+
 /* Test hash initializers */
 void ellswift_hash_init_tests(void) {
     secp256k1_sha256 sha_optimized;
@@ -469,6 +494,7 @@ static const struct tf_test_entry tests_ellswift[] = {
     CASE1(ellswift_create_tests),
     CASE1(ellswift_compute_shared_secret_tests),
     CASE1(ellswift_xdh_correctness_tests),
+    CASE1(ellswift_xdh_invalid_secret_tests),
     CASE1(ellswift_hash_init_tests),
 };
 

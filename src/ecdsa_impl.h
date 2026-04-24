@@ -227,8 +227,12 @@ static int secp256k1_ecdsa_sig_verify(const secp256k1_scalar *sigr, const secp25
 }
 #else
     secp256k1_scalar_get_b32(c, sigr);
-    /* we can ignore the fe_set_b32_limit return value, because we know the input is in range */
-    (void)secp256k1_fe_set_b32_limit(&xr, c);
+    /* The scalar was serialized modulo the group order, which is below the field size. */
+    {
+        int ret = secp256k1_fe_set_b32_limit(&xr, c);
+        (void)ret;
+        VERIFY_CHECK(ret);
+    }
 
     /** We now have the recomputed R point in pr, and its claimed x coordinate (modulo n)
      *  in xr. Naively, we would extract the x coordinate from pr (requiring a inversion modulo p),
