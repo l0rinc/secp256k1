@@ -177,6 +177,8 @@ static void secp256k1_scalar_split_lambda(secp256k1_scalar * SECP256K1_RESTRICT 
 #ifdef VERIFY
     secp256k1_scalar_split_lambda_verify(r1, r2, k);
 #endif
+    secp256k1_scalar_clear(&c1);
+    secp256k1_scalar_clear(&c2);
 }
 
 #ifdef VERIFY

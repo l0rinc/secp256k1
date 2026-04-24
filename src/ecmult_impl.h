@@ -658,6 +658,7 @@ SECP256K1_INLINE static void secp256k1_ecmult_endo_split(secp256k1_scalar *s1, s
         secp256k1_scalar_negate(s2, s2);
         secp256k1_ge_neg(p2, p2);
     }
+    secp256k1_scalar_clear(&tmp);
 }
 
 /**
