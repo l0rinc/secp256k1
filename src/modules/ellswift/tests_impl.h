@@ -544,6 +544,12 @@ void ellswift_xdh_bad_scalar_tests(void) {
     memset(output, 1, sizeof(output));
     CHECK_ILLEGAL(CTX, secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_good, 0, secp256k1_ellswift_xdh_hash_function_prefix, NULL));
     CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK(secp256k1_ellswift_xdh_hash_function_bip324(output, NULL, ell_a64, ell_b64, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK(secp256k1_ellswift_xdh_hash_function_prefix(output, output, ell_a64, ell_b64, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
     CHECK(secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_overflow_minus1, 0, &ellswift_xdh_hash_x32, NULL) == 1);
 }
 
