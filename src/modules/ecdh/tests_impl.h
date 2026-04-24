@@ -57,6 +57,9 @@ static void test_ecdh_api(void) {
     memset(res, 1, sizeof(res));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &invalid_point, s_one, NULL, NULL));
     CHECK(secp256k1_memcmp_var(res, zeros, sizeof(res)) == 0);
+    memset(res, 1, sizeof(res));
+    CHECK(secp256k1_ecdh_hash_function_sha256(res, NULL, s_one, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(res, zeros, sizeof(res)) == 0);
     CHECK(secp256k1_ecdh(CTX, res, &point, s_one, NULL, NULL) == 1);
 }
 
