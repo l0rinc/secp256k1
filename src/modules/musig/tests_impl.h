@@ -130,6 +130,7 @@ static void musig_api_tests(void) {
     secp256k1_keypair keypair[2];
     secp256k1_keypair invalid_keypair;
     unsigned char max64[64];
+    unsigned char max132[132];
     unsigned char zeros132[132] = { 0 };
     unsigned char zeros197[197] = { 0 };
     unsigned char session_secrand[2][32];
@@ -163,6 +164,7 @@ static void musig_api_tests(void) {
 
     /** setup **/
     memset(max64, 0xff, sizeof(max64));
+    memset(max132, 0xff, sizeof(max132));
     memset(&invalid_keypair, 0, sizeof(invalid_keypair));
     memset(&invalid_pk, 0, sizeof(invalid_pk));
     memset(&invalid_secnonce, 0, sizeof(invalid_secnonce));
@@ -395,6 +397,8 @@ static void musig_api_tests(void) {
     CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, aggnonce_ser) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_aggnonce_parse(CTX, NULL, aggnonce_ser));
     CHECK_ILLEGAL(CTX, secp256k1_musig_aggnonce_parse(CTX, &aggnonce, NULL));
+    CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, max132) == 0);
+    CHECK(memcmp_and_randomize(aggnonce.data, zeros132, sizeof(aggnonce.data)) == 0);
     CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, zeros132) == 1);
     CHECK(secp256k1_musig_aggnonce_parse(CTX, &aggnonce, aggnonce_ser) == 1);
 
