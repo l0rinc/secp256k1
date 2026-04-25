@@ -428,9 +428,13 @@ static int secp256k1_musig_nonce_gen_internal(const secp256k1_context* ctx, secp
     for (i = 0; i < 2; i++) {
         secp256k1_declassify(ctx, &nonce_pts[i], sizeof(nonce_pts[i]));
     }
-    /* None of the nonce_pts will be infinity because k != 0 with overwhelming
-     * probability */
-    secp256k1_musig_pubnonce_save(pubnonce, nonce_pts);
+    if (ret) {
+        /* None of the nonce_pts will be infinity because k != 0 with overwhelming
+         * probability */
+        secp256k1_musig_pubnonce_save(pubnonce, nonce_pts);
+    } else {
+        memset(pubnonce, 0, sizeof(*pubnonce));
+    }
     return ret;
 }
 
