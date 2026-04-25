@@ -374,6 +374,7 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, NULL, 2));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, pubnonce_ptr, 0));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, invalid_pubnonce_ptr, 1));
+    CHECK(memcmp_and_randomize(aggnonce.data, zeros132, sizeof(aggnonce.data)) == 0);
     CHECK(secp256k1_musig_nonce_agg(CTX, &aggnonce, inf_pubnonce_ptr, 2) == 1);
     {
         /* Check that the aggnonce encodes two points at infinity */
