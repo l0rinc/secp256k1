@@ -131,6 +131,7 @@ static void musig_api_tests(void) {
     secp256k1_keypair invalid_keypair;
     unsigned char max64[64];
     unsigned char zeros132[132] = { 0 };
+    unsigned char zeros197[197] = { 0 };
     unsigned char session_secrand[2][32];
     unsigned char nonrepeating_cnt = 0;
     secp256k1_musig_secnonce secnonce[2];
@@ -210,6 +211,7 @@ static void musig_api_tests(void) {
     }
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, NULL, 2));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
+    CHECK(memcmp_and_randomize(keyagg_cache.data, zeros197, sizeof(keyagg_cache.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, invalid_pk_ptr2, 2));
     CHECK(memcmp_and_randomize(agg_pk.data, zeros132, sizeof(agg_pk.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, invalid_pk_ptr3, 3));
