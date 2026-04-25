@@ -428,6 +428,7 @@ static void musig_api_tests(void) {
     /* The secnonce is set to 0 and subsequent signing attempts fail */
     CHECK(secp256k1_memcmp_var(&secnonce_tmp, zeros132, sizeof(secnonce_tmp)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], &keyagg_cache, &session));
+    CHECK(memcmp_and_randomize(partial_sig[0].data, zeros132, sizeof(partial_sig[0].data)) == 0);
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, NULL, &secnonce_tmp, &keypair[0], &keyagg_cache, &session));
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
