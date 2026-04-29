@@ -302,9 +302,11 @@ static void musig_api_tests(void) {
 
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], sk[0], NULL, msg, &keyagg_cache, max64));
     CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
 
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], sk[0], &invalid_pk, msg, &keyagg_cache, max64));
     CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
 
     CHECK(secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], sk[0], &pk[0], NULL, &keyagg_cache, max64) == 1);
     CHECK(memcmp_and_randomize(session_secrand[0], zeros132, sizeof(session_secrand[0])) == 0);
@@ -314,6 +316,7 @@ static void musig_api_tests(void) {
 
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], sk[0], &pk[0], msg, &invalid_keyagg_cache, max64));
     CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
 
     CHECK(secp256k1_musig_nonce_gen(CTX, &secnonce[0], &pubnonce[0], session_secrand[0], sk[0], &pk[0], msg, &keyagg_cache, NULL) == 1);
     CHECK(memcmp_and_randomize(session_secrand[0], zeros132, sizeof(session_secrand[0])) == 0);
