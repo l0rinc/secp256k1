@@ -100,7 +100,13 @@ SECP256K1_INLINE static void secp256k1_fe_impl_normalize_weak(secp256k1_fe *r) {
     r->n[0] = t0; r->n[1] = t1; r->n[2] = t2; r->n[3] = t3; r->n[4] = t4;
 }
 
-SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_NORMALIZE_VAR_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_FE_NORMALIZE_VAR_INLINE
+#endif
+
+SECP256K1_FE_NORMALIZE_VAR_INLINE static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
 
     /* Reduce t4 at the start so there will be at most a single carry from the first pass */
@@ -137,6 +143,8 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_normalize_var(secp256k1_fe
 
     r->n[0] = t0; r->n[1] = t1; r->n[2] = t2; r->n[3] = t3; r->n[4] = t4;
 }
+
+#undef SECP256K1_FE_NORMALIZE_VAR_INLINE
 
 #if defined(__GNUC__) && !defined(__clang__)
 #define SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE SECP256K1_ALWAYS_INLINE
