@@ -257,7 +257,13 @@ static void secp256k1_hmac_sha256_clear(secp256k1_hmac_sha256 *hash) {
     secp256k1_memclear_explicit(hash, sizeof(*hash));
 }
 
-static void secp256k1_rfc6979_hmac_sha256_initialize(secp256k1_rfc6979_hmac_sha256 *rng, const unsigned char *key, size_t keylen) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE
+#endif
+
+SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE static void secp256k1_rfc6979_hmac_sha256_initialize(secp256k1_rfc6979_hmac_sha256 *rng, const unsigned char *key, size_t keylen) {
     secp256k1_hmac_sha256 hmac;
     static const unsigned char zero[1] = {0x00};
     static const unsigned char one[1] = {0x01};
@@ -286,6 +292,8 @@ static void secp256k1_rfc6979_hmac_sha256_initialize(secp256k1_rfc6979_hmac_sha2
     secp256k1_hmac_sha256_finalize(&hmac, rng->v);
     rng->retry = 0;
 }
+
+#undef SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE
 
 static void secp256k1_rfc6979_hmac_sha256_generate(secp256k1_rfc6979_hmac_sha256 *rng, unsigned char *out, size_t outlen) {
     /* RFC6979 3.2.h. */
