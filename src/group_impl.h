@@ -421,7 +421,9 @@ static int secp256k1_gej_eq_x_var(const secp256k1_fe *x, const secp256k1_gej *a)
     VERIFY_CHECK(!a->infinity);
 
     secp256k1_fe_sqr(&r, &a->z); secp256k1_fe_mul(&r, &r, x);
-    return secp256k1_fe_equal(&r, &a->x);
+    secp256k1_fe_negate(&r, &r, 1);
+    secp256k1_fe_add(&r, &a->x);
+    return secp256k1_fe_normalizes_to_zero_var(&r);
 }
 
 static void secp256k1_gej_neg(secp256k1_gej *r, const secp256k1_gej *a) {
