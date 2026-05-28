@@ -173,7 +173,7 @@ SECP256K1_INLINE static int secp256k1_scalar_is_zero(const secp256k1_scalar *a) 
 }
 
 static void secp256k1_scalar_negate(secp256k1_scalar *r, const secp256k1_scalar *a) {
-    uint64_t nonzero = 0xFFFFFFFFFFFFFFFFULL * (secp256k1_scalar_is_zero(a) == 0);
+    uint64_t nonzero = -(uint64_t)(secp256k1_scalar_is_zero(a) == 0);
     secp256k1_uint128 t;
     SECP256K1_SCALAR_VERIFY(a);
 
