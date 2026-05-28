@@ -746,7 +746,7 @@ static int secp256k1_ecmult_pippenger_wnaf(secp256k1_gej *buckets, int bucket_wi
  * set of buckets) for a given number of points.
  */
 static int secp256k1_pippenger_bucket_window(size_t n) {
-    if (n <= 1) {
+    if (n <= 2) {
         return 1;
     } else if (n <= 8) {
         return 2;
@@ -778,7 +778,7 @@ static int secp256k1_pippenger_bucket_window(size_t n) {
  */
 static size_t secp256k1_pippenger_bucket_window_inv(int bucket_window) {
     switch(bucket_window) {
-        case 1: return 1;
+        case 1: return 2;
         case 2: return 8;
         case 3: return 27;
         case 4: return 63;
