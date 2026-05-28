@@ -383,40 +383,88 @@ static void secp256k1_ecmult_strauss_wnaf(const struct secp256k1_strauss_state *
     secp256k1_gej_set_infinity(r);
 
     if (ng) {
-        for (i = bits - 1; i >= 0; i--) {
-            int n;
-            secp256k1_gej_double_var(r, r, NULL);
-            for (np = 0; np < no; ++np) {
-                if ((n = state->ps[np].wnaf_na_1[i])) {
-                    secp256k1_ecmult_table_get_ge(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+        /* no is commonly 1 (including signature verification). Special-case it to
+         * avoid the inner loop and repeated base-pointer arithmetic. */
+        if (no == 1) {
+            const struct secp256k1_strauss_point_state* ps0 = &state->ps[0];
+            const secp256k1_ge* pre0 = state->pre_a;
+            const secp256k1_fe* aux0 = state->aux;
+
+            for (i = bits - 1; i >= 0; i--) {
+                int n;
+                secp256k1_gej_double_var(r, r, NULL);
+                if ((n = ps0->wnaf_na_1[i])) {
+                    secp256k1_ecmult_table_get_ge(&tmpa, pre0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
-                if ((n = state->ps[np].wnaf_na_lam[i])) {
-                    secp256k1_ecmult_table_get_ge_lambda(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), state->aux + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+                if ((n = ps0->wnaf_na_lam[i])) {
+                    secp256k1_ecmult_table_get_ge_lambda(&tmpa, pre0, aux0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
+                if ((n = wnaf_ng_1[i])) {
+                    secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g, n, WINDOW_G);
+                    secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
+                }
+                if ((n = wnaf_ng_128[i])) {
+                    secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g_128, n, WINDOW_G);
+                    secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
+                }
             }
-            if ((n = wnaf_ng_1[i])) {
-                secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g, n, WINDOW_G);
-                secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
-            }
-            if ((n = wnaf_ng_128[i])) {
-                secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g_128, n, WINDOW_G);
-                secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
+        } else {
+            for (i = bits - 1; i >= 0; i--) {
+                int n;
+                secp256k1_gej_double_var(r, r, NULL);
+                for (np = 0; np < no; ++np) {
+                    if ((n = state->ps[np].wnaf_na_1[i])) {
+                        secp256k1_ecmult_table_get_ge(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+                        secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
+                    }
+                    if ((n = state->ps[np].wnaf_na_lam[i])) {
+                        secp256k1_ecmult_table_get_ge_lambda(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), state->aux + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+                        secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
+                    }
+                }
+                if ((n = wnaf_ng_1[i])) {
+                    secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g, n, WINDOW_G);
+                    secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
+                }
+                if ((n = wnaf_ng_128[i])) {
+                    secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g_128, n, WINDOW_G);
+                    secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
+                }
             }
         }
     } else {
-        for (i = bits - 1; i >= 0; i--) {
-            int n;
-            secp256k1_gej_double_var(r, r, NULL);
-            for (np = 0; np < no; ++np) {
-                if ((n = state->ps[np].wnaf_na_1[i])) {
-                    secp256k1_ecmult_table_get_ge(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+        if (no == 1) {
+            const struct secp256k1_strauss_point_state* ps0 = &state->ps[0];
+            const secp256k1_ge* pre0 = state->pre_a;
+            const secp256k1_fe* aux0 = state->aux;
+
+            for (i = bits - 1; i >= 0; i--) {
+                int n;
+                secp256k1_gej_double_var(r, r, NULL);
+                if ((n = ps0->wnaf_na_1[i])) {
+                    secp256k1_ecmult_table_get_ge(&tmpa, pre0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
-                if ((n = state->ps[np].wnaf_na_lam[i])) {
-                    secp256k1_ecmult_table_get_ge_lambda(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), state->aux + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+                if ((n = ps0->wnaf_na_lam[i])) {
+                    secp256k1_ecmult_table_get_ge_lambda(&tmpa, pre0, aux0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
+                }
+            }
+        } else {
+            for (i = bits - 1; i >= 0; i--) {
+                int n;
+                secp256k1_gej_double_var(r, r, NULL);
+                for (np = 0; np < no; ++np) {
+                    if ((n = state->ps[np].wnaf_na_1[i])) {
+                        secp256k1_ecmult_table_get_ge(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+                        secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
+                    }
+                    if ((n = state->ps[np].wnaf_na_lam[i])) {
+                        secp256k1_ecmult_table_get_ge_lambda(&tmpa, state->pre_a + np * ECMULT_TABLE_SIZE(WINDOW_A), state->aux + np * ECMULT_TABLE_SIZE(WINDOW_A), n, WINDOW_A);
+                        secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
+                    }
                 }
             }
         }
