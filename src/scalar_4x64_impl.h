@@ -303,7 +303,12 @@ SECP256K1_INLINE static int secp256k1_scalar_is_one(const secp256k1_scalar *a) {
     return ((a->d[0] ^ 1) | a->d[1] | a->d[2] | a->d[3]) == 0;
 }
 
-static int secp256k1_scalar_is_high(const secp256k1_scalar *a) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_SCALAR_IS_HIGH_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_SCALAR_IS_HIGH_INLINE
+#endif
+SECP256K1_SCALAR_IS_HIGH_INLINE static int secp256k1_scalar_is_high(const secp256k1_scalar *a) {
     int yes = 0;
     int no = 0;
     SECP256K1_SCALAR_VERIFY(a);
@@ -316,6 +321,7 @@ static int secp256k1_scalar_is_high(const secp256k1_scalar *a) {
     yes |= (a->d[0] > SECP256K1_N_H_0) & ~no;
     return yes;
 }
+#undef SECP256K1_SCALAR_IS_HIGH_INLINE
 
 static int secp256k1_scalar_cond_negate(secp256k1_scalar *r, int flag) {
     /* If we are flag = 0, mask = 00...00 and this is a no-op;
