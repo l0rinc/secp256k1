@@ -34,6 +34,26 @@ static void secp256k1_ecmult_gen_context_clear(secp256k1_ecmult_gen_context *ctx
  * secp256k1_ecmult_gen, and the scalar whose encoding the table lookup bits are drawn
  * from (before applying blinding). */
 static void secp256k1_ecmult_gen_scalar_diff(secp256k1_scalar* diff) {
+    /* These constants match the scalar-half result computed by the fallback below. */
+#if !defined(EXHAUSTIVE_TEST_ORDER) && COMB_BITS == 258
+    static const secp256k1_scalar scalar_diff = SECP256K1_SCALAR_CONST(
+        0x80000000ul, 0x00000000ul, 0x00000000ul, 0x00000001ul,
+        0xe7f9b4a5ul, 0xf9130fa6ul, 0x6044722cul, 0xc7ae9e1eul
+    );
+    *diff = scalar_diff;
+#elif !defined(EXHAUSTIVE_TEST_ORDER) && COMB_BITS == 260
+    static const secp256k1_scalar scalar_diff = SECP256K1_SCALAR_CONST(
+        0x80000000ul, 0x00000000ul, 0x00000000ul, 0x00000009ul,
+        0x87e0873dul, 0xdd5f4e3ful, 0xe1563adful, 0xe6691698ul
+    );
+    *diff = scalar_diff;
+#elif !defined(EXHAUSTIVE_TEST_ORDER) && COMB_BITS == 264
+    static const secp256k1_scalar scalar_diff = SECP256K1_SCALAR_CONST(
+        0x80000000ul, 0x00000000ul, 0x00000000ul, 0x000000a2ul,
+        0x05e8fb1bul, 0xb354323dul, 0xf6b9e8deul, 0x4cfa8020ul
+    );
+    *diff = scalar_diff;
+#else
     int i;
 
     /* Compute scalar -1/2. */
@@ -49,6 +69,7 @@ static void secp256k1_ecmult_gen_scalar_diff(secp256k1_scalar* diff) {
 
     /* The result is the sum 2^(COMB_BITS - 1) + (-1/2). */
     secp256k1_scalar_add(diff, diff, &neghalf);
+#endif
 }
 
 static void secp256k1_ecmult_gen(const secp256k1_ecmult_gen_context *ctx, secp256k1_gej *r, const secp256k1_scalar *gn) {
