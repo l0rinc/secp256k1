@@ -216,28 +216,72 @@ static void secp256k1_scalar_half(secp256k1_scalar *r, const secp256k1_scalar *a
      * Together they sum to (n-3)//2 + (n+1)//2 = (2n-2)//2 = n - 1, which is less than n.
      */
     uint64_t mask = -(uint64_t)(a->d[0] & 1U);
-    secp256k1_uint128 t;
     SECP256K1_SCALAR_VERIFY(a);
 
-    secp256k1_u128_from_u64(&t, (a->d[0] >> 1) | (a->d[1] << 63));
-    secp256k1_u128_accum_u64(&t, (SECP256K1_N_H_0 + 1U) & mask);
-    r->d[0] = secp256k1_u128_to_u64(&t); secp256k1_u128_rshift(&t, 64);
-    secp256k1_u128_accum_u64(&t, (a->d[1] >> 1) | (a->d[2] << 63));
-    secp256k1_u128_accum_u64(&t, SECP256K1_N_H_1 & mask);
-    r->d[1] = secp256k1_u128_to_u64(&t); secp256k1_u128_rshift(&t, 64);
-    secp256k1_u128_accum_u64(&t, (a->d[2] >> 1) | (a->d[3] << 63));
-    secp256k1_u128_accum_u64(&t, SECP256K1_N_H_2 & mask);
-    r->d[2] = secp256k1_u128_to_u64(&t); secp256k1_u128_rshift(&t, 64);
-    r->d[3] = secp256k1_u128_to_u64(&t) + (a->d[3] >> 1) + (SECP256K1_N_H_3 & mask);
-#ifdef VERIFY
-    /* The line above only computed the bottom 64 bits of r->d[3]; redo the computation
-     * in full 128 bits to make sure the top 64 bits are indeed zero. */
-    secp256k1_u128_accum_u64(&t, a->d[3] >> 1);
-    secp256k1_u128_accum_u64(&t, SECP256K1_N_H_3 & mask);
-    secp256k1_u128_rshift(&t, 64);
-    VERIFY_CHECK(secp256k1_u128_to_u64(&t) == 0);
+#if defined(__GNUC__) && !defined(__clang__)
+    {
+        uint64_t t0 = (a->d[0] >> 1) | (a->d[1] << 63);
+        uint64_t t1 = (a->d[1] >> 1) | (a->d[2] << 63);
+        uint64_t t2 = (a->d[2] >> 1) | (a->d[3] << 63);
+        uint64_t t3 = a->d[3] >> 1;
+        uint64_t carry;
+        uint64_t v;
 
-    SECP256K1_SCALAR_VERIFY(r);
+        v = t0 + ((SECP256K1_N_H_0 + 1U) & mask);
+        carry = (v < t0);
+        r->d[0] = v;
+
+        v = t1 + carry;
+        carry = (v < t1);
+        t1 = SECP256K1_N_H_1 & mask;
+        v += t1;
+        carry += (v < t1);
+        r->d[1] = v;
+
+        v = t2 + carry;
+        carry = (v < t2);
+        t2 = SECP256K1_N_H_2 & mask;
+        v += t2;
+        carry += (v < t2);
+        r->d[2] = v;
+
+        v = t3 + carry;
+        carry = (v < t3);
+        t3 = SECP256K1_N_H_3 & mask;
+        v += t3;
+        carry += (v < t3);
+        r->d[3] = v;
+
+        VERIFY_CHECK(carry == 0);
+#ifdef VERIFY
+        SECP256K1_SCALAR_VERIFY(r);
+#endif
+    }
+#else
+    {
+        secp256k1_uint128 t;
+
+        secp256k1_u128_from_u64(&t, (a->d[0] >> 1) | (a->d[1] << 63));
+        secp256k1_u128_accum_u64(&t, (SECP256K1_N_H_0 + 1U) & mask);
+        r->d[0] = secp256k1_u128_to_u64(&t); secp256k1_u128_rshift(&t, 64);
+        secp256k1_u128_accum_u64(&t, (a->d[1] >> 1) | (a->d[2] << 63));
+        secp256k1_u128_accum_u64(&t, SECP256K1_N_H_1 & mask);
+        r->d[1] = secp256k1_u128_to_u64(&t); secp256k1_u128_rshift(&t, 64);
+        secp256k1_u128_accum_u64(&t, (a->d[2] >> 1) | (a->d[3] << 63));
+        secp256k1_u128_accum_u64(&t, SECP256K1_N_H_2 & mask);
+        r->d[2] = secp256k1_u128_to_u64(&t); secp256k1_u128_rshift(&t, 64);
+        r->d[3] = secp256k1_u128_to_u64(&t) + (a->d[3] >> 1) + (SECP256K1_N_H_3 & mask);
+#ifdef VERIFY
+        /* The line above only computed the bottom 64 bits of r->d[3]; redo the computation
+         * in full 128 bits to make sure the top 64 bits are indeed zero. */
+        secp256k1_u128_accum_u64(&t, a->d[3] >> 1);
+        secp256k1_u128_accum_u64(&t, SECP256K1_N_H_3 & mask);
+        secp256k1_u128_rshift(&t, 64);
+        VERIFY_CHECK(secp256k1_u128_to_u64(&t) == 0);
+
+        SECP256K1_SCALAR_VERIFY(r);
+#endif
+    }
 #endif
 }
 
