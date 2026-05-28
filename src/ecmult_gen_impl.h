@@ -72,6 +72,34 @@ static void secp256k1_ecmult_gen_scalar_diff(secp256k1_scalar* diff) {
 #endif
 }
 
+static int secp256k1_ecmult_gen_scalar_offset_reset(secp256k1_scalar* offset) {
+#if !defined(EXHAUSTIVE_TEST_ORDER) && COMB_BITS == 258
+    static const secp256k1_scalar scalar_offset = SECP256K1_SCALAR_CONST(
+        0x80000000ul, 0x00000000ul, 0x00000000ul, 0x00000001ul,
+        0xe7f9b4a5ul, 0xf9130fa6ul, 0x6044722cul, 0xc7ae9e1ful
+    );
+    *offset = scalar_offset;
+    return 1;
+#elif !defined(EXHAUSTIVE_TEST_ORDER) && COMB_BITS == 260
+    static const secp256k1_scalar scalar_offset = SECP256K1_SCALAR_CONST(
+        0x80000000ul, 0x00000000ul, 0x00000000ul, 0x00000009ul,
+        0x87e0873dul, 0xdd5f4e3ful, 0xe1563adful, 0xe6691699ul
+    );
+    *offset = scalar_offset;
+    return 1;
+#elif !defined(EXHAUSTIVE_TEST_ORDER) && COMB_BITS == 264
+    static const secp256k1_scalar scalar_offset = SECP256K1_SCALAR_CONST(
+        0x80000000ul, 0x00000000ul, 0x00000000ul, 0x000000a2ul,
+        0x05e8fb1bul, 0xb354323dul, 0xf6b9e8deul, 0x4cfa8021ul
+    );
+    *offset = scalar_offset;
+    return 1;
+#else
+    (void)offset;
+    return 0;
+#endif
+}
+
 static void secp256k1_ecmult_gen(const secp256k1_ecmult_gen_context *ctx, secp256k1_gej *r, const secp256k1_scalar *gn) {
     uint32_t comb_off;
     secp256k1_ge add;
@@ -315,9 +343,6 @@ static void secp256k1_ecmult_gen_blind(secp256k1_ecmult_gen_context *ctx, const 
     secp256k1_rfc6979_hmac_sha256 rng;
     unsigned char keydata[64];
 
-    /* Compute the (2^COMB_BITS - 1)/2 term once. */
-    secp256k1_ecmult_gen_scalar_diff(&diff);
-
     if (seed32 == NULL) {
         /* When seed is NULL, reset the final point and blinding value. */
 #if defined(EXHAUSTIVE_TEST_ORDER)
@@ -325,10 +350,16 @@ static void secp256k1_ecmult_gen_blind(secp256k1_ecmult_gen_context *ctx, const 
 #else
         ctx->ge_offset = secp256k1_ge_const_g_neg;
 #endif
-        secp256k1_scalar_add(&ctx->scalar_offset, &secp256k1_scalar_one, &diff);
+        if (!secp256k1_ecmult_gen_scalar_offset_reset(&ctx->scalar_offset)) {
+            secp256k1_ecmult_gen_scalar_diff(&diff);
+            secp256k1_scalar_add(&ctx->scalar_offset, &secp256k1_scalar_one, &diff);
+        }
         ctx->proj_blind = secp256k1_fe_one;
         return;
     }
+    /* Compute the (2^COMB_BITS - 1)/2 term once. */
+    secp256k1_ecmult_gen_scalar_diff(&diff);
+
     /* The prior blinding value (if not reset) is chained forward by including it in the hash. */
     secp256k1_scalar_get_b32(keydata, &ctx->scalar_offset);
     /** Using a CSPRNG allows a failure free interface, avoids needing large amounts of random data,
