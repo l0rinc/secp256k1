@@ -527,7 +527,7 @@ static void secp256k1_fe_impl_inv_var(secp256k1_fe *r, const secp256k1_fe *x) {
     secp256k1_fe_from_signed62(r, &s);
 }
 
-static int secp256k1_fe_impl_is_square_var(const secp256k1_fe *x) {
+SECP256K1_INLINE static int secp256k1_fe_impl_is_square_var(const secp256k1_fe *x) {
     secp256k1_fe tmp;
     secp256k1_modinv64_signed62 s;
     int jac, ret;
