@@ -34,7 +34,8 @@ SECP256K1_INLINE static int secp256k1_fe_equal(const secp256k1_fe *a, const secp
     return secp256k1_fe_normalizes_to_zero(&na);
 }
 
-static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
+/* Compute a square root without checking whether the input has one. */
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_sqrt_unchecked(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
     /** Given that p is congruent to 3 mod 4, we can compute the square root of
      *  a mod p as the (p+1)/4'th power of a.
      *
@@ -45,7 +46,7 @@ static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k
      *  itself always a square (a ** ((p+1)/4) is the square of a ** ((p+1)/8)).
      */
     secp256k1_fe x2, x3, x6, x9, x11, x22, x44, x88, x176, x220, x223, t1;
-    int j, ret;
+    int j;
 
     VERIFY_CHECK(r != a);
     SECP256K1_FE_VERIFY(a);
@@ -129,6 +130,13 @@ static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k
     secp256k1_fe_mul(&t1, &t1, &x2);
     secp256k1_fe_sqr(&t1, &t1);
     secp256k1_fe_sqr(r, &t1);
+}
+
+static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
+    secp256k1_fe t1;
+    int ret;
+
+    secp256k1_fe_sqrt_unchecked(r, a);
 
     /* Check that a square root was actually calculated */
 

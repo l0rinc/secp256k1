@@ -139,11 +139,30 @@ static void secp256k1_ellswift_xswiftec_var(secp256k1_fe *x, const secp256k1_fe 
     secp256k1_fe_mul(x, &xn, &xd);
 }
 
+/* Like secp256k1_ge_set_xo_var, but for callers that know x is on the curve. */
+static void secp256k1_ellswift_ge_set_xo_on_curve_var(secp256k1_ge *r, const secp256k1_fe *x, int odd) {
+    secp256k1_fe x2, x3;
+    SECP256K1_FE_VERIFY(x);
+
+    r->x = *x;
+    secp256k1_fe_sqr(&x2, x);
+    secp256k1_fe_mul(&x3, x, &x2);
+    r->infinity = 0;
+    secp256k1_fe_add_int(&x3, SECP256K1_B);
+    secp256k1_fe_sqrt_unchecked(&r->y, &x3);
+    secp256k1_fe_normalize_var(&r->y);
+    if (secp256k1_fe_is_odd(&r->y) != odd) {
+        secp256k1_fe_negate(&r->y, &r->y, 1);
+    }
+
+    SECP256K1_GE_VERIFY(r);
+}
+
 /** Decode ElligatorSwift encoding (u, t) to point P. */
 static void secp256k1_ellswift_swiftec_var(secp256k1_ge *p, const secp256k1_fe *u, const secp256k1_fe *t) {
     secp256k1_fe x;
     secp256k1_ellswift_xswiftec_var(&x, u, t);
-    secp256k1_ge_set_xo_var(p, &x, secp256k1_fe_is_odd(t));
+    secp256k1_ellswift_ge_set_xo_on_curve_var(p, &x, secp256k1_fe_is_odd(t));
 }
 
 /* Try to complete an ElligatorSwift encoding (u, t) for X coordinate x, given u and x.
@@ -187,7 +206,6 @@ static int secp256k1_ellswift_xswiftec_inv_var(secp256k1_fe *t, const secp256k1_
      * - If (c & 5) = 5: return -w*(c4*u + v).
      */
     secp256k1_fe x = *x_in, u = *u_in, g, v, s, m, r, q;
-    int ret;
 
     secp256k1_fe_normalize_weak(&x);
     secp256k1_fe_normalize_weak(&u);
@@ -266,12 +284,7 @@ static int secp256k1_ellswift_xswiftec_inv_var(secp256k1_fe *t, const secp256k1_
         secp256k1_fe_mul(&q, &q, &s);                   /* q = s*(4*(u^3+7)+3*u^2*s) */
         secp256k1_fe_negate(&q, &q, 1);                 /* q = -s*(4*(u^3+7)+3*u^2*s) */
         if (!secp256k1_fe_is_square_var(&q)) return 0;
-        ret = secp256k1_fe_sqrt(&r, &q);                /* r = sqrt(-s*(4*(u^3+7)+3*u^2*s)) */
-#ifdef VERIFY
-        VERIFY_CHECK(ret);
-#else
-        (void)ret;
-#endif
+        secp256k1_fe_sqrt_unchecked(&r, &q);            /* r = sqrt(-s*(4*(u^3+7)+3*u^2*s)) */
 
         /* If (c & 1) = 1 and r = 0, fail. */
         if (EXPECT((c & 1) && secp256k1_fe_normalizes_to_zero_var(&r), 0)) return 0;
@@ -287,8 +300,7 @@ static int secp256k1_ellswift_xswiftec_inv_var(secp256k1_fe *t, const secp256k1_
     }
 
     /* Let w = sqrt(s). */
-    ret = secp256k1_fe_sqrt(&m, &s);                    /* m = sqrt(s) = w */
-    VERIFY_CHECK(ret);
+    secp256k1_fe_sqrt_unchecked(&m, &s);                /* m = sqrt(s) = w */
 
     /* Return logic. */
     if ((c & 5) == 0 || (c & 5) == 5) {
