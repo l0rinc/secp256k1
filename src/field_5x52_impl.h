@@ -471,7 +471,7 @@ static SECP256K1_INLINE void secp256k1_fe_impl_from_storage(secp256k1_fe *r, con
     r->n[4] = a->n[3] >> 16;
 }
 
-static void secp256k1_fe_from_signed62(secp256k1_fe *r, const secp256k1_modinv64_signed62 *a) {
+static void secp256k1_fe_from_signed62(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_modinv64_signed62 * SECP256K1_RESTRICT a) {
     const uint64_t M52 = UINT64_MAX >> 12;
     const uint64_t a0 = a->v[0], a1 = a->v[1], a2 = a->v[2], a3 = a->v[3], a4 = a->v[4];
 
@@ -491,7 +491,7 @@ static void secp256k1_fe_from_signed62(secp256k1_fe *r, const secp256k1_modinv64
     r->n[4] = (a3 >> 22 | a4 << 40);
 }
 
-static void secp256k1_fe_to_signed62(secp256k1_modinv64_signed62 *r, const secp256k1_fe *a) {
+static void secp256k1_fe_to_signed62(secp256k1_modinv64_signed62 * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
     const uint64_t M62 = UINT64_MAX >> 2;
     const uint64_t a0 = a->n[0], a1 = a->n[1], a2 = a->n[2], a3 = a->n[3], a4 = a->n[4];
 
