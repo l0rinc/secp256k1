@@ -117,16 +117,8 @@ size_t secp256k1_context_preallocated_clone_size(const secp256k1_context* ctx) {
     return sizeof(secp256k1_context);
 }
 
-secp256k1_context* secp256k1_context_preallocated_create(void* prealloc, unsigned int flags) {
-    size_t prealloc_size;
+static secp256k1_context* secp256k1_context_preallocated_create_unchecked(void* prealloc, unsigned int flags) {
     secp256k1_context* ret;
-
-    secp256k1_selftest();
-
-    prealloc_size = secp256k1_context_preallocated_size(flags);
-    if (prealloc_size == 0) {
-        return NULL;
-    }
     VERIFY_CHECK(prealloc != NULL);
     ret = (secp256k1_context*)prealloc;
     ret->illegal_callback = default_illegal_callback;
@@ -141,15 +133,32 @@ secp256k1_context* secp256k1_context_preallocated_create(void* prealloc, unsigne
     return ret;
 }
 
-secp256k1_context* secp256k1_context_create(unsigned int flags) {
-    size_t const prealloc_size = secp256k1_context_preallocated_size(flags);
-    secp256k1_context* ctx = checked_malloc(&default_error_callback, prealloc_size);
-    if (EXPECT(secp256k1_context_preallocated_create(ctx, flags) == NULL, 0)) {
-        free(ctx);
+secp256k1_context* secp256k1_context_preallocated_create(void* prealloc, unsigned int flags) {
+    size_t prealloc_size;
+
+    secp256k1_selftest();
+
+    prealloc_size = secp256k1_context_preallocated_size(flags);
+    if (prealloc_size == 0) {
         return NULL;
     }
 
-    return ctx;
+    return secp256k1_context_preallocated_create_unchecked(prealloc, flags);
+}
+
+secp256k1_context* secp256k1_context_create(unsigned int flags) {
+    size_t const prealloc_size = secp256k1_context_preallocated_size(flags);
+    secp256k1_context* ctx = (secp256k1_context*)checked_malloc(&default_error_callback, prealloc_size);
+    if (EXPECT(prealloc_size == 0, 0)) {
+        secp256k1_context* ret = secp256k1_context_preallocated_create(ctx, flags);
+        if (EXPECT(ret == NULL, 1)) {
+            free(ctx);
+        }
+        return ret;
+    }
+
+    secp256k1_selftest();
+    return secp256k1_context_preallocated_create_unchecked(ctx, flags);
 }
 
 secp256k1_context* secp256k1_context_preallocated_clone(const secp256k1_context* ctx, void* prealloc) {
