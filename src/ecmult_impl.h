@@ -431,19 +431,23 @@ static void secp256k1_ecmult_strauss_wnaf(const struct secp256k1_strauss_state *
             for (i = bits - 1; i >= 0; i--) {
                 int n;
                 secp256k1_gej_double_var(r, r, NULL);
-                if ((n = ps0->wnaf_na_1[i])) {
+                n = ps0->wnaf_na_1[i];
+                if (EXPECT(n != 0, 0)) {
                     secp256k1_ecmult_table_get_ge(&tmpa, pre0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
-                if ((n = ps0->wnaf_na_lam[i])) {
+                n = ps0->wnaf_na_lam[i];
+                if (EXPECT(n != 0, 0)) {
                     secp256k1_ecmult_table_get_ge_lambda(&tmpa, pre0, aux0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
-                if ((n = wnaf_ng_1[i])) {
+                n = wnaf_ng_1[i];
+                if (EXPECT(n != 0, 0)) {
                     secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g, n, WINDOW_G);
                     secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
                 }
-                if ((n = wnaf_ng_128[i])) {
+                n = wnaf_ng_128[i];
+                if (EXPECT(n != 0, 0)) {
                     secp256k1_ecmult_table_get_ge_storage(&tmpa, secp256k1_pre_g_128, n, WINDOW_G);
                     secp256k1_gej_add_zinv_var(r, r, &tmpa, &Z);
                 }
@@ -481,11 +485,13 @@ static void secp256k1_ecmult_strauss_wnaf(const struct secp256k1_strauss_state *
             for (i = bits - 1; i >= 0; i--) {
                 int n;
                 secp256k1_gej_double_var(r, r, NULL);
-                if ((n = ps0->wnaf_na_1[i])) {
+                n = ps0->wnaf_na_1[i];
+                if (EXPECT(n != 0, 0)) {
                     secp256k1_ecmult_table_get_ge(&tmpa, pre0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
-                if ((n = ps0->wnaf_na_lam[i])) {
+                n = ps0->wnaf_na_lam[i];
+                if (EXPECT(n != 0, 0)) {
                     secp256k1_ecmult_table_get_ge_lambda(&tmpa, pre0, aux0, n, WINDOW_A);
                     secp256k1_gej_add_ge_var(r, r, &tmpa, NULL);
                 }
