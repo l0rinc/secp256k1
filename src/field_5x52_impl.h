@@ -420,10 +420,9 @@ static SECP256K1_INLINE void secp256k1_fe_impl_half(secp256k1_fe *r) {
 
 static SECP256K1_INLINE void secp256k1_fe_storage_cmov(secp256k1_fe_storage *r, const secp256k1_fe_storage *a, int flag) {
     uint64_t mask;
-    volatile int vflag = flag;
     VERIFY_CHECK(flag == 0 || flag == 1);
     SECP256K1_CHECKMEM_CHECK_VERIFY(r->n, sizeof(r->n));
-    mask = -(uint64_t)vflag;
+    mask = -(uint64_t)flag;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
     /* AArch64 always has NEON; use it to blend 2x u64 at a time. */
     {
