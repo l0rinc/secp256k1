@@ -258,6 +258,26 @@ static int secp256k1_ecmult_wnaf_small(int8_t *wnaf, int len, const secp256k1_sc
     }
 
     bit = 0;
+#if defined(__clang__)
+    while (bit <= len - w) {
+        int word;
+        if (secp256k1_scalar_get_bits_limb32(&s, bit, 1) == (unsigned int)carry) {
+            bit++;
+            continue;
+        }
+
+        word = (int)secp256k1_scalar_get_bits_var(&s, bit, w) + carry;
+
+        carry = (word >> (w-1)) & 1;
+        word -= carry << w;
+
+        /* For w <= 8, word is in [-(1<<(w-1)-1), (1<<(w-1)-1)] and fits in int8_t. */
+        wnaf[bit] = (int8_t)(sign * word);
+        last_set_bit = bit;
+
+        bit += w;
+    }
+#endif
     while (bit < len) {
         int now;
         int word;
@@ -266,10 +286,14 @@ static int secp256k1_ecmult_wnaf_small(int8_t *wnaf, int len, const secp256k1_sc
             continue;
         }
 
+#if defined(__clang__)
+        now = len - bit;
+#else
         now = w;
         if (now > len - bit) {
             now = len - bit;
         }
+#endif
 
         word = (int)secp256k1_scalar_get_bits_var(&s, bit, now) + carry;
 
