@@ -222,17 +222,65 @@ static int secp256k1_ecmult_wnaf(int *wnaf, int len, const secp256k1_scalar *a, 
 
 /* Same as secp256k1_ecmult_wnaf, but stores to int8_t array. Requires w <= 8. */
 static int secp256k1_ecmult_wnaf_small(int8_t *wnaf, int len, const secp256k1_scalar *a, int w) {
-    int wnaf_tmp[256];
-    int ret, i;
+    secp256k1_scalar s;
+    int last_set_bit = -1;
+    int bit = 0;
+    int sign = 1;
+    int carry = 0;
 
+    VERIFY_CHECK(wnaf != NULL);
+    VERIFY_CHECK(0 <= len && len <= 256);
+    VERIFY_CHECK(a != NULL);
     VERIFY_CHECK(2 <= w && w <= 8);
-    ret = secp256k1_ecmult_wnaf(wnaf_tmp, len, a, w);
 
-    for (i = 0; i < len; i++) {
-        wnaf[i] = (int8_t)wnaf_tmp[i];
+    for (bit = 0; bit < len; bit++) {
+        wnaf[bit] = 0;
     }
 
-    return ret;
+    s = *a;
+    if (secp256k1_scalar_get_bits_limb32(&s, 255, 1)) {
+        secp256k1_scalar_negate(&s, &s);
+        sign = -1;
+    }
+
+    bit = 0;
+    while (bit < len) {
+        int now;
+        int word;
+        if (secp256k1_scalar_get_bits_limb32(&s, bit, 1) == (unsigned int)carry) {
+            bit++;
+            continue;
+        }
+
+        now = w;
+        if (now > len - bit) {
+            now = len - bit;
+        }
+
+        word = (int)secp256k1_scalar_get_bits_var(&s, bit, now) + carry;
+
+        carry = (word >> (w-1)) & 1;
+        word -= carry << w;
+
+        /* For w <= 8, word is in [-(1<<(w-1)-1), (1<<(w-1)-1)] and fits in int8_t. */
+        wnaf[bit] = (int8_t)(sign * word);
+        last_set_bit = bit;
+
+        bit += now;
+    }
+#ifdef VERIFY
+    {
+        int verify_bit = bit;
+
+        VERIFY_CHECK(carry == 0);
+
+        while (verify_bit < 256) {
+            VERIFY_CHECK(secp256k1_scalar_get_bits_limb32(&s, verify_bit, 1) == 0);
+            verify_bit++;
+        }
+    }
+#endif
+    return last_set_bit + 1;
 }
 
 struct secp256k1_strauss_point_state {
