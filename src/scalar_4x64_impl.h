@@ -173,9 +173,16 @@ SECP256K1_INLINE static int secp256k1_scalar_is_zero(const secp256k1_scalar *a) 
 }
 
 static void secp256k1_scalar_negate(secp256k1_scalar *r, const secp256k1_scalar *a) {
-    uint64_t nonzero = -(uint64_t)(secp256k1_scalar_is_zero(a) == 0);
+    uint64_t nonzero;
     secp256k1_uint128 t;
     SECP256K1_SCALAR_VERIFY(a);
+
+#if defined(__GNUC__) && !defined(__clang__)
+    nonzero = a->d[0] | a->d[1] | a->d[2] | a->d[3];
+    nonzero = -((nonzero | -nonzero) >> 63);
+#else
+    nonzero = -(uint64_t)(secp256k1_scalar_is_zero(a) == 0);
+#endif
 
     secp256k1_u128_from_u64(&t, ~a->d[0]);
     secp256k1_u128_accum_u64(&t, SECP256K1_N_0 + 1);
