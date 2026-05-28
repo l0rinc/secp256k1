@@ -92,7 +92,12 @@ SECP256K1_INLINE static int secp256k1_scalar_reduce(secp256k1_scalar *r, unsigne
     return overflow;
 }
 
-static int secp256k1_scalar_add(secp256k1_scalar *r, const secp256k1_scalar *a, const secp256k1_scalar *b) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_SCALAR_ADD_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_SCALAR_ADD_INLINE
+#endif
+SECP256K1_SCALAR_ADD_INLINE static int secp256k1_scalar_add(secp256k1_scalar *r, const secp256k1_scalar *a, const secp256k1_scalar *b) {
     int overflow;
     secp256k1_uint128 t;
     SECP256K1_SCALAR_VERIFY(a);
@@ -117,6 +122,7 @@ static int secp256k1_scalar_add(secp256k1_scalar *r, const secp256k1_scalar *a, 
     SECP256K1_SCALAR_VERIFY(r);
     return overflow;
 }
+#undef SECP256K1_SCALAR_ADD_INLINE
 
 static void secp256k1_scalar_cadd_bit(secp256k1_scalar *r, unsigned int bit, int flag) {
     secp256k1_uint128 t;
