@@ -175,7 +175,13 @@ static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
     r->n[5] = t5; r->n[6] = t6; r->n[7] = t7; r->n[8] = t8; r->n[9] = t9;
 }
 
-static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE
+#endif
+
+SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
     uint32_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4],
              t5 = r->n[5], t6 = r->n[6], t7 = r->n[7], t8 = r->n[8], t9 = r->n[9];
 
@@ -203,6 +209,8 @@ static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
 
     return (z0 == 0) | (z1 == 0x3FFFFFFUL);
 }
+
+#undef SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE
 
 static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
     uint32_t t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
