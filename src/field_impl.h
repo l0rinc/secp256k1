@@ -63,22 +63,39 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_fe_sqrt_unchecked(secp256k1_fe * S
     secp256k1_fe_sqr(&x3, &x2);
     secp256k1_fe_mul(&x3, &x3, a);
 
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_SQRT_SQR2(r) do { \
+    secp256k1_fe_sqr(&(r), &(r)); \
+    secp256k1_fe_sqr(&(r), &(r)); \
+} while(0)
+#define SECP256K1_FE_SQRT_SQR3(r) do { \
+    secp256k1_fe_sqr(&(r), &(r)); \
+    secp256k1_fe_sqr(&(r), &(r)); \
+    secp256k1_fe_sqr(&(r), &(r)); \
+} while(0)
+#else
+#define SECP256K1_FE_SQRT_SQR2(r) do { \
+    for (j=0; j<2; j++) { \
+        secp256k1_fe_sqr(&(r), &(r)); \
+    } \
+} while(0)
+#define SECP256K1_FE_SQRT_SQR3(r) do { \
+    for (j=0; j<3; j++) { \
+        secp256k1_fe_sqr(&(r), &(r)); \
+    } \
+} while(0)
+#endif
+
     x6 = x3;
-    for (j=0; j<3; j++) {
-        secp256k1_fe_sqr(&x6, &x6);
-    }
+    SECP256K1_FE_SQRT_SQR3(x6);
     secp256k1_fe_mul(&x6, &x6, &x3);
 
     x9 = x6;
-    for (j=0; j<3; j++) {
-        secp256k1_fe_sqr(&x9, &x9);
-    }
+    SECP256K1_FE_SQRT_SQR3(x9);
     secp256k1_fe_mul(&x9, &x9, &x3);
 
     x11 = x9;
-    for (j=0; j<2; j++) {
-        secp256k1_fe_sqr(&x11, &x11);
-    }
+    SECP256K1_FE_SQRT_SQR2(x11);
     secp256k1_fe_mul(&x11, &x11, &x2);
 
     x22 = x11;
@@ -112,10 +129,11 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_fe_sqrt_unchecked(secp256k1_fe * S
     secp256k1_fe_mul(&x220, &x220, &x44);
 
     x223 = x220;
-    for (j=0; j<3; j++) {
-        secp256k1_fe_sqr(&x223, &x223);
-    }
+    SECP256K1_FE_SQRT_SQR3(x223);
     secp256k1_fe_mul(&x223, &x223, &x3);
+
+#undef SECP256K1_FE_SQRT_SQR2
+#undef SECP256K1_FE_SQRT_SQR3
 
     /* The final result is then assembled using a sliding window over the blocks. */
 
