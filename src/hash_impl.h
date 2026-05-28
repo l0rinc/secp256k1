@@ -157,15 +157,25 @@ SECP256K1_SHA256_WRITE_INLINE static void secp256k1_sha256_write(secp256k1_sha25
 #undef SECP256K1_SHA256_WRITE_INLINE
 
 static void secp256k1_sha256_finalize(secp256k1_sha256 *hash, unsigned char *out32) {
-    static const unsigned char pad[64] = {0x80};
-    unsigned char sizedesc[8];
+    uint64_t bytes = hash->bytes;
+    size_t input_bufsize = bytes & 0x3F;
+    size_t bufsize = input_bufsize;
+    int extra_block;
     int i;
     /* The maximum message size of SHA256 is 2^64-1 bits. */
-    VERIFY_CHECK(hash->bytes < ((uint64_t)1 << 61));
-    secp256k1_write_be32(&sizedesc[0], hash->bytes >> 29);
-    secp256k1_write_be32(&sizedesc[4], hash->bytes << 3);
-    secp256k1_sha256_write(hash, pad, 1 + ((119 - (hash->bytes % 64)) % 64));
-    secp256k1_sha256_write(hash, sizedesc, 8);
+    VERIFY_CHECK(bytes < ((uint64_t)1 << 61));
+    hash->buf[bufsize++] = 0x80;
+    extra_block = bufsize > 56;
+    if (extra_block) {
+        memset(hash->buf + bufsize, 0, 64 - bufsize);
+        secp256k1_sha256_transform(hash->s, hash->buf);
+        bufsize = 0;
+    }
+    memset(hash->buf + bufsize, 0, 56 - bufsize);
+    secp256k1_write_be32(&hash->buf[56], bytes >> 29);
+    secp256k1_write_be32(&hash->buf[60], bytes << 3);
+    secp256k1_sha256_transform(hash->s, hash->buf);
+    hash->bytes = bytes + (extra_block ? 128 - input_bufsize : 64 - input_bufsize);
     for (i = 0; i < 8; i++) {
         secp256k1_write_be32(&out32[4*i], hash->s[i]);
         hash->s[i] = 0;
