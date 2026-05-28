@@ -2272,14 +2272,31 @@ cherry-picked with new proof, and several heads are optimization stacks.
   `91e4f02`; the force update did not change its source tree. Its commit
   intentionally follows the master-based findings and states that it is not
   security evidence.
+- The l0rinc branch `l0rinc/l0rinc/field-5x52-serialize-word` was subsequently
+  force-updated to `e217ead` on 2026-07-14. It adds the analogous 10x26
+  word-serialization hunk beside the already represented 5x52 change. The
+  commit was cherry-picked here because Git applies only that serializer hunk
+  on top of the audit branch; the branch's existing `uint64_t` carry repairs in
+  `normalizes_to_zero{,_var}` and magnitude-32 normalization remain intact.
+  The hunk is byte-output equivalent and independently covered by the field
+  reference oracle, so it is an optimization replay, not security evidence.
+  Verification in an isolated autotools worktree used
+  `CC=clang CFLAGS='-O1 -g -fsanitize=address,undefined
+  -fno-omit-frame-pointer
+  -DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64'` with matching sanitizer
+  `LDFLAGS`, then `make -j"$(nproc)" fuzz_field` and
+  `./fuzz_field src/fuzz/corpora/field/*`; the replay returned 0 for every
+  seed. `make check TESTS=fuzz_field` also reported `PASS fuzz_field` with no
+  errors.
 
-No new l0rinc commit was cherry-picked in this refresh: every relevant commit
-is either already represented with stronger current-master proof, already in
-master, or changes performance/comments without adding a contract. This keeps
-the discovery order intact. Fork patches are never used to prove that a
-current-master failure was absent; every important barrier still has its own
-seed or minimal production mutation, and severity is always assigned against
-the clean baseline before later fixes are applied.
+Apart from `e217ead`, no new l0rinc commit was cherry-picked in this refresh:
+every other relevant commit is either already represented with stronger
+current-master proof, already in master, or changes performance/comments
+without adding a contract. This keeps the discovery order intact. Fork patches
+are never used to prove that a current-master failure was absent; every
+important barrier still has its own seed or minimal production mutation, and
+severity is always assigned against the clean baseline before later fixes are
+applied.
 
 The additional fork refs were audited on 2026-07-13. The
 `musig-cleanup-failures` branch (`bb02b1e`) is an older cleanup stack whose
