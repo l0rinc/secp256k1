@@ -244,6 +244,9 @@ static void secp256k1_ecmult_gen(const secp256k1_ecmult_gen_context *ctx, secp25
              *    by Dag Arne Osvik, Adi Shamir, and Eran Tromer
              *    (https://eprint.iacr.org/2005/271.pdf)
              */
+#if defined(__clang__)
+#pragma clang loop unroll(full)
+#endif
             for (index = 0; index < COMB_POINTS; ++index) {
                 secp256k1_ge_storage_cmov(&adds, &secp256k1_ecmult_gen_prec_table[block][index], index == abs);
             }
