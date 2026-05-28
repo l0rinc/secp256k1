@@ -41,6 +41,12 @@
     0x483ada77, 0x26a3c465, 0x5da4fbfc, 0x0e1108a8,\
     0xfd17b448, 0xa6855419, 0x9c47d08f, 0xfb10d4b8\
 )
+#define SECP256K1_G_NEG SECP256K1_GE_CONST(\
+    0x79be667e, 0xf9dcbbac, 0x55a06295, 0xce870b07,\
+    0x029bfcdb, 0x2dce28d9, 0x59f2815b, 0x16f81798,\
+    0xb7c52588, 0xd95c3b9a, 0xa25b0403, 0xf1eef757,\
+    0x02e84bb7, 0x597aabe6, 0x63b82f6f, 0x04ef2777\
+)
 /* These exhaustive group test orders and generators are chosen such that:
  * - The field size is equal to that of secp256k1, so field code is the same.
  * - The curve equation is of the form y^2=x^3+B for some small constant B.
@@ -70,6 +76,7 @@ static const secp256k1_ge secp256k1_ge_const_g = SECP256K1_G_ORDER_199;
 #else
 
 static const secp256k1_ge secp256k1_ge_const_g = SECP256K1_G;
+static const secp256k1_ge secp256k1_ge_const_g_neg = SECP256K1_G_NEG;
 #define SECP256K1_B 7
 
 #endif

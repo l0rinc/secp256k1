@@ -320,7 +320,11 @@ static void secp256k1_ecmult_gen_blind(secp256k1_ecmult_gen_context *ctx, const 
 
     if (seed32 == NULL) {
         /* When seed is NULL, reset the final point and blinding value. */
+#if defined(EXHAUSTIVE_TEST_ORDER)
         secp256k1_ge_neg(&ctx->ge_offset, &secp256k1_ge_const_g);
+#else
+        ctx->ge_offset = secp256k1_ge_const_g_neg;
+#endif
         secp256k1_scalar_add(&ctx->scalar_offset, &secp256k1_scalar_one, &diff);
         ctx->proj_blind = secp256k1_fe_one;
         return;
