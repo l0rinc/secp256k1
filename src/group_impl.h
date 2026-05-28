@@ -686,7 +686,7 @@ SECP256K1_GEJ_ADD_VAR_INLINE static void secp256k1_gej_add_zinv_var(secp256k1_ge
      *  The variable az below holds the modified Z coordinate for a, which is used
      *  for the computation of rx and ry, but not for rz.
      */
-    secp256k1_fe_mul(&az, &a->z, bzinv);
+    secp256k1_fe_mul(&az, bzinv, &a->z);
 
     secp256k1_fe_sqr(&z12, &az);
     secp256k1_fe_mul(&u2, &b->x, &z12);
