@@ -178,7 +178,12 @@ SECP256K1_INLINE static int secp256k1_scalar_is_zero(const secp256k1_scalar *a) 
     return (a->d[0] | a->d[1] | a->d[2] | a->d[3]) == 0;
 }
 
-static void secp256k1_scalar_negate(secp256k1_scalar *r, const secp256k1_scalar *a) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_SCALAR_NEGATE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_SCALAR_NEGATE_INLINE
+#endif
+SECP256K1_SCALAR_NEGATE_INLINE static void secp256k1_scalar_negate(secp256k1_scalar *r, const secp256k1_scalar *a) {
     uint64_t nonzero;
     secp256k1_uint128 t;
     SECP256K1_SCALAR_VERIFY(a);
@@ -205,6 +210,7 @@ static void secp256k1_scalar_negate(secp256k1_scalar *r, const secp256k1_scalar 
 
     SECP256K1_SCALAR_VERIFY(r);
 }
+#undef SECP256K1_SCALAR_NEGATE_INLINE
 
 static void secp256k1_scalar_half(secp256k1_scalar *r, const secp256k1_scalar *a) {
     /* Writing `/` for field division and `//` for integer division, we compute
