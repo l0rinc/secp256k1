@@ -465,12 +465,10 @@ static int secp256k1_ge_is_valid_var(const secp256k1_ge *a) {
     return secp256k1_fe_equal(&y2, &x3);
 }
 
-static SECP256K1_ALWAYS_INLINE void secp256k1_gej_double(secp256k1_gej *r, const secp256k1_gej *a) {
+static SECP256K1_ALWAYS_INLINE void secp256k1_gej_double_nonzero(secp256k1_gej *r, const secp256k1_gej *a) {
     /* Operations: 3 mul, 4 sqr, 8 add/half/mul_int/negate */
     secp256k1_fe l, s, t;
     SECP256K1_GEJ_VERIFY(a);
-
-    r->infinity = a->infinity;
 
     /* Formula used:
      * L = (3/2) * X1^2
@@ -500,6 +498,13 @@ static SECP256K1_ALWAYS_INLINE void secp256k1_gej_double(secp256k1_gej *r, const
     SECP256K1_GEJ_VERIFY(r);
 }
 
+static SECP256K1_ALWAYS_INLINE void secp256k1_gej_double(secp256k1_gej *r, const secp256k1_gej *a) {
+    SECP256K1_GEJ_VERIFY(a);
+
+    r->infinity = a->infinity;
+    secp256k1_gej_double_nonzero(r, a);
+}
+
 SECP256K1_ALWAYS_INLINE static void secp256k1_gej_double_var(secp256k1_gej *r, const secp256k1_gej *a, secp256k1_fe *rzr) {
     SECP256K1_GEJ_VERIFY(a);
 
@@ -526,7 +531,8 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_gej_double_var(secp256k1_gej *r, c
         secp256k1_fe_normalize_weak(rzr);
     }
 
-    secp256k1_gej_double(r, a);
+    r->infinity = 0;
+    secp256k1_gej_double_nonzero(r, a);
 
     SECP256K1_GEJ_VERIFY(r);
 }
