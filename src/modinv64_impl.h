@@ -675,6 +675,14 @@ static void secp256k1_modinv64_var(secp256k1_modinv64_signed62 *x, const secp256
         /* Determine if len>1 and limb (len-1) of both f and g is 0 or -1. */
         fn = f.v[len - 1];
         gn = g.v[len - 1];
+#if defined(__GNUC__) && !defined(__clang__)
+        /* If so, reduce length, propagating the sign of f and g's top limb into the one below. */
+        if (len > 1 && (fn == 0 || fn == -1) && (gn == 0 || gn == -1)) {
+            f.v[len - 2] |= (uint64_t)fn << 62;
+            g.v[len - 2] |= (uint64_t)gn << 62;
+            --len;
+        }
+#else
         cond = ((int64_t)len - 2) >> 63;
         cond |= fn ^ (fn >> 63);
         cond |= gn ^ (gn >> 63);
@@ -684,6 +692,7 @@ static void secp256k1_modinv64_var(secp256k1_modinv64_signed62 *x, const secp256
             g.v[len - 2] |= (uint64_t)gn << 62;
             --len;
         }
+#endif
 
         VERIFY_CHECK(++i < 12); /* We should never need more than 12*62 = 744 divsteps */
         VERIFY_CHECK(secp256k1_modinv64_mul_cmp_62(&f, len, &modinfo->modulus, -1) > 0); /* f > -modulus */
