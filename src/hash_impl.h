@@ -189,7 +189,13 @@ static void secp256k1_sha256_clear(secp256k1_sha256 *hash) {
     secp256k1_memclear_explicit(hash, sizeof(*hash));
 }
 
-static void secp256k1_hmac_sha256_initialize(secp256k1_hmac_sha256 *hash, const unsigned char *key, size_t keylen) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_HMAC_SHA256_INITIALIZE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_HMAC_SHA256_INITIALIZE_INLINE
+#endif
+
+SECP256K1_HMAC_SHA256_INITIALIZE_INLINE static void secp256k1_hmac_sha256_initialize(secp256k1_hmac_sha256 *hash, const unsigned char *key, size_t keylen) {
     size_t n;
     unsigned char rkey[64];
     if (keylen <= sizeof(rkey)) {
@@ -216,6 +222,8 @@ static void secp256k1_hmac_sha256_initialize(secp256k1_hmac_sha256 *hash, const 
     secp256k1_sha256_write(&hash->inner, rkey, sizeof(rkey));
     secp256k1_memclear_explicit(rkey, sizeof(rkey));
 }
+
+#undef SECP256K1_HMAC_SHA256_INITIALIZE_INLINE
 
 #if defined(__GNUC__) && !defined(__clang__)
 #define SECP256K1_HMAC_SHA256_WRITE_INLINE SECP256K1_ALWAYS_INLINE
