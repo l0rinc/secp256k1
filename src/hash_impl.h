@@ -123,7 +123,13 @@ static void secp256k1_sha256_transform(uint32_t* s, const unsigned char* buf) {
     s[7] += h;
 }
 
-static void secp256k1_sha256_write(secp256k1_sha256 *hash, const unsigned char *data, size_t len) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_SHA256_WRITE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_SHA256_WRITE_INLINE
+#endif
+
+SECP256K1_SHA256_WRITE_INLINE static void secp256k1_sha256_write(secp256k1_sha256 *hash, const unsigned char *data, size_t len) {
     size_t bufsize = hash->bytes & 0x3F;
     hash->bytes += len;
     VERIFY_CHECK(hash->bytes >= len);
@@ -147,6 +153,8 @@ static void secp256k1_sha256_write(secp256k1_sha256 *hash, const unsigned char *
         memcpy(hash->buf + bufsize, data, len);
     }
 }
+
+#undef SECP256K1_SHA256_WRITE_INLINE
 
 static void secp256k1_sha256_finalize(secp256k1_sha256 *hash, unsigned char *out32) {
     static const unsigned char pad[64] = {0x80};
