@@ -139,6 +139,7 @@ static void secp256k1_ellswift_xswiftec_var(secp256k1_fe *x, const secp256k1_fe 
     secp256k1_fe_mul(x, &xn, &xd);
 }
 
+#if !defined(__clang__)
 /* Like secp256k1_ge_set_xo_var, but for callers that know x is on the curve. */
 static void secp256k1_ellswift_ge_set_xo_on_curve_var(secp256k1_ge *r, const secp256k1_fe *x, int odd) {
     secp256k1_fe x2, x3;
@@ -157,12 +158,18 @@ static void secp256k1_ellswift_ge_set_xo_on_curve_var(secp256k1_ge *r, const sec
 
     SECP256K1_GE_VERIFY(r);
 }
+#endif
 
 /** Decode ElligatorSwift encoding (u, t) to point P. */
 static void secp256k1_ellswift_swiftec_var(secp256k1_ge *p, const secp256k1_fe *u, const secp256k1_fe *t) {
     secp256k1_fe x;
     secp256k1_ellswift_xswiftec_var(&x, u, t);
+#if defined(__clang__)
+    /* The unchecked setter is faster with GCC but regresses Clang benchmarks. */
+    secp256k1_ge_set_xo_var(p, &x, secp256k1_fe_is_odd(t));
+#else
     secp256k1_ellswift_ge_set_xo_on_curve_var(p, &x, secp256k1_fe_is_odd(t));
+#endif
 }
 
 /* Try to complete an ElligatorSwift encoding (u, t) for X coordinate x, given u and x.
