@@ -185,15 +185,18 @@ secp256k1_context* secp256k1_context_clone(const secp256k1_context* ctx) {
     return ret;
 }
 
-void secp256k1_context_preallocated_destroy(secp256k1_context* ctx) {
-    ARG_CHECK_VOID(ctx == NULL || secp256k1_context_is_proper(ctx));
-
+static void secp256k1_context_preallocated_destroy_unchecked(secp256k1_context* ctx) {
     /* Defined as noop */
     if (ctx == NULL) {
         return;
     }
 
     secp256k1_ecmult_gen_context_clear(&ctx->ecmult_gen_ctx);
+}
+
+void secp256k1_context_preallocated_destroy(secp256k1_context* ctx) {
+    ARG_CHECK_VOID(ctx == NULL || secp256k1_context_is_proper(ctx));
+    secp256k1_context_preallocated_destroy_unchecked(ctx);
 }
 
 void secp256k1_context_destroy(secp256k1_context* ctx) {
@@ -204,7 +207,7 @@ void secp256k1_context_destroy(secp256k1_context* ctx) {
         return;
     }
 
-    secp256k1_context_preallocated_destroy(ctx);
+    secp256k1_context_preallocated_destroy_unchecked(ctx);
     free(ctx);
 }
 
