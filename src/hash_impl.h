@@ -133,6 +133,12 @@ SECP256K1_SHA256_WRITE_INLINE static void secp256k1_sha256_write(secp256k1_sha25
     size_t bufsize = hash->bytes & 0x3F;
     hash->bytes += len;
     VERIFY_CHECK(hash->bytes >= len);
+#if defined(__clang__)
+    if (len == 32 && bufsize == 0) {
+        memcpy(hash->buf, data, 32);
+        return;
+    }
+#endif
     while (len >= 64 - bufsize) {
         if (bufsize == 0) {
             secp256k1_sha256_transform(hash->s, data);
