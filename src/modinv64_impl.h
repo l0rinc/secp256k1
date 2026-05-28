@@ -452,7 +452,7 @@ static void secp256k1_modinv64_update_de_62(secp256k1_modinv64_signed62 * SECP25
     secp256k1_i128_accum_mul(&cd, v, e1);
     secp256k1_i128_accum_mul(&ce, q, d1);
     secp256k1_i128_accum_mul(&ce, r, e1);
-    if (modinfo->modulus.v[1]) { /* Optimize for the case where limb of modulus is zero. */
+    if (EXPECT(modinfo->modulus.v[1], 0)) { /* Optimize for the case where limb of modulus is zero. */
         secp256k1_i128_accum_mul(&cd, modinfo->modulus.v[1], md);
         secp256k1_i128_accum_mul(&ce, modinfo->modulus.v[1], me);
     }
@@ -463,7 +463,7 @@ static void secp256k1_modinv64_update_de_62(secp256k1_modinv64_signed62 * SECP25
     secp256k1_i128_accum_mul(&cd, v, e2);
     secp256k1_i128_accum_mul(&ce, q, d2);
     secp256k1_i128_accum_mul(&ce, r, e2);
-    if (modinfo->modulus.v[2]) { /* Optimize for the case where limb of modulus is zero. */
+    if (EXPECT(modinfo->modulus.v[2], 0)) { /* Optimize for the case where limb of modulus is zero. */
         secp256k1_i128_accum_mul(&cd, modinfo->modulus.v[2], md);
         secp256k1_i128_accum_mul(&ce, modinfo->modulus.v[2], me);
     }
@@ -474,7 +474,7 @@ static void secp256k1_modinv64_update_de_62(secp256k1_modinv64_signed62 * SECP25
     secp256k1_i128_accum_mul(&cd, v, e3);
     secp256k1_i128_accum_mul(&ce, q, d3);
     secp256k1_i128_accum_mul(&ce, r, e3);
-    if (modinfo->modulus.v[3]) { /* Optimize for the case where limb of modulus is zero. */
+    if (EXPECT(modinfo->modulus.v[3], 0)) { /* Optimize for the case where limb of modulus is zero. */
         secp256k1_i128_accum_mul(&cd, modinfo->modulus.v[3], md);
         secp256k1_i128_accum_mul(&ce, modinfo->modulus.v[3], me);
     }
