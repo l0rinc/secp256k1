@@ -760,6 +760,8 @@ static int secp256k1_pippenger_bucket_window(size_t n) {
         return 6;
     } else if (n <= 1279) {
         return 7;
+    } else if (n <= 1535) {
+        return 8;
     } else if (n <= 4607) {
         return 9;
     } else if (n <= 8191) {
@@ -783,7 +785,7 @@ static size_t secp256k1_pippenger_bucket_window_inv(int bucket_window) {
         case 5: return 159;
         case 6: return 255;
         case 7: return 1279;
-        case 8: return 1279;
+        case 8: return 1535;
         case 9: return 4607;
         case 10: return 8191;
         case 11: return 16383;
