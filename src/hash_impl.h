@@ -229,13 +229,21 @@ SECP256K1_HMAC_SHA256_WRITE_INLINE static void secp256k1_hmac_sha256_write(secp2
 
 #undef SECP256K1_HMAC_SHA256_WRITE_INLINE
 
-static void secp256k1_hmac_sha256_finalize(secp256k1_hmac_sha256 *hash, unsigned char *out32) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_HMAC_SHA256_FINALIZE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_HMAC_SHA256_FINALIZE_INLINE
+#endif
+
+SECP256K1_HMAC_SHA256_FINALIZE_INLINE static void secp256k1_hmac_sha256_finalize(secp256k1_hmac_sha256 *hash, unsigned char *out32) {
     unsigned char temp[32];
     secp256k1_sha256_finalize(&hash->inner, temp);
     secp256k1_sha256_write(&hash->outer, temp, 32);
     secp256k1_memclear_explicit(temp, sizeof(temp));
     secp256k1_sha256_finalize(&hash->outer, out32);
 }
+
+#undef SECP256K1_HMAC_SHA256_FINALIZE_INLINE
 
 static void secp256k1_hmac_sha256_clear(secp256k1_hmac_sha256 *hash) {
     secp256k1_memclear_explicit(hash, sizeof(*hash));
