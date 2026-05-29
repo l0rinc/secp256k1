@@ -391,7 +391,7 @@ SECP256K1_INLINE static void secp256k1_fe_from_storage(secp256k1_fe *r, const se
 }
 
 static void secp256k1_fe_impl_inv(secp256k1_fe *r, const secp256k1_fe *x);
-SECP256K1_INLINE static void secp256k1_fe_inv(secp256k1_fe *r, const secp256k1_fe *x) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_inv(secp256k1_fe *r, const secp256k1_fe *x) {
     int input_is_zero = secp256k1_fe_normalizes_to_zero(x);
     SECP256K1_FE_VERIFY(x);
 
