@@ -142,7 +142,7 @@ static void secp256k1_hash_ctx_init(secp256k1_hash_ctx *hash_ctx) {
     hash_ctx->fn_sha256_compression = secp256k1_sha256_transform;
 }
 
-static void secp256k1_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_sha256 *hash, const unsigned char *data, size_t len) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_sha256 *hash, const unsigned char *data, size_t len) {
     size_t chunk_len;
     size_t bufsize = hash->bytes & 0x3F;
     hash->bytes += len;
