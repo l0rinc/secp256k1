@@ -91,7 +91,7 @@ SECP256K1_INLINE static int secp256k1_scalar_reduce(secp256k1_scalar *r, unsigne
     return overflow;
 }
 
-static int secp256k1_scalar_add(secp256k1_scalar *r, const secp256k1_scalar *a, const secp256k1_scalar *b) {
+SECP256K1_ALWAYS_INLINE static int secp256k1_scalar_add(secp256k1_scalar *r, const secp256k1_scalar *a, const secp256k1_scalar *b) {
     int overflow;
     secp256k1_uint128 t;
     SECP256K1_SCALAR_VERIFY(a);
