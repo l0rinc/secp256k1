@@ -236,7 +236,7 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_hmac_sha256_initialize(const secp2
     secp256k1_memclear_explicit(rkey, sizeof(rkey));
 }
 
-static void secp256k1_hmac_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, const unsigned char *data, size_t size) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_hmac_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, const unsigned char *data, size_t size) {
     secp256k1_sha256_write(hash_ctx, &hash->inner, data, size);
 }
 
