@@ -650,7 +650,7 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_gej_add_ge_var(secp256k1_gej *r, c
     if (rzr != NULL) SECP256K1_FE_VERIFY(rzr);
 }
 
-static void secp256k1_gej_add_zinv_var(secp256k1_gej *r, const secp256k1_gej *a, const secp256k1_ge *b, const secp256k1_fe *bzinv) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_gej_add_zinv_var(secp256k1_gej *r, const secp256k1_gej *a, const secp256k1_ge *b, const secp256k1_fe *bzinv) {
     /* Operations: 9 mul, 3 sqr, 11 add/negate/normalizes_to_zero (ignoring special cases) */
     secp256k1_fe az, z12, u1, u2, s1, s2, h, i, h2, h3, t;
     SECP256K1_GEJ_VERIFY(a);
