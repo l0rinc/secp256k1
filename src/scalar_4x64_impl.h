@@ -239,7 +239,7 @@ SECP256K1_INLINE static int secp256k1_scalar_is_one(const secp256k1_scalar *a) {
     return ((a->d[0] ^ 1) | a->d[1] | a->d[2] | a->d[3]) == 0;
 }
 
-static int secp256k1_scalar_is_high(const secp256k1_scalar *a) {
+SECP256K1_ALWAYS_INLINE static int secp256k1_scalar_is_high(const secp256k1_scalar *a) {
     int yes = 0;
     int no = 0;
     SECP256K1_SCALAR_VERIFY(a);
