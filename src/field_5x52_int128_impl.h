@@ -151,7 +151,7 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_fe_mul_inner(uint64_t *r, const ui
     /* [r4 r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] */
 }
 
-SECP256K1_INLINE static void secp256k1_fe_sqr_inner(uint64_t *r, const uint64_t *a) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_sqr_inner(uint64_t *r, const uint64_t *a) {
     secp256k1_uint128 c, d;
     uint64_t a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3], a4 = a[4];
     uint64_t t3, t4, tx, u0;
