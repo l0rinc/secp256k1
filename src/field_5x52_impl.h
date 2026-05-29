@@ -360,7 +360,7 @@ SECP256K1_INLINE static void secp256k1_fe_impl_cmov(secp256k1_fe *r, const secp2
     r->n[4] = (r->n[4] & mask0) | (a->n[4] & mask1);
 }
 
-static SECP256K1_INLINE void secp256k1_fe_impl_half(secp256k1_fe *r) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_half(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
     uint64_t one = (uint64_t)1;
     uint64_t mask = -(t0 & one) >> 12;
