@@ -457,7 +457,7 @@ static int secp256k1_ge_is_valid_var(const secp256k1_ge *a) {
     return secp256k1_fe_equal(&y2, &x3);
 }
 
-static SECP256K1_INLINE void secp256k1_gej_double(secp256k1_gej *r, const secp256k1_gej *a) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_gej_double(secp256k1_gej *r, const secp256k1_gej *a) {
     /* Operations: 3 mul, 4 sqr, 8 add/half/mul_int/negate */
     secp256k1_fe l, s, t;
     SECP256K1_GEJ_VERIFY(a);
