@@ -40,7 +40,7 @@ static void secp256k1_fe_impl_get_bounds(secp256k1_fe *r, int m) {
     r->n[4] = 0x0FFFFFFFFFFFFULL * 2 * m;
 }
 
-static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
 
     /* Reduce t4 at the start so there will be at most a single carry from the first pass */
