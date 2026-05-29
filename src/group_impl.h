@@ -492,7 +492,7 @@ SECP256K1_ALWAYS_INLINE static void secp256k1_gej_double(secp256k1_gej *r, const
     SECP256K1_GEJ_VERIFY(r);
 }
 
-static void secp256k1_gej_double_var(secp256k1_gej *r, const secp256k1_gej *a, secp256k1_fe *rzr) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_gej_double_var(secp256k1_gej *r, const secp256k1_gej *a, secp256k1_fe *rzr) {
     SECP256K1_GEJ_VERIFY(a);
 
     /** For secp256k1, 2Q is infinity if and only if Q is infinity. This is because if 2Q = infinity,
