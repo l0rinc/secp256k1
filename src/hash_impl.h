@@ -142,13 +142,25 @@ static void secp256k1_hash_ctx_init(secp256k1_hash_ctx *hash_ctx) {
     hash_ctx->fn_sha256_compression = secp256k1_sha256_transform;
 }
 
-static void secp256k1_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_sha256 *hash, const unsigned char *data, size_t len) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_SHA256_WRITE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_SHA256_WRITE_INLINE
+#endif
+
+SECP256K1_SHA256_WRITE_INLINE static void secp256k1_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_sha256 *hash, const unsigned char *data, size_t len) {
     size_t chunk_len;
     size_t bufsize = hash->bytes & 0x3F;
     hash->bytes += len;
     VERIFY_CHECK(hash->bytes >= len);
     VERIFY_CHECK(hash_ctx != NULL);
     VERIFY_CHECK(hash_ctx->fn_sha256_compression != NULL);
+#if defined(__clang__)
+    if (len == 32 && bufsize == 0) {
+        memcpy(hash->buf, data, 32);
+        return;
+    }
+#endif
 
     /* If we exceed the 64-byte block size with this input, process it and wipe the buffer */
     chunk_len = 64 - bufsize;
@@ -175,16 +187,30 @@ static void secp256k1_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1
     }
 }
 
+#undef SECP256K1_SHA256_WRITE_INLINE
+
 static void secp256k1_sha256_finalize(const secp256k1_hash_ctx *hash_ctx, secp256k1_sha256 *hash, unsigned char *out32) {
-    static const unsigned char pad[64] = {0x80};
-    unsigned char sizedesc[8];
+    uint64_t bytes = hash->bytes;
+    size_t input_bufsize = bytes & 0x3F;
+    size_t bufsize = input_bufsize;
+    int extra_block;
     int i;
     /* The maximum message size of SHA256 is 2^64-1 bits. */
-    VERIFY_CHECK(hash->bytes < ((uint64_t)1 << 61));
-    secp256k1_write_be32(&sizedesc[0], hash->bytes >> 29);
-    secp256k1_write_be32(&sizedesc[4], hash->bytes << 3);
-    secp256k1_sha256_write(hash_ctx, hash, pad, 1 + ((119 - (hash->bytes % 64)) % 64));
-    secp256k1_sha256_write(hash_ctx, hash, sizedesc, 8);
+    VERIFY_CHECK(bytes < ((uint64_t)1 << 61));
+    VERIFY_CHECK(hash_ctx != NULL);
+    VERIFY_CHECK(hash_ctx->fn_sha256_compression != NULL);
+    hash->buf[bufsize++] = 0x80;
+    extra_block = bufsize > 56;
+    if (extra_block) {
+        memset(hash->buf + bufsize, 0, 64 - bufsize);
+        hash_ctx->fn_sha256_compression(hash->s, hash->buf, 1);
+        bufsize = 0;
+    }
+    memset(hash->buf + bufsize, 0, 56 - bufsize);
+    secp256k1_write_be32(&hash->buf[56], bytes >> 29);
+    secp256k1_write_be32(&hash->buf[60], bytes << 3);
+    hash_ctx->fn_sha256_compression(hash->s, hash->buf, 1);
+    hash->bytes = bytes + (extra_block ? 128 - input_bufsize : 64 - input_bufsize);
     for (i = 0; i < 8; i++) {
         secp256k1_write_be32(&out32[4*i], hash->s[i]);
         hash->s[i] = 0;
@@ -208,7 +234,13 @@ static void secp256k1_sha256_clear(secp256k1_sha256 *hash) {
     secp256k1_memclear_explicit(hash, sizeof(*hash));
 }
 
-static void secp256k1_hmac_sha256_initialize(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, const unsigned char *key, size_t keylen) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_HMAC_SHA256_INITIALIZE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_HMAC_SHA256_INITIALIZE_INLINE
+#endif
+
+SECP256K1_HMAC_SHA256_INITIALIZE_INLINE static void secp256k1_hmac_sha256_initialize(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, const unsigned char *key, size_t keylen) {
     size_t n;
     unsigned char rkey[64];
     if (keylen <= sizeof(rkey)) {
@@ -236,11 +268,27 @@ static void secp256k1_hmac_sha256_initialize(const secp256k1_hash_ctx *hash_ctx,
     secp256k1_memclear_explicit(rkey, sizeof(rkey));
 }
 
-static void secp256k1_hmac_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, const unsigned char *data, size_t size) {
+#undef SECP256K1_HMAC_SHA256_INITIALIZE_INLINE
+
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_HMAC_SHA256_WRITE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_HMAC_SHA256_WRITE_INLINE
+#endif
+
+SECP256K1_HMAC_SHA256_WRITE_INLINE static void secp256k1_hmac_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, const unsigned char *data, size_t size) {
     secp256k1_sha256_write(hash_ctx, &hash->inner, data, size);
 }
 
-static void secp256k1_hmac_sha256_finalize(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, unsigned char *out32) {
+#undef SECP256K1_HMAC_SHA256_WRITE_INLINE
+
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_HMAC_SHA256_FINALIZE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_HMAC_SHA256_FINALIZE_INLINE
+#endif
+
+SECP256K1_HMAC_SHA256_FINALIZE_INLINE static void secp256k1_hmac_sha256_finalize(const secp256k1_hash_ctx *hash_ctx, secp256k1_hmac_sha256 *hash, unsigned char *out32) {
     unsigned char temp[32];
     secp256k1_sha256_finalize(hash_ctx, &hash->inner, temp);
     secp256k1_sha256_write(hash_ctx, &hash->outer, temp, 32);
@@ -248,11 +296,19 @@ static void secp256k1_hmac_sha256_finalize(const secp256k1_hash_ctx *hash_ctx, s
     secp256k1_sha256_finalize(hash_ctx, &hash->outer, out32);
 }
 
+#undef SECP256K1_HMAC_SHA256_FINALIZE_INLINE
+
 static void secp256k1_hmac_sha256_clear(secp256k1_hmac_sha256 *hash) {
     secp256k1_memclear_explicit(hash, sizeof(*hash));
 }
 
-static void secp256k1_rfc6979_hmac_sha256_initialize(const secp256k1_hash_ctx *hash_ctx, secp256k1_rfc6979_hmac_sha256 *rng, const unsigned char *key, size_t keylen) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE
+#endif
+
+SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE static void secp256k1_rfc6979_hmac_sha256_initialize(const secp256k1_hash_ctx *hash_ctx, secp256k1_rfc6979_hmac_sha256 *rng, const unsigned char *key, size_t keylen) {
     secp256k1_hmac_sha256 hmac;
     static const unsigned char zero[1] = {0x00};
     static const unsigned char one[1] = {0x01};
@@ -281,6 +337,8 @@ static void secp256k1_rfc6979_hmac_sha256_initialize(const secp256k1_hash_ctx *h
     secp256k1_hmac_sha256_finalize(hash_ctx, &hmac, rng->v);
     rng->retry = 0;
 }
+
+#undef SECP256K1_RFC6979_HMAC_SHA256_INITIALIZE_INLINE
 
 static void secp256k1_rfc6979_hmac_sha256_generate(const secp256k1_hash_ctx *hash_ctx, secp256k1_rfc6979_hmac_sha256 *rng, unsigned char *out, size_t outlen) {
     /* RFC6979 3.2.h. */

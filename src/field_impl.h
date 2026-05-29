@@ -34,7 +34,8 @@ SECP256K1_INLINE static int secp256k1_fe_equal(const secp256k1_fe *a, const secp
     return secp256k1_fe_normalizes_to_zero(&na);
 }
 
-static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
+/* Compute a square root without checking whether the input has one. */
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_sqrt_unchecked(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
     /** Given that p is congruent to 3 mod 4, we can compute the square root of
      *  a mod p as the (p+1)/4'th power of a.
      *
@@ -45,7 +46,7 @@ static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k
      *  itself always a square (a ** ((p+1)/4) is the square of a ** ((p+1)/8)).
      */
     secp256k1_fe x2, x3, x6, x9, x11, x22, x44, x88, x176, x220, x223, t1;
-    int j, ret;
+    int j;
 
     VERIFY_CHECK(r != a);
     SECP256K1_FE_VERIFY(a);
@@ -62,22 +63,39 @@ static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k
     secp256k1_fe_sqr(&x3, &x2);
     secp256k1_fe_mul(&x3, &x3, a);
 
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_SQRT_SQR2(r) do { \
+    secp256k1_fe_sqr(&(r), &(r)); \
+    secp256k1_fe_sqr(&(r), &(r)); \
+} while(0)
+#define SECP256K1_FE_SQRT_SQR3(r) do { \
+    secp256k1_fe_sqr(&(r), &(r)); \
+    secp256k1_fe_sqr(&(r), &(r)); \
+    secp256k1_fe_sqr(&(r), &(r)); \
+} while(0)
+#else
+#define SECP256K1_FE_SQRT_SQR2(r) do { \
+    for (j=0; j<2; j++) { \
+        secp256k1_fe_sqr(&(r), &(r)); \
+    } \
+} while(0)
+#define SECP256K1_FE_SQRT_SQR3(r) do { \
+    for (j=0; j<3; j++) { \
+        secp256k1_fe_sqr(&(r), &(r)); \
+    } \
+} while(0)
+#endif
+
     x6 = x3;
-    for (j=0; j<3; j++) {
-        secp256k1_fe_sqr(&x6, &x6);
-    }
+    SECP256K1_FE_SQRT_SQR3(x6);
     secp256k1_fe_mul(&x6, &x6, &x3);
 
     x9 = x6;
-    for (j=0; j<3; j++) {
-        secp256k1_fe_sqr(&x9, &x9);
-    }
+    SECP256K1_FE_SQRT_SQR3(x9);
     secp256k1_fe_mul(&x9, &x9, &x3);
 
     x11 = x9;
-    for (j=0; j<2; j++) {
-        secp256k1_fe_sqr(&x11, &x11);
-    }
+    SECP256K1_FE_SQRT_SQR2(x11);
     secp256k1_fe_mul(&x11, &x11, &x2);
 
     x22 = x11;
@@ -111,10 +129,11 @@ static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k
     secp256k1_fe_mul(&x220, &x220, &x44);
 
     x223 = x220;
-    for (j=0; j<3; j++) {
-        secp256k1_fe_sqr(&x223, &x223);
-    }
+    SECP256K1_FE_SQRT_SQR3(x223);
     secp256k1_fe_mul(&x223, &x223, &x3);
+
+#undef SECP256K1_FE_SQRT_SQR2
+#undef SECP256K1_FE_SQRT_SQR3
 
     /* The final result is then assembled using a sliding window over the blocks. */
 
@@ -129,6 +148,13 @@ static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k
     secp256k1_fe_mul(&t1, &t1, &x2);
     secp256k1_fe_sqr(&t1, &t1);
     secp256k1_fe_sqr(r, &t1);
+}
+
+static int secp256k1_fe_sqrt(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
+    secp256k1_fe t1;
+    int ret;
+
+    secp256k1_fe_sqrt_unchecked(r, a);
 
     /* Check that a square root was actually calculated */
 
@@ -391,7 +417,7 @@ SECP256K1_INLINE static void secp256k1_fe_from_storage(secp256k1_fe *r, const se
 }
 
 static void secp256k1_fe_impl_inv(secp256k1_fe *r, const secp256k1_fe *x);
-SECP256K1_INLINE static void secp256k1_fe_inv(secp256k1_fe *r, const secp256k1_fe *x) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_inv(secp256k1_fe *r, const secp256k1_fe *x) {
     int input_is_zero = secp256k1_fe_normalizes_to_zero(x);
     SECP256K1_FE_VERIFY(x);
 

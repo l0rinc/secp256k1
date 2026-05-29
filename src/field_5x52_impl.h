@@ -7,6 +7,10 @@
 #ifndef SECP256K1_FIELD_REPR_IMPL_H
 #define SECP256K1_FIELD_REPR_IMPL_H
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
 #include "checkmem.h"
 #include "util.h"
 #include "field.h"
@@ -40,7 +44,7 @@ static void secp256k1_fe_impl_get_bounds(secp256k1_fe *r, int m) {
     r->n[4] = 0x0FFFFFFFFFFFFULL * 2 * m;
 }
 
-static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
 
     /* Reduce t4 at the start so there will be at most a single carry from the first pass */
@@ -77,7 +81,7 @@ static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
     r->n[0] = t0; r->n[1] = t1; r->n[2] = t2; r->n[3] = t3; r->n[4] = t4;
 }
 
-static void secp256k1_fe_impl_normalize_weak(secp256k1_fe *r) {
+SECP256K1_INLINE static void secp256k1_fe_impl_normalize_weak(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
 
     /* Reduce t4 at the start so there will be at most a single carry from the first pass */
@@ -96,7 +100,13 @@ static void secp256k1_fe_impl_normalize_weak(secp256k1_fe *r) {
     r->n[0] = t0; r->n[1] = t1; r->n[2] = t2; r->n[3] = t3; r->n[4] = t4;
 }
 
-static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_NORMALIZE_VAR_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_FE_NORMALIZE_VAR_INLINE
+#endif
+
+SECP256K1_FE_NORMALIZE_VAR_INLINE static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
 
     /* Reduce t4 at the start so there will be at most a single carry from the first pass */
@@ -134,7 +144,15 @@ static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
     r->n[0] = t0; r->n[1] = t1; r->n[2] = t2; r->n[3] = t3; r->n[4] = t4;
 }
 
-static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
+#undef SECP256K1_FE_NORMALIZE_VAR_INLINE
+
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE
+#endif
+
+SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
 
     /* z0 tracks a possible raw value of 0, z1 tracks a possible raw value of P */
@@ -157,7 +175,15 @@ static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
     return (z0 == 0) | (z1 == 0xFFFFFFFFFFFFFULL);
 }
 
-static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
+#undef SECP256K1_FE_NORMALIZES_TO_ZERO_INLINE
+
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_NORMALIZES_TO_ZERO_VAR_INLINE SECP256K1_ALWAYS_INLINE
+#else
+#define SECP256K1_FE_NORMALIZES_TO_ZERO_VAR_INLINE
+#endif
+
+SECP256K1_FE_NORMALIZES_TO_ZERO_VAR_INLINE static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
     uint64_t t0, t1, t2, t3, t4;
     uint64_t z0, z1;
     uint64_t x;
@@ -197,6 +223,8 @@ static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
 
     return (z0 == 0) | (z1 == 0xFFFFFFFFFFFFFULL);
 }
+
+#undef SECP256K1_FE_NORMALIZES_TO_ZERO_VAR_INLINE
 
 SECP256K1_INLINE static void secp256k1_fe_impl_set_int(secp256k1_fe *r, int a) {
     r->n[0] = a;
@@ -269,38 +297,10 @@ static int secp256k1_fe_impl_set_b32_limit(secp256k1_fe *r, const unsigned char 
 
 /** Convert a field element to a 32-byte big endian value. Requires the input to be normalized */
 static void secp256k1_fe_impl_get_b32(unsigned char *r, const secp256k1_fe *a) {
-    r[0] = (a->n[4] >> 40) & 0xFF;
-    r[1] = (a->n[4] >> 32) & 0xFF;
-    r[2] = (a->n[4] >> 24) & 0xFF;
-    r[3] = (a->n[4] >> 16) & 0xFF;
-    r[4] = (a->n[4] >> 8) & 0xFF;
-    r[5] = a->n[4] & 0xFF;
-    r[6] = (a->n[3] >> 44) & 0xFF;
-    r[7] = (a->n[3] >> 36) & 0xFF;
-    r[8] = (a->n[3] >> 28) & 0xFF;
-    r[9] = (a->n[3] >> 20) & 0xFF;
-    r[10] = (a->n[3] >> 12) & 0xFF;
-    r[11] = (a->n[3] >> 4) & 0xFF;
-    r[12] = ((a->n[2] >> 48) & 0xF) | ((a->n[3] & 0xF) << 4);
-    r[13] = (a->n[2] >> 40) & 0xFF;
-    r[14] = (a->n[2] >> 32) & 0xFF;
-    r[15] = (a->n[2] >> 24) & 0xFF;
-    r[16] = (a->n[2] >> 16) & 0xFF;
-    r[17] = (a->n[2] >> 8) & 0xFF;
-    r[18] = a->n[2] & 0xFF;
-    r[19] = (a->n[1] >> 44) & 0xFF;
-    r[20] = (a->n[1] >> 36) & 0xFF;
-    r[21] = (a->n[1] >> 28) & 0xFF;
-    r[22] = (a->n[1] >> 20) & 0xFF;
-    r[23] = (a->n[1] >> 12) & 0xFF;
-    r[24] = (a->n[1] >> 4) & 0xFF;
-    r[25] = ((a->n[0] >> 48) & 0xF) | ((a->n[1] & 0xF) << 4);
-    r[26] = (a->n[0] >> 40) & 0xFF;
-    r[27] = (a->n[0] >> 32) & 0xFF;
-    r[28] = (a->n[0] >> 24) & 0xFF;
-    r[29] = (a->n[0] >> 16) & 0xFF;
-    r[30] = (a->n[0] >> 8) & 0xFF;
-    r[31] = a->n[0] & 0xFF;
+    secp256k1_write_be64(&r[0], (a->n[4] << 16) | (a->n[3] >> 36));
+    secp256k1_write_be64(&r[8], (a->n[3] << 28) | (a->n[2] >> 24));
+    secp256k1_write_be64(&r[16], (a->n[2] << 40) | (a->n[1] >> 12));
+    secp256k1_write_be64(&r[24], (a->n[1] << 52) | a->n[0]);
 }
 
 SECP256K1_INLINE static void secp256k1_fe_impl_negate_unchecked(secp256k1_fe *r, const secp256k1_fe *a, int m) {
@@ -338,29 +338,46 @@ SECP256K1_INLINE static void secp256k1_fe_impl_add(secp256k1_fe *r, const secp25
     r->n[4] += a->n[4];
 }
 
-SECP256K1_INLINE static void secp256k1_fe_impl_mul(secp256k1_fe *r, const secp256k1_fe *a, const secp256k1_fe * SECP256K1_RESTRICT b) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_mul(secp256k1_fe *r, const secp256k1_fe *a, const secp256k1_fe * SECP256K1_RESTRICT b) {
     secp256k1_fe_mul_inner(r->n, a->n, b->n);
 }
 
-SECP256K1_INLINE static void secp256k1_fe_impl_sqr(secp256k1_fe *r, const secp256k1_fe *a) {
+SECP256K1_ALWAYS_INLINE static void secp256k1_fe_impl_sqr(secp256k1_fe *r, const secp256k1_fe *a) {
     secp256k1_fe_sqr_inner(r->n, a->n);
 }
 
 SECP256K1_INLINE static void secp256k1_fe_impl_cmov(secp256k1_fe *r, const secp256k1_fe *a, int flag) {
-    uint64_t mask0, mask1;
-    volatile int vflag = flag;
+    uint64_t mask;
     VERIFY_CHECK(flag == 0 || flag == 1);
     SECP256K1_CHECKMEM_CHECK_VERIFY(r->n, sizeof(r->n));
-    mask0 = vflag + ~((uint64_t)0);
-    mask1 = ~mask0;
-    r->n[0] = (r->n[0] & mask0) | (a->n[0] & mask1);
-    r->n[1] = (r->n[1] & mask0) | (a->n[1] & mask1);
-    r->n[2] = (r->n[2] & mask0) | (a->n[2] & mask1);
-    r->n[3] = (r->n[3] & mask0) | (a->n[3] & mask1);
-    r->n[4] = (r->n[4] & mask0) | (a->n[4] & mask1);
+    mask = -(uint64_t)flag;
+#if (defined(__ARM_NEON) || defined(__ARM_NEON__)) && defined(__GNUC__) && !defined(__clang__)
+    {
+        uint64x2_t maskv = vdupq_n_u64(mask);
+        uint64x2_t r01 = vld1q_u64(&r->n[0]);
+        uint64x2_t a01 = vld1q_u64(&a->n[0]);
+        uint64x2_t r23 = vld1q_u64(&r->n[2]);
+        uint64x2_t a23 = vld1q_u64(&a->n[2]);
+        r01 = veorq_u64(r01, vandq_u64(maskv, veorq_u64(r01, a01)));
+        r23 = veorq_u64(r23, vandq_u64(maskv, veorq_u64(r23, a23)));
+        vst1q_u64(&r->n[0], r01);
+        vst1q_u64(&r->n[2], r23);
+    }
+#else
+    r->n[0] ^= mask & (r->n[0] ^ a->n[0]);
+    r->n[1] ^= mask & (r->n[1] ^ a->n[1]);
+    r->n[2] ^= mask & (r->n[2] ^ a->n[2]);
+    r->n[3] ^= mask & (r->n[3] ^ a->n[3]);
+#endif
+    r->n[4] ^= mask & (r->n[4] ^ a->n[4]);
 }
 
-static SECP256K1_INLINE void secp256k1_fe_impl_half(secp256k1_fe *r) {
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_FE_IMPL_HALF_INLINE SECP256K1_INLINE
+#else
+#define SECP256K1_FE_IMPL_HALF_INLINE SECP256K1_ALWAYS_INLINE
+#endif
+SECP256K1_FE_IMPL_HALF_INLINE static void secp256k1_fe_impl_half(secp256k1_fe *r) {
     uint64_t t0 = r->n[0], t1 = r->n[1], t2 = r->n[2], t3 = r->n[3], t4 = r->n[4];
     uint64_t one = (uint64_t)1;
     uint64_t mask = -(t0 & one) >> 12;
@@ -413,18 +430,32 @@ static SECP256K1_INLINE void secp256k1_fe_impl_half(secp256k1_fe *r) {
      *     M == floor(m/2) + 1
      */
 }
+#undef SECP256K1_FE_IMPL_HALF_INLINE
 
 static SECP256K1_INLINE void secp256k1_fe_storage_cmov(secp256k1_fe_storage *r, const secp256k1_fe_storage *a, int flag) {
-    uint64_t mask0, mask1;
-    volatile int vflag = flag;
+    uint64_t mask;
     VERIFY_CHECK(flag == 0 || flag == 1);
     SECP256K1_CHECKMEM_CHECK_VERIFY(r->n, sizeof(r->n));
-    mask0 = vflag + ~((uint64_t)0);
-    mask1 = ~mask0;
-    r->n[0] = (r->n[0] & mask0) | (a->n[0] & mask1);
-    r->n[1] = (r->n[1] & mask0) | (a->n[1] & mask1);
-    r->n[2] = (r->n[2] & mask0) | (a->n[2] & mask1);
-    r->n[3] = (r->n[3] & mask0) | (a->n[3] & mask1);
+    mask = -(uint64_t)flag;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    /* AArch64 always has NEON; use it to blend 2x u64 at a time. */
+    {
+        uint64x2_t maskv = vdupq_n_u64(mask);
+        uint64x2_t r01 = vld1q_u64(&r->n[0]);
+        uint64x2_t a01 = vld1q_u64(&a->n[0]);
+        uint64x2_t r23 = vld1q_u64(&r->n[2]);
+        uint64x2_t a23 = vld1q_u64(&a->n[2]);
+        r01 = veorq_u64(r01, vandq_u64(maskv, veorq_u64(r01, a01)));
+        r23 = veorq_u64(r23, vandq_u64(maskv, veorq_u64(r23, a23)));
+        vst1q_u64(&r->n[0], r01);
+        vst1q_u64(&r->n[2], r23);
+    }
+#else
+    r->n[0] ^= mask & (r->n[0] ^ a->n[0]);
+    r->n[1] ^= mask & (r->n[1] ^ a->n[1]);
+    r->n[2] ^= mask & (r->n[2] ^ a->n[2]);
+    r->n[3] ^= mask & (r->n[3] ^ a->n[3]);
+#endif
 }
 
 static void secp256k1_fe_impl_to_storage(secp256k1_fe_storage *r, const secp256k1_fe *a) {
@@ -442,7 +473,7 @@ static SECP256K1_INLINE void secp256k1_fe_impl_from_storage(secp256k1_fe *r, con
     r->n[4] = a->n[3] >> 16;
 }
 
-static void secp256k1_fe_from_signed62(secp256k1_fe *r, const secp256k1_modinv64_signed62 *a) {
+static void secp256k1_fe_from_signed62(secp256k1_fe * SECP256K1_RESTRICT r, const secp256k1_modinv64_signed62 * SECP256K1_RESTRICT a) {
     const uint64_t M52 = UINT64_MAX >> 12;
     const uint64_t a0 = a->v[0], a1 = a->v[1], a2 = a->v[2], a3 = a->v[3], a4 = a->v[4];
 
@@ -462,7 +493,7 @@ static void secp256k1_fe_from_signed62(secp256k1_fe *r, const secp256k1_modinv64
     r->n[4] = (a3 >> 22 | a4 << 40);
 }
 
-static void secp256k1_fe_to_signed62(secp256k1_modinv64_signed62 *r, const secp256k1_fe *a) {
+static void secp256k1_fe_to_signed62(secp256k1_modinv64_signed62 * SECP256K1_RESTRICT r, const secp256k1_fe * SECP256K1_RESTRICT a) {
     const uint64_t M62 = UINT64_MAX >> 2;
     const uint64_t a0 = a->n[0], a1 = a->n[1], a2 = a->n[2], a3 = a->n[3], a4 = a->n[4];
 
@@ -498,7 +529,7 @@ static void secp256k1_fe_impl_inv_var(secp256k1_fe *r, const secp256k1_fe *x) {
     secp256k1_fe_from_signed62(r, &s);
 }
 
-static int secp256k1_fe_impl_is_square_var(const secp256k1_fe *x) {
+SECP256K1_INLINE static int secp256k1_fe_impl_is_square_var(const secp256k1_fe *x) {
     secp256k1_fe tmp;
     secp256k1_modinv64_signed62 s;
     int jac, ret;
@@ -506,10 +537,10 @@ static int secp256k1_fe_impl_is_square_var(const secp256k1_fe *x) {
     tmp = *x;
     secp256k1_fe_normalize_var(&tmp);
     /* secp256k1_jacobi64_maybe_var cannot deal with input 0. */
-    if (secp256k1_fe_is_zero(&tmp)) return 1;
+    if (EXPECT(secp256k1_fe_is_zero(&tmp), 0)) return 1;
     secp256k1_fe_to_signed62(&s, &tmp);
     jac = secp256k1_jacobi64_maybe_var(&s, &secp256k1_const_modinfo_fe);
-    if (jac == 0) {
+    if (EXPECT(jac == 0, 0)) {
         /* secp256k1_jacobi64_maybe_var failed to compute the Jacobi symbol. Fall back
          * to computing a square root. This should be extremely rare with random
          * input (except in VERIFY mode, where a lower iteration count is used). */

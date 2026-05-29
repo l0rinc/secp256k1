@@ -26,6 +26,12 @@ typedef struct {
     int64_t u, v, q, r;
 } secp256k1_modinv64_trans2x2;
 
+#if defined(__GNUC__) && !defined(__clang__)
+#define SECP256K1_MODINV64_RESTRICT SECP256K1_RESTRICT
+#else
+#define SECP256K1_MODINV64_RESTRICT
+#endif
+
 #ifdef VERIFY
 /* Helper function to compute the absolute value of an int64_t.
  * (we don't use abs/labs/llabs as it depends on the int sizes). */
@@ -408,7 +414,7 @@ static int64_t secp256k1_modinv64_posdivsteps_62_var(int64_t eta, uint64_t f0, u
  *
  * This implements the update_de function from the explanation.
  */
-static void secp256k1_modinv64_update_de_62(secp256k1_modinv64_signed62 *d, secp256k1_modinv64_signed62 *e, const secp256k1_modinv64_trans2x2 *t, const secp256k1_modinv64_modinfo* modinfo) {
+static void secp256k1_modinv64_update_de_62(secp256k1_modinv64_signed62 * SECP256K1_MODINV64_RESTRICT d, secp256k1_modinv64_signed62 * SECP256K1_MODINV64_RESTRICT e, const secp256k1_modinv64_trans2x2 * SECP256K1_MODINV64_RESTRICT t, const secp256k1_modinv64_modinfo* SECP256K1_MODINV64_RESTRICT modinfo) {
     const uint64_t M62 = UINT64_MAX >> 2;
     const int64_t d0 = d->v[0], d1 = d->v[1], d2 = d->v[2], d3 = d->v[3], d4 = d->v[4];
     const int64_t e0 = e->v[0], e1 = e->v[1], e2 = e->v[2], e3 = e->v[3], e4 = e->v[4];
@@ -675,6 +681,14 @@ static void secp256k1_modinv64_var(secp256k1_modinv64_signed62 *x, const secp256
         /* Determine if len>1 and limb (len-1) of both f and g is 0 or -1. */
         fn = f.v[len - 1];
         gn = g.v[len - 1];
+#if defined(__GNUC__) && !defined(__clang__)
+        /* If so, reduce length, propagating the sign of f and g's top limb into the one below. */
+        if (len > 1 && (fn == 0 || fn == -1) && (gn == 0 || gn == -1)) {
+            f.v[len - 2] |= (uint64_t)fn << 62;
+            g.v[len - 2] |= (uint64_t)gn << 62;
+            --len;
+        }
+#else
         cond = ((int64_t)len - 2) >> 63;
         cond |= fn ^ (fn >> 63);
         cond |= gn ^ (gn >> 63);
@@ -684,6 +698,7 @@ static void secp256k1_modinv64_var(secp256k1_modinv64_signed62 *x, const secp256
             g.v[len - 2] |= (uint64_t)gn << 62;
             --len;
         }
+#endif
 
         VERIFY_CHECK(++i < 12); /* We should never need more than 12*62 = 744 divsteps */
         VERIFY_CHECK(secp256k1_modinv64_mul_cmp_62(&f, len, &modinfo->modulus, -1) > 0); /* f > -modulus */
@@ -776,5 +791,7 @@ static int secp256k1_jacobi64_maybe_var(const secp256k1_modinv64_signed62 *x, co
     /* The loop failed to converge to f=g after 1550 iterations. Return 0, indicating unknown result. */
     return 0;
 }
+
+#undef SECP256K1_MODINV64_RESTRICT
 
 #endif /* SECP256K1_MODINV64_IMPL_H */
