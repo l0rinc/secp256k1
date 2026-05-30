@@ -496,7 +496,7 @@ static void secp256k1_modinv32_update_fg_30(secp256k1_modinv32_signed30 *f, secp
  *
  * Version that operates on a variable number of limbs in f and g.
  *
- * This implements the update_fg function from the explanation in modinv64_impl.h.
+ * This implements the update_fg function from the explanation.
  */
 static void secp256k1_modinv32_update_fg_30_var(int len, secp256k1_modinv32_signed30 *f, secp256k1_modinv32_signed30 *g, const secp256k1_modinv32_trans2x2 *t) {
     const int32_t M30 = (int32_t)(UINT32_MAX >> 2);
