@@ -1896,7 +1896,7 @@ static void rshift256(uint16_t* out, const uint16_t* a, int n, int sign_extend) 
     }
 }
 
-/* Load a 64-bit unsigned integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
+/* Load a 64-bit integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
 static void load256u64(uint16_t* out, uint64_t v, int is_signed) {
     int i;
     uint64_t sign = is_signed && (v >> 63) ? UINT64_MAX : 0;
@@ -1908,7 +1908,7 @@ static void load256u64(uint16_t* out, uint64_t v, int is_signed) {
     }
 }
 
-/* Load a 128-bit unsigned integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
+/* Load a 128-bit integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
 static void load256two64(uint16_t* out, uint64_t hi, uint64_t lo, int is_signed) {
     int i;
     uint64_t sign = is_signed && (hi >> 63) ? UINT64_MAX : 0;
@@ -1923,7 +1923,7 @@ static void load256two64(uint16_t* out, uint64_t hi, uint64_t lo, int is_signed)
     }
 }
 
-/* Check whether the 256-bit value represented by array of 16-bit values is in range -2^127 < v < 2^127. */
+/* Check whether the 256-bit value represented by array of 16-bit values is in range -2^127 <= v < 2^127. */
 static int int256is127(const uint16_t* v) {
     int all_0 = ((v[7] & 0x8000) == 0), all_1 = ((v[7] & 0x8000) == 0x8000);
     int i;
