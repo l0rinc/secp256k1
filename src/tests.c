@@ -4367,10 +4367,16 @@ static void test_point_times_order(const secp256k1_gej *point) {
     CHECK(secp256k1_ge_is_valid_var(&res3) == 0);
     /* check zero/one edge cases */
     secp256k1_ecmult(&res1, point, &secp256k1_scalar_zero, &secp256k1_scalar_zero);
+    secp256k1_ecmult(&res2, point, &secp256k1_scalar_zero, NULL);
     secp256k1_ge_set_gej(&res3, &res1);
+    CHECK(secp256k1_gej_is_infinity(&res1));
+    CHECK(secp256k1_gej_is_infinity(&res2));
     CHECK(secp256k1_ge_is_infinity(&res3));
     secp256k1_ecmult(&res1, point, &secp256k1_scalar_one, &secp256k1_scalar_zero);
+    secp256k1_ecmult(&res2, point, &secp256k1_scalar_one, NULL);
     secp256k1_ge_set_gej(&res3, &res1);
+    CHECK(secp256k1_gej_eq_ge_var(point, &res3));
+    secp256k1_ge_set_gej(&res3, &res2);
     CHECK(secp256k1_gej_eq_ge_var(point, &res3));
     secp256k1_ecmult(&res1, point, &secp256k1_scalar_zero, &secp256k1_scalar_one);
     secp256k1_ge_set_gej(&res3, &res1);
