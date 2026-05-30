@@ -275,10 +275,10 @@ static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, 
      *
      * === Background: the effective affine technique ===
      *
-     * Let phi_u be the isomorphism that maps (x, y) on secp256k1 curve y^2 = x^3 + 7 to
-     * x' = u^2*x, y' = u^3*y on curve y'^2 = x'^3 + u^6*7. This new curve has the same order as
+     * Let phi_u be the isomorphism that maps (x, y) on a curve y^2 = x^3 + B to
+     * x' = u^2*x, y' = u^3*y on curve y'^2 = x'^3 + u^6*B. This new curve has the same order as
      * the original (it is isomorphic), but moreover, has the same addition/doubling formulas, as
-     * the curve b=7 coefficient does not appear in those formulas (or at least does not appear in
+     * the curve B coefficient does not appear in those formulas (or at least does not appear in
      * the formulas implemented in this codebase, both affine and Jacobian). See also Example 9.5.2
      * in https://www.math.auckland.ac.nz/~sgal018/crypto-book/ch9.pdf.
      *
@@ -307,10 +307,10 @@ static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, 
      * === Avoiding the square root for x-only point multiplication ===
      *
      * In this function, we want to compute the X coordinate of q*(n/d, y), for
-     * y = sqrt((n/d)^3 + 7). Its negation would also be a valid Y coordinate, but by convention
+     * y = sqrt((n/d)^3 + B). Its negation would also be a valid Y coordinate, but by convention
      * we pick whatever sqrt returns (which we assume to be a deterministic function).
      *
-     * Let g = y^2*d^3 = n^3 + 7*d^3. This also means y = sqrt(g/d^3).
+     * Let g = y^2*d^3 = n^3 + B*d^3. This also means y = sqrt(g/d^3).
      * Further let v = sqrt(d*g), which must exist as d*g = y^2*d^4 = (y*d^2)^2.
      *
      * The input point (n/d, y) also has Jacobian coordinates:
@@ -352,11 +352,11 @@ static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, 
         secp256k1_fe_mul(&b, &b, d);
         secp256k1_fe_add(&g, &b);
         if (!known_on_curve) {
-            /* We need to determine whether (n/d)^3 + 7 is square.
+            /* We need to determine whether (n/d)^3 + B is square.
              *
-             *     is_square((n/d)^3 + 7)
-             * <=> is_square(((n/d)^3 + 7) * d^4)
-             * <=> is_square((n^3 + 7*d^3) * d)
+             *     is_square((n/d)^3 + B)
+             * <=> is_square(((n/d)^3 + B) * d^4)
+             * <=> is_square((n^3 + B*d^3) * d)
              * <=> is_square(g * d)
              */
             secp256k1_fe c;
@@ -366,7 +366,7 @@ static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, 
     } else {
         secp256k1_fe_add_int(&g, SECP256K1_B);
         if (!known_on_curve) {
-            /* g at this point equals x^3 + 7. Test if it is square. */
+            /* g at this point equals x^3 + B. Test if it is square. */
             if (!secp256k1_fe_is_square_var(&g)) return 0;
         }
     }

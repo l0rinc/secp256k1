@@ -80,7 +80,7 @@ static void secp256k1_ecmult_odd_multiples_table(size_t n, secp256k1_ge *pre_a, 
     secp256k1_gej_double_var(&d, a, NULL);
 
     /*
-     * Perform the additions using an isomorphic curve Y^2 = X^3 + 7*C^6 where C := d.z.
+     * Perform the additions using an isomorphic curve Y^2 = X^3 + B*C^6 where C := d.z.
      * The isomorphism, phi, maps a secp256k1 point (x, y) to the point (x*C^2, y*C^3) on the other curve.
      * In Jacobian coordinates phi maps (x, y, z) to (x*C^2, y*C^3, z) or, equivalently to (x, y, z/C).
      *
