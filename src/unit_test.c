@@ -3,6 +3,8 @@
  * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
  ***********************************************************************/
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,8 +126,10 @@ static void print_test_list(struct tf_framework* tf) {
 
 static int parse_jobs_count(const char* key, const char* value, struct tf_framework* tf) {
     char* ptr_val;
-    long val = strtol(value, &ptr_val, 10); /* base 10 */
-    if (*ptr_val != '\0') {
+    long val;
+    errno = 0;
+    val = strtol(value, &ptr_val, 10); /* base 10 */
+    if (ptr_val == value || *ptr_val != '\0' || errno == ERANGE) {
         fprintf(stderr, "Invalid number for -%s=%s\n", key, value);
         return -1;
     }
@@ -138,13 +142,21 @@ static int parse_jobs_count(const char* key, const char* value, struct tf_framew
 }
 
 static int parse_iterations(const char* key, const char* value, struct tf_framework* tf) {
+    char* ptr_val;
+    long val;
     UNUSED(key); UNUSED(tf);
     if (!value) return 0;
-    COUNT = (int) strtol(value, NULL, 0);
-    if (COUNT <= 0) {
-        fputs("An iteration count of 0 or less is not allowed.\n", stderr);
+    errno = 0;
+    val = strtol(value, &ptr_val, 0);
+    if (ptr_val == value || *ptr_val != '\0' || errno == ERANGE) {
+        fprintf(stderr, "Invalid iteration count: %s\n", value);
         return -1;
     }
+    if (val <= 0 || val > INT_MAX) {
+        fprintf(stderr, "Iteration count out of range: %ld. Range: 1..%d\n", val, INT_MAX);
+        return -1;
+    }
+    COUNT = (int) val;
     return 0;
 }
 
