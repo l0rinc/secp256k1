@@ -98,6 +98,7 @@ static void secp256k1_ecmult_const_odd_multiples_table_globalz(secp256k1_ge *pre
     } \
     secp256k1_fe_negate(&neg_y, &(r)->y, 1); \
     secp256k1_fe_cmov(&(r)->y, &neg_y, negative); \
+    secp256k1_fe_clear(&neg_y); \
 } while(0)
 
 /* For K as defined in the comment of secp256k1_ecmult_const, we have several precomputed
@@ -259,6 +260,7 @@ static void secp256k1_ecmult_const(secp256k1_gej *r, const secp256k1_ge *a, cons
         }
         ECMULT_CONST_TABLE_GET_GE(&t, pre_a_lam, bits2);
         secp256k1_gej_add_ge(r, r, &t);
+        secp256k1_ge_clear(&t);
     }
 
     /* Map the result back to the secp256k1 curve from the isomorphic curve. */
@@ -398,6 +400,8 @@ static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, 
     if (d) secp256k1_fe_mul(&i, &i, d);
     secp256k1_fe_inv(&i, &i);
     secp256k1_fe_mul(r, &rj.x, &i);
+    secp256k1_fe_clear(&i);
+    secp256k1_gej_clear(&rj);
 
     return 1;
 }
