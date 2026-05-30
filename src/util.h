@@ -178,12 +178,21 @@ static SECP256K1_INLINE void *checked_malloc(const secp256k1_callback* cb, size_
     return ret;
 }
 
-static SECP256K1_INLINE void *checked_malloc_array(const secp256k1_callback* cb, size_t nmemb, size_t size) {
-    if (size != 0 && nmemb > ((size_t)-1) / size) {
+static SECP256K1_INLINE int checked_size_mul(const secp256k1_callback* cb, size_t *result, size_t a, size_t b) {
+    if (b != 0 && a > ((size_t)-1) / b) {
         secp256k1_callback_call(cb, "Allocation size overflow");
+        return 0;
+    }
+    *result = a * b;
+    return 1;
+}
+
+static SECP256K1_INLINE void *checked_malloc_array(const secp256k1_callback* cb, size_t nmemb, size_t size) {
+    size_t alloc_size;
+    if (!checked_size_mul(cb, &alloc_size, nmemb, size)) {
         return NULL;
     }
-    return checked_malloc(cb, nmemb * size);
+    return checked_malloc(cb, alloc_size);
 }
 
 #if defined(__BIGGEST_ALIGNMENT__)
