@@ -374,7 +374,7 @@ static void musig_api_tests(void) {
         secp256k1_ge aggnonce_pt[2];
         secp256k1_musig_aggnonce_load(CTX, aggnonce_pt, &aggnonce);
         for (i = 0; i < 2; i++) {
-            secp256k1_ge_is_infinity(&aggnonce_pt[i]);
+            CHECK(secp256k1_ge_is_infinity(&aggnonce_pt[i]));
         }
     }
     CHECK(secp256k1_musig_nonce_agg(CTX, &aggnonce, pubnonce_ptr, 2) == 1);
@@ -676,7 +676,7 @@ static void musig_tweak_test_internal(void) {
 
     /* Compute Pi = f(Pj) + tweaki*G where where j = i-1 and try signing for
      * that key. If xonly is set to true, the function f normalizes the input
-     * point to have an even X-coordinate ("xonly-tweaking").
+     * point to have an even Y-coordinate ("xonly-tweaking").
      * Otherwise, the function f is the identity function. */
     for (i = 1; i <= N_TWEAKS; i++) {
         unsigned char tweak[32];

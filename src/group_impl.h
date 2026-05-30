@@ -450,7 +450,7 @@ static int secp256k1_ge_is_valid_var(const secp256k1_ge *a) {
     if (a->infinity) {
         return 0;
     }
-    /* y^2 = x^3 + 7 */
+    /* y^2 = x^3 + B */
     secp256k1_fe_sqr(&y2, &a->y);
     secp256k1_fe_sqr(&x3, &a->x); secp256k1_fe_mul(&x3, &x3, &a->x);
     secp256k1_fe_add_int(&x3, SECP256K1_B);
@@ -775,7 +775,7 @@ static void secp256k1_gej_add_ge(secp256k1_gej *r, const secp256k1_gej *a, const
      *      for lambda. Specifically (y1 - y2)/(x1 - x2). Where both these
      *      expressions for lambda are defined, they are equal, and can be
      *      obtained from each other by multiplication by (y1 + y2)/(y1 + y2)
-     *      then substitution of x^3 + 7 for y^2 (using the curve equation).
+     *      then substitution of x^3 + B for y^2 (using the curve equation).
      *      For all pairs of nonzero points (a, b) at least one is defined,
      *      so this covers everything.
      */
@@ -958,7 +958,7 @@ static int secp256k1_ge_x_on_curve_var(const secp256k1_fe *x) {
 static int secp256k1_ge_x_frac_on_curve_var(const secp256k1_fe *xn, const secp256k1_fe *xd) {
     /* We want to determine whether (xn/xd) is on the curve.
      *
-     * (xn/xd)^3 + 7 is square <=> xd*xn^3 + 7*xd^4 is square (multiplying by xd^4, a square).
+     * (xn/xd)^3 + B is square <=> xd*xn^3 + B*xd^4 is square (multiplying by xd^4, a square).
      */
      secp256k1_fe r, t;
      VERIFY_CHECK(!secp256k1_fe_normalizes_to_zero_var(xd));
@@ -969,8 +969,8 @@ static int secp256k1_ge_x_frac_on_curve_var(const secp256k1_fe *xn, const secp25
      secp256k1_fe_sqr(&t, xd); /* t = xd^2 */
      secp256k1_fe_sqr(&t, &t); /* t = xd^4 */
      VERIFY_CHECK(SECP256K1_B <= 31);
-     secp256k1_fe_mul_int(&t, SECP256K1_B); /* t = 7*xd^4 */
-     secp256k1_fe_add(&r, &t); /* r = xd*xn^3 + 7*xd^4 */
+     secp256k1_fe_mul_int(&t, SECP256K1_B); /* t = B*xd^4 */
+     secp256k1_fe_add(&r, &t); /* r = xd*xn^3 + B*xd^4 */
      return secp256k1_fe_is_square_var(&r);
 }
 

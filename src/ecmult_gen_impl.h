@@ -145,9 +145,9 @@ static void secp256k1_ecmult_gen(const secp256k1_ecmult_gen_context *ctx, secp25
      *
      * With that, we can rewrite comb(d, G/2) as:
      *
-     *     2^0 * (table(0, d>>0 & mask(0)) + ... + table(COMB_BLOCKS-1, d>>0 & mask(COMP_BLOCKS-1)))
-     *   + 2^1 * (table(0, d>>1 & mask(0)) + ... + table(COMB_BLOCKS-1, d>>1 & mask(COMP_BLOCKS-1)))
-     *   + 2^2 * (table(0, d>>2 & mask(0)) + ... + table(COMB_BLOCKS-1, d>>2 & mask(COMP_BLOCKS-1)))
+     *     2^0 * (table(0, d>>0 & mask(0)) + ... + table(COMB_BLOCKS-1, d>>0 & mask(COMB_BLOCKS-1)))
+     *   + 2^1 * (table(0, d>>1 & mask(0)) + ... + table(COMB_BLOCKS-1, d>>1 & mask(COMB_BLOCKS-1)))
+     *   + 2^2 * (table(0, d>>2 & mask(0)) + ... + table(COMB_BLOCKS-1, d>>2 & mask(COMB_BLOCKS-1)))
      *   + ...
      *   + 2^(COMB_SPACING-1) * (table(0, d>>(COMB_SPACING-1) & mask(0)) + ...)
      *

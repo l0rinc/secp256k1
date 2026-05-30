@@ -128,7 +128,7 @@ static void secp256k1_ellswift_xswiftec_frac_var(secp256k1_fe *xn, secp256k1_fe 
     secp256k1_fe_negate(xn, &n, 2);                              /* n = -u*(c1*s+c2*g)-u*(g+s) */
 
     VERIFY_CHECK(secp256k1_ge_x_frac_on_curve_var(xn, &p));
-    /* Return x3 = n/p = -(u*(c1*s+c2*g)/(g+s)+u) */
+    /* Return x1 = n/p = -(u*(c1*s+c2*g)/(g+s)+u) */
 }
 
 /** Decode ElligatorSwift encoding (u, t) to X coordinate. */
@@ -336,7 +336,7 @@ static void secp256k1_ellswift_xelligatorswift_var(const secp256k1_context *ctx,
     /* Number of 3-bit values in branch_hash left. */
     int branches_left = 0;
     /* Field elements u and branch values are extracted from RNG based on hasher for consecutive
-     * values of cnt. cnt==0 is first used to populate a pool of 64 4-bit branch values. The 64
+     * values of cnt. cnt==0 is first used to populate a pool of 64 3-bit branch values. The 64
      * cnt values that follow are used to generate field elements u. cnt==65 (and multiples
      * thereof) are used to repopulate the pool and start over, if that were ever necessary.
      * On average, 4 iterations are needed. */

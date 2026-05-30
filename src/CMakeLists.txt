@@ -5,7 +5,7 @@ set_property(TARGET secp256k1 PROPERTY PUBLIC_HEADER
   ${PROJECT_SOURCE_DIR}/include/secp256k1_preallocated.h
 )
 
-# Processing must be done in a topological sorting of the dependency graph
+# Processing must be done in a reverse topological sorting of the dependency graph
 # (dependent module first).
 if(SECP256K1_ENABLE_MODULE_ELLSWIFT)
   add_compile_definitions(ENABLE_MODULE_ELLSWIFT=1)

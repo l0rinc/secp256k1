@@ -425,7 +425,7 @@ SECP256K1_INLINE static void secp256k1_fe_mul_inner(uint32_t *r, const uint32_t 
     VERIFY_BITS(b[8], 30);
     VERIFY_BITS(b[9], 26);
 
-    /** [... a b c] is a shorthand for ... + a<<52 + b<<26 + c<<0 mod n.
+    /** [... a b c] is a shorthand for ... + a<<52 + b<<26 + c<<0 mod p.
      *  for 0 <= x <= 9, px is a shorthand for sum(a[i]*b[x-i], i=0..x).
      *  for 9 <= x <= 18, px is a shorthand for sum(a[i]*b[x-i], i=(x-9)..9)
      *  Note that [x 0 0 0 0 0 0 0 0 0 0] = [x*R1 x*R0].
@@ -745,7 +745,7 @@ SECP256K1_INLINE static void secp256k1_fe_sqr_inner(uint32_t *r, const uint32_t 
     VERIFY_BITS(a[8], 30);
     VERIFY_BITS(a[9], 26);
 
-    /** [... a b c] is a shorthand for ... + a<<52 + b<<26 + c<<0 mod n.
+    /** [... a b c] is a shorthand for ... + a<<52 + b<<26 + c<<0 mod p.
      *  px is a shorthand for sum(a[i]*a[x-i], i=0..x).
      *  Note that [x 0 0 0 0 0 0 0 0 0 0] = [x*R1 x*R0].
      */

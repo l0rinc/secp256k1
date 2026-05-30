@@ -69,7 +69,7 @@ static void hash_into_offset(bench_data* data, size_t x) {
 }
 
 /* Check correctness of the benchmark by computing
- * sum(outputs) ?= (sum(scalars_gen) + sum(seckeys)*sum(scalars))*G */
+ * sum(outputs) ?= (sum(scalars_gen) + sum(seckeys_i*scalars_i))*G */
 static void bench_ecmult_teardown_helper(bench_data* data, size_t* seckey_offset, size_t* scalar_offset, size_t* scalar_gen_offset, int iters) {
     int i;
     secp256k1_gej sum_output, tmp;
