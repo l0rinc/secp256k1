@@ -114,7 +114,7 @@ static int sign(const secp256k1_context* ctx, struct signer_secrets *signer_secr
     for (i = 0; i < N_SIGNERS; i++) {
         unsigned char seckey[32];
         unsigned char session_secrand[32];
-        /* Create random session ID. It is absolutely necessary that the session ID
+        /* Create random session randomness. It is absolutely necessary that it
          * is unique for every call of secp256k1_musig_nonce_gen. Otherwise
          * it's trivial for an attacker to extract the secret key! */
         if (!fill_random(session_secrand, sizeof(session_secrand))) {
