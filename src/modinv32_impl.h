@@ -510,7 +510,7 @@ static void secp256k1_modinv32_update_fg_30_var(int len, secp256k1_modinv32_sign
     gi = g->v[0];
     cf = (int64_t)u * fi + (int64_t)v * gi;
     cg = (int64_t)q * fi + (int64_t)r * gi;
-    /* Verify that the bottom 62 bits of the result are zero, and then throw them away. */
+    /* Verify that the bottom 30 bits of the result are zero, and then throw them away. */
     VERIFY_CHECK(((int32_t)cf & M30) == 0); cf >>= 30;
     VERIFY_CHECK(((int32_t)cg & M30) == 0); cg >>= 30;
     /* Now iteratively compute limb i=1..len of t*[f,g], and store them in output limb i-1 (shifting
