@@ -25,6 +25,7 @@
 #endif
 
 #define UNUSED(x) (void)(x)
+#define MAX_TEST_ITERATIONS (INT_MAX / 1000)
 
 /* Number of times certain tests will run */
 int COUNT = 16;
@@ -92,7 +93,7 @@ static void help(void) {
     printf("    --help, -h                           Show this help message\n");
     printf("    --list_tests, -l                     Display list of all available tests and modules\n");
     printf("    --jobs=<num>, -j=<num>               Number of parallel worker processes (default: 0 = sequential)\n");
-    printf("    --iterations=<num>, -i=<num>         Number of iterations for each test (default: 16)\n");
+    printf("    --iterations=<num>, -i=<num>         Number of iterations for each test (default: 16, max: %d)\n", MAX_TEST_ITERATIONS);
     printf("    --seed=<hex>                         Set a specific RNG seed (default: random)\n");
     printf("    --target=<test name>, -t=<name>      Run a specific test (can be provided multiple times)\n");
     printf("    --target=<module name>, -t=<module>  Run all tests within a specific module (can be provided multiple times)\n");
@@ -152,8 +153,8 @@ static int parse_iterations(const char* key, const char* value, struct tf_framew
         fprintf(stderr, "Invalid iteration count: %s\n", value);
         return -1;
     }
-    if (val <= 0 || val > INT_MAX) {
-        fprintf(stderr, "Iteration count out of range: %ld. Range: 1..%d\n", val, INT_MAX);
+    if (val <= 0 || val > MAX_TEST_ITERATIONS) {
+        fprintf(stderr, "Iteration count out of range: %ld. Range: 1..%d\n", val, MAX_TEST_ITERATIONS);
         return -1;
     }
     COUNT = (int) val;
