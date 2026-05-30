@@ -4606,7 +4606,7 @@ static void test_ecmult_target(const secp256k1_scalar* target, int mode) {
         secp256k1_ecmult_const(&ptj, &p, target);
     }
 
-    /* Add them all up: n1*P + n2*P + target*P = (n1+n2+target)*P = (n1+n1-n1-n2)*P = 0. */
+    /* Add them all up: n1*P + n2*P + target*P = (n1+n2+target)*P = (n1+n2-n1-n2)*P = 0. */
     secp256k1_gej_add_var(&ptj, &ptj, &p1j, NULL);
     secp256k1_gej_add_var(&ptj, &ptj, &p2j, NULL);
     CHECK(secp256k1_gej_is_infinity(&ptj));
