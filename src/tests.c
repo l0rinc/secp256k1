@@ -914,9 +914,9 @@ static uint64_t modinv2p64(uint64_t x) {
 }
 
 
-/* compute out = (a*b) mod m; if b=NULL, treat b=1; if m=NULL, treat m=infinity.
+/* compute out = (a*b) mod m; if b=NULL, treat b=1; if m=NULL, treat m=2^256.
  *
- * Out is a 512-bit number (represented as 32 uint16_t's in LE order). The other
+ * Out is a 256-bit number (represented as 16 uint16_t's in LE order). The other
  * arguments are 256-bit numbers (represented as 16 uint16_t's in LE order). */
 static void mulmod256(uint16_t* out, const uint16_t* a, const uint16_t* b, const uint16_t* m) {
     uint16_t mul[32];
