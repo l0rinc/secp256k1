@@ -411,7 +411,11 @@ int main(int argc, char** argv) {
     testrand_init(argc > 2 ? argv[2] : NULL);
 
     /* set up split processing */
-    if (argc > 4) {
+    if (argc == 4 || argc > 5) {
+        fprintf(stderr, "Usage: %s [count] [seed] [numcores] [thiscore]\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+    if (argc == 5) {
         int parsed_num_cores;
         int parsed_this_core;
         if (!parse_int_arg("numcores", argv[3], 1, INT_MAX, &parsed_num_cores)
