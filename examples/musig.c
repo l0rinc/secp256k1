@@ -39,24 +39,31 @@ struct signer {
 /* Create a key pair, store it in signer_secrets->keypair and signer->pubkey */
 static int create_keypair(const secp256k1_context* ctx, struct signer_secrets *signer_secrets, struct signer *signer) {
     unsigned char seckey[32];
+    int ret = 0;
 
     if (!fill_random(seckey, sizeof(seckey))) {
         printf("Failed to generate randomness\n");
-        return 0;
+        goto cleanup;
     }
     /* Try to create a keypair with a valid context. This only fails if the
      * secret key is zero or out of range (greater than secp256k1's order). Note
      * that the probability of this occurring is negligible with a properly
      * functioning random number generator. */
     if (!secp256k1_keypair_create(ctx, &signer_secrets->keypair, seckey)) {
-        return 0;
+        goto cleanup;
     }
     if (!secp256k1_keypair_pub(ctx, &signer->pubkey, &signer_secrets->keypair)) {
-        return 0;
+        goto cleanup;
     }
 
+    ret = 1;
+
+cleanup:
     secure_erase(seckey, sizeof(seckey));
-    return 1;
+    if (!ret) {
+        secure_erase(signer_secrets, sizeof(*signer_secrets));
+    }
+    return ret;
 }
 
 /* Tweak the pubkey corresponding to the provided keyagg cache, update the cache
@@ -114,23 +121,26 @@ static int sign(const secp256k1_context* ctx, struct signer_secrets *signer_secr
     for (i = 0; i < N_SIGNERS; i++) {
         unsigned char seckey[32];
         unsigned char session_secrand[32];
+        int ret;
         /* Create random session ID. It is absolutely necessary that the session ID
          * is unique for every call of secp256k1_musig_nonce_gen. Otherwise
          * it's trivial for an attacker to extract the secret key! */
         if (!fill_random(session_secrand, sizeof(session_secrand))) {
             return 0;
         }
-        if (!secp256k1_keypair_sec(ctx, seckey, &signer_secrets[i].keypair)) {
+        ret = secp256k1_keypair_sec(ctx, seckey, &signer_secrets[i].keypair);
+        if (!ret) {
+            secure_erase(seckey, sizeof(seckey));
             return 0;
         }
         /* Initialize session and create secret nonce for signing and public
          * nonce to send to the other signers. */
-        if (!secp256k1_musig_nonce_gen(ctx, &signer_secrets[i].secnonce, &signer[i].pubnonce, session_secrand, seckey, &signer[i].pubkey, msg32, NULL, NULL)) {
+        ret = secp256k1_musig_nonce_gen(ctx, &signer_secrets[i].secnonce, &signer[i].pubnonce, session_secrand, seckey, &signer[i].pubkey, msg32, NULL, NULL);
+        secure_erase(seckey, sizeof(seckey));
+        if (!ret) {
             return 0;
         }
         pubnonces[i] = &signer[i].pubnonce;
-
-        secure_erase(seckey, sizeof(seckey));
     }
 
     /* Communication round 1: Every signer sends their pubnonce to the
@@ -179,6 +189,8 @@ static int sign(const secp256k1_context* ctx, struct signer_secrets *signer_secr
 int main(void) {
     secp256k1_context* ctx;
     int i;
+    int n_signer_secrets = 0;
+    int ret = EXIT_FAILURE;
     struct signer_secrets signer_secrets[N_SIGNERS];
     struct signer signers[N_SIGNERS];
     const secp256k1_pubkey *pubkeys_ptr[N_SIGNERS];
@@ -194,8 +206,9 @@ int main(void) {
     for (i = 0; i < N_SIGNERS; i++) {
         if (!create_keypair(ctx, &signer_secrets[i], &signers[i])) {
             printf("FAILED\n");
-            return EXIT_FAILURE;
+            goto cleanup;
         }
+        n_signer_secrets = i + 1;
         pubkeys_ptr[i] = &signers[i].pubkey;
     }
     printf("ok\n");
@@ -209,7 +222,7 @@ int main(void) {
     fflush(stdout);
     if (!secp256k1_ec_pubkey_sort(ctx, pubkeys_ptr, N_SIGNERS)) {
         printf("FAILED\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     printf("ok\n");
 
@@ -220,7 +233,7 @@ int main(void) {
      * while providing a non-NULL agg_pk argument. */
     if (!secp256k1_musig_pubkey_agg(ctx, NULL, &cache, pubkeys_ptr, N_SIGNERS)) {
         printf("FAILED\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     printf("ok\n");
     printf("Tweaking................");
@@ -228,23 +241,24 @@ int main(void) {
     /* Optionally tweak the aggregate key */
     if (!tweak(ctx, &agg_pk, &cache)) {
         printf("FAILED\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     printf("ok\n");
     printf("Signing message.........");
     fflush(stdout);
     if (!sign(ctx, signer_secrets, signers, &cache, msg, sig)) {
         printf("FAILED\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     printf("ok\n");
     printf("Verifying signature.....");
     fflush(stdout);
     if (!secp256k1_schnorrsig_verify(ctx, sig, msg, 32, &agg_pk)) {
         printf("FAILED\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     printf("ok\n");
+    ret = EXIT_SUCCESS;
 
     /* It's best practice to try to clear secrets from memory after using them.
      * This is done because some bugs can allow an attacker to leak memory, for
@@ -253,9 +267,10 @@ int main(void) {
      *
      * Here we are preventing these writes from being optimized out, as any good compiler
      * will remove any writes that aren't used. */
-    for (i = 0; i < N_SIGNERS; i++) {
+cleanup:
+    for (i = 0; i < n_signer_secrets; i++) {
         secure_erase(&signer_secrets[i], sizeof(signer_secrets[i]));
     }
     secp256k1_context_destroy(ctx);
-    return EXIT_SUCCESS;
+    return ret;
 }
