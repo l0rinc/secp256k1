@@ -7468,10 +7468,41 @@ static void run_ecdsa_der_parse(void) {
     }
 }
 
+static void test_ecdsa_compact_parse_bounds(void) {
+    secp256k1_ecdsa_signature sig;
+    unsigned char compact[64] = {0};
+    unsigned char order_minus_one[32];
+    unsigned char order_plus_one[32];
+
+    memcpy(order_minus_one, secp256k1_group_order_bytes, sizeof(order_minus_one));
+    order_minus_one[31] -= 1;
+    memcpy(order_plus_one, secp256k1_group_order_bytes, sizeof(order_plus_one));
+    order_plus_one[31] += 1;
+
+    compact[63] = 1;
+    memcpy(&compact[0], order_minus_one, 32);
+    CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, compact) == 1);
+    memcpy(&compact[0], secp256k1_group_order_bytes, 32);
+    CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, compact) == 0);
+    memcpy(&compact[0], order_plus_one, 32);
+    CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, compact) == 0);
+
+    memset(compact, 0, sizeof(compact));
+    compact[31] = 1;
+    memcpy(&compact[32], order_minus_one, 32);
+    CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, compact) == 1);
+    memcpy(&compact[32], secp256k1_group_order_bytes, 32);
+    CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, compact) == 0);
+    memcpy(&compact[32], order_plus_one, 32);
+    CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, compact) == 0);
+}
+
 /* Tests several edge cases. */
 static void run_ecdsa_edge_cases(void) {
     int t;
     secp256k1_ecdsa_signature sig;
+
+    test_ecdsa_compact_parse_bounds();
 
     /* Test the case where ECDSA recomputes a point that is infinity. */
     {
