@@ -7,6 +7,8 @@
 #ifndef SECP256K1_BENCH_H
 #define SECP256K1_BENCH_H
 
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -151,9 +153,11 @@ static int get_iters(int default_iters) {
     char* env = getenv("SECP256K1_BENCH_ITERS");
     if (env) {
         char* endptr;
-        long int iters = strtol(env, &endptr, 0);
-        if (*endptr != '\0' || iters <= 0) {
-            printf("Error: Value of SECP256K1_BENCH_ITERS is not a positive integer: %s\n\n", env);
+        long int iters;
+        errno = 0;
+        iters = strtol(env, &endptr, 0);
+        if (*endptr != '\0' || errno == ERANGE || iters <= 0 || iters > INT_MAX) {
+            printf("Error: Value of SECP256K1_BENCH_ITERS is not a valid positive integer: %s\n\n", env);
             return 0;
         }
         return iters;
