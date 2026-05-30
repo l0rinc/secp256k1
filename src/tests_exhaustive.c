@@ -4,6 +4,8 @@
  * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
  ***********************************************************************/
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -40,6 +42,23 @@ static int count = 2;
 
 static uint32_t num_cores = 1;
 static uint32_t this_core = 0;
+
+static int parse_int_arg(const char *name, const char *value, int min, int max, int *out) {
+    char *endptr;
+    long parsed;
+    errno = 0;
+    parsed = strtol(value, &endptr, 0);
+    if (endptr == value || *endptr != '\0' || errno == ERANGE) {
+        fprintf(stderr, "Invalid %s: %s\n", name, value);
+        return 0;
+    }
+    if (parsed < min || parsed > max) {
+        fprintf(stderr, "%s out of range: %ld. Range: %d..%d\n", name, parsed, min, max);
+        return 0;
+    }
+    *out = (int)parsed;
+    return 1;
+}
 
 SECP256K1_INLINE static int skip_section(uint64_t* iter) {
     if (num_cores == 1) return 0;
@@ -381,7 +400,10 @@ int main(int argc, char** argv) {
 
     /* find iteration count */
     if (argc > 1) {
-        count = strtol(argv[1], NULL, 0);
+        if (!parse_int_arg("count", argv[1], 1, INT_MAX, &count)) {
+            fprintf(stderr, "Usage: %s [count] [seed] [numcores] [thiscore]\n", argv[0]);
+            return EXIT_FAILURE;
+        }
     }
     printf("test count = %i\n", count);
 
@@ -390,12 +412,16 @@ int main(int argc, char** argv) {
 
     /* set up split processing */
     if (argc > 4) {
-        num_cores = strtol(argv[3], NULL, 0);
-        this_core = strtol(argv[4], NULL, 0);
-        if (num_cores < 1 || this_core >= num_cores) {
+        int parsed_num_cores;
+        int parsed_this_core;
+        if (!parse_int_arg("numcores", argv[3], 1, INT_MAX, &parsed_num_cores)
+            || !parse_int_arg("thiscore", argv[4], 0, INT_MAX, &parsed_this_core)
+            || parsed_this_core >= parsed_num_cores) {
             fprintf(stderr, "Usage: %s [count] [seed] [numcores] [thiscore]\n", argv[0]);
             return EXIT_FAILURE;
         }
+        num_cores = (uint32_t)parsed_num_cores;
+        this_core = (uint32_t)parsed_this_core;
         printf("running tests for core %lu (out of [0..%lu])\n", (unsigned long)this_core, (unsigned long)num_cores - 1);
     }
 
