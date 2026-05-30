@@ -7068,7 +7068,7 @@ static void assign_big_endian(unsigned char *ptr, size_t ptrlen, uint32_t val) {
         if (shift >= 4) {
             ptr[i] = 0;
         } else {
-            ptr[i] = (val >> shift) & 0xFF;
+            ptr[i] = (val >> (8 * shift)) & 0xFF;
         }
     }
 }
