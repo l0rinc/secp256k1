@@ -152,7 +152,7 @@ SECP256K1_INLINE static void secp256k1_ecmult_table_get_ge_storage(secp256k1_ge 
     }
 }
 
-/** Convert a number to WNAF notation. The number becomes represented by sum(2^i * wnaf[i], i=0..bits),
+/** Convert a number to WNAF notation. The number becomes represented by sum(2^i * wnaf[i], i=0..len-1),
  *  with the following guarantees:
  *  - each wnaf[i] is either 0, or an odd integer between -(1<<(w-1) - 1) and (1<<(w-1) - 1)
  *  - two non-zero entries in wnaf are separated by at least w-1 zeroes.
@@ -428,7 +428,7 @@ static size_t secp256k1_strauss_max_points(const secp256k1_callback* error_callb
 }
 
 /** Convert a number to WNAF notation.
- *  The number becomes represented by sum(2^{wi} * wnaf[i], i=0..WNAF_SIZE(w)+1) - return_val.
+ *  The number becomes represented by sum(2^{wi} * wnaf[i], i=0..WNAF_SIZE(w)-1) - return_val.
  *  It has the following guarantees:
  *  - each wnaf[i] is either 0 or an odd integer between -(1 << w) and (1 << w)
  *  - the number of words set is always WNAF_SIZE(w)
