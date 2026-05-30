@@ -3391,7 +3391,7 @@ static void run_sqr(void) {
         secp256k1_fe_mul_int(&x, 2);
         secp256k1_fe_normalize(&x);
 
-        /* Check that (x+y)*(x-y) = x^2 - y*2 for some random values y */
+        /* Check that (x+y)*(x-y) = x^2 - y^2 for some random values y */
         testutil_random_fe_test(&y);
 
         lhs = x;
