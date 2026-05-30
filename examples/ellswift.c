@@ -34,12 +34,13 @@ int main(void) {
     unsigned char shared_secret1[32];
     unsigned char shared_secret2[32];
     int return_val;
+    int ret = EXIT_FAILURE;
 
     /* Create a secp256k1 context */
     ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!fill_random(randomize, sizeof(randomize))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     /* Randomizing the context is recommended to protect against side-channel
      * leakage. See `secp256k1_context_randomize` in secp256k1.h for more
@@ -50,14 +51,14 @@ int main(void) {
     /*** Generate secret keys ***/
     if (!fill_random(seckey1, sizeof(seckey1)) || !fill_random(seckey2, sizeof(seckey2))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     /* If the secret key is zero or out of range (greater than secp256k1's
     * order), we fail. Note that the probability of this occurring is negligible
     * with a properly functioning random number generator. */
     if (!secp256k1_ec_seckey_verify(ctx, seckey1) || !secp256k1_ec_seckey_verify(ctx, seckey2)) {
         printf("Generated secret key is invalid. This indicates an issue with the random number generator.\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Generate ElligatorSwift public keys. This should never fail with valid context and
@@ -65,7 +66,7 @@ int main(void) {
        optional, but recommended. */
     if (!fill_random(auxrand1, sizeof(auxrand1)) || !fill_random(auxrand2, sizeof(auxrand2))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     return_val = secp256k1_ellswift_create(ctx, ellswift_pubkey1, seckey1, auxrand1);
     assert(return_val);
@@ -103,8 +104,7 @@ int main(void) {
     printf("\n   Shared Secret: ");
     print_hex(shared_secret1, sizeof(shared_secret1));
 
-    /* This will clear everything from the context and free the memory */
-    secp256k1_context_destroy(ctx);
+    ret = EXIT_SUCCESS;
 
     /* It's best practice to try to clear secrets from memory after using them.
      * This is done because some bugs can allow an attacker to leak memory, for
@@ -113,10 +113,13 @@ int main(void) {
      *
      * Here we are preventing these writes from being optimized out, as any good compiler
      * will remove any writes that aren't used. */
+cleanup:
     secure_erase(seckey1, sizeof(seckey1));
     secure_erase(seckey2, sizeof(seckey2));
     secure_erase(shared_secret1, sizeof(shared_secret1));
     secure_erase(shared_secret2, sizeof(shared_secret2));
+    /* This will clear everything from the context and free the memory */
+    secp256k1_context_destroy(ctx);
 
-    return EXIT_SUCCESS;
+    return ret;
 }
