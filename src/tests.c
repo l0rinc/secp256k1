@@ -2397,7 +2397,6 @@ static void test_scalar_check_overflow(void) {
         0xFFFFFFFFUL, 0xFFFFFFFFUL, 0xFFFFFFFFUL, 0xFFFFFFFFUL,
         0xFFFFFFFFUL, 0xFFFFFFFFUL, 0xFFFFFFFFUL, 0xFFFFFFFFUL
     );
-
     int i;
 
     secp256k1_scalar_set_int(&s, 0);
@@ -2423,6 +2422,7 @@ static void test_scalar_check_overflow(void) {
 
         secp256k1_scalar_set_b32(&s, b32, &overflow);
         CHECK(overflow == expected_overflow);
+        CHECK(secp256k1_scalar_check_overflow(&s) == 0);
     }
 }
 
