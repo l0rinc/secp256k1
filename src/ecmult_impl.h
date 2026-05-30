@@ -318,7 +318,7 @@ static void secp256k1_ecmult_strauss_wnaf(const struct secp256k1_strauss_state *
     }
 
     if (ng) {
-        /* split ng into ng_1 and ng_128 (where gn = gn_1 + gn_128*2^128, and gn_1 and gn_128 are ~128 bit) */
+        /* split ng into ng_1 and ng_128 (where ng = ng_1 + ng_128*2^128, and ng_1 and ng_128 are ~128 bit) */
         secp256k1_scalar_split_128(&ng_1, &ng_128, ng);
 
         /* Build wnaf representation for ng_1 and ng_128 */
