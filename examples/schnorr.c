@@ -29,13 +29,14 @@ int main(void) {
     unsigned char signature[64];
     int is_signature_valid, is_signature_valid2;
     int return_val;
+    int ret = EXIT_FAILURE;
     secp256k1_xonly_pubkey pubkey;
     secp256k1_keypair keypair;
     /* Before we can call actual API functions, we need to create a "context". */
     secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!fill_random(randomize, sizeof(randomize))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     /* Randomizing the context is recommended to protect against side-channel
      * leakage See `secp256k1_context_randomize` in secp256k1.h for more
@@ -46,7 +47,7 @@ int main(void) {
     /*** Key Generation ***/
     if (!fill_random(seckey, sizeof(seckey))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     /* Try to create a keypair with a valid context. This only fails if the
      * secret key is zero or out of range (greater than secp256k1's order). Note
@@ -54,7 +55,7 @@ int main(void) {
      * functioning random number generator. */
     if (!secp256k1_keypair_create(ctx, &keypair, seckey)) {
         printf("Generated secret key is invalid. This indicates an issue with the random number generator.\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Extract the X-only public key from the keypair. We pass NULL for
@@ -91,7 +92,7 @@ int main(void) {
     /* Generate 32 bytes of randomness to use with BIP-340 schnorr signing. */
     if (!fill_random(auxiliary_rand, sizeof(auxiliary_rand))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Generate a Schnorr signature.
@@ -111,7 +112,7 @@ int main(void) {
      * be parsed correctly */
     if (!secp256k1_xonly_pubkey_parse(ctx, &pubkey, serialized_pubkey)) {
         printf("Failed parsing the public key\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Compute the tagged hash on the received messages using the same tag as the signer. */
@@ -130,9 +131,6 @@ int main(void) {
     printf("Signature: ");
     print_hex(signature, sizeof(signature));
 
-    /* This will clear everything from the context and free the memory */
-    secp256k1_context_destroy(ctx);
-
     /* Bonus example: if all we need is signature verification (and no key
        generation or signing), we don't need to use a context created via
        secp256k1_context_create(). We can simply use the static (i.e., global)
@@ -141,6 +139,7 @@ int main(void) {
     is_signature_valid2 = secp256k1_schnorrsig_verify(secp256k1_context_static,
                                                       signature, msg_hash, 32, &pubkey);
     assert(is_signature_valid2 == is_signature_valid);
+    ret = EXIT_SUCCESS;
 
     /* It's best practice to try to clear secrets from memory after using them.
      * This is done because some bugs can allow an attacker to leak memory, for
@@ -149,6 +148,10 @@ int main(void) {
      *
      * Here we are preventing these writes from being optimized out, as any good compiler
      * will remove any writes that aren't used. */
+cleanup:
     secure_erase(seckey, sizeof(seckey));
-    return EXIT_SUCCESS;
+    secure_erase(&keypair, sizeof(keypair));
+    /* This will clear everything from the context and free the memory */
+    secp256k1_context_destroy(ctx);
+    return ret;
 }

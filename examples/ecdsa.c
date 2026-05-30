@@ -35,13 +35,14 @@ int main(void) {
     size_t len;
     int is_signature_valid, is_signature_valid2;
     int return_val;
+    int ret = EXIT_FAILURE;
     secp256k1_pubkey pubkey;
     secp256k1_ecdsa_signature sig;
     /* Before we can call actual API functions, we need to create a "context". */
     secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     if (!fill_random(randomize, sizeof(randomize))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     /* Randomizing the context is recommended to protect against side-channel
      * leakage See `secp256k1_context_randomize` in secp256k1.h for more
@@ -52,14 +53,14 @@ int main(void) {
     /*** Key Generation ***/
     if (!fill_random(seckey, sizeof(seckey))) {
         printf("Failed to generate randomness\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
     /* If the secret key is zero or out of range (greater than secp256k1's
     * order), we fail. Note that the probability of this occurring is negligible
     * with a properly functioning random number generator. */
     if (!secp256k1_ec_seckey_verify(ctx, seckey)) {
         printf("Generated secret key is invalid. This indicates an issue with the random number generator.\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Public key creation using a valid context with a verified secret key should never fail */
@@ -93,13 +94,13 @@ int main(void) {
     /* Deserialize the signature. This will return 0 if the signature can't be parsed correctly. */
     if (!secp256k1_ecdsa_signature_parse_compact(ctx, &sig, serialized_signature)) {
         printf("Failed parsing the signature\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Deserialize the public key. This will return 0 if the public key can't be parsed correctly. */
     if (!secp256k1_ec_pubkey_parse(ctx, &pubkey, compressed_pubkey, sizeof(compressed_pubkey))) {
         printf("Failed parsing the public key\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     /* Verify a signature. This will return 1 if it's valid and 0 if it's not. */
@@ -113,9 +114,6 @@ int main(void) {
     printf("Signature: ");
     print_hex(serialized_signature, sizeof(serialized_signature));
 
-    /* This will clear everything from the context and free the memory */
-    secp256k1_context_destroy(ctx);
-
     /* Bonus example: if all we need is signature verification (and no key
        generation or signing), we don't need to use a context created via
        secp256k1_context_create(). We can simply use the static (i.e., global)
@@ -124,6 +122,7 @@ int main(void) {
     is_signature_valid2 = secp256k1_ecdsa_verify(secp256k1_context_static,
                                                  &sig, msg_hash, &pubkey);
     assert(is_signature_valid2 == is_signature_valid);
+    ret = EXIT_SUCCESS;
 
     /* It's best practice to try to clear secrets from memory after using them.
      * This is done because some bugs can allow an attacker to leak memory, for
@@ -132,7 +131,10 @@ int main(void) {
      *
      * Here we are preventing these writes from being optimized out, as any good compiler
      * will remove any writes that aren't used. */
+cleanup:
     secure_erase(seckey, sizeof(seckey));
+    /* This will clear everything from the context and free the memory */
+    secp256k1_context_destroy(ctx);
 
-    return EXIT_SUCCESS;
+    return ret;
 }
