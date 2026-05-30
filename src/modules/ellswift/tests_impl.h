@@ -239,6 +239,19 @@ void ellswift_xdh_test_vectors_tests(void) {
 /* Verify that secp256k1_ellswift_encode + decode roundtrips */
 void ellswift_encode_decode_roundtrip_tests(void) {
     int i;
+    {
+        unsigned char rnd32[32];
+        unsigned char ell64[64];
+        unsigned char zeros64[64] = { 0 };
+        secp256k1_pubkey pubkey;
+        testrand256(rnd32);
+        memset(ell64, 1, sizeof(ell64));
+        CHECK_ILLEGAL(CTX, secp256k1_ellswift_encode(CTX, ell64, NULL, rnd32));
+        CHECK(secp256k1_memcmp_var(ell64, zeros64, sizeof(ell64)) == 0);
+        memset(&pubkey, 1, sizeof(pubkey));
+        CHECK_ILLEGAL(CTX, secp256k1_ellswift_decode(CTX, &pubkey, NULL));
+        CHECK(secp256k1_memcmp_var(&pubkey, zeros64, sizeof(pubkey)) == 0);
+    }
     for (i = 0; i < 1000 * COUNT; i++) {
         unsigned char rnd32[32];
         unsigned char ell64[64];
@@ -507,6 +520,7 @@ void ellswift_xdh_bad_scalar_tests(void) {
     unsigned char s_good[32] = { 0 };
     unsigned char ell_a64[64], ell_b64[64];
     unsigned char output[32];
+    unsigned char zeros32[32] = { 0 };
     secp256k1_scalar rand_scalar;
 
     testutil_random_scalar_order(&rand_scalar);
@@ -524,6 +538,18 @@ void ellswift_xdh_bad_scalar_tests(void) {
     CHECK(secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_zero, 0, &ellswift_xdh_hash_x32, NULL) == 0);
     CHECK(secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, secp256k1_group_order_bytes, 0, &ellswift_xdh_hash_x32, NULL) == 0);
     CHECK(secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_overflow_plus1, 0, &ellswift_xdh_hash_x32, NULL) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK(secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_zero, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK_ILLEGAL(CTX, secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_good, 0, secp256k1_ellswift_xdh_hash_function_prefix, NULL));
+    CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK(secp256k1_ellswift_xdh_hash_function_bip324(output, NULL, ell_a64, ell_b64, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK(secp256k1_ellswift_xdh_hash_function_prefix(output, output, ell_a64, ell_b64, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, zeros32, sizeof(output)) == 0);
     CHECK(secp256k1_ellswift_xdh(CTX, output, ell_a64, ell_b64, s_overflow_minus1, 0, &ellswift_xdh_hash_x32, NULL) == 1);
 }
 

@@ -322,6 +322,7 @@ static void secp256k1_ellswift_prng(const secp256k1_hash_ctx *hash_ctx, unsigned
 
     /* Writing and finalizing together should trigger exactly one SHA256 compression. */
     VERIFY_CHECK(((hash.bytes) >> 6) == (blocks + 1));
+    secp256k1_sha256_clear(&hash);
 }
 
 /** Find an ElligatorSwift encoding (u, t) for X coordinate x, and random Y coordinate.
@@ -364,6 +365,7 @@ static void secp256k1_ellswift_xelligatorswift_var(const secp256k1_context *ctx,
         /* Find a remainder t, and return it if found. */
         if (EXPECT(secp256k1_ellswift_xswiftec_inv_var(t, x, &u, branch), 0)) break;
     }
+    secp256k1_memclear_explicit(branch_hash, sizeof(branch_hash));
 }
 
 /** Find an ElligatorSwift encoding (u, t) for point P.
@@ -394,6 +396,9 @@ int secp256k1_ellswift_encode(const secp256k1_context *ctx, unsigned char *ell64
     secp256k1_ge p;
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(ell64 != NULL);
+    if (pubkey == NULL || rnd32 == NULL) {
+        memset(ell64, 0, 64);
+    }
     ARG_CHECK(pubkey != NULL);
     ARG_CHECK(rnd32 != NULL);
 
@@ -412,6 +417,8 @@ int secp256k1_ellswift_encode(const secp256k1_context *ctx, unsigned char *ell64
         /* Compute ElligatorSwift encoding and construct output. */
         secp256k1_ellswift_elligatorswift_var(ctx, ell64, &t, &p, &hash); /* puts u in ell64[0..32] */
         secp256k1_fe_get_b32(ell64 + 32, &t); /* puts t in ell64[32..64] */
+        secp256k1_sha256_clear(&hash);
+        secp256k1_fe_clear(&t);
         return 1;
     }
     /* Only reached in case the provided pubkey is invalid. */
@@ -461,6 +468,8 @@ int secp256k1_ellswift_create(const secp256k1_context *ctx, unsigned char *ell64
     secp256k1_ellswift_elligatorswift_var(ctx, ell64, &t, &p, &hash); /* puts u in ell64[0..32] */
     secp256k1_fe_get_b32(ell64 + 32, &t); /* puts t in ell64[32..64] */
 
+    secp256k1_sha256_clear(&hash);
+    secp256k1_fe_clear(&t);
     secp256k1_memczero(ell64, 64, !ret);
     secp256k1_scalar_clear(&seckey_scalar);
 
@@ -472,6 +481,9 @@ int secp256k1_ellswift_decode(const secp256k1_context *ctx, secp256k1_pubkey *pu
     secp256k1_ge p;
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(pubkey != NULL);
+    if (ell64 == NULL) {
+        memset(pubkey, 0, sizeof(*pubkey));
+    }
     ARG_CHECK(ell64 != NULL);
 
     secp256k1_fe_set_b32_mod(&u, ell64);
@@ -485,6 +497,12 @@ int secp256k1_ellswift_decode(const secp256k1_context *ctx, secp256k1_pubkey *pu
 static int ellswift_xdh_hash_function_prefix_impl(const secp256k1_hash_ctx *hash_ctx, unsigned char *output, const unsigned char *x32, const unsigned char *ell_a64, const unsigned char *ell_b64, void *data) {
     secp256k1_sha256 sha;
 
+    if (output == NULL || x32 == NULL || ell_a64 == NULL || ell_b64 == NULL || data == NULL) {
+        if (output != NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
     secp256k1_sha256_initialize(&sha);
     secp256k1_sha256_write(hash_ctx, &sha, data, 64);
     secp256k1_sha256_write(hash_ctx, &sha, ell_a64, 64);
@@ -514,6 +532,12 @@ static int ellswift_xdh_hash_function_bip324_impl(const secp256k1_hash_ctx *hash
 
     (void)data;
 
+    if (output == NULL || x32 == NULL || ell_a64 == NULL || ell_b64 == NULL) {
+        if (output != NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
     secp256k1_ellswift_sha256_init_bip324(&sha);
     secp256k1_sha256_write(hash_ctx, &sha, ell_a64, 64);
     secp256k1_sha256_write(hash_ctx, &sha, ell_b64, 64);
@@ -538,13 +562,22 @@ int secp256k1_ellswift_xdh(const secp256k1_context *ctx, unsigned char *output, 
     secp256k1_fe xn, xd, px, u, t;
     unsigned char sx[32];
     const unsigned char* theirs64;
+    int known_hashfp = hashfp == secp256k1_ellswift_xdh_hash_function_bip324
+                    || hashfp == secp256k1_ellswift_xdh_hash_function_prefix;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output != NULL);
+    if (known_hashfp && (ell_a64 == NULL
+        || ell_b64 == NULL
+        || seckey32 == NULL
+        || (hashfp == secp256k1_ellswift_xdh_hash_function_prefix && data == NULL))) {
+        memset(output, 0, 32);
+    }
     ARG_CHECK(ell_a64 != NULL);
     ARG_CHECK(ell_b64 != NULL);
     ARG_CHECK(seckey32 != NULL);
     ARG_CHECK(hashfp != NULL);
+    ARG_CHECK(hashfp != secp256k1_ellswift_xdh_hash_function_prefix || data != NULL);
 
     /* Load remote public key (as fraction). */
     theirs64 = party ? ell_a64 : ell_b64;
@@ -575,6 +608,9 @@ int secp256k1_ellswift_xdh(const secp256k1_context *ctx, unsigned char *output, 
     secp256k1_fe_clear(&px);
     secp256k1_scalar_clear(&s);
 
+    if (known_hashfp) {
+        secp256k1_memczero(output, 32, overflow || !ret);
+    }
     return !!ret & !overflow;
 }
 

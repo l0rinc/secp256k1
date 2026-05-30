@@ -11,10 +11,17 @@
 #include "../../ecmult_const_impl.h"
 
 static int ecdh_hash_function_sha256_impl(const secp256k1_hash_ctx *hash_ctx, unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
-    unsigned char version = (y32[31] & 0x01) | 0x02;
+    unsigned char version;
     secp256k1_sha256 sha;
     (void)data;
 
+    if (output == NULL || x32 == NULL || y32 == NULL) {
+        if (output != NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
+    version = (y32[31] & 0x01) | 0x02;
     secp256k1_sha256_initialize(&sha);
     secp256k1_sha256_write(hash_ctx, &sha, &version, 1);
     secp256k1_sha256_write(hash_ctx, &sha, x32, 32);
@@ -42,10 +49,18 @@ int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const se
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output != NULL);
+    if (hashfp == NULL && (point == NULL || scalar == NULL)) {
+        memset(output, 0, 32);
+    }
     ARG_CHECK(point != NULL);
     ARG_CHECK(scalar != NULL);
 
-    secp256k1_pubkey_load(ctx, &pt, point);
+    if (!secp256k1_pubkey_load(ctx, &pt, point)) {
+        if (hashfp == NULL) {
+            memset(output, 0, 32);
+        }
+        return 0;
+    }
     secp256k1_scalar_set_b32(&s, scalar, &overflow);
 
     overflow |= secp256k1_scalar_is_zero(&s);
@@ -73,6 +88,9 @@ int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const se
     secp256k1_ge_clear(&pt);
     secp256k1_gej_clear(&res);
 
+    if (hashfp == NULL) {
+        secp256k1_memczero(output, 32, overflow || !ret);
+    }
     return !!ret & !overflow;
 }
 

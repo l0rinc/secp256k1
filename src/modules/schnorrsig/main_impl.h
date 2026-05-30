@@ -42,7 +42,11 @@ static int nonce_function_bip340_impl(const secp256k1_hash_ctx *hash_ctx, unsign
     unsigned char masked_key[32];
     int i;
 
-    if (algo == NULL) {
+    if (nonce32 == NULL || (msg == NULL && msglen != 0) || key32 == NULL || xonly_pk32 == NULL || algo == NULL ||
+            algolen >= SECP256K1_SHA256_MAX_SIZE || msglen >= SECP256K1_SHA256_MAX_SIZE - 128) {
+        if (nonce32 != NULL) {
+            memset(nonce32, 0, 32);
+        }
         return 0;
     }
 
@@ -132,9 +136,16 @@ static int secp256k1_schnorrsig_sign_internal(const secp256k1_context* ctx, unsi
     int ret = 1;
 
     VERIFY_CHECK(ctx != NULL);
-    ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(sig64 != NULL);
+    if (!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
+        || (msg == NULL && msglen != 0)
+        || msglen >= SECP256K1_SHA256_MAX_SIZE - 128
+        || keypair == NULL) {
+        memset(sig64, 0, 64);
+    }
+    ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
     ARG_CHECK(msg != NULL || msglen == 0);
+    ARG_CHECK(msglen < SECP256K1_SHA256_MAX_SIZE - 128);
     ARG_CHECK(keypair != NULL);
 
     ret &= secp256k1_keypair_load(ctx, &sk, &pk, keypair);
@@ -203,6 +214,13 @@ int secp256k1_schnorrsig_sign_custom(const secp256k1_context* ctx, unsigned char
     VERIFY_CHECK(ctx != NULL);
 
     if (extraparams != NULL) {
+        if (secp256k1_memcmp_var(extraparams->magic,
+                                 schnorrsig_extraparams_magic,
+                                 sizeof(extraparams->magic)) != 0) {
+            if (sig64 != NULL) {
+                memset(sig64, 0, 64);
+            }
+        }
         ARG_CHECK(secp256k1_memcmp_var(extraparams->magic,
                                        schnorrsig_extraparams_magic,
                                        sizeof(extraparams->magic)) == 0);
@@ -226,6 +244,7 @@ int secp256k1_schnorrsig_verify(const secp256k1_context* ctx, const unsigned cha
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig64 != NULL);
     ARG_CHECK(msg != NULL || msglen == 0);
+    ARG_CHECK(msglen < SECP256K1_SHA256_MAX_SIZE - 128);
     ARG_CHECK(pubkey != NULL);
 
     if (!secp256k1_fe_set_b32_limit(&rx, &sig64[0])) {

@@ -29,6 +29,7 @@ static void run_nonce_function_bip340_tests(void) {
     unsigned char algo[] = {'B', 'I', 'P', '0', '3', '4', '0', '/', 'n', 'o', 'n', 'c', 'e'};
     size_t algolen = sizeof(algo);
     secp256k1_sha256 sha_optimized;
+    const unsigned char zeros[32] = { 0 };
     unsigned char nonce[32], nonce_z[32];
     unsigned char msg[32];
     size_t msglen = sizeof(msg);
@@ -78,6 +79,10 @@ static void run_nonce_function_bip340_tests(void) {
     /* NULL algo is disallowed */
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, NULL, 0, NULL) == 0);
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, algolen, NULL) == 1);
+#if SIZE_MAX > 0xffffffff
+    CHECK(nonce_function_bip340(nonce, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, key, pk, algo, algolen, NULL) == 0);
+    CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, (size_t)SECP256K1_SHA256_MAX_SIZE, NULL) == 0);
+#endif
     /* Other algo is fine */
     testrand_bytes_test(algo, algolen);
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, algolen, NULL) == 1);
@@ -104,6 +109,20 @@ static void run_nonce_function_bip340_tests(void) {
     CHECK(nonce_function_bip340(nonce_z, msg, msglen, key, pk, algo, algolen, &aux_rand) == 1);
     CHECK(nonce_function_bip340(nonce, msg, msglen, key, pk, algo, algolen, NULL) == 1);
     CHECK(secp256k1_memcmp_var(nonce_z, nonce, 32) == 0);
+
+    CHECK(nonce_function_bip340(NULL, msg, msglen, key, pk, algo, algolen, NULL) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, NULL, msglen, key, pk, algo, algolen, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, msg, msglen, NULL, pk, algo, algolen, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, msg, msglen, key, NULL, algo, algolen, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    memset(nonce, 1, sizeof(nonce));
+    CHECK(nonce_function_bip340(nonce, NULL, 0, key, pk, algo, algolen, NULL) == 1);
+    CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) != 0);
 }
 
 static void test_schnorrsig_api(void) {
@@ -148,6 +167,9 @@ static void test_schnorrsig_api(void) {
     CHECK(secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypairs[0], NULL) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypairs[0], &invalid_extraparams));
     CHECK_ILLEGAL(STATIC_CTX, secp256k1_schnorrsig_sign_custom(STATIC_CTX, sig, msg, sizeof(msg), &keypairs[0], &extraparams));
+#if SIZE_MAX > 0xffffffff
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, &keypairs[0], &extraparams));
+#endif
 
     CHECK(secp256k1_schnorrsig_sign32(CTX, sig, msg, &keypairs[0], NULL) == 1);
     CHECK(secp256k1_schnorrsig_verify(CTX, sig, msg, sizeof(msg), &pk[0]) == 1);
@@ -156,6 +178,9 @@ static void test_schnorrsig_api(void) {
     CHECK(secp256k1_schnorrsig_verify(CTX, sig, NULL, 0, &pk[0]) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_verify(CTX, sig, msg, sizeof(msg), NULL));
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_verify(CTX, sig, msg, sizeof(msg), &zero_pk));
+#if SIZE_MAX > 0xffffffff
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_verify(CTX, sig, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, &pk[0]));
+#endif
 }
 
 /* Checks that hash initialized by secp256k1_schnorrsig_sha256_tagged has the
@@ -826,6 +851,12 @@ static void test_schnorrsig_sign_internal(void) {
     /* Check that deprecated alias gives the same result */
     CHECK(secp256k1_schnorrsig_sign(CTX, sig2, msg, &keypair, NULL) == 1);
     CHECK(secp256k1_memcmp_var(sig, sig2, sizeof(sig)) == 0);
+    memset(sig, 1, sizeof(sig));
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign32(CTX, sig, NULL, &keypair, NULL));
+    CHECK(secp256k1_memcmp_var(sig, zeros64, sizeof(sig)) == 0);
+    memset(sig, 1, sizeof(sig));
+    CHECK_ILLEGAL(STATIC_CTX, secp256k1_schnorrsig_sign32(STATIC_CTX, sig, msg, &keypair, NULL));
+    CHECK(secp256k1_memcmp_var(sig, zeros64, sizeof(sig)) == 0);
 
     /* Test different nonce functions */
     CHECK(secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypair, &extraparams) == 1);
@@ -850,6 +881,11 @@ static void test_schnorrsig_sign_internal(void) {
     CHECK(secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypair, &extraparams) == 1);
     CHECK(secp256k1_schnorrsig_sign32(CTX, sig2, msg, &keypair, extraparams.ndata) == 1);
     CHECK(secp256k1_memcmp_var(sig, sig2, sizeof(sig)) == 0);
+
+    memset(sig, 1, sizeof(sig));
+    extraparams.magic[0] ^= 1;
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &keypair, &extraparams));
+    CHECK(secp256k1_memcmp_var(sig, zeros64, sizeof(sig)) == 0);
 }
 
 DEFINE_SHA256_TRANSFORM_PROBE(sha256_schnorrsig)
