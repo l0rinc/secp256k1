@@ -489,8 +489,9 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_nonce_process(
  *  For signing to succeed, the secnonce provided to this function must have
  *  been generated for the provided keypair. This means that when signing for a
  *  keypair consisting of a seckey and pubkey, the secnonce must have been
- *  created by calling musig_nonce_gen with that pubkey. Otherwise, the
- *  illegal_callback is called.
+ *  created by calling musig_nonce_gen with that pubkey or
+ *  musig_nonce_gen_counter with that keypair. Otherwise, the illegal_callback
+ *  is called.
  *
  *  This function does not verify the output partial signature, deviating from
  *  the BIP 327 specification. It is recommended to verify the output partial
