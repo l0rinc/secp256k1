@@ -30,7 +30,7 @@ static void print_table(FILE* fp, int blocks, int teeth) {
     int outer;
     size_t inner;
 
-    secp256k1_ge_storage* table = checked_malloc(&default_error_callback, blocks * points * sizeof(secp256k1_ge_storage));
+    secp256k1_ge_storage* table = checked_malloc_array(&default_error_callback, (size_t)blocks * points, sizeof(*table));
     secp256k1_ecmult_gen_compute_table(table, &secp256k1_ge_const_g, blocks, teeth, spacing);
 
     fprintf(fp, "#elif (COMB_BLOCKS == %d) && (COMB_TEETH == %d) && (COMB_SPACING == %d)\n", blocks, teeth, spacing);

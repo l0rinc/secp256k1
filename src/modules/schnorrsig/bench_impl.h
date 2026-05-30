@@ -51,18 +51,18 @@ static void run_schnorrsig_bench(int iters, int argc, char** argv) {
     int d = argc == 1;
 
     data.ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-    data.keypairs = malloc(iters * sizeof(secp256k1_keypair *));
-    data.pk = malloc(iters * sizeof(unsigned char *));
-    data.msgs = malloc(iters * sizeof(unsigned char *));
-    data.sigs = malloc(iters * sizeof(unsigned char *));
+    data.keypairs = (const secp256k1_keypair **)checked_malloc_array(&default_error_callback, iters, sizeof(*data.keypairs));
+    data.pk = (const unsigned char **)checked_malloc_array(&default_error_callback, iters, sizeof(*data.pk));
+    data.msgs = (const unsigned char **)checked_malloc_array(&default_error_callback, iters, sizeof(*data.msgs));
+    data.sigs = (const unsigned char **)checked_malloc_array(&default_error_callback, iters, sizeof(*data.sigs));
 
     CHECK(MSGLEN >= 4);
     for (i = 0; i < iters; i++) {
         unsigned char sk[32];
-        unsigned char *msg = malloc(MSGLEN);
-        unsigned char *sig = malloc(64);
-        secp256k1_keypair *keypair = malloc(sizeof(*keypair));
-        unsigned char *pk_char = malloc(32);
+        unsigned char *msg = (unsigned char *)checked_malloc(&default_error_callback, MSGLEN);
+        unsigned char *sig = (unsigned char *)checked_malloc(&default_error_callback, 64);
+        secp256k1_keypair *keypair = (secp256k1_keypair *)checked_malloc(&default_error_callback, sizeof(*keypair));
+        unsigned char *pk_char = (unsigned char *)checked_malloc(&default_error_callback, 32);
         secp256k1_xonly_pubkey pk;
         msg[0] = sk[0] = i;
         msg[1] = sk[1] = i >> 8;

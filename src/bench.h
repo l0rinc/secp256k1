@@ -111,6 +111,14 @@ static void run_benchmark(char *name, void (*benchmark)(void*, int), void (*setu
     printf("\n");
 }
 
+static SECP256K1_INLINE int bench_iteration_count_mul(size_t iters, size_t multiplier) {
+    if (multiplier != 0 && iters > (size_t)INT_MAX / multiplier) {
+        fprintf(stderr, "Error: benchmark iteration count is out of range\n");
+        exit(EXIT_FAILURE);
+    }
+    return (int)(iters * multiplier);
+}
+
 static int have_flag(int argc, char** argv, char *flag) {
     char** argm = argv + argc;
     argv++;

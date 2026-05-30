@@ -17,9 +17,9 @@
 static void secp256k1_ecmult_gen_compute_table(secp256k1_ge_storage* table, const secp256k1_ge* gen, int blocks, int teeth, int spacing) {
     size_t points = ((size_t)1) << (teeth - 1);
     size_t points_total = points * blocks;
-    secp256k1_ge* prec = checked_malloc(&default_error_callback, points_total * sizeof(*prec));
-    secp256k1_gej* ds = checked_malloc(&default_error_callback, teeth * sizeof(*ds));
-    secp256k1_gej* vs = checked_malloc(&default_error_callback, points_total * sizeof(*vs));
+    secp256k1_ge* prec = checked_malloc_array(&default_error_callback, points_total, sizeof(*prec));
+    secp256k1_gej* ds = checked_malloc_array(&default_error_callback, teeth, sizeof(*ds));
+    secp256k1_gej* vs = checked_malloc_array(&default_error_callback, points_total, sizeof(*vs));
     secp256k1_gej u;
     size_t vs_pos = 0;
     secp256k1_scalar half;

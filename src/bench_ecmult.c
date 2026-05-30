@@ -211,7 +211,7 @@ static void run_ecmult_bench(bench_data* data, int iters) {
     run_benchmark(str, bench_ecmult_0p_g, bench_ecmult_setup, bench_ecmult_0p_g_teardown, data, 10, iters);
     /* ecmult with generator and non-generator point. The reported time is per point. */
     sprintf(str, "ecmult_1p_g");
-    run_benchmark(str, bench_ecmult_1p_g, bench_ecmult_setup, bench_ecmult_1p_g_teardown, data, 10, 2*iters);
+    run_benchmark(str, bench_ecmult_1p_g, bench_ecmult_setup, bench_ecmult_1p_g_teardown, data, 10, bench_iteration_count_mul(iters, 2));
 }
 
 static int bench_ecmult_multi_callback(secp256k1_scalar* sc, secp256k1_ge* ge, size_t idx, void* arg) {
@@ -303,7 +303,7 @@ static void run_ecmult_multi_bench(bench_data* data, size_t count, int includes_
     } else {
         sprintf(str, "ecmult_multi_%ip", (int)count);
     }
-    run_benchmark(str, bench_ecmult_multi, bench_ecmult_multi_setup, bench_ecmult_multi_teardown, data, 10, count * iters);
+    run_benchmark(str, bench_ecmult_multi, bench_ecmult_multi_setup, bench_ecmult_multi_teardown, data, 10, bench_iteration_count_mul(iters, count));
 }
 
 int main(int argc, char **argv) {
@@ -350,13 +350,13 @@ int main(int argc, char **argv) {
     }
 
     /* Allocate stuff */
-    data.scalars = malloc(sizeof(secp256k1_scalar) * POINTS);
-    data.seckeys = malloc(sizeof(secp256k1_scalar) * POINTS);
-    data.pubkeys = malloc(sizeof(secp256k1_ge) * POINTS);
-    data.pubkeys_gej = malloc(sizeof(secp256k1_gej) * POINTS);
-    data.expected_output = malloc(sizeof(secp256k1_gej) * (iters + 1));
-    data.output = malloc(sizeof(secp256k1_gej) * (iters + 1));
-    data.output_xonly = malloc(sizeof(secp256k1_fe) * (iters + 1));
+    data.scalars = checked_malloc_array(&default_error_callback, POINTS, sizeof(*data.scalars));
+    data.seckeys = checked_malloc_array(&default_error_callback, POINTS, sizeof(*data.seckeys));
+    data.pubkeys = checked_malloc_array(&default_error_callback, POINTS, sizeof(*data.pubkeys));
+    data.pubkeys_gej = checked_malloc_array(&default_error_callback, POINTS, sizeof(*data.pubkeys_gej));
+    data.expected_output = checked_malloc_array(&default_error_callback, (size_t)iters + 1, sizeof(*data.expected_output));
+    data.output = checked_malloc_array(&default_error_callback, (size_t)iters + 1, sizeof(*data.output));
+    data.output_xonly = checked_malloc_array(&default_error_callback, (size_t)iters + 1, sizeof(*data.output_xonly));
 
     /* Generate a set of scalars, and private/public keypairs. */
     secp256k1_gej_set_ge(&data.pubkeys_gej[0], &secp256k1_ge_const_g);
