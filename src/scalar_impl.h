@@ -243,7 +243,7 @@ static void secp256k1_scalar_split_lambda(secp256k1_scalar * SECP256K1_RESTRICT 
  *
  *    |k2|
  *  =   {definition of k2}
- *    |- c1*a1 - c2*a2|
+ *    |- c1*b1 - c2*b2|
  *  =   {(b1*b2 - b1*b2)/n = 0}
  *    |k*(b1*b2 - b1*b2)/n - c1*b1 - c2*b2|
  *  =
