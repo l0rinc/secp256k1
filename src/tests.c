@@ -7255,13 +7255,49 @@ static int test_ecdsa_der_parse(const unsigned char *sig, size_t siglen, int cer
 static void assign_big_endian(unsigned char *ptr, size_t ptrlen, uint32_t val) {
     size_t i;
     for (i = 0; i < ptrlen; i++) {
-        int shift = ptrlen - 1 - i;
-        if (shift >= 4) {
+        int shift = 8 * (ptrlen - 1 - i);
+        if (shift >= 32) {
             ptr[i] = 0;
         } else {
             ptr[i] = (val >> shift) & 0xFF;
         }
     }
+}
+
+static void test_ecdsa_der_lax_long_form_lengths(void) {
+    /* Strict DER rejects non-minimal long-form lengths, but lax DER accepts
+     * them and normalizes the same integers. */
+    unsigned char sig[16];
+    unsigned char compact[64] = { 0 };
+    unsigned char expected[64] = { 0 };
+    secp256k1_ecdsa_signature parsed;
+    size_t len = 0;
+
+    sig[len++] = 0x30;
+    sig[len++] = 0x82;
+    assign_big_endian(sig + len, 2, 12);
+    len += 2;
+    sig[len++] = 0x02;
+    sig[len++] = 0x82;
+    assign_big_endian(sig + len, 2, 2);
+    len += 2;
+    sig[len++] = 0x00;
+    sig[len++] = 0x80;
+    sig[len++] = 0x02;
+    sig[len++] = 0x82;
+    assign_big_endian(sig + len, 2, 2);
+    len += 2;
+    sig[len++] = 0x00;
+    sig[len++] = 0x80;
+    CHECK(len == sizeof(sig));
+
+    expected[31] = 0x80;
+    expected[63] = 0x80;
+
+    CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &parsed, sig, sizeof(sig)) == 0);
+    CHECK(ecdsa_signature_parse_der_lax(CTX, &parsed, sig, sizeof(sig)) == 1);
+    CHECK(secp256k1_ecdsa_signature_serialize_compact(CTX, compact, &parsed) == 1);
+    CHECK(secp256k1_memcmp_var(compact, expected, sizeof(compact)) == 0);
 }
 
 static void damage_array(unsigned char *sig, size_t *len) {
@@ -7439,6 +7475,7 @@ static void random_ber_signature(unsigned char *sig, size_t *len, int* certainly
 
 static void run_ecdsa_der_parse(void) {
     int i,j;
+    test_ecdsa_der_lax_long_form_lengths();
     for (i = 0; i < 200 * COUNT; i++) {
         unsigned char buffer[2048];
         size_t buflen = 0;
