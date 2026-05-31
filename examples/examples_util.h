@@ -42,8 +42,12 @@
 /* Returns 1 on success, and 0 on failure. */
 static int fill_random(unsigned char* data, size_t size) {
 #if defined(_WIN32)
-    NTSTATUS res = BCryptGenRandom(NULL, data, size, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    if (res != STATUS_SUCCESS || size > ULONG_MAX) {
+    NTSTATUS res;
+    if (size > ULONG_MAX) {
+        return 0;
+    }
+    res = BCryptGenRandom(NULL, data, (ULONG)size, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (res != STATUS_SUCCESS) {
         return 0;
     } else {
         return 1;
