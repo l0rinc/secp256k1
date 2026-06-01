@@ -163,7 +163,7 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
 
-    /* The tweak is not treated as a secret in keypair_tweak_add */
+    /* The tweak is not treated as a secret in keypair_xonly_tweak_add. */
     SECP256K1_CHECKMEM_DEFINE(msg, 32);
     ret = secp256k1_keypair_xonly_tweak_add(ctx, &keypair, msg);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));

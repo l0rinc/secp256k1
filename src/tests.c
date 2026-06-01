@@ -914,9 +914,9 @@ static uint64_t modinv2p64(uint64_t x) {
 }
 
 
-/* compute out = (a*b) mod m; if b=NULL, treat b=1; if m=NULL, treat m=infinity.
+/* compute out = (a*b) mod m; if b=NULL, treat b=1; if m=NULL, treat m=2^256.
  *
- * Out is a 512-bit number (represented as 32 uint16_t's in LE order). The other
+ * Out is a 256-bit number (represented as 16 uint16_t's in LE order). The other
  * arguments are 256-bit numbers (represented as 16 uint16_t's in LE order). */
 static void mulmod256(uint16_t* out, const uint16_t* a, const uint16_t* b, const uint16_t* m) {
     uint16_t mul[32];
@@ -1896,7 +1896,7 @@ static void rshift256(uint16_t* out, const uint16_t* a, int n, int sign_extend) 
     }
 }
 
-/* Load a 64-bit unsigned integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
+/* Load a 64-bit integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
 static void load256u64(uint16_t* out, uint64_t v, int is_signed) {
     int i;
     uint64_t sign = is_signed && (v >> 63) ? UINT64_MAX : 0;
@@ -1908,7 +1908,7 @@ static void load256u64(uint16_t* out, uint64_t v, int is_signed) {
     }
 }
 
-/* Load a 128-bit unsigned integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
+/* Load a 128-bit integer into an array of 16 uint16_t's in LE order representing a 256-bit value. */
 static void load256two64(uint16_t* out, uint64_t hi, uint64_t lo, int is_signed) {
     int i;
     uint64_t sign = is_signed && (hi >> 63) ? UINT64_MAX : 0;
@@ -1923,7 +1923,7 @@ static void load256two64(uint16_t* out, uint64_t hi, uint64_t lo, int is_signed)
     }
 }
 
-/* Check whether the 256-bit value represented by array of 16-bit values is in range -2^127 < v < 2^127. */
+/* Check whether the 256-bit value represented by array of 16-bit values is in range -2^127 <= v < 2^127. */
 static int int256is127(const uint16_t* v) {
     int all_0 = ((v[7] & 0x8000) == 0), all_1 = ((v[7] & 0x8000) == 0x8000);
     int i;
@@ -3391,7 +3391,7 @@ static void run_sqr(void) {
         secp256k1_fe_mul_int(&x, 2);
         secp256k1_fe_normalize(&x);
 
-        /* Check that (x+y)*(x-y) = x^2 - y*2 for some random values y */
+        /* Check that (x+y)*(x-y) = x^2 - y^2 for some random values y */
         testutil_random_fe_test(&y);
 
         lhs = x;
@@ -4606,7 +4606,7 @@ static void test_ecmult_target(const secp256k1_scalar* target, int mode) {
         secp256k1_ecmult_const(&ptj, &p, target);
     }
 
-    /* Add them all up: n1*P + n2*P + target*P = (n1+n2+target)*P = (n1+n1-n1-n2)*P = 0. */
+    /* Add them all up: n1*P + n2*P + target*P = (n1+n2+target)*P = (n1+n2-n1-n2)*P = 0. */
     secp256k1_gej_add_var(&ptj, &ptj, &p1j, NULL);
     secp256k1_gej_add_var(&ptj, &ptj, &p2j, NULL);
     CHECK(secp256k1_gej_is_infinity(&ptj));
@@ -7068,7 +7068,7 @@ static void assign_big_endian(unsigned char *ptr, size_t ptrlen, uint32_t val) {
         if (shift >= 4) {
             ptr[i] = 0;
         } else {
-            ptr[i] = (val >> shift) & 0xFF;
+            ptr[i] = (val >> (8 * shift)) & 0xFF;
         }
     }
 }

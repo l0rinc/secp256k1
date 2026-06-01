@@ -59,7 +59,7 @@ static void bench_setup(void* arg) {
             0x3b, 0x3d, 0x43, 0x47, 0x49, 0x4f, 0x53, 0x59,
             0x61, 0x65, 0x67, 0x6b, 0x6d, 0x71, 0x7f, 0x83
         },
-        /* Initializer for scalar[1], fe[1], first half of data, the X coordinate of ge[1],
+        /* Initializer for scalar[1], fe[1], second half of data, the X coordinate of ge[1],
            and the (implied affine) X coordinate of gej[1]. */
         {
             0x82, 0x83, 0x85, 0x87, 0x8b, 0x8d, 0x81, 0x83,

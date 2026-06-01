@@ -46,7 +46,7 @@ extern "C" {
  *  Args: ctx:        pointer to a context object (not secp256k1_context_static).
  *  Out: privkey:     pointer to an array for storing the private key in BER.
  *                    Should have space for 279 bytes, and cannot be NULL.
- *       privkeylen:  Pointer to an int where the length of the private key in
+ *       privkeylen:  Pointer to a size_t where the length of the private key in
  *                    privkey will be stored.
  *  In:  seckey:      pointer to a 32-byte secret key to export.
  *       compressed:  1 if the key should be exported in
@@ -57,7 +57,7 @@ extern "C" {
  *  simple 32-byte private keys are sufficient.
  *
  *  Note that this function does not guarantee correct DER output. It is
- *  guaranteed to be parsable by secp256k1_ec_privkey_import_der
+ *  guaranteed to be parsable by ec_privkey_import_der
  */
 SECP256K1_WARN_UNUSED_RESULT int ec_privkey_export_der(
     const secp256k1_context* ctx,
