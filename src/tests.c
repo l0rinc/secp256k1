@@ -3076,6 +3076,48 @@ static void run_fe_equal_magnitude_boundaries(void) {
     }
 }
 
+/* secp256k1_fe_equal(a, b) accepts a with magnitude up to 1 and b with magnitude
+ * up to 30 (see the contract in src/field.h). It negates a (raising its magnitude
+ * to 2) and adds b, and secp256k1_fe_add requires the operand magnitudes to sum to
+ * at most 32, so b's true maximum magnitude is 30, not 31. This pins that exact
+ * boundary: at magnitude 30 the comparison must work and return the correct
+ * result. Bumping the magnitude-30 constructions below to 31 aborts inside
+ * secp256k1_fe_add (./src/field_impl.h: r->magnitude + a->magnitude <= 32) under
+ * VERIFY, which is the boundary bug this guards against. */
+static void run_fe_equal_magnitude(void) {
+    secp256k1_fe a, b, zero_mag29;
+    int i;
+
+    /* zero_mag29 = 0 (mod p) carried at magnitude 29; adding it to a magnitude-1
+     * element leaves the value unchanged but raises its magnitude to 30. */
+    secp256k1_fe_set_int(&zero_mag29, 0);
+    secp256k1_fe_negate(&zero_mag29, &zero_mag29, 0); /* 0 (mod p), magnitude 1 */
+    secp256k1_fe_mul_int_unchecked(&zero_mag29, 29);  /* 0 (mod p), magnitude 29 */
+#ifdef VERIFY
+    CHECK(zero_mag29.magnitude == 29);
+#endif
+
+    for (i = 1; i <= 16; i++) {
+        secp256k1_fe_set_int(&a, i);
+
+        /* Equal case: b has the same value as a, carried at magnitude 30. */
+        secp256k1_fe_set_int(&b, i);
+        secp256k1_fe_add(&b, &zero_mag29);
+#ifdef VERIFY
+        CHECK(a.magnitude == 1 && b.magnitude == 30);
+#endif
+        CHECK(secp256k1_fe_equal(&a, &b));
+
+        /* Unequal case: b differs from a, still carried at magnitude 30. */
+        secp256k1_fe_set_int(&b, i + 1);
+        secp256k1_fe_add(&b, &zero_mag29);
+#ifdef VERIFY
+        CHECK(b.magnitude == 30);
+#endif
+        CHECK(!secp256k1_fe_equal(&a, &b));
+    }
+}
+
 static void run_field_convert(void) {
     static const unsigned char b32[32] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -7987,6 +8029,7 @@ static const struct tf_test_entry tests_field[] = {
     CASE(field_half),
     CASE(field_misc),
     CASE(fe_equal_magnitude_boundaries),
+    CASE(fe_equal_magnitude),
     CASE(field_convert),
     CASE(field_be32_overflow),
     CASE(fe_mul),
