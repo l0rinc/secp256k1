@@ -56,19 +56,25 @@ static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
     uint32_t m;
+    uint64_t c;
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
-    /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL; m = t2;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL; m &= t3;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL; m &= t4;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL; m &= t5;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL; m &= t6;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL; m &= t7;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL; m &= t8;
+    /* The first pass ensures the magnitude is 1. A 64-bit carry accumulator is
+     * used because at the maximum magnitude (32) the limbs reach 2*32*(2^26-1),
+     * leaving no headroom in a uint32 to absorb the reduction/carry; a plain
+     * uint32 chain would overflow and silently corrupt the result. */
+    c = (uint64_t)t0 + x * 0x3D1UL;
+    t0 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += (uint64_t)t1 + ((uint32_t)x << 6);
+    t1 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t2; t2 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m  = t2;
+    c += t3; t3 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t3;
+    c += t4; t4 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t4;
+    c += t5; t5 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t5;
+    c += t6; t6 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t6;
+    c += t7; t7 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t7;
+    c += t8; t8 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t8;
+    t9 += (uint32_t)c;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
@@ -104,19 +110,25 @@ static void secp256k1_fe_impl_normalize_weak(secp256k1_fe *r) {
              t5 = r->n[5], t6 = r->n[6], t7 = r->n[7], t8 = r->n[8], t9 = r->n[9];
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
+    uint64_t c;
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
-    /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL;
+    /* The first pass ensures the magnitude is 1. A 64-bit carry accumulator is
+     * used because at the maximum magnitude (32) the limbs reach 2*32*(2^26-1),
+     * leaving no headroom in a uint32 to absorb the reduction/carry; a plain
+     * uint32 chain would overflow and silently corrupt the result. */
+    c = (uint64_t)t0 + x * 0x3D1UL;
+    t0 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += (uint64_t)t1 + ((uint32_t)x << 6);
+    t1 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t2; t2 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t3; t3 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t4; t4 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t5; t5 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t6; t6 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t7; t7 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t8; t8 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    t9 += (uint32_t)c;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
@@ -131,19 +143,25 @@ static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
     uint32_t m;
+    uint64_t c;
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
-    /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL; m = t2;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL; m &= t3;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL; m &= t4;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL; m &= t5;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL; m &= t6;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL; m &= t7;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL; m &= t8;
+    /* The first pass ensures the magnitude is 1. A 64-bit carry accumulator is
+     * used because at the maximum magnitude (32) the limbs reach 2*32*(2^26-1),
+     * leaving no headroom in a uint32 to absorb the reduction/carry; a plain
+     * uint32 chain would overflow and silently corrupt the result. */
+    c = (uint64_t)t0 + x * 0x3D1UL;
+    t0 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += (uint64_t)t1 + ((uint32_t)x << 6);
+    t1 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26;
+    c += t2; t2 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m  = t2;
+    c += t3; t3 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t3;
+    c += t4; t4 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t4;
+    c += t5; t5 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t5;
+    c += t6; t6 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t6;
+    c += t7; t7 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t7;
+    c += t8; t8 = (uint32_t)c & 0x3FFFFFFUL; c >>= 26; m &= t8;
+    t9 += (uint32_t)c;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
