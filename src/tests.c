@@ -3059,6 +3059,48 @@ static int fe_equal(const secp256k1_fe *a, const secp256k1_fe *b) {
     return secp256k1_fe_equal(&an, &bn);
 }
 
+/* secp256k1_fe_equal(a, b) accepts a with magnitude up to 1 and b with magnitude
+ * up to 30 (see the contract in src/field.h). It negates a (raising its magnitude
+ * to 2) and adds b, and secp256k1_fe_add requires the operand magnitudes to sum to
+ * at most 32, so b's true maximum magnitude is 30, not 31. This pins that exact
+ * boundary: at magnitude 30 the comparison must work and return the correct
+ * result. Bumping the magnitude-30 constructions below to 31 aborts inside
+ * secp256k1_fe_add (./src/field_impl.h: r->magnitude + a->magnitude <= 32) under
+ * VERIFY, which is the boundary bug this guards against. */
+static void run_fe_equal_magnitude(void) {
+    secp256k1_fe a, b, zero_mag29;
+    int i;
+
+    /* zero_mag29 = 0 (mod p) carried at magnitude 29; adding it to a magnitude-1
+     * element leaves the value unchanged but raises its magnitude to 30. */
+    secp256k1_fe_set_int(&zero_mag29, 0);
+    secp256k1_fe_negate(&zero_mag29, &zero_mag29, 0); /* 0 (mod p), magnitude 1 */
+    secp256k1_fe_mul_int_unchecked(&zero_mag29, 29);  /* 0 (mod p), magnitude 29 */
+#ifdef VERIFY
+    CHECK(zero_mag29.magnitude == 29);
+#endif
+
+    for (i = 1; i <= 16; i++) {
+        secp256k1_fe_set_int(&a, i);
+
+        /* Equal case: b has the same value as a, carried at magnitude 30. */
+        secp256k1_fe_set_int(&b, i);
+        secp256k1_fe_add(&b, &zero_mag29);
+#ifdef VERIFY
+        CHECK(a.magnitude == 1 && b.magnitude == 30);
+#endif
+        CHECK(secp256k1_fe_equal(&a, &b));
+
+        /* Unequal case: b differs from a, still carried at magnitude 30. */
+        secp256k1_fe_set_int(&b, i + 1);
+        secp256k1_fe_add(&b, &zero_mag29);
+#ifdef VERIFY
+        CHECK(b.magnitude == 30);
+#endif
+        CHECK(!secp256k1_fe_equal(&a, &b));
+    }
+}
+
 static void run_field_convert(void) {
     static const unsigned char b32[32] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -3360,6 +3402,72 @@ static void test_fe_mul(const secp256k1_fe* a, const secp256k1_fe* b, int use_sq
     mulmod256(t16, a16, b16, m16);
     /* Compare */
     CHECK(secp256k1_memcmp_var(t16, c16, 32) == 0);
+}
+
+/* The normalize/normalizes_to_zero family must accept the maximum field
+ * magnitude (32). On the 10x26 field a magnitude-32 element's limbs reach
+ * 2*32*(2^26-1) = 0xFFFFFFC0, leaving no headroom in a uint32 for the first-pass
+ * reduction/carry: a defective implementation overflows and silently returns a
+ * wrong value (e.g. ...fc00003e0000f02f instead of the true residue). These
+ * checks build worst-case magnitude-32 inputs and compare against a reference
+ * computed entirely at magnitude <= 2, so they FAIL on such an implementation. */
+static void run_fe_normalize_max_magnitude(void) {
+    secp256k1_fe x, hi, lo, zero32, raise31;
+    int i;
+
+    /* Worst case: get_bounds(16) + get_bounds(16) drives every limb to its
+     * magnitude-32 maximum (the exact pattern that overflows a uint32 carry). */
+    secp256k1_fe_get_bounds(&x, 16);
+    hi = x;
+    secp256k1_fe_add(&hi, &x);                    /* magnitude 32, value 2*X */
+    lo = x;
+    secp256k1_fe_normalize_var(&lo);              /* value X, magnitude 1 */
+    secp256k1_fe_add(&lo, &lo);                   /* value 2*X, magnitude 2 */
+    secp256k1_fe_normalize_var(&lo);              /* canonical reference */
+    {
+        secp256k1_fe a = hi, b = hi, d = hi;
+        secp256k1_fe_normalize_var(&a);           /* variable-time path */
+        CHECK(fe_identical(&a, &lo));
+        secp256k1_fe_normalize(&b);               /* constant-time path */
+        CHECK(fe_identical(&b, &lo));
+        secp256k1_fe_normalize_weak(&d);
+        secp256k1_fe_normalize_var(&d);
+        CHECK(fe_identical(&d, &lo));
+        /* hi is nonzero, so both zero-tests must report "not zero". */
+        CHECK(secp256k1_fe_normalizes_to_zero(&hi) == 0);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&hi) == 0);
+    }
+
+    /* A magnitude-32 representation of 0 (mod p): 32 * (a magnitude-1 zero).
+     * normalizes_to_zero{,_var} must recognise it and normalize must yield 0. */
+    secp256k1_fe_set_int(&zero32, 0);
+    secp256k1_fe_negate(&zero32, &zero32, 0);     /* 0 (mod p), magnitude 1 */
+    secp256k1_fe_mul_int_unchecked(&zero32, 32);  /* 0 (mod p), magnitude 32 */
+    CHECK(secp256k1_fe_normalizes_to_zero(&zero32) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&zero32) == 1);
+    {
+        secp256k1_fe z = zero32;
+        secp256k1_fe_normalize_var(&z);
+        CHECK(secp256k1_fe_is_zero(&z));
+    }
+
+    /* Random values raised to magnitude 32 (value preserved by adding a
+     * magnitude-31 zero) must normalize to the same residue as at magnitude 1. */
+    secp256k1_fe_set_int(&raise31, 0);
+    secp256k1_fe_negate(&raise31, &raise31, 0);
+    secp256k1_fe_mul_int_unchecked(&raise31, 31); /* 0 (mod p), magnitude 31 */
+    for (i = 0; i < 128 * COUNT; i++) {
+        secp256k1_fe v, hm, hc, ref;
+        testutil_random_fe(&v);                   /* normalized random value */
+        ref = v;
+        hm = v;
+        secp256k1_fe_add(&hm, &raise31);          /* same value, magnitude 32 */
+        hc = hm;
+        secp256k1_fe_normalize_var(&hm);
+        CHECK(fe_identical(&hm, &ref));
+        secp256k1_fe_normalize(&hc);              /* constant-time path */
+        CHECK(fe_identical(&hc, &ref));
+    }
 }
 
 static void run_fe_mul(void) {
@@ -7964,6 +8072,8 @@ static const struct tf_test_entry tests_scalar[] = {
 static const struct tf_test_entry tests_field[] = {
     CASE(field_half),
     CASE(field_misc),
+    CASE(fe_equal_magnitude),
+    CASE(fe_normalize_max_magnitude),
     CASE(field_convert),
     CASE(field_be32_overflow),
     CASE(fe_mul),
