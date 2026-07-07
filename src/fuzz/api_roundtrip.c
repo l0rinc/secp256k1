@@ -133,6 +133,15 @@ static void secp256k1_fuzz_check_pubkey_parse(const secp256k1_context *ctx, cons
     }
 }
 
+static void secp256k1_fuzz_check_pubkey_create_failure(const secp256k1_context *ctx, const unsigned char *seckey32) {
+    secp256k1_pubkey pubkey;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+
+    memset(&pubkey, 0xA5, sizeof(pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey32) == 0);
+    FUZZ_CHECK(memcmp(&pubkey, zero_pubkey, sizeof(pubkey)) == 0);
+}
+
 static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
@@ -287,6 +296,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
     secp256k1_fuzz_check_pubkey_parse(ctx, input, size);
+    secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_order);
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 11);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
