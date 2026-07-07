@@ -115,6 +115,13 @@ int secp256k1_xonly_pubkey_from_pubkey(const secp256k1_context* ctx, secp256k1_x
         return 0;
     }
     tmp = secp256k1_extrakeys_ge_even_y(&pk);
+#ifdef VERIFY
+    {
+        secp256k1_fe y = pk.y;
+        secp256k1_fe_normalize_var(&y);
+        VERIFY_CHECK(!secp256k1_fe_is_odd(&y));
+    }
+#endif
     if (pk_parity != NULL) {
         *pk_parity = tmp;
     }
@@ -251,6 +258,13 @@ int secp256k1_keypair_xonly_pub(const secp256k1_context* ctx, secp256k1_xonly_pu
         return 0;
     }
     tmp = secp256k1_extrakeys_ge_even_y(&pk);
+#ifdef VERIFY
+    {
+        secp256k1_fe y = pk.y;
+        secp256k1_fe_normalize_var(&y);
+        VERIFY_CHECK(!secp256k1_fe_is_odd(&y));
+    }
+#endif
     if (pk_parity != NULL) {
         *pk_parity = tmp;
     }
@@ -273,6 +287,13 @@ int secp256k1_keypair_xonly_tweak_add(const secp256k1_context* ctx, secp256k1_ke
     memset(keypair, 0, sizeof(*keypair));
 
     y_parity = secp256k1_extrakeys_ge_even_y(&pk);
+#ifdef VERIFY
+    {
+        secp256k1_fe y = pk.y;
+        secp256k1_fe_normalize_var(&y);
+        VERIFY_CHECK(!secp256k1_fe_is_odd(&y));
+    }
+#endif
     if (y_parity == 1) {
         secp256k1_scalar_negate(&sk, &sk);
     }

@@ -609,6 +609,9 @@ int secp256k1_ecdsa_sign(const secp256k1_context* ctx, secp256k1_ecdsa_signature
     ARG_CHECK(seckey != NULL);
 
     ret = secp256k1_ecdsa_sign_inner(ctx, &r, &s, NULL, msghash32, seckey, noncefp, noncedata);
+    if (ret) {
+        VERIFY_CHECK(!secp256k1_scalar_is_high(&s));
+    }
     secp256k1_ecdsa_signature_save(signature, &r, &s);
     return ret;
 }

@@ -13,6 +13,15 @@ schnorr_example
 ellswift_example
 musig_example
 silentpayments_example
+fuzz_api_roundtrip
+fuzz_context
+fuzz_ecdh
+fuzz_musig
+fuzz_recovery
+fuzz_schnorrsig
+fuzz_xonly_tweak
+fuzz-*.log
+fuzz-work/
 *.exe
 *.so
 *.a

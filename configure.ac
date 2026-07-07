@@ -169,6 +169,10 @@ AC_ARG_ENABLE(examples,
     AS_HELP_STRING([--enable-examples],[compile the examples [default=no]]), [],
     [SECP_SET_DEFAULT([enable_examples], [no], [yes])])
 
+AC_ARG_ENABLE(fuzz,
+    AS_HELP_STRING([--enable-fuzz],[compile fuzzing binaries [default=no]]), [],
+    [SECP_SET_DEFAULT([enable_fuzz], [no], [yes])])
+
 AC_ARG_ENABLE(module_ecdh,
     AS_HELP_STRING([--enable-module-ecdh],[enable ECDH module [default=yes]]), [],
     [SECP_SET_DEFAULT([enable_module_ecdh], [yes], [yes])])
@@ -397,6 +401,11 @@ fi
 # autoconf's logic for setting default CFLAGS, which we would like to test in CI.
 SECP_CFLAGS="$SECP_CFLAGS $WERROR_CFLAGS"
 
+FUZZ_LIB_VERIFY_DEFINE=
+if test x"$enable_fuzz" = x"yes"; then
+  FUZZ_LIB_VERIFY_DEFINE="-DVERIFY"
+fi
+
 ###
 ### Handle module options
 ###
@@ -472,11 +481,13 @@ fi
 AC_CONFIG_FILES([Makefile libsecp256k1.pc])
 AC_SUBST(SECP_CFLAGS)
 AC_SUBST(SECP_CONFIG_DEFINES)
+AC_SUBST(FUZZ_LIB_VERIFY_DEFINE)
 AM_CONDITIONAL([ENABLE_COVERAGE], [test x"$enable_coverage" = x"yes"])
 AM_CONDITIONAL([USE_TESTS], [test x"$enable_tests" != x"no"])
 AM_CONDITIONAL([USE_CTIME_TESTS], [test x"$enable_ctime_tests" = x"yes"])
 AM_CONDITIONAL([USE_EXHAUSTIVE_TESTS], [test x"$enable_exhaustive_tests" != x"no"])
 AM_CONDITIONAL([USE_EXAMPLES], [test x"$enable_examples" != x"no"])
+AM_CONDITIONAL([USE_FUZZ], [test x"$enable_fuzz" = x"yes"])
 AM_CONDITIONAL([USE_BENCHMARK], [test x"$enable_benchmark" = x"yes"])
 AM_CONDITIONAL([ENABLE_MODULE_ECDH], [test x"$enable_module_ecdh" = x"yes"])
 AM_CONDITIONAL([ENABLE_MODULE_RECOVERY], [test x"$enable_module_recovery" = x"yes"])
@@ -503,6 +514,7 @@ echo "  with exhaustive tests   = $enable_exhaustive_tests"
 echo "  with ctime tests        = $enable_ctime_tests"
 echo "  with coverage           = $enable_coverage"
 echo "  with examples           = $enable_examples"
+echo "  with fuzz               = $enable_fuzz"
 echo "  module ecdh             = $enable_module_ecdh"
 echo "  module recovery         = $enable_module_recovery"
 echo "  module extrakeys        = $enable_module_extrakeys"

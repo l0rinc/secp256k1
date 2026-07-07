@@ -168,6 +168,56 @@ if(SECP256K1_BUILD_CTIME_TESTS)
   target_link_libraries(ctime_tests secp256k1)
 endif()
 
+if(SECP256K1_BUILD_FUZZ)
+  target_compile_definitions(secp256k1 PRIVATE VERIFY)
+  if(SECP256K1_FUZZ_USE_LIBFUZZER)
+    target_compile_options(secp256k1 PRIVATE -fsanitize=fuzzer-no-link)
+  endif()
+
+  function(add_secp256k1_fuzz_target name)
+    add_executable(fuzz_${name} fuzz/${name}.c)
+    target_include_directories(fuzz_${name} PRIVATE
+      ${PROJECT_SOURCE_DIR}/include
+    )
+    target_link_libraries(fuzz_${name} secp256k1)
+    if(SECP256K1_FUZZ_USE_LIBFUZZER)
+      target_compile_definitions(fuzz_${name} PRIVATE SECP256K1_FUZZ_USE_LIBFUZZER)
+      target_compile_options(fuzz_${name} PRIVATE -fsanitize=fuzzer-no-link)
+      target_link_options(fuzz_${name} PRIVATE -fsanitize=fuzzer)
+    endif()
+
+    if(NOT SECP256K1_FUZZ_USE_LIBFUZZER)
+      file(GLOB fuzz_${name}_corpus CONFIGURE_DEPENDS
+        ${PROJECT_SOURCE_DIR}/src/fuzz/corpora/${name}/*
+      )
+      if(fuzz_${name}_corpus)
+        add_test(NAME secp256k1.fuzz.${name}.seeds COMMAND fuzz_${name} ${fuzz_${name}_corpus})
+        set_tests_properties(secp256k1.fuzz.${name}.seeds PROPERTIES
+          LABELS secp256k1_fuzz
+        )
+      endif()
+    endif()
+  endfunction()
+
+  add_secp256k1_fuzz_target(api_roundtrip)
+  add_secp256k1_fuzz_target(context)
+  if(SECP256K1_ENABLE_MODULE_ECDH)
+    add_secp256k1_fuzz_target(ecdh)
+  endif()
+  if(SECP256K1_ENABLE_MODULE_EXTRAKEYS)
+    add_secp256k1_fuzz_target(xonly_tweak)
+  endif()
+  if(SECP256K1_ENABLE_MODULE_RECOVERY)
+    add_secp256k1_fuzz_target(recovery)
+  endif()
+  if(SECP256K1_ENABLE_MODULE_SCHNORRSIG)
+    add_secp256k1_fuzz_target(schnorrsig)
+  endif()
+  if(SECP256K1_ENABLE_MODULE_MUSIG)
+    add_secp256k1_fuzz_target(musig)
+  endif()
+endif()
+
 if(SECP256K1_INSTALL)
   include(GNUInstallDirs)
   target_include_directories(secp256k1 INTERFACE
