@@ -72,6 +72,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char xonly32[32];
     unsigned char tweaked32[32];
     unsigned char zero_tweaked32[32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    unsigned char zero_keypair[sizeof(secp256k1_keypair)] = { 0 };
     secp256k1_keypair keypair;
     secp256k1_keypair tweaked_keypair;
     secp256k1_keypair zero_tweaked_keypair;
@@ -129,8 +131,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add_check(ctx, zero_tweaked32, !zero_tweaked_parity, &xonly, secp256k1_fuzz_scalar_zero) == 0);
 
     overflow_tweaked_keypair = keypair;
+    memset(&overflow_tweaked_pubkey, 0xA5, sizeof(overflow_tweaked_pubkey));
     FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &overflow_tweaked_pubkey, &xonly, secp256k1_fuzz_scalar_order) == 0);
     FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &overflow_tweaked_keypair, secp256k1_fuzz_scalar_order) == 0);
+    FUZZ_CHECK(memcmp(&overflow_tweaked_pubkey, zero_pubkey, sizeof(overflow_tweaked_pubkey)) == 0);
+    FUZZ_CHECK(memcmp(&overflow_tweaked_keypair, zero_keypair, sizeof(overflow_tweaked_keypair)) == 0);
 
     tweaked_keypair = keypair;
     pub_tweak_ret = secp256k1_xonly_pubkey_tweak_add(ctx, &tweaked_pubkey, &xonly, tweak);
