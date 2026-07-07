@@ -22,6 +22,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecdsa_recoverable_signature recoverable_sig;
     secp256k1_ecdsa_recoverable_signature reparsed_sig;
     int recid;
+    int alt_recid;
     int parsed;
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 97);
@@ -39,6 +40,19 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &recovered_pubkey) == 0);
+
+    for (alt_recid = 0; alt_recid < 4; alt_recid++) {
+        if (alt_recid == recid) {
+            continue;
+        }
+        FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &reparsed_sig, compact, alt_recid) == 1);
+        FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &normal_sig, &reparsed_sig) == 1);
+        secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig);
+        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
+        if (secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32)) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &recovered_pubkey) != 0);
+        }
+    }
 
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &reparsed_sig, zero_compact, 0) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 0);
