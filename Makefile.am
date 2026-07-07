@@ -147,9 +147,11 @@ endif
 if USE_FUZZ
 FUZZ_CPPFLAGS = $(SECP_CONFIG_DEFINES) -I$(top_srcdir)/include
 FUZZ_LDADD = libsecp256k1.la
+FUZZ_INTERNAL_CPPFLAGS = $(FUZZ_CPPFLAGS) -I$(top_srcdir)/src -DVERIFY
+FUZZ_INTERNAL_LDADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
 
-noinst_PROGRAMS += fuzz_api_roundtrip fuzz_context
-TESTS += fuzz_api_roundtrip fuzz_context
+noinst_PROGRAMS += fuzz_api_roundtrip fuzz_context fuzz_ecmult_multi
+TESTS += fuzz_api_roundtrip fuzz_context fuzz_ecmult_multi
 
 fuzz_api_roundtrip_SOURCES = src/fuzz/api_roundtrip.c
 fuzz_api_roundtrip_CPPFLAGS = $(FUZZ_CPPFLAGS)
@@ -158,6 +160,10 @@ fuzz_api_roundtrip_LDADD = $(FUZZ_LDADD)
 fuzz_context_SOURCES = src/fuzz/context.c
 fuzz_context_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_context_LDADD = $(FUZZ_LDADD)
+
+fuzz_ecmult_multi_SOURCES = src/fuzz/ecmult_multi.c
+fuzz_ecmult_multi_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
+fuzz_ecmult_multi_LDADD = $(FUZZ_INTERNAL_LDADD)
 
 if ENABLE_MODULE_ECDH
 noinst_PROGRAMS += fuzz_ecdh

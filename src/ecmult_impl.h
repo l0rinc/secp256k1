@@ -402,6 +402,7 @@ static int secp256k1_ecmult_strauss_batch(const secp256k1_callback* error_callba
 
     if (points == NULL || scalars == NULL || state.aux == NULL || state.pre_a == NULL || state.ps == NULL) {
         secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+        VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
         return 0;
     }
 
@@ -409,12 +410,14 @@ static int secp256k1_ecmult_strauss_batch(const secp256k1_callback* error_callba
         secp256k1_ge point;
         if (!cb(&scalars[i], &point, i+cb_offset, cbdata)) {
             secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+            VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
             return 0;
         }
         secp256k1_gej_set_ge(&points[i], &point);
     }
     secp256k1_ecmult_strauss_wnaf(&state, r, n_points, points, scalars, inp_g_sc);
     secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+    VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
     return 1;
 }
 
@@ -696,6 +699,7 @@ static int secp256k1_ecmult_pippenger_batch(const secp256k1_callback* error_call
     state_space = (struct secp256k1_pippenger_state *) secp256k1_scratch_alloc(error_callback, scratch, sizeof(*state_space));
     if (points == NULL || scalars == NULL || state_space == NULL) {
         secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+        VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
         return 0;
     }
     state_space->ps = (struct secp256k1_pippenger_point_state *) secp256k1_scratch_alloc(error_callback, scratch, entries * sizeof(*state_space->ps));
@@ -703,6 +707,7 @@ static int secp256k1_ecmult_pippenger_batch(const secp256k1_callback* error_call
     buckets = (secp256k1_gej *) secp256k1_scratch_alloc(error_callback, scratch, ((size_t)1 << bucket_window) * sizeof(*buckets));
     if (state_space->ps == NULL || state_space->wnaf_na == NULL || buckets == NULL) {
         secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+        VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
         return 0;
     }
 
@@ -717,6 +722,7 @@ static int secp256k1_ecmult_pippenger_batch(const secp256k1_callback* error_call
     while (point_idx < n_points) {
         if (!cb(&scalars[idx], &points[idx], point_idx + cb_offset, cbdata)) {
             secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+            VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
             return 0;
         }
         idx++;
@@ -727,6 +733,7 @@ static int secp256k1_ecmult_pippenger_batch(const secp256k1_callback* error_call
 
     secp256k1_ecmult_pippenger_wnaf(buckets, bucket_window, state_space, r, scalars, points, idx);
     secp256k1_scratch_apply_checkpoint(error_callback, scratch, scratch_checkpoint);
+    VERIFY_CHECK(scratch->alloc_size == scratch_checkpoint);
     return 1;
 }
 

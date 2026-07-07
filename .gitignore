@@ -16,6 +16,7 @@ silentpayments_example
 fuzz_api_roundtrip
 fuzz_context
 fuzz_ecdh
+fuzz_ecmult_multi
 fuzz_musig
 fuzz_recovery
 fuzz_schnorrsig
