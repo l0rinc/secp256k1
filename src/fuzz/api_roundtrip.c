@@ -13,13 +13,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_pubkey pubkey_neg;
     secp256k1_pubkey pubkey_neg_from_seckey;
     secp256k1_pubkey parsed_pubkey;
+    secp256k1_pubkey sort_pubkeys[4];
     secp256k1_ecdsa_signature sig;
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char seckey[32];
     unsigned char seckey_neg[32];
+    unsigned char sort_seckey[32];
     unsigned char msg32[32];
+    const secp256k1_pubkey *sorted_pubkeys[4];
+    const secp256k1_pubkey *permuted_pubkeys[4];
     int parsed_compact;
     int parsed_der;
+    size_t i;
 
     if (secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, input, size)) {
         secp256k1_fuzz_check_pubkey_roundtrip(ctx, &parsed_pubkey);
@@ -41,6 +46,30 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(seckey, seckey_neg, sizeof(seckey)) == 0);
     FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey_neg) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_neg) == 0);
+
+    sort_pubkeys[0] = pubkey;
+    sort_pubkeys[1] = pubkey_neg_from_seckey;
+    secp256k1_fuzz_valid_seckey32(ctx, sort_seckey, input, size, 23);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &sort_pubkeys[2], sort_seckey) == 1);
+    secp256k1_fuzz_valid_seckey32(ctx, sort_seckey, input, size, 29);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &sort_pubkeys[3], sort_seckey) == 1);
+    sorted_pubkeys[0] = &sort_pubkeys[0];
+    sorted_pubkeys[1] = &sort_pubkeys[1];
+    sorted_pubkeys[2] = &sort_pubkeys[2];
+    sorted_pubkeys[3] = &sort_pubkeys[3];
+    permuted_pubkeys[0] = &sort_pubkeys[2];
+    permuted_pubkeys[1] = &sort_pubkeys[0];
+    permuted_pubkeys[2] = &sort_pubkeys[3];
+    permuted_pubkeys[3] = &sort_pubkeys[1];
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, sorted_pubkeys, 4) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, permuted_pubkeys, 4) == 1);
+    for (i = 1; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, sorted_pubkeys[i - 1], sorted_pubkeys[i]) <= 0);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, permuted_pubkeys[i - 1], permuted_pubkeys[i]) <= 0);
+    }
+    for (i = 0; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, sorted_pubkeys[i], permuted_pubkeys[i]) == 0);
+    }
 
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey, NULL, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
