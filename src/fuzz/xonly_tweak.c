@@ -32,6 +32,33 @@ static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const
         FUZZ_CHECK(memcmp(&parsed_xonly, zero_xonly, sizeof(parsed_xonly)) == 0);
     }
 }
+
+static void secp256k1_fuzz_check_xonly_parity_pair(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey) {
+    secp256k1_pubkey negated_pubkey = *pubkey;
+    secp256k1_xonly_pubkey xonly;
+    secp256k1_xonly_pubkey negated_xonly;
+    unsigned char compressed[33];
+    size_t compressed_len = sizeof(compressed);
+    int parity;
+    int negated_parity;
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed));
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly, &parity, pubkey) == 1);
+    FUZZ_CHECK(parity == 0 || parity == 1);
+    FUZZ_CHECK(parity == (compressed[0] == SECP256K1_TAG_PUBKEY_ODD));
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &negated_pubkey) == 1);
+    compressed_len = sizeof(compressed);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, &negated_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed));
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &negated_xonly, &negated_parity, &negated_pubkey) == 1);
+    FUZZ_CHECK(negated_parity == 0 || negated_parity == 1);
+    FUZZ_CHECK(negated_parity == (compressed[0] == SECP256K1_TAG_PUBKEY_ODD));
+
+    FUZZ_CHECK(parity != negated_parity);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &negated_xonly) == 0);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -78,6 +105,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_from_pubkey, &pubkey_parity, &pubkey) == 1);
     FUZZ_CHECK(keypair_parity == pubkey_parity);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_from_pubkey) == 0);
+    secp256k1_fuzz_check_xonly_parity_pair(ctx, &pubkey);
 
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
@@ -111,6 +139,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (pub_tweak_ret) {
         FUZZ_CHECK(secp256k1_keypair_pub(ctx, &tweaked_keypair_pubkey, &tweaked_keypair) == 1);
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &tweaked_keypair_pubkey) == 0);
+        secp256k1_fuzz_check_xonly_parity_pair(ctx, &tweaked_pubkey);
         FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &tweaked_xonly, &tweaked_parity, &tweaked_pubkey) == 1);
         FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, tweaked32, &tweaked_xonly) == 1);
         FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add_check(ctx, tweaked32, tweaked_parity, &xonly, tweak) == 1);
