@@ -24,6 +24,40 @@ static int secp256k1_fuzz_musig_ge_ext_parse(const secp256k1_context *ctx, unsig
     return 1;
 }
 
+static int secp256k1_fuzz_musig_pubnonce_part_parse(const secp256k1_context *ctx, unsigned char *serialized33, const unsigned char *input33) {
+    secp256k1_pubkey pubkey;
+    size_t serialized_len = 33;
+
+    if (!secp256k1_ec_pubkey_parse(ctx, &pubkey, input33, 33)) {
+        return 0;
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized33, &serialized_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+    return 1;
+}
+
+static void secp256k1_fuzz_check_musig_pubnonce_parse(const secp256k1_context *ctx, const unsigned char *input66) {
+    unsigned char expected66[66];
+    unsigned char serialized66[66];
+    secp256k1_musig_pubnonce pubnonce;
+    secp256k1_musig_pubnonce reparsed;
+    int expected_ret;
+    int parse_ret;
+
+    expected_ret = secp256k1_fuzz_musig_pubnonce_part_parse(ctx, expected66, input66);
+    expected_ret &= secp256k1_fuzz_musig_pubnonce_part_parse(ctx, expected66 + 33, input66 + 33);
+
+    parse_ret = secp256k1_musig_pubnonce_parse(ctx, &pubnonce, input66);
+    FUZZ_CHECK(parse_ret == expected_ret);
+    if (parse_ret) {
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized66, &pubnonce) == 1);
+        FUZZ_CHECK(memcmp(serialized66, expected66, sizeof(serialized66)) == 0);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &reparsed, serialized66) == 1);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized66, &reparsed) == 1);
+        FUZZ_CHECK(memcmp(serialized66, expected66, sizeof(serialized66)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_musig_aggnonce_parse(const secp256k1_context *ctx, const unsigned char *input66) {
     unsigned char expected66[66];
     unsigned char serialized66[66];
@@ -77,6 +111,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char zero66[66] = { 0 };
     unsigned char valid_aggnonce66[66];
     unsigned char mixed_aggnonce66[66];
+    unsigned char mixed_pubnonce66[66];
     unsigned char sig32[32];
     unsigned char ones32[32];
     secp256k1_pubkey pubkeys[3];
@@ -96,8 +131,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_musig_keyagg_cache tweak_cache_no_output;
     secp256k1_musig_keyagg_cache one_tweak_cache;
     secp256k1_musig_keyagg_cache zero_tweak_cache;
-    secp256k1_musig_pubnonce pubnonce;
-    secp256k1_musig_pubnonce pubnonce2;
     size_t n_pubkeys;
     size_t i;
     int parity;
@@ -120,6 +153,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(aggnonce_part_len == 33);
     memcpy(mixed_aggnonce66, zero66, sizeof(mixed_aggnonce66));
     memcpy(mixed_aggnonce66 + 33, valid_aggnonce66 + 33, 33);
+    memcpy(mixed_pubnonce66, valid_aggnonce66, 33);
+    memset(mixed_pubnonce66 + 33, 0, 33);
     memset(ones32, 0xFF, sizeof(ones32));
 
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_xonly, &cache, pubkey_ptrs, n_pubkeys) == 1);
@@ -186,11 +221,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
 
     secp256k1_fuzz_derive(nonce66, sizeof(nonce66), input, size, 181);
-    if (secp256k1_musig_pubnonce_parse(ctx, &pubnonce, nonce66)) {
-        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, nonce66, &pubnonce) == 1);
-        FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &pubnonce2, nonce66) == 1);
-        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, nonce66, &pubnonce2) == 1);
-    }
+    secp256k1_fuzz_check_musig_pubnonce_parse(ctx, zero66);
+    secp256k1_fuzz_check_musig_pubnonce_parse(ctx, valid_aggnonce66);
+    secp256k1_fuzz_check_musig_pubnonce_parse(ctx, mixed_aggnonce66);
+    secp256k1_fuzz_check_musig_pubnonce_parse(ctx, mixed_pubnonce66);
+    secp256k1_fuzz_check_musig_pubnonce_parse(ctx, nonce66);
     secp256k1_fuzz_derive(nonce66, sizeof(nonce66), input, size, 191);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, zero66);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, valid_aggnonce66);
