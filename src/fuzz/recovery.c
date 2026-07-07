@@ -43,6 +43,15 @@ static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_conte
         FUZZ_CHECK(memcmp(&recoverable_sig, zero_sig, sizeof(recoverable_sig)) == 0);
     }
 }
+
+static void secp256k1_fuzz_check_recover_failure_cleanup(const secp256k1_context *ctx, const secp256k1_ecdsa_recoverable_signature *sig, const unsigned char *msg32) {
+    secp256k1_pubkey recovered_pubkey;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+
+    memset(&recovered_pubkey, 0xA5, sizeof(recovered_pubkey));
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, sig, msg32) == 0);
+    FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -95,7 +104,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
 
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &reparsed_sig, zero_compact, 0) == 1);
-    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 0);
+    secp256k1_fuzz_check_recover_failure_cleanup(ctx, &reparsed_sig, msg32);
     secp256k1_fuzz_check_recoverable_parse_compact(ctx, zero_compact, 0);
     memcpy(sig64, secp256k1_fuzz_scalar_order_minus_one, 32);
     memcpy(sig64 + 32, secp256k1_fuzz_scalar_order_minus_one, 32);
