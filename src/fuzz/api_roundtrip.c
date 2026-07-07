@@ -94,6 +94,30 @@ static void secp256k1_fuzz_check_pubkey_combine(const secp256k1_context *ctx, co
     }
 }
 
+static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
+    return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
+}
+
+static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context *ctx, const unsigned char *input64, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    secp256k1_ecdsa_signature parsed_sig;
+    unsigned char compact[64];
+    int expected_ret;
+    int parse_ret;
+
+    expected_ret = secp256k1_fuzz_scalar32_in_order(input64);
+    expected_ret &= secp256k1_fuzz_scalar32_in_order(input64 + 32);
+    memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+    parse_ret = secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, input64);
+    FUZZ_CHECK(parse_ret == expected_ret);
+    if (parse_ret) {
+        FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+        FUZZ_CHECK(memcmp(compact, input64, sizeof(compact)) == 0);
+        secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
+    } else {
+        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
@@ -111,10 +135,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char sort_seckey[32];
     unsigned char tweak32[32];
     unsigned char zero_compact[64] = { 0 };
+    unsigned char sig64[64];
     unsigned char msg32[32];
     const secp256k1_pubkey *sorted_pubkeys[4];
     const secp256k1_pubkey *permuted_pubkeys[4];
-    int parsed_compact;
     int parsed_der;
     size_t i;
 
@@ -188,13 +212,20 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(zero_compact + 32, secp256k1_fuzz_scalar_zero, sizeof(secp256k1_fuzz_scalar_zero)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, &pubkey) == 0);
 
-    parsed_compact = 0;
+    secp256k1_fuzz_check_signature_parse_compact(ctx, zero_compact, msg32, &pubkey);
+    memcpy(sig64, secp256k1_fuzz_scalar_order_minus_one, 32);
+    memcpy(sig64 + 32, secp256k1_fuzz_scalar_order_minus_one, 32);
+    secp256k1_fuzz_check_signature_parse_compact(ctx, sig64, msg32, &pubkey);
+    memcpy(sig64, secp256k1_fuzz_scalar_order, 32);
+    memcpy(sig64 + 32, secp256k1_fuzz_scalar_zero, 32);
+    secp256k1_fuzz_check_signature_parse_compact(ctx, sig64, msg32, &pubkey);
+    memcpy(sig64, secp256k1_fuzz_scalar_zero, 32);
+    memcpy(sig64 + 32, secp256k1_fuzz_scalar_order, 32);
+    secp256k1_fuzz_check_signature_parse_compact(ctx, sig64, msg32, &pubkey);
+    secp256k1_fuzz_derive(sig64, sizeof(sig64), input, size, 37);
+    secp256k1_fuzz_check_signature_parse_compact(ctx, sig64, msg32, &pubkey);
     if (size >= 64) {
-        parsed_compact = secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, input);
-        secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
-        if (!parsed_compact) {
-            FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, &pubkey) == 0);
-        }
+        secp256k1_fuzz_check_signature_parse_compact(ctx, input, msg32, &pubkey);
     }
 
     parsed_der = secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, input, size);
@@ -203,7 +234,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, &pubkey) == 0);
     }
 
-    (void)parsed_compact;
     secp256k1_context_destroy(ctx);
     return 0;
 }
