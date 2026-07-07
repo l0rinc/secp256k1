@@ -199,10 +199,15 @@ static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_conte
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char compact[64];
     unsigned char roundtrip_der[72];
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = { 0 };
     size_t roundtrip_der_len = sizeof(roundtrip_der);
     int parsed_der;
 
+    memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
     parsed_der = secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, input, inputlen);
+    if (!parsed_der) {
+        FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
+    }
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
     if (parsed_der && !secp256k1_fuzz_scalar32_is_zero(compact) && !secp256k1_fuzz_scalar32_is_zero(compact + 32)) {
         FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, roundtrip_der, &roundtrip_der_len, &parsed_sig) == 1);
