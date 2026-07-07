@@ -10,10 +10,13 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
     secp256k1_pubkey pubkey;
+    secp256k1_pubkey pubkey_neg;
+    secp256k1_pubkey pubkey_neg_from_seckey;
     secp256k1_pubkey parsed_pubkey;
     secp256k1_ecdsa_signature sig;
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char seckey[32];
+    unsigned char seckey_neg[32];
     unsigned char msg32[32];
     int parsed_compact;
     int parsed_der;
@@ -26,6 +29,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey);
+
+    memcpy(seckey_neg, seckey, sizeof(seckey_neg));
+    pubkey_neg = pubkey;
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, seckey_neg) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey_neg) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_neg_from_seckey, seckey_neg) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey_neg, &pubkey_neg_from_seckey) == 0);
+    secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey_neg);
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, seckey_neg) == 1);
+    FUZZ_CHECK(memcmp(seckey, seckey_neg, sizeof(seckey)) == 0);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey_neg) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_neg) == 0);
 
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey, NULL, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
