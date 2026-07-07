@@ -5,8 +5,25 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "../hash_impl.h"
 
 #ifdef ENABLE_MODULE_ECDH
+static void secp256k1_fuzz_check_ecdh_default_hash(const secp256k1_context *ctx, const secp256k1_pubkey *shared_pubkey, const unsigned char *output32) {
+    secp256k1_hash_ctx hash_ctx;
+    secp256k1_sha256 sha;
+    unsigned char compressed[33];
+    unsigned char expected[32];
+    size_t compressed_len = sizeof(compressed);
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, shared_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed));
+    secp256k1_hash_ctx_init(&hash_ctx);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, compressed, sizeof(compressed));
+    secp256k1_sha256_finalize(&hash_ctx, &sha, expected);
+    FUZZ_CHECK(memcmp(output32, expected, sizeof(expected)) == 0);
+}
+
 static int fuzz_ecdh_hash_passthrough(unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
     (void)data;
     memcpy(output, x32, 32);
@@ -75,6 +92,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(shared_ser_len == sizeof(shared_ser));
     FUZZ_CHECK(memcmp(shared_ab, shared_ser + 1, 32) == 0);
     FUZZ_CHECK(memcmp(shared_ab + 32, shared_ser + 33, 32) == 0);
+    secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, default_ab);
+    secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, explicit_ab);
+    secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, default_fn_ab);
+    secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ba, default_ba);
 
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_zero, NULL, NULL) == 0);
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_order, NULL, NULL) == 0);
