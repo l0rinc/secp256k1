@@ -27,6 +27,7 @@ static int secp256k1_fuzz_ecdsa_nonce(unsigned char *nonce32, const unsigned cha
 
 static void secp256k1_fuzz_check_tweak_add(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const unsigned char *tweak32) {
     unsigned char tweaked_seckey[32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
     secp256k1_pubkey tweaked_pubkey;
     secp256k1_pubkey pubkey_from_tweaked_seckey;
     int seckey_ret;
@@ -41,11 +42,15 @@ static void secp256k1_fuzz_check_tweak_add(const secp256k1_context *ctx, const s
         FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_from_tweaked_seckey, tweaked_seckey) == 1);
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &pubkey_from_tweaked_seckey) == 0);
         secp256k1_fuzz_check_pubkey_roundtrip(ctx, &tweaked_pubkey);
+    } else {
+        FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
+        FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
     }
 }
 
 static void secp256k1_fuzz_check_tweak_mul(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const unsigned char *tweak32) {
     unsigned char tweaked_seckey[32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
     secp256k1_pubkey tweaked_pubkey;
     secp256k1_pubkey pubkey_from_tweaked_seckey;
     int seckey_ret;
@@ -60,6 +65,9 @@ static void secp256k1_fuzz_check_tweak_mul(const secp256k1_context *ctx, const s
         FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_from_tweaked_seckey, tweaked_seckey) == 1);
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &pubkey_from_tweaked_seckey) == 0);
         secp256k1_fuzz_check_pubkey_roundtrip(ctx, &tweaked_pubkey);
+    } else {
+        FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
+        FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
     }
 }
 
