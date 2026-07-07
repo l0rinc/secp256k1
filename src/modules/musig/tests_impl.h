@@ -397,10 +397,15 @@ static void musig_api_tests(void) {
 
     {
         /* Check that serialize and parse results in the same value */
+        unsigned char invalid_aggnonce_ser[66];
         secp256k1_musig_aggnonce tmp;
         CHECK(secp256k1_musig_aggnonce_serialize(CTX, aggnonce_ser, &aggnonce) == 1);
         CHECK(secp256k1_musig_aggnonce_parse(CTX, &tmp, aggnonce_ser) == 1);
         CHECK(secp256k1_memcmp_var(&tmp, &aggnonce, sizeof(tmp)) == 0);
+        memcpy(invalid_aggnonce_ser, aggnonce_ser, sizeof(invalid_aggnonce_ser));
+        invalid_aggnonce_ser[0] = 0x05;
+        CHECK(secp256k1_musig_aggnonce_parse(CTX, &tmp, invalid_aggnonce_ser) == 0);
+        CHECK(memcmp_and_randomize(tmp.data, zeros132, sizeof(tmp.data)) == 0);
     }
 
     /** Process nonces **/
