@@ -66,6 +66,7 @@ noinst_HEADERS += src/hash.h
 noinst_HEADERS += src/hash_impl.h
 noinst_HEADERS += src/field.h
 noinst_HEADERS += src/field_impl.h
+noinst_HEADERS += src/fuzz/fuzz.h
 noinst_HEADERS += src/bench.h
 noinst_HEADERS += src/wycheproof/ecdsa_secp256k1_sha256_bitcoin_test.h
 noinst_HEADERS += src/hsort.h
@@ -100,7 +101,7 @@ endif
 endif
 
 libsecp256k1_la_SOURCES = src/secp256k1.c
-libsecp256k1_la_CPPFLAGS = $(SECP_CONFIG_DEFINES)
+libsecp256k1_la_CPPFLAGS = $(SECP_CONFIG_DEFINES) $(FUZZ_LIB_VERIFY_DEFINE)
 libsecp256k1_la_LIBADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
 libsecp256k1_la_LDFLAGS = -no-undefined -version-info $(LIB_VERSION_CURRENT):$(LIB_VERSION_REVISION):$(LIB_VERSION_AGE)
 
@@ -141,6 +142,62 @@ noinst_PROGRAMS += ctime_tests
 ctime_tests_SOURCES = src/ctime_tests.c
 ctime_tests_LDADD = libsecp256k1.la
 ctime_tests_CPPFLAGS = $(SECP_CONFIG_DEFINES)
+endif
+
+if USE_FUZZ
+FUZZ_CPPFLAGS = $(SECP_CONFIG_DEFINES) -I$(top_srcdir)/include
+FUZZ_LDADD = libsecp256k1.la
+
+noinst_PROGRAMS += fuzz_api_roundtrip fuzz_context
+TESTS += fuzz_api_roundtrip fuzz_context
+
+fuzz_api_roundtrip_SOURCES = src/fuzz/api_roundtrip.c
+fuzz_api_roundtrip_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_api_roundtrip_LDADD = $(FUZZ_LDADD)
+
+fuzz_context_SOURCES = src/fuzz/context.c
+fuzz_context_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_context_LDADD = $(FUZZ_LDADD)
+
+if ENABLE_MODULE_ECDH
+noinst_PROGRAMS += fuzz_ecdh
+TESTS += fuzz_ecdh
+fuzz_ecdh_SOURCES = src/fuzz/ecdh.c
+fuzz_ecdh_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_ecdh_LDADD = $(FUZZ_LDADD)
+endif
+
+if ENABLE_MODULE_EXTRAKEYS
+noinst_PROGRAMS += fuzz_xonly_tweak
+TESTS += fuzz_xonly_tweak
+fuzz_xonly_tweak_SOURCES = src/fuzz/xonly_tweak.c
+fuzz_xonly_tweak_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_xonly_tweak_LDADD = $(FUZZ_LDADD)
+endif
+
+if ENABLE_MODULE_RECOVERY
+noinst_PROGRAMS += fuzz_recovery
+TESTS += fuzz_recovery
+fuzz_recovery_SOURCES = src/fuzz/recovery.c
+fuzz_recovery_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_recovery_LDADD = $(FUZZ_LDADD)
+endif
+
+if ENABLE_MODULE_SCHNORRSIG
+noinst_PROGRAMS += fuzz_schnorrsig
+TESTS += fuzz_schnorrsig
+fuzz_schnorrsig_SOURCES = src/fuzz/schnorrsig.c
+fuzz_schnorrsig_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_schnorrsig_LDADD = $(FUZZ_LDADD)
+endif
+
+if ENABLE_MODULE_MUSIG
+noinst_PROGRAMS += fuzz_musig
+TESTS += fuzz_musig
+fuzz_musig_SOURCES = src/fuzz/musig.c
+fuzz_musig_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_musig_LDADD = $(FUZZ_LDADD)
+endif
 endif
 
 if USE_EXHAUSTIVE_TESTS
