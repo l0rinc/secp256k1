@@ -65,6 +65,7 @@ static void secp256k1_fuzz_check_musig_pubnonce_parse(const secp256k1_context *c
 static void secp256k1_fuzz_check_musig_aggnonce_parse(const secp256k1_context *ctx, const unsigned char *input66) {
     unsigned char expected66[66];
     unsigned char serialized66[66];
+    unsigned char zero_nonce[sizeof(secp256k1_musig_aggnonce)] = { 0 };
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_aggnonce reparsed;
     int expected_ret;
@@ -82,6 +83,8 @@ static void secp256k1_fuzz_check_musig_aggnonce_parse(const secp256k1_context *c
         FUZZ_CHECK(secp256k1_musig_aggnonce_parse(ctx, &reparsed, serialized66) == 1);
         FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, serialized66, &reparsed) == 1);
         FUZZ_CHECK(memcmp(serialized66, expected66, sizeof(serialized66)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&aggnonce, zero_nonce, sizeof(aggnonce)) == 0);
     }
 }
 
@@ -114,6 +117,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char nonce66[66];
     unsigned char zero66[66] = { 0 };
     unsigned char valid_aggnonce66[66];
+    unsigned char invalid_aggnonce66[66];
     unsigned char mixed_aggnonce66[66];
     unsigned char mixed_pubnonce66[66];
     unsigned char sig32[32];
@@ -157,6 +161,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(aggnonce_part_len == 33);
     memcpy(mixed_aggnonce66, zero66, sizeof(mixed_aggnonce66));
     memcpy(mixed_aggnonce66 + 33, valid_aggnonce66 + 33, 33);
+    memcpy(invalid_aggnonce66, valid_aggnonce66, sizeof(invalid_aggnonce66));
+    invalid_aggnonce66[0] = 0x05;
     memcpy(mixed_pubnonce66, valid_aggnonce66, 33);
     memset(mixed_pubnonce66 + 33, 0, 33);
     memset(ones32, 0xFF, sizeof(ones32));
@@ -233,6 +239,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(nonce66, sizeof(nonce66), input, size, 191);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, zero66);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, valid_aggnonce66);
+    secp256k1_fuzz_check_musig_aggnonce_parse(ctx, invalid_aggnonce66);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, mixed_aggnonce66);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, nonce66);
     secp256k1_fuzz_derive(sig32, sizeof(sig32), input, size, 193);
