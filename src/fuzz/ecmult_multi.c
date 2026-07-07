@@ -62,6 +62,35 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
+static void secp256k1_fuzz_ecmult_multi_empty(const secp256k1_context *ctx, size_t scratch_size, const secp256k1_scalar *g_sc, secp256k1_fuzz_ecmult_multi_data *data) {
+    secp256k1_scratch *scratch = NULL;
+    secp256k1_gej actual;
+    secp256k1_gej expected;
+    secp256k1_gej infinity;
+    size_t checkpoint = 0;
+
+    if (scratch_size != 0) {
+        scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_size);
+        FUZZ_CHECK(scratch != NULL);
+        checkpoint = scratch->alloc_size;
+    }
+
+    FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, g_sc, secp256k1_fuzz_ecmult_multi_callback, data, 0) == 1);
+    if (scratch != NULL) {
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    }
+
+    secp256k1_gej_set_infinity(&infinity);
+    if (g_sc == NULL) {
+        secp256k1_gej_set_infinity(&expected);
+    } else {
+        secp256k1_ecmult(&expected, &infinity, &secp256k1_scalar_zero, g_sc);
+    }
+    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+}
+
 static void secp256k1_fuzz_ecmult_multi_fail_callback(const secp256k1_context *ctx, const secp256k1_scalar *g_sc, size_t n_points, secp256k1_fuzz_ecmult_multi_data *data) {
     secp256k1_scratch *scratch;
     secp256k1_gej r;
@@ -137,6 +166,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_compare(ctx, 512, g_sc_ptr, n_points, &data);
     secp256k1_fuzz_ecmult_multi_compare(ctx, 4096, g_sc_ptr, n_points, &data);
     secp256k1_fuzz_ecmult_multi_compare(ctx, 65536, g_sc_ptr, n_points, &data);
+    secp256k1_fuzz_ecmult_multi_empty(ctx, 0, NULL, &data);
+    secp256k1_fuzz_ecmult_multi_empty(ctx, 4096, NULL, &data);
+    secp256k1_fuzz_ecmult_multi_empty(ctx, 0, &secp256k1_scalar_one, &data);
+    secp256k1_fuzz_ecmult_multi_empty(ctx, 4096, &secp256k1_scalar_one, &data);
+    secp256k1_fuzz_ecmult_multi_empty(ctx, 4096, g_sc_ptr, &data);
     secp256k1_fuzz_ecmult_multi_fail_callback(ctx, g_sc_ptr, n_points, &data);
 
     secp256k1_context_destroy(ctx);
