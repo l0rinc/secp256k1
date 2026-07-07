@@ -149,6 +149,7 @@ static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
 static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context *ctx, const unsigned char *input64, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char compact[64];
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = { 0 };
     int expected_ret;
     int parse_ret;
 
@@ -162,6 +163,7 @@ static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context
         FUZZ_CHECK(memcmp(compact, input64, sizeof(compact)) == 0);
         secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
     } else {
+        FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
         FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
     }
 }
