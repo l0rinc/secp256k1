@@ -44,10 +44,61 @@ static void secp256k1_fuzz_check_tweak_mul(const secp256k1_context *ctx, const s
     }
 }
 
+static void secp256k1_fuzz_check_pubkey_combine(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const secp256k1_pubkey *pubkey_neg, const unsigned char *seckey, const secp256k1_pubkey *other_pubkey, const unsigned char *other_seckey) {
+    const secp256k1_pubkey *inputs[3];
+    secp256k1_pubkey combined;
+    secp256k1_pubkey combined_reversed;
+    secp256k1_pubkey combined_from_seckey;
+    secp256k1_pubkey doubled;
+    unsigned char combined_seckey[32];
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    int combine_ret;
+    int seckey_ret;
+
+    inputs[0] = pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 1) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, pubkey) == 0);
+    secp256k1_fuzz_check_pubkey_roundtrip(ctx, &combined);
+
+    inputs[1] = pubkey_neg;
+    memset(&combined, 0xA5, sizeof(combined));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 2) == 0);
+    FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+
+    inputs[2] = pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 3) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, pubkey) == 0);
+
+    inputs[1] = pubkey;
+    scalar_two[31] = 2;
+    doubled = *pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &doubled, scalar_two) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 2) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &doubled) == 0);
+
+    inputs[0] = pubkey;
+    inputs[1] = other_pubkey;
+    combine_ret = secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 2);
+    inputs[0] = other_pubkey;
+    inputs[1] = pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined_reversed, inputs, 2) == combine_ret);
+    memcpy(combined_seckey, seckey, sizeof(combined_seckey));
+    seckey_ret = secp256k1_ec_seckey_tweak_add(ctx, combined_seckey, other_seckey);
+    FUZZ_CHECK(seckey_ret == combine_ret);
+    if (combine_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &combined_reversed) == 0);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &combined_from_seckey, combined_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &combined_from_seckey) == 0);
+        secp256k1_fuzz_check_pubkey_roundtrip(ctx, &combined);
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
     secp256k1_pubkey pubkey;
+    secp256k1_pubkey combine_pubkey;
     secp256k1_pubkey pubkey_neg;
     secp256k1_pubkey pubkey_neg_from_seckey;
     secp256k1_pubkey parsed_pubkey;
@@ -55,6 +106,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecdsa_signature sig;
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char seckey[32];
+    unsigned char combine_seckey[32];
     unsigned char seckey_neg[32];
     unsigned char sort_seckey[32];
     unsigned char tweak32[32];
@@ -96,6 +148,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(seckey, seckey_neg, sizeof(seckey)) == 0);
     FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey_neg) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_neg) == 0);
+
+    secp256k1_fuzz_valid_seckey32(ctx, combine_seckey, input, size, 19);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &combine_pubkey, combine_seckey) == 1);
+    secp256k1_fuzz_check_pubkey_combine(ctx, &pubkey, &pubkey_neg_from_seckey, seckey, &combine_pubkey, combine_seckey);
 
     sort_pubkeys[0] = pubkey;
     sort_pubkeys[1] = pubkey_neg_from_seckey;
