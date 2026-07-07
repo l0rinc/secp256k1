@@ -6,12 +6,42 @@
 
 #include "fuzz.h"
 
+#ifdef ENABLE_MODULE_EXTRAKEYS
+static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const unsigned char *input32) {
+    unsigned char compressed[33];
+    unsigned char serialized[32];
+    unsigned char zero_xonly[sizeof(secp256k1_xonly_pubkey)] = { 0 };
+    secp256k1_pubkey parsed_pubkey;
+    secp256k1_xonly_pubkey parsed_xonly;
+    secp256k1_xonly_pubkey xonly_from_pubkey;
+    int parse_full_ret;
+    int parse_xonly_ret;
+
+    compressed[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(compressed + 1, input32, 32);
+    parse_full_ret = secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, compressed, sizeof(compressed));
+    memset(&parsed_xonly, 0xA5, sizeof(parsed_xonly));
+    parse_xonly_ret = secp256k1_xonly_pubkey_parse(ctx, &parsed_xonly, input32);
+    FUZZ_CHECK(parse_xonly_ret == parse_full_ret);
+    if (parse_xonly_ret) {
+        FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_from_pubkey, NULL, &parsed_pubkey) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &parsed_xonly, &xonly_from_pubkey) == 0);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, serialized, &parsed_xonly) == 1);
+        FUZZ_CHECK(memcmp(serialized, input32, sizeof(serialized)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&parsed_xonly, zero_xonly, sizeof(parsed_xonly)) == 0);
+    }
+}
+#endif
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #ifdef ENABLE_MODULE_EXTRAKEYS
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
     unsigned char seckey[32];
     unsigned char tweak[32];
+    unsigned char parse32[32];
+    unsigned char ones32[32];
     unsigned char xonly32[32];
     unsigned char tweaked32[32];
     unsigned char zero_tweaked32[32];
@@ -39,6 +69,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 73);
     secp256k1_fuzz_scalar32(tweak, input, size, 79);
+    secp256k1_fuzz_derive(parse32, sizeof(parse32), input, size, 83);
+    memset(ones32, 0xFF, sizeof(ones32));
 
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
@@ -50,6 +82,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &reparsed) == 0);
+    secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
+    secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_xonly_parse(ctx, ones32);
+    secp256k1_fuzz_check_xonly_parse(ctx, parse32);
 
     zero_tweaked_keypair = keypair;
     FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &zero_tweaked_pubkey, &xonly, secp256k1_fuzz_scalar_zero) == 1);
