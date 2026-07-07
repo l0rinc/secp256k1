@@ -345,6 +345,7 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_parse(CTX, NULL, pubnonce_ser));
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], NULL));
     CHECK(secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], zeros132) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
     CHECK(secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], pubnonce_ser) == 1);
 
     {
