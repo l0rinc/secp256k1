@@ -130,6 +130,102 @@ static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context
     }
 }
 
+static int secp256k1_fuzz_scalar32_is_zero(const unsigned char *input32) {
+    return memcmp(input32, secp256k1_fuzz_scalar_zero, 32) == 0;
+}
+
+static size_t secp256k1_fuzz_write_der_integer(unsigned char *out, const unsigned char *input32) {
+    size_t offset = 0;
+    size_t input_offset = 0;
+    size_t input_len;
+
+    while (input_offset < 31 && input32[input_offset] == 0) {
+        input_offset++;
+    }
+    input_len = 32 - input_offset;
+
+    out[offset++] = 0x02;
+    if (input32[input_offset] & 0x80) {
+        out[offset++] = (unsigned char)(input_len + 1);
+        out[offset++] = 0;
+    } else {
+        out[offset++] = (unsigned char)input_len;
+    }
+    memcpy(out + offset, input32 + input_offset, input_len);
+    return offset + input_len;
+}
+
+static size_t secp256k1_fuzz_make_der_signature(unsigned char *out, const unsigned char *r32, const unsigned char *s32) {
+    unsigned char integers[70];
+    size_t integers_len = 0;
+
+    integers_len += secp256k1_fuzz_write_der_integer(integers + integers_len, r32);
+    integers_len += secp256k1_fuzz_write_der_integer(integers + integers_len, s32);
+
+    out[0] = 0x30;
+    out[1] = (unsigned char)integers_len;
+    memcpy(out + 2, integers, integers_len);
+    return 2 + integers_len;
+}
+
+static void secp256k1_fuzz_der_expected_scalar(unsigned char *out32, const unsigned char *input32) {
+    if (secp256k1_fuzz_scalar32_in_order(input32)) {
+        memcpy(out32, input32, 32);
+    } else {
+        memcpy(out32, secp256k1_fuzz_scalar_zero, 32);
+    }
+}
+
+static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    secp256k1_ecdsa_signature parsed_sig;
+    unsigned char compact[64];
+    unsigned char roundtrip_der[72];
+    size_t roundtrip_der_len = sizeof(roundtrip_der);
+    int parsed_der;
+
+    parsed_der = secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, input, inputlen);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+    if (parsed_der && !secp256k1_fuzz_scalar32_is_zero(compact) && !secp256k1_fuzz_scalar32_is_zero(compact + 32)) {
+        FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, roundtrip_der, &roundtrip_der_len, &parsed_sig) == 1);
+        FUZZ_CHECK(roundtrip_der_len == inputlen);
+        FUZZ_CHECK(memcmp(roundtrip_der, input, inputlen) == 0);
+        secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
+    } else {
+        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
+    }
+}
+
+static void secp256k1_fuzz_check_signature_parse_der_boundary(const secp256k1_context *ctx, const unsigned char *r32, const unsigned char *s32, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    secp256k1_ecdsa_signature parsed_sig;
+    unsigned char der[72];
+    unsigned char roundtrip_der[72];
+    unsigned char compact[64];
+    unsigned char expected_r[32];
+    unsigned char expected_s[32];
+    size_t der_len;
+    size_t roundtrip_der_len = sizeof(roundtrip_der);
+    int expected_verifiable;
+
+    der_len = secp256k1_fuzz_make_der_signature(der, r32, s32);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, der, der_len) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+
+    secp256k1_fuzz_der_expected_scalar(expected_r, r32);
+    secp256k1_fuzz_der_expected_scalar(expected_s, s32);
+    FUZZ_CHECK(memcmp(compact, expected_r, sizeof(expected_r)) == 0);
+    FUZZ_CHECK(memcmp(compact + 32, expected_s, sizeof(expected_s)) == 0);
+
+    expected_verifiable = !secp256k1_fuzz_scalar32_is_zero(expected_r) && !secp256k1_fuzz_scalar32_is_zero(expected_s);
+    if (expected_verifiable) {
+        FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, roundtrip_der, &roundtrip_der_len, &parsed_sig) == 1);
+        FUZZ_CHECK(roundtrip_der_len == der_len);
+        FUZZ_CHECK(memcmp(roundtrip_der, der, der_len) == 0);
+        secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
+    } else {
+        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
@@ -150,7 +246,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char msg32[32];
     const secp256k1_pubkey *sorted_pubkeys[4];
     const secp256k1_pubkey *permuted_pubkeys[4];
-    int parsed_der;
     size_t i;
 
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
@@ -238,11 +333,14 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_signature_parse_compact(ctx, input, msg32, &pubkey);
     }
 
-    parsed_der = secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, input, size);
-    secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
-    if (!parsed_der) {
-        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, &pubkey) == 0);
-    }
+    secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_zero, secp256k1_fuzz_scalar_one, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_one, secp256k1_fuzz_scalar_zero, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_order_minus_one, secp256k1_fuzz_scalar_order_minus_one, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_order, secp256k1_fuzz_scalar_one, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_one, secp256k1_fuzz_scalar_order, msg32, &pubkey);
+    secp256k1_fuzz_derive(sig64, sizeof(sig64), input, size, 41);
+    secp256k1_fuzz_check_signature_parse_der_boundary(ctx, sig64, sig64 + 32, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_input(ctx, input, size, msg32, &pubkey);
 
     secp256k1_context_destroy(ctx);
     return 0;
