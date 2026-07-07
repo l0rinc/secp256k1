@@ -94,6 +94,18 @@ static void secp256k1_fuzz_check_pubkey_combine(const secp256k1_context *ctx, co
     }
 }
 
+static void secp256k1_fuzz_check_pubkey_parse(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    secp256k1_pubkey parsed_pubkey;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    if (secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, input, inputlen)) {
+        secp256k1_fuzz_check_pubkey_roundtrip(ctx, &parsed_pubkey);
+    } else {
+        FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
+    }
+}
+
 static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
@@ -125,7 +137,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_pubkey combine_pubkey;
     secp256k1_pubkey pubkey_neg;
     secp256k1_pubkey pubkey_neg_from_seckey;
-    secp256k1_pubkey parsed_pubkey;
     secp256k1_pubkey sort_pubkeys[4];
     secp256k1_ecdsa_signature sig;
     secp256k1_ecdsa_signature parsed_sig;
@@ -142,9 +153,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     int parsed_der;
     size_t i;
 
-    if (secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, input, size)) {
-        secp256k1_fuzz_check_pubkey_roundtrip(ctx, &parsed_pubkey);
-    }
+    secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
+    secp256k1_fuzz_check_pubkey_parse(ctx, input, size);
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 11);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
