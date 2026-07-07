@@ -8,6 +8,7 @@ Targets:
 
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, deterministic signing consistency
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
@@ -32,9 +33,9 @@ Autotools standalone build:
 mkdir -p build-autotools-fuzz
 cd build-autotools-fuzz
 ../configure --enable-fuzz --enable-module-recovery
-make -j"$(nproc)" fuzz_api_roundtrip fuzz_context fuzz_ecdh \
+make -j"$(nproc)" fuzz_api_roundtrip fuzz_context fuzz_ecmult_multi fuzz_ecdh \
   fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig
-make check TESTS="fuzz_api_roundtrip fuzz_context fuzz_ecdh fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig"
+make check TESTS="fuzz_api_roundtrip fuzz_context fuzz_ecmult_multi fuzz_ecdh fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig"
 ```
 
 ASan/UBSan replay:
