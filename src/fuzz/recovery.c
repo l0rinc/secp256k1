@@ -17,6 +17,7 @@ static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_conte
     secp256k1_ecdsa_signature normal_sig;
     unsigned char compact[64];
     unsigned char normal_compact[64];
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_recoverable_signature)] = { 0 };
     int expected_ret;
     int parse_ret;
     int serialized_recid;
@@ -24,6 +25,7 @@ static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_conte
     FUZZ_CHECK(recid >= 0 && recid <= 3);
     expected_ret = secp256k1_fuzz_scalar32_in_order(input64);
     expected_ret &= secp256k1_fuzz_scalar32_in_order(input64 + 32);
+    memset(&recoverable_sig, 0xA5, sizeof(recoverable_sig));
     parse_ret = secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &recoverable_sig, input64, recid);
     FUZZ_CHECK(parse_ret == expected_ret);
     if (parse_ret) {
@@ -37,6 +39,8 @@ static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_conte
         FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &normal_sig, &recoverable_sig) == 1);
         FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normal_compact, &normal_sig) == 1);
         FUZZ_CHECK(memcmp(normal_compact, input64, sizeof(normal_compact)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&recoverable_sig, zero_sig, sizeof(recoverable_sig)) == 0);
     }
 }
 #endif
