@@ -6,6 +6,25 @@
 
 #include "fuzz.h"
 
+#if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
+static void secp256k1_fuzz_check_musig_partial_sig_parse(const secp256k1_context *ctx, const unsigned char *input32) {
+    unsigned char serialized[32];
+    unsigned char zero_sig[sizeof(secp256k1_musig_partial_sig)] = { 0 };
+    secp256k1_musig_partial_sig sig;
+    secp256k1_musig_partial_sig reparsed;
+
+    memset(&sig, 0xA5, sizeof(sig));
+    if (secp256k1_musig_partial_sig_parse(ctx, &sig, input32)) {
+        FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, serialized, &sig) == 1);
+        FUZZ_CHECK(memcmp(serialized, input32, sizeof(serialized)) == 0);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_parse(ctx, &reparsed, serialized) == 1);
+        FUZZ_CHECK(memcmp(&sig, &reparsed, sizeof(sig)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
+    }
+}
+#endif
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
@@ -16,6 +35,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char tweaked_xonly32[32];
     unsigned char nonce66[66];
     unsigned char sig32[32];
+    unsigned char ones32[32];
     secp256k1_pubkey pubkeys[3];
     const secp256k1_pubkey *pubkey_ptrs[3];
     secp256k1_pubkey agg_full;
@@ -37,8 +57,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_musig_pubnonce pubnonce2;
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_aggnonce aggnonce2;
-    secp256k1_musig_partial_sig partial_sig;
-    secp256k1_musig_partial_sig partial_sig2;
     size_t n_pubkeys;
     size_t i;
     int parity;
@@ -52,6 +70,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         pubkey_ptrs[i] = &pubkeys[i];
     }
     secp256k1_fuzz_scalar32(tweak, input, size, 173);
+    memset(ones32, 0xFF, sizeof(ones32));
 
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_xonly, &cache, pubkey_ptrs, n_pubkeys) == 1);
     FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &agg_full, &cache) == 1);
@@ -129,11 +148,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, nonce66, &aggnonce2) == 1);
     }
     secp256k1_fuzz_derive(sig32, sizeof(sig32), input, size, 193);
-    if (secp256k1_musig_partial_sig_parse(ctx, &partial_sig, sig32)) {
-        FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, sig32, &partial_sig) == 1);
-        FUZZ_CHECK(secp256k1_musig_partial_sig_parse(ctx, &partial_sig2, sig32) == 1);
-        FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, sig32, &partial_sig2) == 1);
-    }
+    secp256k1_fuzz_check_musig_partial_sig_parse(ctx, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_musig_partial_sig_parse(ctx, secp256k1_fuzz_scalar_order_minus_one);
+    secp256k1_fuzz_check_musig_partial_sig_parse(ctx, secp256k1_fuzz_scalar_order);
+    secp256k1_fuzz_check_musig_partial_sig_parse(ctx, ones32);
+    secp256k1_fuzz_check_musig_partial_sig_parse(ctx, sig32);
 
     secp256k1_context_destroy(ctx);
 #else
