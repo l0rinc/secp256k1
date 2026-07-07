@@ -28,6 +28,64 @@ static int secp256k1_fuzz_schnorrsig_nonce(unsigned char *nonce32, const unsigne
     nonce_data->calls++;
     return secp256k1_nonce_function_bip340(nonce32, msg, msglen, key32, xonly_pk32, algo, algolen, (void *)nonce_data->aux32);
 }
+
+static int secp256k1_fuzz_schnorrsig_nonce_fail(unsigned char *nonce32, const unsigned char *msg, size_t msglen, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *algo, size_t algolen, void *data) {
+    static const unsigned char expected_algo[13] = {'B', 'I', 'P', '0', '3', '4', '0', '/', 'n', 'o', 'n', 'c', 'e'};
+    secp256k1_fuzz_schnorrsig_nonce_data *nonce_data = (secp256k1_fuzz_schnorrsig_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg != NULL || msglen == 0);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(xonly_pk32 != NULL);
+    FUZZ_CHECK(algo != NULL);
+    FUZZ_CHECK(algolen == sizeof(expected_algo));
+    FUZZ_CHECK(memcmp(algo, expected_algo, sizeof(expected_algo)) == 0);
+    nonce_data->calls++;
+    memset(nonce32, 0xA5, 32);
+    return 0;
+}
+
+static int secp256k1_fuzz_schnorrsig_nonce_zero(unsigned char *nonce32, const unsigned char *msg, size_t msglen, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *algo, size_t algolen, void *data) {
+    static const unsigned char expected_algo[13] = {'B', 'I', 'P', '0', '3', '4', '0', '/', 'n', 'o', 'n', 'c', 'e'};
+    secp256k1_fuzz_schnorrsig_nonce_data *nonce_data = (secp256k1_fuzz_schnorrsig_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg != NULL || msglen == 0);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(xonly_pk32 != NULL);
+    FUZZ_CHECK(algo != NULL);
+    FUZZ_CHECK(algolen == sizeof(expected_algo));
+    FUZZ_CHECK(memcmp(algo, expected_algo, sizeof(expected_algo)) == 0);
+    nonce_data->calls++;
+    memset(nonce32, 0, 32);
+    return 1;
+}
+
+static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1_context *ctx, const unsigned char *msg, size_t msglen, const secp256k1_keypair *keypair, const unsigned char *aux32) {
+    secp256k1_fuzz_schnorrsig_nonce_data nonce_data;
+    secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
+    unsigned char sig64[64];
+    unsigned char zero64[64] = { 0 };
+
+    nonce_data.self = &nonce_data;
+    nonce_data.aux32 = aux32;
+    nonce_data.calls = 0;
+    extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce_fail;
+    extraparams.ndata = &nonce_data;
+    memset(sig64, 0xA5, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64, msg, msglen, keypair, &extraparams) == 0);
+    FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+
+    nonce_data.calls = 0;
+    extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce_zero;
+    memset(sig64, 0xA5, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64, msg, msglen, keypair, &extraparams) == 0);
+    FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -106,6 +164,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, input, msglen, &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 2);
     FUZZ_CHECK(memcmp(sig64_checked, sig64_custom, sizeof(sig64_checked)) == 0);
+    secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(ctx, input, msglen, &keypair, aux32);
     wrong_msglen = msglen == 0 ? 1 : msglen - 1;
     FUZZ_CHECK(wrong_msglen != msglen);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, wrong_msglen, &xonly) == 0);
