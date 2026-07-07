@@ -38,12 +38,33 @@ static int fuzz_ecdh_hash_fail(unsigned char *output, const unsigned char *x32, 
     (void)data;
     return 0;
 }
+
+typedef struct {
+    const void *self;
+    unsigned char mask32[32];
+    int calls;
+} secp256k1_fuzz_ecdh_hash_data;
+
+static int fuzz_ecdh_hash_with_data(unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
+    secp256k1_fuzz_ecdh_hash_data *hash_data = (secp256k1_fuzz_ecdh_hash_data *)data;
+    size_t i;
+
+    FUZZ_CHECK(hash_data != NULL);
+    FUZZ_CHECK(hash_data->self == hash_data);
+    hash_data->calls++;
+    for (i = 0; i < 32; i++) {
+        output[i] = (unsigned char)(x32[i] ^ hash_data->mask32[i]);
+        output[32 + i] = (unsigned char)(y32[i] ^ hash_data->mask32[31 - i]);
+    }
+    return 1;
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #ifdef ENABLE_MODULE_ECDH
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 51);
+    secp256k1_fuzz_ecdh_hash_data hash_data;
     unsigned char seckey_a[32];
     unsigned char seckey_b[32];
     secp256k1_pubkey pubkey_a;
@@ -52,6 +73,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_pubkey shared_pubkey_ba;
     unsigned char shared_ab[64];
     unsigned char shared_ba[64];
+    unsigned char masked_ab[64];
+    unsigned char masked_ba[64];
     unsigned char default_ab[32];
     unsigned char default_ba[32];
     unsigned char explicit_ab[32];
@@ -61,9 +84,13 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char shared_ser[65];
     unsigned char fail_output[64];
     size_t shared_ser_len = sizeof(shared_ser);
+    size_t i;
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey_a, input, size, 53);
     secp256k1_fuzz_valid_seckey32(ctx, seckey_b, input, size, 59);
+    hash_data.self = &hash_data;
+    secp256k1_fuzz_derive(hash_data.mask32, sizeof(hash_data.mask32), input, size, 67);
+    hash_data.calls = 0;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
 
@@ -82,6 +109,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdh(ctx, shared_ab, &pubkey_b, seckey_a, fuzz_ecdh_hash_passthrough, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdh(ctx, shared_ba, &pubkey_a, seckey_b, fuzz_ecdh_hash_passthrough, NULL) == 1);
     FUZZ_CHECK(memcmp(shared_ab, shared_ba, sizeof(shared_ab)) == 0);
+    FUZZ_CHECK(secp256k1_ecdh(ctx, masked_ab, &pubkey_b, seckey_a, fuzz_ecdh_hash_with_data, &hash_data) == 1);
+    FUZZ_CHECK(hash_data.calls == 1);
+    FUZZ_CHECK(secp256k1_ecdh(ctx, masked_ba, &pubkey_a, seckey_b, fuzz_ecdh_hash_with_data, &hash_data) == 1);
+    FUZZ_CHECK(hash_data.calls == 2);
+    FUZZ_CHECK(memcmp(masked_ab, masked_ba, sizeof(masked_ab)) == 0);
 
     shared_pubkey_ab = pubkey_b;
     shared_pubkey_ba = pubkey_a;
@@ -92,6 +124,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(shared_ser_len == sizeof(shared_ser));
     FUZZ_CHECK(memcmp(shared_ab, shared_ser + 1, 32) == 0);
     FUZZ_CHECK(memcmp(shared_ab + 32, shared_ser + 33, 32) == 0);
+    for (i = 0; i < 32; i++) {
+        FUZZ_CHECK(masked_ab[i] == (unsigned char)(shared_ser[1 + i] ^ hash_data.mask32[i]));
+        FUZZ_CHECK(masked_ab[32 + i] == (unsigned char)(shared_ser[33 + i] ^ hash_data.mask32[31 - i]));
+    }
     secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, default_ab);
     secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, explicit_ab);
     secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, default_fn_ab);
