@@ -6,6 +6,44 @@
 
 #include "fuzz.h"
 
+static void secp256k1_fuzz_check_tweak_add(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const unsigned char *tweak32) {
+    unsigned char tweaked_seckey[32];
+    secp256k1_pubkey tweaked_pubkey;
+    secp256k1_pubkey pubkey_from_tweaked_seckey;
+    int seckey_ret;
+    int pubkey_ret;
+
+    memcpy(tweaked_seckey, seckey, sizeof(tweaked_seckey));
+    tweaked_pubkey = *pubkey;
+    seckey_ret = secp256k1_ec_seckey_tweak_add(ctx, tweaked_seckey, tweak32);
+    pubkey_ret = secp256k1_ec_pubkey_tweak_add(ctx, &tweaked_pubkey, tweak32);
+    FUZZ_CHECK(seckey_ret == pubkey_ret);
+    if (seckey_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_from_tweaked_seckey, tweaked_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &pubkey_from_tweaked_seckey) == 0);
+        secp256k1_fuzz_check_pubkey_roundtrip(ctx, &tweaked_pubkey);
+    }
+}
+
+static void secp256k1_fuzz_check_tweak_mul(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const unsigned char *tweak32) {
+    unsigned char tweaked_seckey[32];
+    secp256k1_pubkey tweaked_pubkey;
+    secp256k1_pubkey pubkey_from_tweaked_seckey;
+    int seckey_ret;
+    int pubkey_ret;
+
+    memcpy(tweaked_seckey, seckey, sizeof(tweaked_seckey));
+    tweaked_pubkey = *pubkey;
+    seckey_ret = secp256k1_ec_seckey_tweak_mul(ctx, tweaked_seckey, tweak32);
+    pubkey_ret = secp256k1_ec_pubkey_tweak_mul(ctx, &tweaked_pubkey, tweak32);
+    FUZZ_CHECK(seckey_ret == pubkey_ret);
+    if (seckey_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_from_tweaked_seckey, tweaked_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &pubkey_from_tweaked_seckey) == 0);
+        secp256k1_fuzz_check_pubkey_roundtrip(ctx, &tweaked_pubkey);
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
@@ -19,6 +57,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char seckey[32];
     unsigned char seckey_neg[32];
     unsigned char sort_seckey[32];
+    unsigned char tweak32[32];
     unsigned char zero_compact[64] = { 0 };
     unsigned char msg32[32];
     const secp256k1_pubkey *sorted_pubkeys[4];
@@ -35,6 +74,16 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey);
+
+    secp256k1_fuzz_scalar32(tweak32, input, size, 31);
+    secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_one);
+    secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_order);
+    secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, tweak32);
+    secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_one);
+    secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_order);
+    secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, tweak32);
 
     memcpy(seckey_neg, seckey, sizeof(seckey_neg));
     pubkey_neg = pubkey;
