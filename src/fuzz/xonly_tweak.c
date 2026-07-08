@@ -81,15 +81,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char tweaked32[32];
     unsigned char tweaked32_bad[32];
     unsigned char zero_tweaked32[32];
+    unsigned char cancel_tweak[32];
     unsigned char tweaked_seckey[32];
     unsigned char expected_tweaked_seckey[32];
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
     unsigned char zero_keypair[sizeof(secp256k1_keypair)] = { 0 };
     secp256k1_keypair keypair;
+    secp256k1_keypair cancel_tweaked_keypair;
     secp256k1_keypair tweaked_keypair;
     secp256k1_keypair zero_tweaked_keypair;
     secp256k1_keypair overflow_tweaked_keypair;
     secp256k1_pubkey pubkey;
+    secp256k1_pubkey cancel_tweaked_pubkey;
     secp256k1_pubkey tweaked_pubkey;
     secp256k1_pubkey tweaked_keypair_pubkey;
     secp256k1_pubkey zero_tweaked_pubkey;
@@ -160,6 +163,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &overflow_tweaked_keypair, secp256k1_fuzz_scalar_order) == 0);
     FUZZ_CHECK(memcmp(&overflow_tweaked_pubkey, zero_pubkey, sizeof(overflow_tweaked_pubkey)) == 0);
     FUZZ_CHECK(memcmp(&overflow_tweaked_keypair, zero_keypair, sizeof(overflow_tweaked_keypair)) == 0);
+
+    memcpy(cancel_tweak, seckey, sizeof(cancel_tweak));
+    if (!keypair_parity) {
+        FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, cancel_tweak) == 1);
+    }
+    cancel_tweaked_keypair = keypair;
+    memset(&cancel_tweaked_pubkey, 0xA5, sizeof(cancel_tweaked_pubkey));
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &cancel_tweaked_pubkey, &xonly, cancel_tweak) == 0);
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &cancel_tweaked_keypair, cancel_tweak) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add_check(ctx, xonly32, keypair_parity, &xonly, cancel_tweak) == 0);
+    FUZZ_CHECK(memcmp(&cancel_tweaked_pubkey, zero_pubkey, sizeof(cancel_tweaked_pubkey)) == 0);
+    FUZZ_CHECK(memcmp(&cancel_tweaked_keypair, zero_keypair, sizeof(cancel_tweaked_keypair)) == 0);
 
     tweaked_keypair = keypair;
     pub_tweak_ret = secp256k1_xonly_pubkey_tweak_add(ctx, &tweaked_pubkey, &xonly, tweak);
