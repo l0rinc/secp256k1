@@ -64,8 +64,28 @@ static void secp256k1_fuzz_ecmult_multi_make_point(const secp256k1_context *ctx,
     secp256k1_scalar_clear(&sc);
 }
 
+static void secp256k1_fuzz_ecmult_multi_reference(secp256k1_gej *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data) {
+    secp256k1_gej infinity;
+    secp256k1_gej pointj;
+    secp256k1_gej term;
+    size_t i;
+
+    secp256k1_gej_set_infinity(&infinity);
+    if (g_sc == NULL) {
+        secp256k1_gej_set_infinity(expected);
+    } else {
+        secp256k1_ecmult(expected, &infinity, &secp256k1_scalar_zero, g_sc);
+    }
+    for (i = 0; i < n_points; i++) {
+        secp256k1_gej_set_ge(&pointj, &data->pt[i]);
+        secp256k1_ecmult(&term, &pointj, &data->sc[i], NULL);
+        secp256k1_gej_add_var(expected, expected, &term, NULL);
+    }
+}
+
 static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, size_t scratch_size, const secp256k1_scalar *g_sc, size_t n_points, secp256k1_fuzz_ecmult_multi_data *data) {
     secp256k1_scratch *scratch;
+    secp256k1_gej expected;
     secp256k1_gej no_scratch;
     secp256k1_gej with_scratch;
     size_t checkpoint;
@@ -75,6 +95,7 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
     scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_size);
     FUZZ_CHECK(scratch != NULL);
     checkpoint = scratch->alloc_size;
+    secp256k1_fuzz_ecmult_multi_reference(&expected, g_sc, n_points, data);
 
     secp256k1_fuzz_ecmult_multi_reset_trace(data);
     no_scratch_ret = secp256k1_ecmult_multi_var(&ctx->error_callback, NULL, &no_scratch, g_sc, secp256k1_fuzz_ecmult_multi_callback, data, n_points);
@@ -85,7 +106,9 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     FUZZ_CHECK(no_scratch_ret == with_scratch_ret);
     if (with_scratch_ret) {
+        FUZZ_CHECK(secp256k1_gej_eq_var(&no_scratch, &expected));
         FUZZ_CHECK(secp256k1_gej_eq_var(&no_scratch, &with_scratch));
+        FUZZ_CHECK(secp256k1_gej_eq_var(&with_scratch, &expected));
     }
 
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
