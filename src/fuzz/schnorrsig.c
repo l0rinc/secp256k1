@@ -100,10 +100,13 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char sig64_custom[64];
     unsigned char sig64_checked[64];
     unsigned char sig64_null_aux[64];
+    unsigned char sig64_zero_aux[64];
+    unsigned char sig64_zero_aux_custom[64];
     unsigned char sig64_bad[64];
     unsigned char other_seckey[32];
     unsigned char negated_seckey[32];
     unsigned char msg32_bad[32];
+    unsigned char zero_aux32[32] = { 0 };
     secp256k1_keypair keypair;
     secp256k1_keypair other_keypair;
     secp256k1_keypair negated_keypair;
@@ -112,6 +115,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_xonly_pubkey negated_xonly;
     secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     secp256k1_schnorrsig_extraparams null_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
+    secp256k1_schnorrsig_extraparams zero_aux_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     secp256k1_schnorrsig_extraparams checked_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     size_t msglen;
     size_t wrong_msglen;
@@ -169,6 +173,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32_bad, sizeof(msg32_bad), &xonly) == 0);
 
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_null_aux, msg32, &keypair, NULL) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_zero_aux, msg32, &keypair, zero_aux32) == 1);
+    FUZZ_CHECK(memcmp(sig64_null_aux, sig64_zero_aux, sizeof(sig64_null_aux)) == 0);
+    zero_aux_extraparams.ndata = zero_aux32;
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_zero_aux_custom, msg32, sizeof(msg32), &keypair, &zero_aux_extraparams) == 1);
+    FUZZ_CHECK(memcmp(sig64_zero_aux, sig64_zero_aux_custom, sizeof(sig64_zero_aux)) == 0);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_custom, msg32, sizeof(msg32), &keypair, &null_extraparams) == 1);
     FUZZ_CHECK(memcmp(sig64_null_aux, sig64_custom, sizeof(sig64_null_aux)) == 0);
 
