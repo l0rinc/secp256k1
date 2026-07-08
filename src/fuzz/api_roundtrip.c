@@ -78,6 +78,10 @@ static void secp256k1_fuzz_check_tweak_mul(const secp256k1_context *ctx, const s
     if (seckey_ret) {
         FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_from_tweaked_seckey, tweaked_seckey) == 1);
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &pubkey_from_tweaked_seckey) == 0);
+        if (memcmp(tweak32, secp256k1_fuzz_scalar_one, sizeof(secp256k1_fuzz_scalar_one)) == 0) {
+            FUZZ_CHECK(memcmp(tweaked_seckey, seckey, sizeof(tweaked_seckey)) == 0);
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, pubkey) == 0);
+        }
         secp256k1_fuzz_check_pubkey_roundtrip(ctx, &tweaked_pubkey);
     } else {
         FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
