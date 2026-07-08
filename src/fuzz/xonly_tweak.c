@@ -7,6 +7,13 @@
 #include "fuzz.h"
 
 #ifdef ENABLE_MODULE_EXTRAKEYS
+static const unsigned char secp256k1_fuzz_field_p_plus_one[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
+
 static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const unsigned char *input32) {
     unsigned char compressed[33];
     unsigned char serialized[32];
@@ -135,6 +142,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &reparsed) == 0);
     secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
     secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_field_p_plus_one);
     secp256k1_fuzz_check_xonly_parse(ctx, ones32);
     secp256k1_fuzz_check_xonly_parse(ctx, parse32);
 
