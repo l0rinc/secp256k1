@@ -131,6 +131,7 @@ static void test_ecdh_ctx_sha256(void) {
 static void test_bad_scalar(void) {
     unsigned char s_zero[32] = { 0 };
     unsigned char s_overflow[32] = { 0 };
+    unsigned char s_overflow_plus1[32] = { 0 };
     unsigned char s_rand[32] = { 0 };
     unsigned char output[32];
     secp256k1_scalar rand;
@@ -143,11 +144,16 @@ static void test_bad_scalar(void) {
 
     /* Try to multiply it by bad values */
     memcpy(s_overflow, secp256k1_group_order_bytes, 32);
+    memcpy(s_overflow_plus1, secp256k1_group_order_bytes, 32);
+    s_overflow_plus1[31] += 1;
     memset(output, 1, sizeof(output));
     CHECK(secp256k1_ecdh(CTX, output, &point, s_zero, NULL, NULL) == 0);
     CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
     memset(output, 1, sizeof(output));
     CHECK(secp256k1_ecdh(CTX, output, &point, s_overflow, NULL, NULL) == 0);
+    CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
+    memset(output, 1, sizeof(output));
+    CHECK(secp256k1_ecdh(CTX, output, &point, s_overflow_plus1, NULL, NULL) == 0);
     CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
     /* ...and a good one */
     s_overflow[31] -= 1;
