@@ -397,13 +397,24 @@ static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
 
 static void secp256k1_fuzz_check_ecdsa_high_s(const secp256k1_context *ctx, const secp256k1_ecdsa_signature *sig, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature high_sig;
+    secp256k1_ecdsa_signature in_place_sig;
+    secp256k1_ecdsa_signature low_copy_sig;
     secp256k1_ecdsa_signature normalized_sig;
     unsigned char low_compact[64];
+    unsigned char copy_compact[64];
     unsigned char high_compact[64];
     unsigned char normalized_compact[64];
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, sig) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, low_compact, sig) == 1);
+    memset(&low_copy_sig, 0xA5, sizeof(low_copy_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &low_copy_sig, sig) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, copy_compact, &low_copy_sig) == 1);
+    FUZZ_CHECK(memcmp(copy_compact, low_compact, sizeof(copy_compact)) == 0);
+    in_place_sig = *sig;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &in_place_sig, &in_place_sig) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, copy_compact, &in_place_sig) == 1);
+    FUZZ_CHECK(memcmp(copy_compact, low_compact, sizeof(copy_compact)) == 0);
     memcpy(high_compact, low_compact, sizeof(high_compact));
     FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, high_compact + 32) == 1);
     FUZZ_CHECK(memcmp(low_compact + 32, high_compact + 32, 32) != 0);
@@ -411,6 +422,10 @@ static void secp256k1_fuzz_check_ecdsa_high_s(const secp256k1_context *ctx, cons
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &high_sig, msg32, pubkey) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &high_sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normalized_compact, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(normalized_compact, low_compact, sizeof(normalized_compact)) == 0);
+    in_place_sig = high_sig;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &in_place_sig, &in_place_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normalized_compact, &in_place_sig) == 1);
     FUZZ_CHECK(memcmp(normalized_compact, low_compact, sizeof(normalized_compact)) == 0);
 }
 
