@@ -52,6 +52,20 @@ typedef struct {
     int calls;
 } secp256k1_fuzz_ecdh_hash_data;
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_ecdh_illegal_data;
+
+static void secp256k1_fuzz_ecdh_illegal_callback(const char *message, void *data) {
+    secp256k1_fuzz_ecdh_illegal_data *illegal_data = (secp256k1_fuzz_ecdh_illegal_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(illegal_data != NULL);
+    FUZZ_CHECK(illegal_data->self == illegal_data);
+    illegal_data->calls++;
+}
+
 static int fuzz_ecdh_hash_with_data(unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
     secp256k1_fuzz_ecdh_hash_data *hash_data = (secp256k1_fuzz_ecdh_hash_data *)data;
     size_t i;
@@ -64,6 +78,38 @@ static int fuzz_ecdh_hash_with_data(unsigned char *output, const unsigned char *
         output[32 + i] = (unsigned char)(y32[i] ^ hash_data->mask32[31 - i]);
     }
     return 1;
+}
+
+static void secp256k1_fuzz_check_ecdh_invalid_pubkey(secp256k1_context *ctx, const unsigned char *valid_seckey32, const unsigned char *mask32) {
+    secp256k1_fuzz_ecdh_illegal_data illegal_data;
+    secp256k1_fuzz_ecdh_hash_data hash_data;
+    secp256k1_pubkey invalid_pubkey;
+    unsigned char default_output[32];
+    unsigned char custom_output[64];
+    unsigned char zero32[32] = { 0 };
+    unsigned int calls;
+
+    memset(&invalid_pubkey, 0, sizeof(invalid_pubkey));
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_ecdh_illegal_callback, &illegal_data);
+
+    memset(default_output, 0xA5, sizeof(default_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdh(ctx, default_output, &invalid_pubkey, valid_seckey32, NULL, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(default_output, zero32, sizeof(default_output)) == 0);
+
+    hash_data.self = &hash_data;
+    memcpy(hash_data.mask32, mask32, sizeof(hash_data.mask32));
+    hash_data.calls = 0;
+    memset(custom_output, 0xA5, sizeof(custom_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdh(ctx, custom_output, &invalid_pubkey, valid_seckey32, fuzz_ecdh_hash_with_data, &hash_data) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(hash_data.calls == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 #endif
 
@@ -168,6 +214,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdh_hash_function_default(default_fail_output, seckey_a, NULL, NULL) == 0);
     FUZZ_CHECK(memcmp(default_fail_output, zero32, sizeof(default_fail_output)) == 0);
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, seckey_a, fuzz_ecdh_hash_fail, NULL) == 0);
+    secp256k1_fuzz_check_ecdh_invalid_pubkey(ctx, seckey_a, hash_data.mask32);
 
     secp256k1_context_destroy(ctx);
 #else
