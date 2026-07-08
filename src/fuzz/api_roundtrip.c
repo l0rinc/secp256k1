@@ -9,6 +9,13 @@
 
 static size_t secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
 
+static const unsigned char secp256k1_fuzz_field_p_plus_one[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
+
 static void secp256k1_fuzz_ecdsa_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_ecdsa_sha256_compression_calls += n_blocks;
     secp256k1_sha256_transform(state, blocks64, n_blocks);
@@ -250,6 +257,24 @@ static void secp256k1_fuzz_check_pubkey_parse(const secp256k1_context *ctx, cons
     } else {
         FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
     }
+}
+
+static void secp256k1_fuzz_check_pubkey_parse_field_overflow(const secp256k1_context *ctx) {
+    unsigned char compressed[33];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_pubkey parsed_pubkey;
+
+    memcpy(compressed + 1, secp256k1_fuzz_field_p_plus_one, 32);
+
+    compressed[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, compressed, sizeof(compressed)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
+
+    compressed[0] = SECP256K1_TAG_PUBKEY_ODD;
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, compressed, sizeof(compressed)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
 }
 
 static void secp256k1_fuzz_check_pubkey_create_failure(const secp256k1_context *ctx, const unsigned char *seckey32) {
@@ -566,6 +591,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
     secp256k1_fuzz_check_pubkey_parse(ctx, input, size);
+    secp256k1_fuzz_check_pubkey_parse_field_overflow(ctx);
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_order);
 
