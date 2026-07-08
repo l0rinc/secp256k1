@@ -15,6 +15,12 @@ static const unsigned char secp256k1_fuzz_field_p_plus_one[32] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
 };
+static const unsigned char secp256k1_fuzz_x_one_even_y[32] = {
+    0x42, 0x18, 0xF2, 0x0A, 0xE6, 0xC6, 0x46, 0xB3,
+    0x63, 0xDB, 0x68, 0x60, 0x58, 0x22, 0xFB, 0x14,
+    0x26, 0x4C, 0xA8, 0xD2, 0x58, 0x7F, 0xDD, 0x6F,
+    0xBC, 0x75, 0x0D, 0x58, 0x7E, 0x76, 0xA7, 0xEE
+};
 
 static void secp256k1_fuzz_ecdsa_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_ecdsa_sha256_compression_calls += n_blocks;
@@ -261,6 +267,7 @@ static void secp256k1_fuzz_check_pubkey_parse(const secp256k1_context *ctx, cons
 
 static void secp256k1_fuzz_check_pubkey_parse_field_overflow(const secp256k1_context *ctx) {
     unsigned char compressed[33];
+    unsigned char uncompressed[65];
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
     secp256k1_pubkey parsed_pubkey;
 
@@ -274,6 +281,18 @@ static void secp256k1_fuzz_check_pubkey_parse_field_overflow(const secp256k1_con
     compressed[0] = SECP256K1_TAG_PUBKEY_ODD;
     memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
     FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, compressed, sizeof(compressed)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
+
+    uncompressed[0] = SECP256K1_TAG_PUBKEY_UNCOMPRESSED;
+    memcpy(uncompressed + 1, secp256k1_fuzz_field_p_plus_one, 32);
+    memcpy(uncompressed + 33, secp256k1_fuzz_x_one_even_y, 32);
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, uncompressed, sizeof(uncompressed)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
+
+    uncompressed[0] = SECP256K1_TAG_PUBKEY_HYBRID_EVEN;
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, uncompressed, sizeof(uncompressed)) == 0);
     FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
 }
 
