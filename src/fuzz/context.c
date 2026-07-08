@@ -7,6 +7,13 @@
 #include "fuzz.h"
 #include "../hash_impl.h"
 
+static size_t secp256k1_fuzz_sha256_compression_calls = 0;
+
+static void secp256k1_fuzz_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    secp256k1_fuzz_sha256_compression_calls += n_blocks;
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
+
 static void secp256k1_fuzz_tagged_sha256_reference(unsigned char *hash32, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen) {
     secp256k1_hash_ctx hash_ctx;
     secp256k1_sha256 sha;
@@ -42,10 +49,23 @@ static void secp256k1_fuzz_check_tagged_sha256(const secp256k1_context *ctx, con
     FUZZ_CHECK(memcmp(hash32_static, expected, sizeof(hash32_static)) == 0);
 }
 
+static void secp256k1_fuzz_check_tagged_sha256_compression(const secp256k1_context *ctx, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen, int expect_custom_compression) {
+    unsigned char expected[32];
+    unsigned char hash32[32];
+
+    secp256k1_fuzz_tagged_sha256_reference(expected, tag, taglen, msg, msglen);
+    memset(hash32, 0xA5, sizeof(hash32));
+    secp256k1_fuzz_sha256_compression_calls = 0;
+    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, hash32, tag, taglen, msg, msglen) == 1);
+    FUZZ_CHECK(memcmp(hash32, expected, sizeof(hash32)) == 0);
+    FUZZ_CHECK((secp256k1_fuzz_sha256_compression_calls != 0) == expect_custom_compression);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     secp256k1_context *clone;
+    secp256k1_context *hash_clone;
     secp256k1_pubkey pubkey;
     secp256k1_pubkey pubkey_clone;
     secp256k1_ecdsa_signature sig;
@@ -76,6 +96,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input, 0, input, 0);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input, size, input, size);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
+
+    secp256k1_fuzz_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_sha256_compression);
+    FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls != 0);
+    hash_clone = secp256k1_context_clone(ctx);
+    FUZZ_CHECK(hash_clone != NULL);
+    secp256k1_fuzz_check_tagged_sha256_compression(ctx, input, 0, input, 0, 1);
+    secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+    secp256k1_fuzz_check_tagged_sha256_compression(ctx, input + tag_offset, taglen, input + msg_offset, msglen, 0);
+    secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input, size, input, size, 1);
+    secp256k1_context_destroy(hash_clone);
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 41);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 43);
