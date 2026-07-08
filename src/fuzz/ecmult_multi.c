@@ -7,6 +7,8 @@
 #include "../secp256k1.c"
 #include "fuzz.h"
 
+#define SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS 128
+
 typedef struct {
     secp256k1_scalar sc[8];
     secp256k1_ge pt[8];
@@ -15,6 +17,13 @@ typedef struct {
     size_t calls;
     unsigned int seen_mask;
 } secp256k1_fuzz_ecmult_multi_data;
+
+typedef struct {
+    secp256k1_scalar sc;
+    secp256k1_ge pt;
+    uint64_t seen[(SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS + 63) / 64];
+    size_t calls;
+} secp256k1_fuzz_ecmult_multi_repeat_data;
 
 static void secp256k1_fuzz_ecmult_multi_reset_trace(secp256k1_fuzz_ecmult_multi_data *data) {
     data->calls = 0;
@@ -47,6 +56,35 @@ static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_
     }
     *sc = data->sc[idx];
     *pt = data->pt[idx];
+    return 1;
+}
+
+static void secp256k1_fuzz_ecmult_multi_repeat_reset_trace(secp256k1_fuzz_ecmult_multi_repeat_data *data) {
+    memset(data->seen, 0, sizeof(data->seen));
+    data->calls = 0;
+}
+
+static void secp256k1_fuzz_ecmult_multi_repeat_check_trace(const secp256k1_fuzz_ecmult_multi_repeat_data *data, size_t n_points) {
+    size_t i;
+
+    FUZZ_CHECK(data->calls == n_points);
+    FUZZ_CHECK(n_points <= SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS);
+    for (i = 0; i < n_points; i++) {
+        FUZZ_CHECK((data->seen[i / 64] & ((uint64_t)1 << (i % 64))) != 0);
+    }
+}
+
+static int secp256k1_fuzz_ecmult_multi_repeat_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
+    secp256k1_fuzz_ecmult_multi_repeat_data *data = (secp256k1_fuzz_ecmult_multi_repeat_data *)cbdata;
+    uint64_t bit;
+
+    FUZZ_CHECK(idx < SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS);
+    bit = (uint64_t)1 << (idx % 64);
+    FUZZ_CHECK((data->seen[idx / 64] & bit) == 0);
+    data->seen[idx / 64] |= bit;
+    data->calls++;
+    *sc = data->sc;
+    *pt = data->pt;
     return 1;
 }
 
@@ -110,6 +148,56 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
         FUZZ_CHECK(secp256k1_gej_eq_var(&no_scratch, &with_scratch));
         FUZZ_CHECK(secp256k1_gej_eq_var(&with_scratch, &expected));
     }
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+}
+
+static void secp256k1_fuzz_ecmult_multi_repeated_pippenger(const secp256k1_context *ctx, const secp256k1_scalar *g_sc, const unsigned char *input, size_t size) {
+    secp256k1_fuzz_ecmult_multi_repeat_data data;
+    secp256k1_scratch *scratch;
+    secp256k1_scalar n_sc;
+    secp256k1_scalar total_sc;
+    secp256k1_gej pointj;
+    secp256k1_gej actual;
+    secp256k1_gej expected;
+    unsigned char scalar32[32];
+    size_t n_points;
+    size_t scratch_size;
+    size_t n_batches;
+    size_t n_batch_points;
+    size_t checkpoint;
+    int overflow;
+
+    n_points = ECMULT_PIPPENGER_THRESHOLD + (secp256k1_fuzz_byte(input, size, 443) % (SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS - ECMULT_PIPPENGER_THRESHOLD + 1u));
+    FUZZ_CHECK(n_points >= ECMULT_PIPPENGER_THRESHOLD);
+    FUZZ_CHECK(n_points <= SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS);
+
+    memset(&data, 0, sizeof(data));
+    secp256k1_fuzz_scalar32(scalar32, input, size, 461);
+    secp256k1_scalar_set_b32(&data.sc, scalar32, &overflow);
+    if (overflow || secp256k1_scalar_is_zero(&data.sc)) {
+        secp256k1_scalar_set_int(&data.sc, 1);
+    }
+    secp256k1_fuzz_ecmult_multi_make_point(ctx, &data.pt, input, size, 479);
+
+    secp256k1_scalar_set_int(&n_sc, (unsigned int)n_points);
+    secp256k1_scalar_mul(&total_sc, &data.sc, &n_sc);
+    secp256k1_gej_set_ge(&pointj, &data.pt);
+    secp256k1_ecmult(&expected, &pointj, &total_sc, g_sc);
+
+    scratch_size = secp256k1_pippenger_scratch_size(n_points, secp256k1_pippenger_bucket_window(n_points));
+    scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_size + PIPPENGER_SCRATCH_OBJECTS * ALIGNMENT);
+    FUZZ_CHECK(scratch != NULL);
+    FUZZ_CHECK(secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, secp256k1_pippenger_max_points(&ctx->error_callback, scratch), n_points) == 1);
+    FUZZ_CHECK(n_batches == 1);
+    FUZZ_CHECK(n_batch_points >= ECMULT_PIPPENGER_THRESHOLD);
+
+    checkpoint = scratch->alloc_size;
+    secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
+    FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, g_sc, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 1);
+    FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
 
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
@@ -233,6 +321,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_empty(ctx, 4096, &secp256k1_scalar_one, &data);
     secp256k1_fuzz_ecmult_multi_empty(ctx, 4096, g_sc_ptr, &data);
     secp256k1_fuzz_ecmult_multi_fail_callback(ctx, g_sc_ptr, n_points, &data);
+    secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
 
     secp256k1_context_destroy(ctx);
     return 0;
