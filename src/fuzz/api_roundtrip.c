@@ -461,6 +461,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     memcpy(seckey_neg, seckey, sizeof(seckey_neg));
     pubkey_neg = pubkey;
     FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, seckey_neg) == 1);
+    secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, seckey_neg);
     FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey_neg) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_neg_from_seckey, seckey_neg) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey_neg, &pubkey_neg_from_seckey) == 0);
