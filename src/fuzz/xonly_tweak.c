@@ -97,6 +97,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_pubkey overflow_tweaked_pubkey;
     secp256k1_xonly_pubkey xonly;
     secp256k1_xonly_pubkey xonly_from_pubkey;
+    secp256k1_xonly_pubkey xonly_no_parity;
     secp256k1_xonly_pubkey reparsed;
     secp256k1_xonly_pubkey tweaked_xonly;
     secp256k1_xonly_pubkey zero_tweaked_xonly;
@@ -119,6 +120,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &keypair_parity, &keypair) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_no_parity) == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_from_pubkey, &pubkey_parity, &pubkey) == 1);
     FUZZ_CHECK(keypair_parity == pubkey_parity);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_from_pubkey) == 0);
