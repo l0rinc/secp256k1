@@ -132,11 +132,15 @@ static void secp256k1_fuzz_check_pubkey_roundtrip(const secp256k1_context *ctx, 
     secp256k1_pubkey parsed;
     unsigned char compressed[33];
     unsigned char uncompressed[65];
+    unsigned char hybrid[65];
+    unsigned char hybrid_wrong_parity[65];
     size_t compressed_len = sizeof(compressed);
     size_t uncompressed_len = sizeof(uncompressed);
+    int compressed_odd;
 
     FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, pubkey, SECP256K1_EC_COMPRESSED) == 1);
     FUZZ_CHECK(compressed_len == sizeof(compressed));
+    compressed_odd = compressed[0] == SECP256K1_TAG_PUBKEY_ODD;
     FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed, compressed, compressed_len) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, pubkey, &parsed) == 0);
 
@@ -144,6 +148,15 @@ static void secp256k1_fuzz_check_pubkey_roundtrip(const secp256k1_context *ctx, 
     FUZZ_CHECK(uncompressed_len == sizeof(uncompressed));
     FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed, uncompressed, uncompressed_len) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, pubkey, &parsed) == 0);
+
+    memcpy(hybrid, uncompressed, sizeof(hybrid));
+    hybrid[0] = compressed_odd ? SECP256K1_TAG_PUBKEY_HYBRID_ODD : SECP256K1_TAG_PUBKEY_HYBRID_EVEN;
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed, hybrid, sizeof(hybrid)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, pubkey, &parsed) == 0);
+
+    memcpy(hybrid_wrong_parity, hybrid, sizeof(hybrid_wrong_parity));
+    hybrid_wrong_parity[0] = compressed_odd ? SECP256K1_TAG_PUBKEY_HYBRID_EVEN : SECP256K1_TAG_PUBKEY_HYBRID_ODD;
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed, hybrid_wrong_parity, sizeof(hybrid_wrong_parity)) == 0);
 }
 
 static void secp256k1_fuzz_check_signature_roundtrip(const secp256k1_context *ctx, const secp256k1_ecdsa_signature *sig) {
