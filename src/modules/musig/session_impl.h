@@ -776,6 +776,7 @@ int secp256k1_musig_partial_sig_agg(const secp256k1_context* ctx, unsigned char 
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig64 != NULL);
+    memset(sig64, 0, 64);
     ARG_CHECK(session != NULL);
     ARG_CHECK(partial_sigs != NULL);
     ARG_CHECK(n_sigs > 0);
