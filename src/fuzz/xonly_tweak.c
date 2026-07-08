@@ -14,6 +14,20 @@ static const unsigned char secp256k1_fuzz_field_p_plus_one[32] = {
     0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
 };
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_xonly_illegal_data;
+
+static void secp256k1_fuzz_xonly_illegal_callback(const char *message, void *data) {
+    secp256k1_fuzz_xonly_illegal_data *illegal_data = (secp256k1_fuzz_xonly_illegal_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(illegal_data != NULL);
+    FUZZ_CHECK(illegal_data->self == illegal_data);
+    illegal_data->calls++;
+}
+
 static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const unsigned char *input32) {
     unsigned char compressed[33];
     unsigned char serialized[32];
@@ -73,6 +87,31 @@ static void secp256k1_fuzz_xonly_tweaked_seckey(const secp256k1_context *ctx, un
         FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, out32) == 1);
     }
     FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, out32, tweak32) == 1);
+}
+
+static void secp256k1_fuzz_check_xonly_invalid_tweak(secp256k1_context *ctx, const unsigned char *xonly32, int parity, const unsigned char *tweak32) {
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    secp256k1_xonly_pubkey invalid_xonly;
+    secp256k1_pubkey tweaked_pubkey;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    unsigned int calls;
+
+    memset(&invalid_xonly, 0, sizeof(invalid_xonly));
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+
+    memset(&tweaked_pubkey, 0xA5, sizeof(tweaked_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &tweaked_pubkey, &invalid_xonly, tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add_check(ctx, xonly32, parity, &invalid_xonly, tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 #endif
 
@@ -140,6 +179,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &reparsed) == 0);
+    secp256k1_fuzz_check_xonly_invalid_tweak(ctx, xonly32, keypair_parity, tweak);
     secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
     secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_field_p_plus_one);
