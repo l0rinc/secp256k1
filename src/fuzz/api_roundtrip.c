@@ -143,6 +143,30 @@ static void secp256k1_fuzz_check_pubkey_combine(const secp256k1_context *ctx, co
     }
 }
 
+static void secp256k1_fuzz_check_pubkey_cmp_order(const secp256k1_context *ctx, const secp256k1_pubkey *a, const secp256k1_pubkey *b) {
+    unsigned char serialized_a[33];
+    unsigned char serialized_b[33];
+    size_t serialized_a_len = sizeof(serialized_a);
+    size_t serialized_b_len = sizeof(serialized_b);
+    int cmp_ret;
+    int reverse_cmp_ret;
+    int serialized_cmp;
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized_a, &serialized_a_len, a, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_a_len == sizeof(serialized_a));
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized_b, &serialized_b_len, b, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_b_len == sizeof(serialized_b));
+    cmp_ret = secp256k1_ec_pubkey_cmp(ctx, a, b);
+    serialized_cmp = memcmp(serialized_a, serialized_b, sizeof(serialized_a));
+    FUZZ_CHECK((cmp_ret == 0) == (serialized_cmp == 0));
+    FUZZ_CHECK((cmp_ret < 0) == (serialized_cmp < 0));
+    FUZZ_CHECK((cmp_ret > 0) == (serialized_cmp > 0));
+    reverse_cmp_ret = secp256k1_ec_pubkey_cmp(ctx, b, a);
+    FUZZ_CHECK((reverse_cmp_ret == 0) == (cmp_ret == 0));
+    FUZZ_CHECK((reverse_cmp_ret < 0) == (cmp_ret > 0));
+    FUZZ_CHECK((reverse_cmp_ret > 0) == (cmp_ret < 0));
+}
+
 static void secp256k1_fuzz_check_pubkey_sort(const secp256k1_context *ctx, const secp256k1_pubkey * const*input_pubkeys) {
     const secp256k1_pubkey *sorted_pubkeys[4];
     const secp256k1_pubkey *resorted_pubkeys[4];
@@ -152,6 +176,11 @@ static void secp256k1_fuzz_check_pubkey_sort(const secp256k1_context *ctx, const
 
     for (i = 0; i < 4; i++) {
         sorted_pubkeys[i] = input_pubkeys[i];
+    }
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            secp256k1_fuzz_check_pubkey_cmp_order(ctx, input_pubkeys[i], input_pubkeys[j]);
+        }
     }
     FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, sorted_pubkeys, 4) == 1);
     for (i = 1; i < 4; i++) {
