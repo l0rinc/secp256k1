@@ -127,6 +127,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char sig64[64];
     unsigned char sig64_custom[64];
     unsigned char sig64_checked[64];
+    unsigned char sig64_explicit_bip340[64];
     unsigned char sig64_null_aux[64];
     unsigned char sig64_zero_aux[64];
     unsigned char sig64_zero_aux_custom[64];
@@ -145,6 +146,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_schnorrsig_extraparams null_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     secp256k1_schnorrsig_extraparams zero_aux_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     secp256k1_schnorrsig_extraparams checked_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
+    secp256k1_schnorrsig_extraparams explicit_bip340_extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     size_t msglen;
     size_t wrong_msglen;
     size_t flip_index;
@@ -189,6 +191,14 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, msg32, sizeof(msg32), &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 1);
     FUZZ_CHECK(memcmp(sig64_checked, sig64, sizeof(sig64_checked)) == 0);
+    explicit_bip340_extraparams.noncefp = secp256k1_nonce_function_bip340;
+    explicit_bip340_extraparams.ndata = aux32;
+    secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls = 0;
+    secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_explicit_bip340, msg32, sizeof(msg32), &keypair, &explicit_bip340_extraparams) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls != 0);
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
+    FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64, sizeof(sig64_explicit_bip340)) == 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32) - 1, &xonly) == 0);
     if (secp256k1_xonly_pubkey_cmp(ctx, &xonly, &other_xonly) != 0) {
@@ -221,6 +231,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     extraparams.ndata = aux32;
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_custom, input, msglen, &keypair, &extraparams) == 1);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, msglen, &xonly) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_explicit_bip340, input, msglen, &keypair, &explicit_bip340_extraparams) == 1);
+    FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64_custom, sizeof(sig64_explicit_bip340)) == 0);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, input, msglen, &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 2);
     FUZZ_CHECK(memcmp(sig64_checked, sig64_custom, sizeof(sig64_checked)) == 0);
