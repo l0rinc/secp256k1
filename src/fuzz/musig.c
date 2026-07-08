@@ -5,8 +5,16 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "../hash_impl.h"
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
+static size_t secp256k1_fuzz_musig_sha256_compression_calls = 0;
+
+static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    secp256k1_fuzz_musig_sha256_compression_calls += n_blocks;
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
+
 static int secp256k1_fuzz_musig_ge_ext_parse(const secp256k1_context *ctx, unsigned char *serialized33, const unsigned char *input33) {
     unsigned char zero33[33] = { 0 };
     secp256k1_pubkey pubkey;
@@ -137,7 +145,7 @@ static void secp256k1_fuzz_check_musig_nonce_agg(const secp256k1_context *ctx, c
     FUZZ_CHECK(memcmp(serialized_ab66, serialized_ba66, sizeof(serialized_ab66)) == 0);
 }
 
-static void secp256k1_fuzz_check_musig_sign_roundtrip(const secp256k1_context *ctx, const unsigned char *input, size_t size, unsigned char seckey[3][32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
+static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, unsigned char seckey[3][32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
     unsigned char session_rand[3][32];
     unsigned char sig64[64];
     unsigned char sig64_replay[64];
@@ -160,15 +168,20 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(const secp256k1_context *c
         pubkey_ptrs[i] = &pubkeys[i];
     }
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_pk, &keyagg_cache, pubkey_ptrs, n_signers) == 1);
+    secp256k1_fuzz_musig_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_musig_sha256_compression);
     for (i = 0; i < n_signers; i++) {
         secp256k1_fuzz_derive(session_rand[i], sizeof(session_rand[i]), input, size, 211u + (unsigned int)i);
         if (memcmp(session_rand[i], secp256k1_fuzz_scalar_zero, sizeof(session_rand[i])) == 0) {
             memcpy(session_rand[i], secp256k1_fuzz_scalar_one, sizeof(session_rand[i]));
         }
+        secp256k1_fuzz_musig_sha256_compression_calls = 0;
         FUZZ_CHECK(secp256k1_musig_nonce_gen(ctx, &secnonce[i], &pubnonce[i], session_rand[i], seckey[i], &pubkeys[i], msg32, &keyagg_cache, NULL) == 1);
+        FUZZ_CHECK(secp256k1_fuzz_musig_sha256_compression_calls != 0);
         FUZZ_CHECK(memcmp(session_rand[i], secp256k1_fuzz_scalar_zero, sizeof(session_rand[i])) == 0);
         pubnonce_ptrs[i] = &pubnonce[i];
     }
+    secp256k1_context_set_sha256_compression(ctx, NULL);
     FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, n_signers) == 1);
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, &keyagg_cache) == 1);
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session_replay, &aggnonce, msg32, &keyagg_cache) == 1);
