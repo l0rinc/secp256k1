@@ -89,7 +89,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char default_fn_ab[32];
     unsigned char default_fn_ba[32];
     unsigned char shared_ser[65];
+    unsigned char default_fail_output[32];
     unsigned char fail_output[64];
+    unsigned char zero32[32] = { 0 };
     size_t shared_ser_len = sizeof(shared_ser);
     size_t i;
 
@@ -153,8 +155,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     hash_data.calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_order, fuzz_ecdh_hash_with_data, &hash_data) == 0);
     FUZZ_CHECK(hash_data.calls == 1);
-    FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_zero, NULL, NULL) == 0);
-    FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_order, NULL, NULL) == 0);
+    memset(default_fail_output, 0xA5, sizeof(default_fail_output));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, default_fail_output, &pubkey_b, secp256k1_fuzz_scalar_zero, NULL, NULL) == 0);
+    FUZZ_CHECK(memcmp(default_fail_output, zero32, sizeof(default_fail_output)) == 0);
+    memset(default_fail_output, 0xA5, sizeof(default_fail_output));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, default_fail_output, &pubkey_b, secp256k1_fuzz_scalar_order, NULL, NULL) == 0);
+    FUZZ_CHECK(memcmp(default_fail_output, zero32, sizeof(default_fail_output)) == 0);
+    memset(default_fail_output, 0xA5, sizeof(default_fail_output));
+    FUZZ_CHECK(secp256k1_ecdh_hash_function_sha256(default_fail_output, NULL, seckey_a, NULL) == 0);
+    FUZZ_CHECK(memcmp(default_fail_output, zero32, sizeof(default_fail_output)) == 0);
+    memset(default_fail_output, 0xA5, sizeof(default_fail_output));
+    FUZZ_CHECK(secp256k1_ecdh_hash_function_default(default_fail_output, seckey_a, NULL, NULL) == 0);
+    FUZZ_CHECK(memcmp(default_fail_output, zero32, sizeof(default_fail_output)) == 0);
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, seckey_a, fuzz_ecdh_hash_fail, NULL) == 0);
 
     secp256k1_context_destroy(ctx);
