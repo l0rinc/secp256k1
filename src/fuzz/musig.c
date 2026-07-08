@@ -48,6 +48,20 @@ static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsig
     secp256k1_sha256_transform(state, blocks64, n_blocks);
 }
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_musig_illegal_data;
+
+static void secp256k1_fuzz_musig_illegal_callback(const char *message, void *data) {
+    secp256k1_fuzz_musig_illegal_data *illegal_data = (secp256k1_fuzz_musig_illegal_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(illegal_data != NULL);
+    FUZZ_CHECK(illegal_data->self == illegal_data);
+    illegal_data->calls++;
+}
+
 static int secp256k1_fuzz_musig_ge_ext_parse(const secp256k1_context *ctx, unsigned char *serialized33, const unsigned char *input33) {
     unsigned char zero33[33] = { 0 };
     secp256k1_pubkey pubkey;
@@ -395,6 +409,34 @@ static void secp256k1_fuzz_check_musig_infinity_nonce_process(secp256k1_context 
     FUZZ_CHECK(memcmp(sig64, gen_xonly32, sizeof(gen_xonly32)) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_session *session, const secp256k1_musig_partial_sig * const *partial_sig_ptrs, size_t n_sigs) {
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    unsigned char sig64[64];
+    unsigned char zero64[64] = { 0 };
+    secp256k1_musig_partial_sig invalid_partial_sig;
+    const secp256k1_musig_partial_sig *invalid_partial_sig_ptrs[3];
+    size_t i;
+
+    FUZZ_CHECK(n_sigs > 0);
+    FUZZ_CHECK(n_sigs <= 3);
+
+    for (i = 0; i < n_sigs; i++) {
+        invalid_partial_sig_ptrs[i] = partial_sig_ptrs[i];
+    }
+    invalid_partial_sig = *partial_sig_ptrs[0];
+    invalid_partial_sig.data[0] ^= 1u;
+    invalid_partial_sig_ptrs[0] = &invalid_partial_sig;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    memset(sig64, 0xA5, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, session, invalid_partial_sig_ptrs, n_sigs) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, unsigned char seckey[3][32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
     unsigned char session_rand[3][32];
     unsigned char sig64[64];
@@ -456,6 +498,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64_replay, &session_replay, partial_sig_ptrs, n_signers) == 1);
     FUZZ_CHECK(memcmp(sig64, sig64_replay, sizeof(sig64)) == 0);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, &agg_pk) == 1);
+    secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(ctx, &session, partial_sig_ptrs, n_signers);
 }
 
 static void secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *valid_seckey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, const unsigned char *session_rand32) {
