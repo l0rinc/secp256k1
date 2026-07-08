@@ -8,6 +8,13 @@
 #include "../hash_impl.h"
 
 #ifdef ENABLE_MODULE_ECDH
+static size_t secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
+
+static void secp256k1_fuzz_ecdh_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    secp256k1_fuzz_ecdh_sha256_compression_calls += n_blocks;
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
+
 static void secp256k1_fuzz_check_ecdh_default_hash(const secp256k1_context *ctx, const secp256k1_pubkey *shared_pubkey, const unsigned char *output32) {
     secp256k1_hash_ctx hash_ctx;
     secp256k1_sha256 sha;
@@ -94,8 +101,15 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
 
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdh_sha256_compression);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, default_ab, &pubkey_b, seckey_a, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, default_ba, &pubkey_a, seckey_b, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_ecdh(ctx, explicit_ab, &pubkey_b, seckey_a, secp256k1_ecdh_hash_function_sha256, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdh(ctx, explicit_ba, &pubkey_a, seckey_b, secp256k1_ecdh_hash_function_sha256, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdh(ctx, default_fn_ab, &pubkey_b, seckey_a, secp256k1_ecdh_hash_function_default, NULL) == 1);
