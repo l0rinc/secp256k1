@@ -5,6 +5,14 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "../hash_impl.h"
+
+static size_t secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
+
+static void secp256k1_fuzz_ecdsa_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    secp256k1_fuzz_ecdsa_sha256_compression_calls += n_blocks;
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
 
 typedef struct {
     const void *self;
@@ -408,6 +416,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecdsa_signature sig;
     secp256k1_ecdsa_signature parsed_sig;
     secp256k1_ecdsa_signature checked_sig;
+    secp256k1_ecdsa_signature checked_default_sig;
     unsigned char seckey[32];
     unsigned char combine_seckey[32];
     unsigned char seckey_neg[32];
@@ -505,11 +514,25 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, duplicate_pubkeys[i], duplicate_permuted_pubkeys[i]) == 0);
     }
 
+    secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdsa_sha256_compression);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_sha256_compression_calls != 0);
+    nonce_data.extra32 = NULL;
+    nonce_data.calls = 0;
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &checked_default_sig, msg32, seckey, secp256k1_fuzz_ecdsa_nonce, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls >= 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig64, &sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig_checked64, &checked_default_sig) == 1);
+    FUZZ_CHECK(memcmp(sig64, sig_checked64, sizeof(sig64)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &sig) == 0);
     secp256k1_fuzz_check_signature_roundtrip(ctx, &sig);
     secp256k1_fuzz_check_ecdsa_high_s(ctx, &sig, msg32, &pubkey);
+    nonce_data.extra32 = nonce_extra32;
+    nonce_data.calls = 0;
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &parsed_sig, msg32, seckey, NULL, nonce_extra32) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &checked_sig, msg32, seckey, secp256k1_fuzz_ecdsa_nonce, &nonce_data) == 1);
     FUZZ_CHECK(nonce_data.calls >= 1);
@@ -517,6 +540,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig_checked64, &checked_sig) == 1);
     FUZZ_CHECK(memcmp(sig_extra64, sig_checked64, sizeof(sig_extra64)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &checked_sig, msg32, &pubkey) == 1);
+    secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(ctx, msg32, seckey);
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, zero_compact) == 1);
