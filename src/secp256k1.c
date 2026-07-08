@@ -127,7 +127,10 @@ secp256k1_context* secp256k1_context_preallocated_create(void* prealloc, unsigne
     if (prealloc_size == 0) {
         return NULL;
     }
-    VERIFY_CHECK(prealloc != NULL);
+    if (EXPECT(prealloc == NULL, 0)) {
+        secp256k1_callback_call(&default_illegal_callback, "prealloc != NULL");
+        return NULL;
+    }
     ret = (secp256k1_context*)prealloc;
     ret->illegal_callback = default_illegal_callback;
     ret->error_callback = default_error_callback;
@@ -143,7 +146,11 @@ secp256k1_context* secp256k1_context_preallocated_create(void* prealloc, unsigne
 
 secp256k1_context* secp256k1_context_create(unsigned int flags) {
     size_t const prealloc_size = secp256k1_context_preallocated_size(flags);
-    secp256k1_context* ctx = checked_malloc(&default_error_callback, prealloc_size);
+    secp256k1_context* ctx;
+    if (prealloc_size == 0) {
+        return NULL;
+    }
+    ctx = checked_malloc(&default_error_callback, prealloc_size);
     if (EXPECT(secp256k1_context_preallocated_create(ctx, flags) == NULL, 0)) {
         free(ctx);
         return NULL;
