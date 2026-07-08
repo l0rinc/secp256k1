@@ -21,6 +21,13 @@ static const unsigned char secp256k1_fuzz_x_one_even_y[32] = {
     0x26, 0x4C, 0xA8, 0xD2, 0x58, 0x7F, 0xDD, 0x6F,
     0xBC, 0x75, 0x0D, 0x58, 0x7E, 0x76, 0xA7, 0xEE
 };
+/* x coordinate for a valid curve point with y = 1. */
+static const unsigned char secp256k1_fuzz_x_for_y_one[32] = {
+    0x14, 0x6D, 0x3B, 0x65, 0xAD, 0xD9, 0xF5, 0x4C,
+    0xCC, 0xA2, 0x85, 0x33, 0xC8, 0x8E, 0x2C, 0xBC,
+    0x63, 0xF7, 0x44, 0x3E, 0x16, 0x58, 0x78, 0x3A,
+    0xB4, 0x1F, 0x8E, 0xF9, 0x7C, 0x2A, 0x10, 0xB5
+};
 
 static void secp256k1_fuzz_ecdsa_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_ecdsa_sha256_compression_calls += n_blocks;
@@ -291,6 +298,18 @@ static void secp256k1_fuzz_check_pubkey_parse_field_overflow(const secp256k1_con
     FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
 
     uncompressed[0] = SECP256K1_TAG_PUBKEY_HYBRID_EVEN;
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, uncompressed, sizeof(uncompressed)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
+
+    uncompressed[0] = SECP256K1_TAG_PUBKEY_UNCOMPRESSED;
+    memcpy(uncompressed + 1, secp256k1_fuzz_x_for_y_one, 32);
+    memcpy(uncompressed + 33, secp256k1_fuzz_field_p_plus_one, 32);
+    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, uncompressed, sizeof(uncompressed)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
+
+    uncompressed[0] = SECP256K1_TAG_PUBKEY_HYBRID_ODD;
     memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
     FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, uncompressed, sizeof(uncompressed)) == 0);
     FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
