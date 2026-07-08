@@ -25,6 +25,74 @@ typedef struct {
     size_t calls;
 } secp256k1_fuzz_ecmult_multi_repeat_data;
 
+static size_t secp256k1_fuzz_size_t(const unsigned char *input, size_t size, unsigned int salt) {
+    unsigned char bytes[sizeof(size_t)];
+    size_t ret = 0;
+    size_t i;
+
+    switch (secp256k1_fuzz_byte(input, size, salt) & 7u) {
+    case 0:
+        return 0;
+    case 1:
+        return 1;
+    case 2:
+        return ECMULT_MAX_POINTS_PER_BATCH;
+    case 3:
+        return ECMULT_MAX_POINTS_PER_BATCH + 1u;
+    case 4:
+        return SIZE_MAX;
+    case 5:
+        return SIZE_MAX / 2u + 1u;
+    default:
+        break;
+    }
+
+    secp256k1_fuzz_derive(bytes, sizeof(bytes), input, size, salt + 1u);
+    for (i = 0; i < sizeof(bytes); i++) {
+        ret = (ret << 8) | bytes[i];
+    }
+    return ret;
+}
+
+static size_t secp256k1_fuzz_ceil_div_size(size_t n, size_t d) {
+    FUZZ_CHECK(d != 0);
+    return n == 0 ? 0 : 1u + (n - 1u) / d;
+}
+
+static void secp256k1_fuzz_check_ecmult_multi_batch_size_helper(const unsigned char *input, size_t size) {
+    size_t n_batches = SIZE_MAX;
+    size_t n_batch_points = SIZE_MAX;
+    size_t max_n_batch_points = secp256k1_fuzz_size_t(input, size, 503);
+    size_t n = secp256k1_fuzz_size_t(input, size, 521);
+    size_t capped_max = max_n_batch_points;
+    int ret;
+
+    ret = secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, max_n_batch_points, n);
+    if (max_n_batch_points == 0) {
+        FUZZ_CHECK(ret == 0);
+        return;
+    }
+
+    if (capped_max > ECMULT_MAX_POINTS_PER_BATCH) {
+        capped_max = ECMULT_MAX_POINTS_PER_BATCH;
+    }
+
+    FUZZ_CHECK(ret == 1);
+    if (n == 0) {
+        FUZZ_CHECK(n_batches == 0);
+        FUZZ_CHECK(n_batch_points == 0);
+    } else {
+        size_t expected_batches = secp256k1_fuzz_ceil_div_size(n, capped_max);
+        size_t expected_batch_points = secp256k1_fuzz_ceil_div_size(n, expected_batches);
+
+        FUZZ_CHECK(n_batches == expected_batches);
+        FUZZ_CHECK(n_batch_points == expected_batch_points);
+        FUZZ_CHECK(n_batch_points != 0);
+        FUZZ_CHECK(n_batch_points <= capped_max);
+        FUZZ_CHECK(secp256k1_fuzz_ceil_div_size(n, n_batch_points) == n_batches);
+    }
+}
+
 static void secp256k1_fuzz_ecmult_multi_reset_trace(secp256k1_fuzz_ecmult_multi_data *data) {
     data->calls = 0;
     data->seen_mask = 0;
@@ -274,6 +342,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     memset(&data, 0, sizeof(data));
     n_points = secp256k1_fuzz_byte(input, size, 3) % 9u;
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
+    secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
 
     secp256k1_fuzz_scalar32(scalar32, input, size, 223);
     secp256k1_scalar_set_b32(&g_sc, scalar32, &overflow);
