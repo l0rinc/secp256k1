@@ -29,6 +29,12 @@ static void secp256k1_fuzz_sha256_compression(uint32_t *state, const unsigned ch
     secp256k1_sha256_transform(state, blocks64, n_blocks);
 }
 
+static void secp256k1_fuzz_invalid_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    (void)state;
+    (void)blocks64;
+    (void)n_blocks;
+}
+
 static void secp256k1_fuzz_tagged_sha256_reference(unsigned char *hash32, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen) {
     secp256k1_hash_ctx hash_ctx;
     secp256k1_sha256 sha;
@@ -74,6 +80,22 @@ static void secp256k1_fuzz_check_tagged_sha256_compression(const secp256k1_conte
     FUZZ_CHECK(secp256k1_tagged_sha256(ctx, hash32, tag, taglen, msg, msglen) == 1);
     FUZZ_CHECK(memcmp(hash32, expected, sizeof(hash32)) == 0);
     FUZZ_CHECK((secp256k1_fuzz_sha256_compression_calls != 0) == expect_custom_compression);
+}
+
+static void secp256k1_fuzz_check_sha256_reject_keeps_backend(secp256k1_context *ctx, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen) {
+    secp256k1_fuzz_context_callback_data callback_data;
+    unsigned int calls;
+
+    callback_data.self = &callback_data;
+    callback_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_context_illegal_callback, &callback_data);
+
+    calls = callback_data.calls;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_invalid_sha256_compression);
+    FUZZ_CHECK(callback_data.calls == calls + 1);
+    secp256k1_fuzz_check_tagged_sha256_compression(ctx, tag, taglen, msg, msglen, 1);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_check_context_ecdsa_equivalence(const secp256k1_context *ctx, const secp256k1_context *other, const unsigned char *msg32, const unsigned char *seckey) {
@@ -211,6 +233,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input, 0, input, 0, 1);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
     secp256k1_fuzz_check_tagged_sha256_compression(prealloc_hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
+    secp256k1_fuzz_check_sha256_reject_keeps_backend(ctx, input + tag_offset, taglen, input + msg_offset, msglen);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input + tag_offset, taglen, input + msg_offset, msglen, 0);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input, size, input, size, 1);
