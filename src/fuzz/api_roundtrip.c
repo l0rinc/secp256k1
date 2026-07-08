@@ -217,6 +217,25 @@ static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
 
+static void secp256k1_fuzz_check_ecdsa_high_s(const secp256k1_context *ctx, const secp256k1_ecdsa_signature *sig, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    secp256k1_ecdsa_signature high_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+    unsigned char low_compact[64];
+    unsigned char high_compact[64];
+    unsigned char normalized_compact[64];
+
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, sig) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, low_compact, sig) == 1);
+    memcpy(high_compact, low_compact, sizeof(high_compact));
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, high_compact + 32) == 1);
+    FUZZ_CHECK(memcmp(low_compact + 32, high_compact + 32, 32) != 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &high_sig, high_compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &high_sig, msg32, pubkey) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &high_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normalized_compact, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(normalized_compact, low_compact, sizeof(normalized_compact)) == 0);
+}
+
 static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context *ctx, const unsigned char *input64, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char compact[64];
@@ -453,6 +472,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &sig) == 0);
     secp256k1_fuzz_check_signature_roundtrip(ctx, &sig);
+    secp256k1_fuzz_check_ecdsa_high_s(ctx, &sig, msg32, &pubkey);
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &parsed_sig, msg32, seckey, NULL, nonce_extra32) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &checked_sig, msg32, seckey, secp256k1_fuzz_ecdsa_nonce, &nonce_data) == 1);
     FUZZ_CHECK(nonce_data.calls >= 1);
