@@ -222,7 +222,7 @@ static void test_schnorrsig_bip_vectors_check_signing(const unsigned char *sk, c
 }
 
 /* Helper function for schnorrsig_bip_vectors
- * Checks that both verify and verify_batch (TODO) return the same value as expected. */
+ * Checks that verify returns the same value as expected. */
 static void test_schnorrsig_bip_vectors_check_verify(const unsigned char *pk_serialized, const unsigned char *msg, size_t msglen, const unsigned char *sig, int expected) {
     secp256k1_xonly_pubkey pk;
 
@@ -912,9 +912,8 @@ static void test_schnorrsig_ctx_sha256(void) {
 }
 
 #define N_SIGS 3
-/* Creates N_SIGS valid signatures and verifies them with verify and
- * verify_batch (TODO). Then flips some bits and checks that verification now
- * fails. */
+/* Creates N_SIGS valid signatures and verifies them. Then flips some bits and
+ * checks that verification now fails. */
 static void test_schnorrsig_sign_verify_internal(void) {
     unsigned char sk[32];
     unsigned char msg[N_SIGS][32];
@@ -936,7 +935,7 @@ static void test_schnorrsig_sign_verify_internal(void) {
 
     {
         /* Flip a few bits in the signature and in the message and check that
-         * verify and verify_batch (TODO) fail */
+         * verify fails. */
         size_t sig_idx = testrand_int(N_SIGS);
         size_t byte_idx = testrand_bits(5);
         unsigned char xorbyte = testrand_int(254)+1;

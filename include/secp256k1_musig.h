@@ -236,7 +236,7 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_get(
  *
  *  secp256k1_musig_pubkey_agg(..., keyagg_cache, pubkeys, ...)
  *  secp256k1_musig_pubkey_get(..., agg_pk, keyagg_cache)
- *  secp256k1_musig_pubkey_ec_tweak_add(..., output_pk, tweak32, keyagg_cache)
+ *  secp256k1_musig_pubkey_ec_tweak_add(..., output_pk, keyagg_cache, tweak32)
  *  secp256k1_ec_pubkey_serialize(..., buf, ..., output_pk, ...)
  *  secp256k1_ec_pubkey_tweak_add(..., agg_pk, tweak32)
  *  secp256k1_ec_pubkey_serialize(..., buf2, ..., agg_pk, ...)
@@ -252,12 +252,12 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_get(
  *                        do not need it, this arg can be NULL.
  *  In/Out: keyagg_cache: pointer to a `musig_keyagg_cache` struct initialized by
  *                       `musig_pubkey_agg`
- *  In:          tweak32: pointer to a 32-byte tweak. The tweak is valid if it passes
- *                        `secp256k1_ec_seckey_verify` and is not equal to the
- *                        secret key corresponding to the public key represented
- *                        by keyagg_cache or its negation. For uniformly random
- *                        32-byte arrays the chance of being invalid is
- *                        negligible (around 1 in 2^128).
+ *  In:          tweak32: pointer to a 32-byte tweak, which must be valid
+ *                        according to secp256k1_ec_seckey_verify or 32 zero
+ *                        bytes. The function returns 0 if the resulting public
+ *                        key would be invalid. For uniformly random 32-byte
+ *                        tweaks, the chance of being invalid is negligible
+ *                        (around 1 in 2^128).
  */
 SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_ec_tweak_add(
     const secp256k1_context *ctx,
@@ -280,8 +280,9 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_ec_tweak_a
  *
  *  secp256k1_musig_pubkey_agg(..., agg_pk, keyagg_cache, pubkeys, ...)
  *  secp256k1_musig_pubkey_xonly_tweak_add(..., output_pk, keyagg_cache, tweak32)
- *  secp256k1_xonly_pubkey_serialize(..., buf, output_pk)
- *  secp256k1_xonly_pubkey_tweak_add_check(..., buf, ..., agg_pk, tweak32)
+ *  secp256k1_xonly_pubkey_from_pubkey(..., output_xonly_pk, &pk_parity, output_pk)
+ *  secp256k1_xonly_pubkey_serialize(..., buf, output_xonly_pk)
+ *  secp256k1_xonly_pubkey_tweak_add_check(..., buf, pk_parity, agg_pk, tweak32)
  *
  *  This function is required if you want to _sign_ for a tweaked aggregate key.
  *  If you are only computing a public key but not intending to create a
@@ -294,12 +295,12 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_ec_tweak_a
  *                        do not need it, this arg can be NULL.
  *  In/Out: keyagg_cache: pointer to a `musig_keyagg_cache` struct initialized by
  *                       `musig_pubkey_agg`
- *  In:          tweak32: pointer to a 32-byte tweak. The tweak is valid if it passes
- *                        `secp256k1_ec_seckey_verify` and is not equal to the
- *                        secret key corresponding to the public key represented
- *                        by keyagg_cache or its negation. For uniformly random
- *                        32-byte arrays the chance of being invalid is
- *                        negligible (around 1 in 2^128).
+ *  In:          tweak32: pointer to a 32-byte tweak, which must be valid
+ *                        according to secp256k1_ec_seckey_verify or 32 zero
+ *                        bytes. The function returns 0 if the resulting public
+ *                        key would be invalid. For uniformly random 32-byte
+ *                        tweaks, the chance of being invalid is negligible
+ *                        (around 1 in 2^128).
  */
 SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_xonly_tweak_add(
     const secp256k1_context *ctx,
@@ -392,12 +393,11 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_nonce_gen(
  *     that if the same keypair is used with `secp256k1_musig_nonce_gen_counter`
  *     on multiple devices, none of the devices should have the same counter
  *     value as any other device.
- *  2. If the seckey, message or aggregate public key cache is already available
- *     at this stage, any of these can be optionally provided, in which case
- *     they will be used in the derivation of the nonce and increase
- *     misuse-resistance. The extra_input32 argument can be used to provide
- *     additional data that does not repeat in normal scenarios, such as the
- *     current time.
+ *  2. If the message or aggregate public key cache is already available at this
+ *     stage, either can be optionally provided, in which case they will be used
+ *     in the derivation of the nonce and increase misuse-resistance. The
+ *     extra_input32 argument can be used to provide additional data that does
+ *     not repeat in normal scenarios, such as the current time.
  *  3. Avoid copying (or serializing) the secnonce. This reduces the possibility
  *     that it is used more than once for signing.
  *
@@ -410,7 +410,7 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_nonce_gen(
  *           pubnonce: pointer to a structure to store the public nonce
  *  In:
  *   nonrepeating_cnt: the value of a counter as explained above. Must be
- *                     unique to this call to secp256k1_musig_nonce_gen.
+ *                     unique to this call to secp256k1_musig_nonce_gen_counter.
  *            keypair: keypair of the signer creating the nonce. The secnonce
  *                     output of this function cannot be used to sign for any
  *                     other keypair.
@@ -489,8 +489,9 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_nonce_process(
  *  For signing to succeed, the secnonce provided to this function must have
  *  been generated for the provided keypair. This means that when signing for a
  *  keypair consisting of a seckey and pubkey, the secnonce must have been
- *  created by calling musig_nonce_gen with that pubkey. Otherwise, the
- *  illegal_callback is called.
+ *  created by calling musig_nonce_gen with that pubkey or
+ *  musig_nonce_gen_counter with that keypair. Otherwise, the illegal_callback
+ *  is called.
  *
  *  This function does not verify the output partial signature, deviating from
  *  the BIP 327 specification. It is recommended to verify the output partial

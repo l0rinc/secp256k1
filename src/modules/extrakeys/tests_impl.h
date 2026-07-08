@@ -362,7 +362,7 @@ static void test_keypair(void) {
     CHECK(secp256k1_memcmp_var(&xonly_pk, &xonly_pk_tmp, sizeof(pk)) == 0);
     CHECK(pk_parity == pk_parity_tmp);
 
-    /* Test keypair_seckey */
+    /* Test keypair_sec */
     testrand256(sk);
     CHECK(secp256k1_keypair_create(CTX, &keypair, sk) == 1);
     CHECK(secp256k1_keypair_sec(CTX, sk_tmp, &keypair) == 1);
@@ -376,7 +376,7 @@ static void test_keypair(void) {
     CHECK(secp256k1_memcmp_var(sk, sk_tmp, sizeof(sk_tmp)) == 0);
 
 
-    /* Using an invalid keypair is fine for keypair_seckey */
+    /* Using an invalid keypair is fine for keypair_sec */
     memset(&keypair, 0, sizeof(keypair));
     CHECK(secp256k1_keypair_sec(CTX, sk_tmp, &keypair) == 1);
     CHECK(secp256k1_memcmp_var(zeros96, sk_tmp, sizeof(sk_tmp)) == 0);
@@ -444,7 +444,7 @@ static void test_keypair_add(void) {
     memset(&keypair.data[32], 0, 64);
     CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak));
 
-    /* Check that the keypair_tweak_add implementation is correct */
+    /* Check that the keypair_xonly_tweak_add implementation is correct */
     CHECK(secp256k1_keypair_create(CTX, &keypair, sk) == 1);
     for (i = 0; i < COUNT; i++) {
         secp256k1_xonly_pubkey internal_pk;

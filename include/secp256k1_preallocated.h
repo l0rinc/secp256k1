@@ -81,8 +81,8 @@ SECP256K1_API size_t secp256k1_context_preallocated_clone_size(
 /** Copy a secp256k1 context object into caller-provided memory.
  *
  *  The caller must provide a pointer to a rewritable contiguous block of memory
- *  of size at least secp256k1_context_preallocated_size(flags) bytes, suitably
- *  aligned to hold an object of any type.
+ *  of size at least secp256k1_context_preallocated_clone_size(ctx) bytes,
+ *  suitably aligned to hold an object of any type.
  *
  *  The block of memory is exclusively owned by the created context object during
  *  the lifetime of this context object, see the description of
@@ -94,7 +94,7 @@ SECP256K1_API size_t secp256k1_context_preallocated_clone_size(
  *  Returns: pointer to a newly created context object.
  *  Args:    ctx:      pointer to a context to copy (not secp256k1_context_static).
  *  In:      prealloc: pointer to a rewritable contiguous block of memory of
- *                     size at least secp256k1_context_preallocated_size(flags)
+ *                     size at least secp256k1_context_preallocated_clone_size(ctx)
  *                     bytes, as detailed above.
  */
 SECP256K1_API secp256k1_context *secp256k1_context_preallocated_clone(
