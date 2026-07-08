@@ -5,8 +5,16 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "../hash_impl.h"
 
 #ifdef ENABLE_MODULE_RECOVERY
+static size_t secp256k1_fuzz_recovery_sha256_compression_calls = 0;
+
+static void secp256k1_fuzz_recovery_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    secp256k1_fuzz_recovery_sha256_compression_calls += n_blocks;
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
+
 static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
@@ -95,6 +103,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char seckey[32];
     unsigned char msg32[32];
     unsigned char compact[64];
+    unsigned char checked_compact[64];
     unsigned char normal_compact[64];
     unsigned char zero_compact[64] = { 0 };
     unsigned char sig64[64];
@@ -103,8 +112,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecdsa_signature normal_sig;
     secp256k1_ecdsa_signature normalized_sig;
     secp256k1_ecdsa_recoverable_signature recoverable_sig;
+    secp256k1_ecdsa_recoverable_signature checked_recoverable_sig;
     secp256k1_ecdsa_recoverable_signature reparsed_sig;
     int recid;
+    int checked_recid;
     int alt_recid;
     int parsed;
 
@@ -112,8 +123,17 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 101);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
 
+    secp256k1_fuzz_recovery_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_recovery_sha256_compression);
+    secp256k1_fuzz_recovery_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &recoverable_sig, msg32, seckey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_recovery_sha256_compression_calls != 0);
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &checked_recoverable_sig, msg32, seckey, secp256k1_nonce_function_rfc6979, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, compact, &recid, &recoverable_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, checked_compact, &checked_recid, &checked_recoverable_sig) == 1);
+    FUZZ_CHECK(recid == checked_recid);
+    FUZZ_CHECK(memcmp(compact, checked_compact, sizeof(compact)) == 0);
+    secp256k1_context_set_sha256_compression(ctx, NULL);
     FUZZ_CHECK(recid >= 0 && recid <= 3);
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &reparsed_sig, compact, recid) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &normal_sig, &reparsed_sig) == 1);
