@@ -600,6 +600,7 @@ int secp256k1_musig_nonce_process(const secp256k1_context* ctx, secp256k1_musig_
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(session != NULL);
+    memset(session, 0, sizeof(*session));
     ARG_CHECK(aggnonce != NULL);
     ARG_CHECK(msg32 != NULL);
     ARG_CHECK(keyagg_cache != NULL);

@@ -131,6 +131,7 @@ static void musig_api_tests(void) {
     secp256k1_keypair invalid_keypair;
     unsigned char max64[64];
     unsigned char zeros132[132] = { 0 };
+    unsigned char zeros133[133] = { 0 };
     unsigned char session_secrand[2][32];
     unsigned char nonrepeating_cnt = 0;
     secp256k1_musig_secnonce secnonce[2];
@@ -423,10 +424,15 @@ static void musig_api_tests(void) {
     CHECK(secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, &keyagg_cache) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, NULL, &aggnonce, msg, &keyagg_cache));
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, NULL, msg, &keyagg_cache));
+    CHECK(memcmp_and_randomize(session.data, zeros133, sizeof(session.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, (secp256k1_musig_aggnonce*) &invalid_pubnonce, msg, &keyagg_cache));
+    CHECK(memcmp_and_randomize(session.data, zeros133, sizeof(session.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &aggnonce, NULL, &keyagg_cache));
+    CHECK(memcmp_and_randomize(session.data, zeros133, sizeof(session.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, NULL));
+    CHECK(memcmp_and_randomize(session.data, zeros133, sizeof(session.data)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, &invalid_keyagg_cache));
+    CHECK(memcmp_and_randomize(session.data, zeros133, sizeof(session.data)) == 0);
 
     CHECK(secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, &keyagg_cache) == 1);
 
