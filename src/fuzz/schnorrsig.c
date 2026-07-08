@@ -176,6 +176,32 @@ static void secp256k1_fuzz_check_schnorrsig_nonce_overflow(const secp256k1_conte
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_reduced, msg, msglen, xonly) == 1);
     FUZZ_CHECK(memcmp(sig64_overflow, sig64_reduced, sizeof(sig64_overflow)) == 0);
 }
+
+static void secp256k1_fuzz_check_schnorrsig_rx_overflow(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const secp256k1_xonly_pubkey *xonly) {
+    static const unsigned char field_p[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
+    };
+    static const unsigned char field_p_plus_one[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+    };
+    unsigned char sig64_overflow[64];
+
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg, msglen, xonly) == 1);
+
+    memcpy(sig64_overflow, sig64, sizeof(sig64_overflow));
+    memcpy(sig64_overflow, field_p, sizeof(field_p));
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_overflow, msg, msglen, xonly) == 0);
+
+    memcpy(sig64_overflow, sig64, sizeof(sig64_overflow));
+    memcpy(sig64_overflow, field_p_plus_one, sizeof(field_p_plus_one));
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_overflow, msg, msglen, xonly) == 0);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -250,6 +276,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
+    secp256k1_fuzz_check_schnorrsig_rx_overflow(ctx, sig64, msg32, sizeof(msg32), &xonly);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, msg32, sizeof(msg32), &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 1);
     FUZZ_CHECK(memcmp(sig64_checked, sig64, sizeof(sig64_checked)) == 0);
@@ -293,6 +320,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     extraparams.ndata = aux32;
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_custom, input, msglen, &keypair, &extraparams) == 1);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, msglen, &xonly) == 1);
+    secp256k1_fuzz_check_schnorrsig_rx_overflow(ctx, sig64_custom, input, msglen, &xonly);
     secp256k1_fuzz_check_schnorrsig_nonce_overflow(ctx, input, msglen, &keypair, &xonly);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_explicit_bip340, input, msglen, &keypair, &explicit_bip340_extraparams) == 1);
     FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64_custom, sizeof(sig64_explicit_bip340)) == 0);
