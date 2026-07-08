@@ -257,6 +257,10 @@ static void musig_api_tests(void) {
             tmp_keyagg_cache = keyagg_cache;
             CHECK((*tweak_func[i])(CTX, &tmp_output_pk, &tmp_keyagg_cache, max64) == 0);
             CHECK(memcmp_and_randomize(tmp_output_pk.data, zeros132, sizeof(tmp_output_pk.data)) == 0);
+            CHECK(secp256k1_memcmp_var(tmp_keyagg_cache.data, keyagg_cache.data, sizeof(tmp_keyagg_cache.data)) == 0);
+            tmp_keyagg_cache = keyagg_cache;
+            CHECK((*tweak_func[i])(CTX, NULL, &tmp_keyagg_cache, max64) == 0);
+            CHECK(secp256k1_memcmp_var(tmp_keyagg_cache.data, keyagg_cache.data, sizeof(tmp_keyagg_cache.data)) == 0);
             tmp_keyagg_cache = keyagg_cache;
             /* Uninitialized keyagg_cache */
             CHECK_ILLEGAL(CTX, (*tweak_func[i])(CTX, &tmp_output_pk, &invalid_keyagg_cache, tweak));

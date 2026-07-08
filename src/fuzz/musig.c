@@ -241,6 +241,24 @@ static void secp256k1_fuzz_check_musig_keyagg_hash_routing(secp256k1_context *ct
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &routed_full, &expected_full) == 0);
 }
 
+typedef int (*secp256k1_fuzz_musig_tweak_func)(const secp256k1_context *ctx, secp256k1_pubkey *output_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *tweak32);
+
+static void secp256k1_fuzz_check_musig_tweak_overflow_rollback(const secp256k1_context *ctx, secp256k1_fuzz_musig_tweak_func tweak_func, const secp256k1_musig_keyagg_cache *cache) {
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_musig_keyagg_cache failed_cache;
+    secp256k1_pubkey failed_output;
+
+    failed_cache = *cache;
+    memset(&failed_output, 0xA5, sizeof(failed_output));
+    FUZZ_CHECK(tweak_func(ctx, &failed_output, &failed_cache, secp256k1_fuzz_scalar_order) == 0);
+    FUZZ_CHECK(memcmp(&failed_output, zero_pubkey, sizeof(failed_output)) == 0);
+    FUZZ_CHECK(memcmp(&failed_cache, cache, sizeof(failed_cache)) == 0);
+
+    failed_cache = *cache;
+    FUZZ_CHECK(tweak_func(ctx, NULL, &failed_cache, secp256k1_fuzz_scalar_order) == 0);
+    FUZZ_CHECK(memcmp(&failed_cache, cache, sizeof(failed_cache)) == 0);
+}
+
 static uint64_t secp256k1_fuzz_musig_nonzero_counter(const unsigned char *input, size_t size) {
     unsigned char counter_bytes[8];
     uint64_t counter = 0;
@@ -516,6 +534,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &cache_full, &agg_full) == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &agg_xonly_from_full, NULL, &agg_full) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &agg_xonly, &agg_xonly_from_full) == 0);
+    secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_ec_tweak_add, &cache);
+    secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_xonly_tweak_add, &cache);
 
     zero_tweak_cache = cache;
     FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(ctx, &zero_tweaked_full, &zero_tweak_cache, secp256k1_fuzz_scalar_zero) == 1);
@@ -540,6 +560,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(ctx, NULL, &one_tweak_cache, secp256k1_fuzz_scalar_one) == 1);
         FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &cache_full, &one_tweak_cache) == 1);
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &cache_full, &one_tweaked_full) == 0);
+        secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_ec_tweak_add, &one_tweak_cache);
+        secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_xonly_tweak_add, &one_tweak_cache);
     }
 
     tweak_cache = cache;
@@ -555,6 +577,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &cache_full, &musig_tweaked_full) == 0);
         FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &cache_full, &tweak_cache_no_output) == 1);
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &cache_full, &musig_tweaked_full) == 0);
+        secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_ec_tweak_add, &tweak_cache);
+        secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_xonly_tweak_add, &tweak_cache);
     }
 
     tweak_cache = cache;
@@ -573,6 +597,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &cache_full, &musig_tweaked_full) == 0);
         FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &agg_xonly_from_full, agg_xonly32) == 1);
         FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &agg_xonly, &agg_xonly_from_full) == 0);
+        secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_ec_tweak_add, &tweak_cache);
+        secp256k1_fuzz_check_musig_tweak_overflow_rollback(ctx, secp256k1_musig_pubkey_xonly_tweak_add, &tweak_cache);
     }
 
     secp256k1_fuzz_derive(nonce66, sizeof(nonce66), input, size, 181);
