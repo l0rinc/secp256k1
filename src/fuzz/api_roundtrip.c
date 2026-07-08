@@ -135,6 +135,41 @@ static void secp256k1_fuzz_check_pubkey_combine(const secp256k1_context *ctx, co
     }
 }
 
+static void secp256k1_fuzz_check_pubkey_sort(const secp256k1_context *ctx, const secp256k1_pubkey * const*input_pubkeys) {
+    const secp256k1_pubkey *sorted_pubkeys[4];
+    const secp256k1_pubkey *resorted_pubkeys[4];
+    int matched[4] = { 0 };
+    size_t i;
+    size_t j;
+
+    for (i = 0; i < 4; i++) {
+        sorted_pubkeys[i] = input_pubkeys[i];
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, sorted_pubkeys, 4) == 1);
+    for (i = 1; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, sorted_pubkeys[i - 1], sorted_pubkeys[i]) <= 0);
+    }
+    for (i = 0; i < 4; i++) {
+        int found = 0;
+        for (j = 0; j < 4; j++) {
+            if (!matched[j] && secp256k1_ec_pubkey_cmp(ctx, sorted_pubkeys[i], input_pubkeys[j]) == 0) {
+                matched[j] = 1;
+                found = 1;
+                break;
+            }
+        }
+        FUZZ_CHECK(found);
+    }
+    for (i = 0; i < 4; i++) {
+        FUZZ_CHECK(matched[i]);
+        resorted_pubkeys[i] = sorted_pubkeys[i];
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, resorted_pubkeys, 4) == 1);
+    for (i = 0; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, sorted_pubkeys[i], resorted_pubkeys[i]) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_pubkey_parse(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
     secp256k1_pubkey parsed_pubkey;
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
@@ -330,6 +365,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char msg32[32];
     const secp256k1_pubkey *sorted_pubkeys[4];
     const secp256k1_pubkey *permuted_pubkeys[4];
+    const secp256k1_pubkey *duplicate_pubkeys[4];
+    const secp256k1_pubkey *duplicate_permuted_pubkeys[4];
     size_t i;
 
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
@@ -394,6 +431,22 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     for (i = 0; i < 4; i++) {
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, sorted_pubkeys[i], permuted_pubkeys[i]) == 0);
+    }
+    secp256k1_fuzz_check_pubkey_sort(ctx, sorted_pubkeys);
+    duplicate_pubkeys[0] = &sort_pubkeys[2];
+    duplicate_pubkeys[1] = &sort_pubkeys[0];
+    duplicate_pubkeys[2] = &sort_pubkeys[2];
+    duplicate_pubkeys[3] = &sort_pubkeys[1];
+    duplicate_permuted_pubkeys[0] = &sort_pubkeys[1];
+    duplicate_permuted_pubkeys[1] = &sort_pubkeys[2];
+    duplicate_permuted_pubkeys[2] = &sort_pubkeys[0];
+    duplicate_permuted_pubkeys[3] = &sort_pubkeys[2];
+    secp256k1_fuzz_check_pubkey_sort(ctx, duplicate_pubkeys);
+    secp256k1_fuzz_check_pubkey_sort(ctx, duplicate_permuted_pubkeys);
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, duplicate_pubkeys, 4) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, duplicate_permuted_pubkeys, 4) == 1);
+    for (i = 0; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, duplicate_pubkeys[i], duplicate_permuted_pubkeys[i]) == 0);
     }
 
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey, NULL, NULL) == 1);
