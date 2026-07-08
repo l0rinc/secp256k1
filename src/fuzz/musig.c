@@ -9,9 +9,26 @@
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
 static size_t secp256k1_fuzz_musig_sha256_compression_calls = 0;
+static size_t secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
+static size_t secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
+
+static const uint32_t secp256k1_fuzz_musig_noncecoef_midstate[8] = {
+    0x2c7d5a45ul, 0x06bf7e53ul, 0x89be68a6ul, 0x971254c0ul,
+    0x60ac12d2ul, 0x72846dcdul, 0x6c81212ful, 0xde7a2500ul
+};
+static const uint32_t secp256k1_fuzz_musig_challenge_midstate[8] = {
+    0x9cecba11ul, 0x23925381ul, 0x11679112ul, 0xd1627e0ful,
+    0x97c87550ul, 0x003cc765ul, 0x90f61164ul, 0x33e9b66aul
+};
 
 static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_musig_sha256_compression_calls += n_blocks;
+    if (memcmp(state, secp256k1_fuzz_musig_noncecoef_midstate, sizeof(secp256k1_fuzz_musig_noncecoef_midstate)) == 0) {
+        secp256k1_fuzz_musig_noncecoef_sha256_compression_calls++;
+    }
+    if (memcmp(state, secp256k1_fuzz_musig_challenge_midstate, sizeof(secp256k1_fuzz_musig_challenge_midstate)) == 0) {
+        secp256k1_fuzz_musig_challenge_sha256_compression_calls++;
+    }
     secp256k1_sha256_transform(state, blocks64, n_blocks);
 }
 
@@ -181,10 +198,18 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
         FUZZ_CHECK(memcmp(session_rand[i], secp256k1_fuzz_scalar_zero, sizeof(session_rand[i])) == 0);
         pubnonce_ptrs[i] = &pubnonce[i];
     }
-    secp256k1_context_set_sha256_compression(ctx, NULL);
     FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, n_signers) == 1);
+    secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
+    secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, &keyagg_cache) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_musig_noncecoef_sha256_compression_calls != 0);
+    FUZZ_CHECK(secp256k1_fuzz_musig_challenge_sha256_compression_calls != 0);
+    secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
+    secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session_replay, &aggnonce, msg32, &keyagg_cache) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_musig_noncecoef_sha256_compression_calls != 0);
+    FUZZ_CHECK(secp256k1_fuzz_musig_challenge_sha256_compression_calls != 0);
+    secp256k1_context_set_sha256_compression(ctx, NULL);
     for (i = 0; i < n_signers; i++) {
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], &keyagg_cache, &session) == 1);
         FUZZ_CHECK(memcmp(secnonce[i].data, zero132, sizeof(secnonce[i].data)) == 0);
