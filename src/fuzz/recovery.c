@@ -24,6 +24,20 @@ typedef struct {
     unsigned int calls;
 } secp256k1_fuzz_recovery_nonce_data;
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_recovery_illegal_data;
+
+static void secp256k1_fuzz_recovery_illegal_callback(const char *message, void *data) {
+    secp256k1_fuzz_recovery_illegal_data *illegal_data = (secp256k1_fuzz_recovery_illegal_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(illegal_data != NULL);
+    FUZZ_CHECK(illegal_data->self == illegal_data);
+    illegal_data->calls++;
+}
+
 static int secp256k1_fuzz_recovery_nonce_retry(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
     secp256k1_fuzz_recovery_nonce_data *nonce_data = (secp256k1_fuzz_recovery_nonce_data *)data;
 
@@ -94,6 +108,93 @@ static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_conte
     } else {
         FUZZ_CHECK(memcmp(&recoverable_sig, zero_sig, sizeof(recoverable_sig)) == 0);
     }
+}
+
+static void secp256k1_fuzz_check_recovery_illegal_failure_cleanup(secp256k1_context *ctx, const secp256k1_ecdsa_recoverable_signature *valid_sig, const unsigned char *compact, const unsigned char *msg32, const unsigned char *valid_seckey32) {
+    secp256k1_fuzz_recovery_illegal_data illegal_data;
+    secp256k1_ecdsa_recoverable_signature recoverable_sig;
+    secp256k1_ecdsa_signature normal_sig;
+    secp256k1_pubkey recovered_pubkey;
+    unsigned char output64[64];
+    unsigned char zero64[64] = { 0 };
+    unsigned char zero_recoverable_sig[sizeof(secp256k1_ecdsa_recoverable_signature)] = { 0 };
+    unsigned char zero_normal_sig[sizeof(secp256k1_ecdsa_signature)] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    int (*parse_compact_fn)(const secp256k1_context *, secp256k1_ecdsa_recoverable_signature *, const unsigned char *, int) = secp256k1_ecdsa_recoverable_signature_parse_compact;
+    int (*serialize_compact_fn)(const secp256k1_context *, unsigned char *, int *, const secp256k1_ecdsa_recoverable_signature *) = secp256k1_ecdsa_recoverable_signature_serialize_compact;
+    int (*convert_fn)(const secp256k1_context *, secp256k1_ecdsa_signature *, const secp256k1_ecdsa_recoverable_signature *) = secp256k1_ecdsa_recoverable_signature_convert;
+    int (*sign_recoverable_fn)(const secp256k1_context *, secp256k1_ecdsa_recoverable_signature *, const unsigned char *, const unsigned char *, secp256k1_nonce_function, const void *) = secp256k1_ecdsa_sign_recoverable;
+    int (*recover_fn)(const secp256k1_context *, secp256k1_pubkey *, const secp256k1_ecdsa_recoverable_signature *, const unsigned char *) = secp256k1_ecdsa_recover;
+    unsigned int calls;
+    int recid_out;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_recovery_illegal_callback, &illegal_data);
+
+    memset(&recoverable_sig, 0xA5, sizeof(recoverable_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(parse_compact_fn(ctx, &recoverable_sig, NULL, 0) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recoverable_sig, zero_recoverable_sig, sizeof(recoverable_sig)) == 0);
+
+    memset(&recoverable_sig, 0xA5, sizeof(recoverable_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(parse_compact_fn(ctx, &recoverable_sig, compact, -1) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recoverable_sig, zero_recoverable_sig, sizeof(recoverable_sig)) == 0);
+
+    memset(&recoverable_sig, 0xA5, sizeof(recoverable_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(parse_compact_fn(ctx, &recoverable_sig, compact, 4) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recoverable_sig, zero_recoverable_sig, sizeof(recoverable_sig)) == 0);
+
+    memset(output64, 0xA5, sizeof(output64));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(serialize_compact_fn(ctx, output64, NULL, valid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(output64, zero64, sizeof(output64)) == 0);
+
+    memset(output64, 0xA5, sizeof(output64));
+    recid_out = 7;
+    calls = illegal_data.calls;
+    FUZZ_CHECK(serialize_compact_fn(ctx, output64, &recid_out, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(recid_out == 0);
+    FUZZ_CHECK(memcmp(output64, zero64, sizeof(output64)) == 0);
+
+    memset(&normal_sig, 0xA5, sizeof(normal_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(convert_fn(ctx, &normal_sig, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&normal_sig, zero_normal_sig, sizeof(normal_sig)) == 0);
+
+    memset(&recoverable_sig, 0xA5, sizeof(recoverable_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(sign_recoverable_fn(ctx, &recoverable_sig, NULL, valid_seckey32, NULL, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recoverable_sig, zero_recoverable_sig, sizeof(recoverable_sig)) == 0);
+
+    memset(&recoverable_sig, 0xA5, sizeof(recoverable_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(sign_recoverable_fn(ctx, &recoverable_sig, msg32, NULL, NULL, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recoverable_sig, zero_recoverable_sig, sizeof(recoverable_sig)) == 0);
+
+    memset(&recovered_pubkey, 0xA5, sizeof(recovered_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(recover_fn(ctx, &recovered_pubkey, valid_sig, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
+
+    memset(&recovered_pubkey, 0xA5, sizeof(recovered_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(recover_fn(ctx, &recovered_pubkey, NULL, msg32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_check_recover_failure_cleanup(const secp256k1_context *ctx, const secp256k1_ecdsa_recoverable_signature *sig, const unsigned char *msg32) {
@@ -211,6 +312,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &recovered_pubkey) == 0);
+    secp256k1_fuzz_check_recovery_illegal_failure_cleanup(ctx, &reparsed_sig, compact, msg32, seckey);
     secp256k1_fuzz_check_recoverable_high_s(ctx, &reparsed_sig, msg32, &pubkey);
 
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_zero);
