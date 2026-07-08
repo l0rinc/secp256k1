@@ -154,7 +154,9 @@ static void secp256k1_fuzz_check_signature_roundtrip(const secp256k1_context *ct
     unsigned char compact[64];
     unsigned char compact2[64];
     unsigned char der[72];
+    unsigned char short_der[72];
     size_t der_len = sizeof(der);
+    size_t short_der_len;
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_compact, compact) == 1);
@@ -163,6 +165,10 @@ static void secp256k1_fuzz_check_signature_roundtrip(const secp256k1_context *ct
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, der, &der_len, sig) == 1);
     FUZZ_CHECK(der_len <= sizeof(der));
+    short_der_len = der_len - 1;
+    memset(short_der, 0xA5, sizeof(short_der));
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, short_der, &short_der_len, sig) == 0);
+    FUZZ_CHECK(short_der_len == der_len);
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_der, der, der_len) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact2, &parsed_der) == 1);
     FUZZ_CHECK(memcmp(compact, compact2, sizeof(compact)) == 0);
