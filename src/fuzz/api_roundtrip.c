@@ -47,6 +47,31 @@ static int secp256k1_fuzz_ecdsa_nonce_fail(unsigned char *nonce32, const unsigne
     return 0;
 }
 
+static int secp256k1_fuzz_ecdsa_nonce_retry(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
+    secp256k1_fuzz_ecdsa_nonce_data *nonce_data = (secp256k1_fuzz_ecdsa_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(algo16 == NULL);
+    FUZZ_CHECK(attempt == nonce_data->calls);
+    nonce_data->calls++;
+    if (attempt == 0) {
+        memset(nonce32, 0, 32);
+        return 1;
+    }
+    if (attempt == 1) {
+        memcpy(nonce32, secp256k1_fuzz_scalar_order, 32);
+        return 1;
+    }
+    if (attempt == 2) {
+        memset(nonce32, 0xFF, 32);
+        return 1;
+    }
+    return secp256k1_nonce_function_rfc6979(nonce32, msg32, key32, algo16, (void *)nonce_data->extra32, attempt - 3);
+}
+
 static void secp256k1_fuzz_check_tweak_add(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const unsigned char *tweak32) {
     unsigned char tweaked_seckey[32];
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
@@ -463,6 +488,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecdsa_signature parsed_sig;
     secp256k1_ecdsa_signature checked_sig;
     secp256k1_ecdsa_signature checked_default_sig;
+    secp256k1_ecdsa_signature retry_sig;
     unsigned char seckey[32];
     unsigned char combine_seckey[32];
     unsigned char seckey_neg[32];
@@ -473,6 +499,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char sig64[64];
     unsigned char sig_extra64[64];
     unsigned char sig_checked64[64];
+    unsigned char sig_retry64[64];
     unsigned char msg32[32];
     const secp256k1_pubkey *sorted_pubkeys[4];
     const secp256k1_pubkey *permuted_pubkeys[4];
@@ -574,6 +601,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig64, &sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig_checked64, &checked_default_sig) == 1);
     FUZZ_CHECK(memcmp(sig64, sig_checked64, sizeof(sig64)) == 0);
+    nonce_data.calls = 0;
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &retry_sig, msg32, seckey, secp256k1_fuzz_ecdsa_nonce_retry, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls >= 4);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig_retry64, &retry_sig) == 1);
+    FUZZ_CHECK(memcmp(sig64, sig_retry64, sizeof(sig64)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &sig) == 0);
     secp256k1_fuzz_check_signature_roundtrip(ctx, &sig);
