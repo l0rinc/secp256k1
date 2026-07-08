@@ -139,6 +139,44 @@ static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1
     FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
 }
 
+static void secp256k1_fuzz_check_bip340_nonce_failure_cleanup(const unsigned char *msg, size_t msglen, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *aux32) {
+    static const unsigned char expected_algo[13] = {'B', 'I', 'P', '0', '3', '4', '0', '/', 'n', 'o', 'n', 'c', 'e'};
+    unsigned char nonce32[32];
+    unsigned char zero32[32] = { 0 };
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(NULL, msg, msglen, key32, xonly_pk32, expected_algo, sizeof(expected_algo), (void *)aux32) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, NULL, msglen == 0 ? 1 : msglen, key32, xonly_pk32, expected_algo, sizeof(expected_algo), (void *)aux32) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, msg, msglen, NULL, xonly_pk32, expected_algo, sizeof(expected_algo), (void *)aux32) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, msg, msglen, key32, NULL, expected_algo, sizeof(expected_algo), (void *)aux32) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, msg, msglen, key32, xonly_pk32, NULL, 0, (void *)aux32) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+#if SIZE_MAX > 0xffffffff
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, msg, (size_t)SECP256K1_SHA256_MAX_SIZE - 128, key32, xonly_pk32, expected_algo, sizeof(expected_algo), (void *)aux32) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, msg, msglen, key32, xonly_pk32, expected_algo, (size_t)SECP256K1_SHA256_MAX_SIZE, (void *)aux32) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+#endif
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(nonce32, NULL, 0, key32, xonly_pk32, expected_algo, sizeof(expected_algo), (void *)aux32) == 1);
+}
+
 static void secp256k1_fuzz_check_schnorrsig_nonce_overflow(const secp256k1_context *ctx, const unsigned char *msg, size_t msglen, const secp256k1_keypair *keypair, const secp256k1_xonly_pubkey *xonly) {
     static const unsigned char overflow_nonce32[32] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -224,6 +262,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char negated_seckey[32];
     unsigned char msg32_bad[32];
     unsigned char zero_aux32[32] = { 0 };
+    unsigned char xonly32[32];
     secp256k1_keypair keypair;
     secp256k1_keypair other_keypair;
     secp256k1_keypair negated_keypair;
@@ -255,6 +294,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &parity, &keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    secp256k1_fuzz_check_bip340_nonce_failure_cleanup(input, msglen, seckey, xonly32, aux32);
     memcpy(negated_seckey, seckey, sizeof(negated_seckey));
     FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, negated_seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &negated_keypair, negated_seckey) == 1);
