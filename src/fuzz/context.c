@@ -102,6 +102,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls != 0);
     hash_clone = secp256k1_context_clone(ctx);
     FUZZ_CHECK(hash_clone != NULL);
+    secp256k1_fuzz_sha256_compression_calls = 0;
+    FUZZ_CHECK(secp256k1_context_randomize(ctx, seed32) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls != 0);
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input, 0, input, 0, 1);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
     secp256k1_context_set_sha256_compression(ctx, NULL);
