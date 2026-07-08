@@ -49,6 +49,20 @@ static int secp256k1_fuzz_recovery_nonce_retry(unsigned char *nonce32, const uns
     return secp256k1_nonce_function_rfc6979(nonce32, msg32, key32, algo16, NULL, attempt - 3);
 }
 
+static int secp256k1_fuzz_recovery_nonce_fail(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
+    secp256k1_fuzz_recovery_nonce_data *nonce_data = (secp256k1_fuzz_recovery_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(algo16 == NULL);
+    FUZZ_CHECK(attempt == 0);
+    nonce_data->calls++;
+    memset(nonce32, 0xA5, 32);
+    return 0;
+}
+
 static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_context *ctx, const unsigned char *input64, int recid) {
     secp256k1_ecdsa_recoverable_signature recoverable_sig;
     secp256k1_ecdsa_recoverable_signature reparsed_sig;
@@ -97,6 +111,19 @@ static void secp256k1_fuzz_check_sign_recoverable_failure_cleanup(const secp256k
 
     memset(&sig, 0xA5, sizeof(sig));
     FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &sig, msg32, seckey32, NULL, NULL) == 0);
+    FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
+}
+
+static void secp256k1_fuzz_check_sign_recoverable_nonce_failure_cleanup(const secp256k1_context *ctx, const unsigned char *msg32, const unsigned char *valid_seckey32) {
+    secp256k1_fuzz_recovery_nonce_data nonce_data;
+    secp256k1_ecdsa_recoverable_signature sig;
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_recoverable_signature)] = { 0 };
+
+    nonce_data.self = &nonce_data;
+    nonce_data.calls = 0;
+    memset(&sig, 0xA5, sizeof(sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &sig, msg32, valid_seckey32, secp256k1_fuzz_recovery_nonce_fail, &nonce_data) == 0);
+    FUZZ_CHECK(nonce_data.calls == 1);
     FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
 }
 
@@ -188,6 +215,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_order);
+    secp256k1_fuzz_check_sign_recoverable_nonce_failure_cleanup(ctx, msg32, seckey);
 
     for (alt_recid = 0; alt_recid < 4; alt_recid++) {
         if (alt_recid == recid) {
