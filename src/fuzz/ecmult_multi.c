@@ -154,11 +154,16 @@ static void secp256k1_fuzz_ecmult_multi_fail_callback(const secp256k1_context *c
     if (n_points == 0) {
         return;
     }
+    data->fail = 1;
+    data->fail_at %= n_points;
+    secp256k1_fuzz_ecmult_multi_reset_trace(data);
+    ret = secp256k1_ecmult_multi_var(&ctx->error_callback, NULL, &r, g_sc, secp256k1_fuzz_ecmult_multi_callback, data, n_points);
+    FUZZ_CHECK(ret == 0);
+    secp256k1_fuzz_ecmult_multi_check_failure_trace(data, n_points);
+
     scratch = secp256k1_scratch_create(&ctx->error_callback, 65536);
     FUZZ_CHECK(scratch != NULL);
     checkpoint = scratch->alloc_size;
-    data->fail = 1;
-    data->fail_at %= n_points;
     secp256k1_fuzz_ecmult_multi_reset_trace(data);
     ret = secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &r, g_sc, secp256k1_fuzz_ecmult_multi_callback, data, n_points);
     data->fail = 0;
