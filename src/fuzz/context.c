@@ -6,6 +6,7 @@
 
 #include "fuzz.h"
 #include "../hash_impl.h"
+#include "secp256k1_preallocated.h"
 
 static size_t secp256k1_fuzz_sha256_compression_calls = 0;
 
@@ -61,11 +62,34 @@ static void secp256k1_fuzz_check_tagged_sha256_compression(const secp256k1_conte
     FUZZ_CHECK((secp256k1_fuzz_sha256_compression_calls != 0) == expect_custom_compression);
 }
 
+static void secp256k1_fuzz_check_context_ecdsa_equivalence(const secp256k1_context *ctx, const secp256k1_context *other, const unsigned char *msg32, const unsigned char *seckey) {
+    secp256k1_pubkey pubkey;
+    secp256k1_pubkey pubkey_other;
+    secp256k1_ecdsa_signature sig;
+    secp256k1_ecdsa_signature sig_other;
+    unsigned char compact[64];
+    unsigned char compact_other[64];
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(other, &pubkey_other, seckey) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_other) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_sign(other, &sig_other, msg32, seckey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(other, compact_other, &sig_other) == 1);
+    FUZZ_CHECK(memcmp(compact, compact_other, sizeof(compact)) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
     secp256k1_context *clone;
     secp256k1_context *hash_clone;
+    secp256k1_context *prealloc_ctx;
+    secp256k1_context *prealloc_clone;
+    secp256k1_context *prealloc_hash_clone;
     secp256k1_pubkey pubkey;
     secp256k1_pubkey pubkey_clone;
     secp256k1_ecdsa_signature sig;
@@ -80,6 +104,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     size_t msglen;
     size_t tag_offset;
     size_t msg_offset;
+    size_t prealloc_size;
+    void *prealloc_mem;
+    void *prealloc_clone_mem;
+    void *prealloc_hash_clone_mem;
 
     FUZZ_CHECK(ctx != NULL);
     secp256k1_fuzz_derive(seed32, sizeof(seed32), input, size, 31);
@@ -87,6 +115,19 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_context_randomize(ctx, seed32) == 1);
     clone = secp256k1_context_clone(ctx);
     FUZZ_CHECK(clone != NULL);
+    prealloc_size = secp256k1_context_preallocated_size(SECP256K1_CONTEXT_NONE);
+    FUZZ_CHECK(prealloc_size != 0);
+    FUZZ_CHECK(secp256k1_context_preallocated_clone_size(ctx) == prealloc_size);
+    prealloc_mem = malloc(prealloc_size);
+    FUZZ_CHECK(prealloc_mem != NULL);
+    prealloc_ctx = secp256k1_context_preallocated_create(prealloc_mem, SECP256K1_CONTEXT_NONE);
+    FUZZ_CHECK(prealloc_ctx != NULL);
+    FUZZ_CHECK(secp256k1_context_randomize(prealloc_ctx, seed32) == 1);
+    FUZZ_CHECK(secp256k1_context_preallocated_clone_size(prealloc_ctx) == prealloc_size);
+    prealloc_clone_mem = malloc(prealloc_size);
+    FUZZ_CHECK(prealloc_clone_mem != NULL);
+    prealloc_clone = secp256k1_context_preallocated_clone(ctx, prealloc_clone_mem);
+    FUZZ_CHECK(prealloc_clone != NULL);
     FUZZ_CHECK(secp256k1_context_randomize(ctx, reset_seed32) == 1);
 
     taglen = size == 0 ? 0 : (size_t)(secp256k1_fuzz_byte(input, size, 47) % (size + 1));
@@ -96,20 +137,29 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input, 0, input, 0);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input, size, input, size);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
+    secp256k1_fuzz_check_tagged_sha256(prealloc_ctx, prealloc_clone, input + tag_offset, taglen, input + msg_offset, msglen);
 
     secp256k1_fuzz_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_sha256_compression);
     FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls != 0);
     hash_clone = secp256k1_context_clone(ctx);
     FUZZ_CHECK(hash_clone != NULL);
+    prealloc_hash_clone_mem = malloc(prealloc_size);
+    FUZZ_CHECK(prealloc_hash_clone_mem != NULL);
+    prealloc_hash_clone = secp256k1_context_preallocated_clone(ctx, prealloc_hash_clone_mem);
+    FUZZ_CHECK(prealloc_hash_clone != NULL);
     secp256k1_fuzz_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_context_randomize(ctx, seed32) == 1);
     FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls != 0);
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input, 0, input, 0, 1);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
+    secp256k1_fuzz_check_tagged_sha256_compression(prealloc_hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input + tag_offset, taglen, input + msg_offset, msglen, 0);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input, size, input, size, 1);
+    secp256k1_fuzz_check_tagged_sha256_compression(prealloc_hash_clone, input, size, input, size, 1);
+    secp256k1_context_preallocated_destroy(prealloc_hash_clone);
+    free(prealloc_hash_clone_mem);
     secp256k1_context_destroy(hash_clone);
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 41);
@@ -125,6 +175,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(clone, compact_clone, &sig_clone) == 1);
     FUZZ_CHECK(memcmp(compact, compact_clone, sizeof(compact)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
+    secp256k1_fuzz_check_context_ecdsa_equivalence(ctx, prealloc_ctx, msg32, seckey);
+    secp256k1_fuzz_check_context_ecdsa_equivalence(ctx, prealloc_clone, msg32, seckey);
 
     FUZZ_CHECK(secp256k1_context_randomize(ctx, NULL) == 1);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
@@ -132,6 +184,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_clone) == 0);
 
     secp256k1_context_destroy(clone);
+    secp256k1_context_preallocated_destroy(prealloc_clone);
+    free(prealloc_clone_mem);
+    secp256k1_context_preallocated_destroy(prealloc_ctx);
+    free(prealloc_mem);
     secp256k1_context_destroy(ctx);
     return 0;
 }
