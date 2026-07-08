@@ -521,6 +521,7 @@ int secp256k1_musig_nonce_agg(const secp256k1_context* ctx, secp256k1_musig_aggn
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(aggnonce != NULL);
+    memset(aggnonce, 0, sizeof(*aggnonce));
     ARG_CHECK(pubnonces != NULL);
     ARG_CHECK(n_pubnonces > 0);
     for (i = 0; i < n_pubnonces; i++) {
