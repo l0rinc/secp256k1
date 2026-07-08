@@ -61,6 +61,31 @@ static void secp256k1_fuzz_check_sign_recoverable_failure_cleanup(const secp256k
     FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &sig, msg32, seckey32, NULL, NULL) == 0);
     FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
 }
+
+static void secp256k1_fuzz_check_recoverable_high_s(const secp256k1_context *ctx, const secp256k1_ecdsa_recoverable_signature *sig, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    secp256k1_ecdsa_recoverable_signature high_sig;
+    secp256k1_ecdsa_signature high_normal_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+    secp256k1_pubkey recovered_pubkey;
+    unsigned char compact[64];
+    unsigned char low_compact[64];
+    unsigned char normalized_compact[64];
+    int recid;
+
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, low_compact, &recid, sig) == 1);
+    FUZZ_CHECK(recid >= 0 && recid <= 3);
+    memcpy(compact, low_compact, sizeof(compact));
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, compact + 32) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &high_sig, compact, recid ^ 1) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &high_sig, msg32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, pubkey, &recovered_pubkey) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &high_normal_sig, &high_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &high_normal_sig, msg32, pubkey) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &high_normal_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normalized_compact, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(normalized_compact, low_compact, sizeof(normalized_compact)) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, pubkey) == 1);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -98,6 +123,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &recovered_pubkey) == 0);
+    secp256k1_fuzz_check_recoverable_high_s(ctx, &reparsed_sig, msg32, &pubkey);
 
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_order);
