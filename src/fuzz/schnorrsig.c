@@ -5,8 +5,29 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "../hash_impl.h"
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
+static size_t secp256k1_fuzz_schnorrsig_sha256_compression_calls = 0;
+
+static const uint32_t secp256k1_fuzz_schnorrsig_nonce_midstate[8] = {
+    0x46615b35ul, 0xf4bfbff7ul, 0x9f8dc671ul, 0x83627ab3ul,
+    0x60217180ul, 0x57358661ul, 0x21a29e54ul, 0x68b07b4cul
+};
+static const uint32_t secp256k1_fuzz_schnorrsig_aux_midstate[8] = {
+    0x24dd3219ul, 0x4eba7e70ul, 0xca0fabb9ul, 0x0fa3166dul,
+    0x3afbe4b1ul, 0x4c44df97ul, 0x4aac2739ul, 0x249e850aul
+};
+
+static void secp256k1_fuzz_schnorrsig_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    /* Count only BIP340 nonce/aux hashing; signing also hashes the challenge through ctx. */
+    if (memcmp(state, secp256k1_fuzz_schnorrsig_nonce_midstate, sizeof(secp256k1_fuzz_schnorrsig_nonce_midstate)) == 0 ||
+        memcmp(state, secp256k1_fuzz_schnorrsig_aux_midstate, sizeof(secp256k1_fuzz_schnorrsig_aux_midstate)) == 0) {
+        secp256k1_fuzz_schnorrsig_sha256_compression_calls++;
+    }
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
+
 typedef struct {
     const void *self;
     const unsigned char *aux32;
@@ -146,13 +167,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_valid_seckey32(ctx, other_seckey, input, size, 149);
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &other_keypair, other_seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &other_xonly, NULL, &other_keypair) == 1);
+    secp256k1_fuzz_schnorrsig_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_schnorrsig_sha256_compression);
+    secp256k1_fuzz_schnorrsig_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64, msg32, &keypair, aux32) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_negated, msg32, &negated_keypair, aux32) == 1);
     FUZZ_CHECK(memcmp(sig64, sig64_negated, sizeof(sig64)) == 0);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, msg32, sizeof(msg32), &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 1);
     FUZZ_CHECK(memcmp(sig64_checked, sig64, sizeof(sig64_checked)) == 0);
+    secp256k1_context_set_sha256_compression(ctx, NULL);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32) - 1, &xonly) == 0);
     if (secp256k1_xonly_pubkey_cmp(ctx, &xonly, &other_xonly) != 0) {
         FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &other_xonly) == 0);
