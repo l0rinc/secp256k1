@@ -751,7 +751,7 @@ static void musig_tweak_test_internal(void) {
 
     /* Compute Pi = f(Pj) + tweaki*G where where j = i-1 and try signing for
      * that key. If xonly is set to true, the function f normalizes the input
-     * point to have an even X-coordinate ("xonly-tweaking").
+     * point to have an even Y-coordinate ("xonly-tweaking").
      * Otherwise, the function f is the identity function. */
     for (i = 1; i <= N_TWEAKS; i++) {
         unsigned char tweak[32];
