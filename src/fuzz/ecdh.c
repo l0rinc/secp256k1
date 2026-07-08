@@ -147,6 +147,12 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ab, default_fn_ab);
     secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey_ba, default_ba);
 
+    hash_data.calls = 0;
+    FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_zero, fuzz_ecdh_hash_with_data, &hash_data) == 0);
+    FUZZ_CHECK(hash_data.calls == 1);
+    hash_data.calls = 0;
+    FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_order, fuzz_ecdh_hash_with_data, &hash_data) == 0);
+    FUZZ_CHECK(hash_data.calls == 1);
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_zero, NULL, NULL) == 0);
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, secp256k1_fuzz_scalar_order, NULL, NULL) == 0);
     FUZZ_CHECK(secp256k1_ecdh(ctx, fail_output, &pubkey_b, seckey_a, fuzz_ecdh_hash_fail, NULL) == 0);
