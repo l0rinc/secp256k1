@@ -10,6 +10,20 @@
 
 static size_t secp256k1_fuzz_sha256_compression_calls = 0;
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_context_callback_data;
+
+static void secp256k1_fuzz_context_illegal_callback(const char *message, void *data) {
+    secp256k1_fuzz_context_callback_data *callback_data = (secp256k1_fuzz_context_callback_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(callback_data != NULL);
+    FUZZ_CHECK(callback_data->self == callback_data);
+    callback_data->calls++;
+}
+
 static void secp256k1_fuzz_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_sha256_compression_calls += n_blocks;
     secp256k1_sha256_transform(state, blocks64, n_blocks);
@@ -82,6 +96,48 @@ static void secp256k1_fuzz_check_context_ecdsa_equivalence(const secp256k1_conte
     FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
 }
 
+static void secp256k1_fuzz_check_context_illegal_callback_clone(secp256k1_context *ctx, size_t prealloc_size) {
+    secp256k1_fuzz_context_callback_data cloned_data;
+    secp256k1_fuzz_context_callback_data original_data;
+    secp256k1_context *callback_clone;
+    secp256k1_context *callback_prealloc_clone;
+    void *callback_prealloc_clone_mem;
+    int (*seckey_verify_fn)(const secp256k1_context *, const unsigned char *) = secp256k1_ec_seckey_verify;
+
+    cloned_data.self = &cloned_data;
+    cloned_data.calls = 0;
+    original_data.self = &original_data;
+    original_data.calls = 0;
+
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_context_illegal_callback, &cloned_data);
+    callback_clone = secp256k1_context_clone(ctx);
+    FUZZ_CHECK(callback_clone != NULL);
+    callback_prealloc_clone_mem = malloc(prealloc_size);
+    FUZZ_CHECK(callback_prealloc_clone_mem != NULL);
+    callback_prealloc_clone = secp256k1_context_preallocated_clone(ctx, callback_prealloc_clone_mem);
+    FUZZ_CHECK(callback_prealloc_clone != NULL);
+
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_context_illegal_callback, &original_data);
+    FUZZ_CHECK(seckey_verify_fn(callback_clone, NULL) == 0);
+    FUZZ_CHECK(cloned_data.calls == 1);
+    FUZZ_CHECK(original_data.calls == 0);
+
+    FUZZ_CHECK(seckey_verify_fn(callback_prealloc_clone, NULL) == 0);
+    FUZZ_CHECK(cloned_data.calls == 2);
+    FUZZ_CHECK(original_data.calls == 0);
+
+    FUZZ_CHECK(seckey_verify_fn(ctx, NULL) == 0);
+    FUZZ_CHECK(cloned_data.calls == 2);
+    FUZZ_CHECK(original_data.calls == 1);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+    secp256k1_context_set_illegal_callback(callback_clone, NULL, NULL);
+    secp256k1_context_set_illegal_callback(callback_prealloc_clone, NULL, NULL);
+    secp256k1_context_destroy(callback_clone);
+    secp256k1_context_preallocated_destroy(callback_prealloc_clone);
+    free(callback_prealloc_clone_mem);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
@@ -129,6 +185,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     prealloc_clone = secp256k1_context_preallocated_clone(ctx, prealloc_clone_mem);
     FUZZ_CHECK(prealloc_clone != NULL);
     FUZZ_CHECK(secp256k1_context_randomize(ctx, reset_seed32) == 1);
+    secp256k1_fuzz_check_context_illegal_callback_clone(ctx, prealloc_size);
 
     taglen = size == 0 ? 0 : (size_t)(secp256k1_fuzz_byte(input, size, 47) % (size + 1));
     msglen = size == 0 ? 0 : (size_t)(secp256k1_fuzz_byte(input, size, 53) % (size + 1));
