@@ -177,8 +177,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_schnorrsig_sha256_compression);
     secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls = 0;
+    secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64, msg32, &keypair, aux32) == 1);
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls != 0);
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_negated, msg32, &negated_keypair, aux32) == 1);
     FUZZ_CHECK(memcmp(sig64, sig64_negated, sizeof(sig64)) == 0);
     secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
