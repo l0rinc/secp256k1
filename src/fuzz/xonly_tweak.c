@@ -19,6 +19,12 @@ typedef struct {
     unsigned int calls;
 } secp256k1_fuzz_xonly_illegal_data;
 
+typedef int (*secp256k1_fuzz_keypair_xonly_tweak_add_fn)(
+    const secp256k1_context *ctx,
+    secp256k1_keypair *keypair,
+    const unsigned char *tweak32
+);
+
 static void secp256k1_fuzz_xonly_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_xonly_illegal_data *illegal_data = (secp256k1_fuzz_xonly_illegal_data *)data;
 
@@ -26,6 +32,13 @@ static void secp256k1_fuzz_xonly_illegal_callback(const char *message, void *dat
     FUZZ_CHECK(illegal_data != NULL);
     FUZZ_CHECK(illegal_data->self == illegal_data);
     illegal_data->calls++;
+}
+
+static const unsigned char *secp256k1_fuzz_xonly_null_tweak32(const unsigned char *tweak32) {
+    const unsigned char * volatile null_tweak32 = tweak32;
+
+    null_tweak32 = NULL;
+    return null_tweak32;
 }
 
 static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const unsigned char *input32) {
@@ -113,6 +126,24 @@ static void secp256k1_fuzz_check_xonly_invalid_tweak(secp256k1_context *ctx, con
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
+
+static void secp256k1_fuzz_check_keypair_null_tweak(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *tweak32) {
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    secp256k1_fuzz_keypair_xonly_tweak_add_fn tweak_add = secp256k1_keypair_xonly_tweak_add;
+    secp256k1_keypair null_tweaked_keypair = *keypair;
+    const unsigned char *null_tweak32 = secp256k1_fuzz_xonly_null_tweak32(tweak32);
+    unsigned char zero_keypair[sizeof(secp256k1_keypair)] = { 0 };
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+
+    FUZZ_CHECK(tweak_add(ctx, &null_tweaked_keypair, null_tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&null_tweaked_keypair, zero_keypair, sizeof(null_tweaked_keypair)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -180,6 +211,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &reparsed) == 0);
     secp256k1_fuzz_check_xonly_invalid_tweak(ctx, xonly32, keypair_parity, tweak);
+    secp256k1_fuzz_check_keypair_null_tweak(ctx, &keypair, tweak);
     secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
     secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_xonly_parse(ctx, secp256k1_fuzz_field_p_plus_one);
