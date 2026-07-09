@@ -177,6 +177,14 @@ fuzz_ecdh_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_ecdh_LDADD = $(FUZZ_LDADD)
 endif
 
+if ENABLE_MODULE_ELLSWIFT
+noinst_PROGRAMS += fuzz_ellswift
+TESTS += fuzz_ellswift
+fuzz_ellswift_SOURCES = src/fuzz/ellswift.c
+fuzz_ellswift_CPPFLAGS = $(FUZZ_CPPFLAGS)
+fuzz_ellswift_LDADD = $(FUZZ_LDADD)
+endif
+
 if ENABLE_MODULE_EXTRAKEYS
 noinst_PROGRAMS += fuzz_xonly_tweak
 TESTS += fuzz_xonly_tweak

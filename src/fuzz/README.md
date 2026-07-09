@@ -11,6 +11,7 @@ Targets:
 - `fuzz_field`: internal field normalization and maximum-magnitude consistency
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
+- `fuzz_ellswift`: EllSwift encode/decode, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify and `sign32`/`sign_custom` equivalence
@@ -35,8 +36,8 @@ mkdir -p build-autotools-fuzz
 cd build-autotools-fuzz
 ../configure --enable-fuzz --enable-module-recovery
 make -j"$(nproc)" fuzz_api_roundtrip fuzz_context fuzz_field fuzz_ecmult_multi fuzz_ecdh \
-  fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig
-make check TESTS="fuzz_api_roundtrip fuzz_context fuzz_field fuzz_ecmult_multi fuzz_ecdh fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig"
+  fuzz_ellswift fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig
+make check TESTS="fuzz_api_roundtrip fuzz_context fuzz_field fuzz_ecmult_multi fuzz_ecdh fuzz_ellswift fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig"
 ```
 
 ASan/UBSan replay:

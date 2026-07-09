@@ -18,6 +18,9 @@
 #ifdef ENABLE_MODULE_ECDH
 #include "secp256k1_ecdh.h"
 #endif
+#ifdef ENABLE_MODULE_ELLSWIFT
+#include "secp256k1_ellswift.h"
+#endif
 #ifdef ENABLE_MODULE_EXTRAKEYS
 #include "secp256k1_extrakeys.h"
 #endif
