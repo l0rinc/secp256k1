@@ -6,6 +6,7 @@
 
 #include "fuzz.h"
 #include "../hash_impl.h"
+#include "../../contrib/lax_der_parsing.c"
 
 static size_t secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
 
@@ -653,6 +654,28 @@ static void secp256k1_fuzz_check_signature_parse_der_lengths(const secp256k1_con
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
 }
 
+static void secp256k1_fuzz_check_signature_parse_der_lax_long_lengths(const secp256k1_context *ctx) {
+    static const unsigned char ber_sig[16] = {
+        0x30, 0x82, 0x00, 0x0C,
+        0x02, 0x82, 0x00, 0x02, 0x00, 0x80,
+        0x02, 0x82, 0x00, 0x02, 0x00, 0x80
+    };
+    unsigned char compact[64];
+    unsigned char expected[64] = { 0 };
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = { 0 };
+    secp256k1_ecdsa_signature parsed_sig;
+
+    expected[31] = 0x80;
+    expected[63] = 0x80;
+
+    memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, ber_sig, sizeof(ber_sig)) == 0);
+    FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
+    FUZZ_CHECK(ecdsa_signature_parse_der_lax(ctx, &parsed_sig, ber_sig, sizeof(ber_sig)) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+    FUZZ_CHECK(memcmp(compact, expected, sizeof(compact)) == 0);
+}
+
 static void secp256k1_fuzz_check_signature_parse_der_empty_integer(const secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     static const unsigned char empty_r_der[7] = { 0x30, 0x05, 0x02, 0x00, 0x02, 0x01, 0x01 };
     static const unsigned char empty_s_der[7] = { 0x30, 0x05, 0x02, 0x01, 0x01, 0x02, 0x00 };
@@ -890,6 +913,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_trailing(ctx, secp256k1_fuzz_scalar_one, secp256k1_fuzz_scalar_one, secp256k1_fuzz_byte(input, size, 47));
     secp256k1_fuzz_check_signature_parse_der_nonminimal(ctx, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_lengths(ctx, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_lax_long_lengths(ctx);
     secp256k1_fuzz_check_signature_parse_der_empty_integer(ctx, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_negative(ctx, msg32, &pubkey);
     secp256k1_fuzz_derive(sig64, sizeof(sig64), input, size, 41);
