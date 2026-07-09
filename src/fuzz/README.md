@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, deterministic signing consistency
 - `fuzz_field`: internal field normalization and maximum-magnitude consistency
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
