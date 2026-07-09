@@ -93,6 +93,14 @@ static void secp256k1_fuzz_check_ecmult_multi_batch_size_helper(const unsigned c
     }
 }
 
+static void secp256k1_fuzz_check_scratch_create_boundaries(const secp256k1_context *ctx) {
+    const size_t base_alloc = ROUND_TO_ALIGN(sizeof(secp256k1_scratch));
+
+    FUZZ_CHECK(secp256k1_scratch_create(&ctx->error_callback, SIZE_MAX) == NULL);
+    FUZZ_CHECK(base_alloc != 0);
+    FUZZ_CHECK(secp256k1_scratch_create(&ctx->error_callback, SIZE_MAX - base_alloc + 1u) == NULL);
+}
+
 static void secp256k1_fuzz_ecmult_multi_reset_trace(secp256k1_fuzz_ecmult_multi_data *data) {
     data->calls = 0;
     data->seen_mask = 0;
@@ -343,6 +351,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     n_points = secp256k1_fuzz_byte(input, size, 3) % 9u;
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
+    secp256k1_fuzz_check_scratch_create_boundaries(ctx);
 
     secp256k1_fuzz_scalar32(scalar32, input, size, 223);
     secp256k1_scalar_set_b32(&g_sc, scalar32, &overflow);
