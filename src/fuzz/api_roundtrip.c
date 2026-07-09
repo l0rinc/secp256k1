@@ -7,6 +7,7 @@
 #include "fuzz.h"
 #include "../hash_impl.h"
 #include "../../contrib/lax_der_parsing.c"
+#include "../../contrib/lax_der_privatekey_parsing.c"
 
 static size_t secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
 
@@ -845,6 +846,38 @@ static void secp256k1_fuzz_check_signature_parse_der_negative(const secp256k1_co
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
 }
 
+static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const unsigned char *seckey32, const unsigned char *input, size_t inputlen) {
+    static const unsigned char overflow_len_der[] = { 0x30, 0x82, 0xff, 0xff };
+    unsigned char exported[300];
+    unsigned char imported[32];
+    unsigned char zero32[32] = { 0 };
+    size_t exported_len;
+    int compressed;
+    int import_ret;
+
+    for (compressed = 0; compressed <= 1; compressed++) {
+        memset(exported, 0xA5, sizeof(exported));
+        exported_len = sizeof(exported);
+        FUZZ_CHECK(ec_privkey_export_der(ctx, exported, &exported_len, seckey32, compressed) == 1);
+        FUZZ_CHECK(exported_len <= sizeof(exported));
+        memset(imported, 0xA5, sizeof(imported));
+        FUZZ_CHECK(ec_privkey_import_der(ctx, imported, exported, exported_len) == 1);
+        FUZZ_CHECK(memcmp(imported, seckey32, sizeof(imported)) == 0);
+    }
+
+    memset(imported, 0xA5, sizeof(imported));
+    import_ret = ec_privkey_import_der(ctx, imported, input, inputlen);
+    if (import_ret) {
+        FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, imported) == 1);
+    } else {
+        FUZZ_CHECK(memcmp(imported, zero32, sizeof(imported)) == 0);
+    }
+
+    memset(imported, 0xA5, sizeof(imported));
+    FUZZ_CHECK(ec_privkey_import_der(ctx, imported, overflow_len_der, sizeof(overflow_len_der)) == 0);
+    FUZZ_CHECK(memcmp(imported, zero32, sizeof(imported)) == 0);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
@@ -884,6 +917,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_order);
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 11);
+    secp256k1_fuzz_check_privkey_der(ctx, seckey, input, size);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
     secp256k1_fuzz_derive(nonce_extra32, sizeof(nonce_extra32), input, size, 43);
     secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(msg32, seckey, nonce_extra32);
