@@ -180,7 +180,35 @@ static void secp256k1_fuzz_check_musig_partial_sig_parse(secp256k1_context *ctx,
     }
 }
 
-static void secp256k1_fuzz_check_musig_nonce_agg(const secp256k1_context *ctx, const unsigned char *nonce_a66, const unsigned char *nonce_b66) {
+static void secp256k1_fuzz_check_musig_nonce_agg_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_pubnonce * const *pubnonce_ptrs, size_t n_pubnonces) {
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    unsigned char zero_aggnonce[sizeof(secp256k1_musig_aggnonce)] = { 0 };
+    secp256k1_musig_pubnonce invalid_pubnonce;
+    secp256k1_musig_aggnonce aggnonce;
+    const secp256k1_musig_pubnonce *invalid_pubnonce_ptrs[2];
+    size_t i;
+
+    FUZZ_CHECK(n_pubnonces > 0);
+    FUZZ_CHECK(n_pubnonces <= 2);
+
+    for (i = 0; i < n_pubnonces; i++) {
+        invalid_pubnonce_ptrs[i] = pubnonce_ptrs[i];
+    }
+    invalid_pubnonce = *pubnonce_ptrs[0];
+    invalid_pubnonce.data[0] ^= 1u;
+    invalid_pubnonce_ptrs[0] = &invalid_pubnonce;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    memset(&aggnonce, 0xA5, sizeof(aggnonce));
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, invalid_pubnonce_ptrs, n_pubnonces) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&aggnonce, zero_aggnonce, sizeof(aggnonce)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
+static void secp256k1_fuzz_check_musig_nonce_agg(secp256k1_context *ctx, const unsigned char *nonce_a66, const unsigned char *nonce_b66) {
     unsigned char serialized_a66[66];
     unsigned char serialized_ab66[66];
     unsigned char serialized_ba66[66];
@@ -210,6 +238,7 @@ static void secp256k1_fuzz_check_musig_nonce_agg(const secp256k1_context *ctx, c
     FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, serialized_ab66, &aggnonce_ab) == 1);
     FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, serialized_ba66, &aggnonce_ba) == 1);
     FUZZ_CHECK(memcmp(serialized_ab66, serialized_ba66, sizeof(serialized_ab66)) == 0);
+    secp256k1_fuzz_check_musig_nonce_agg_failure_cleanup(ctx, pubnonce_ptrs, 2);
 }
 
 static void secp256k1_fuzz_negate_musig_pubnonce_parts(const secp256k1_context *ctx, unsigned char *negated66, const unsigned char *nonce66) {
