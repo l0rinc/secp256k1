@@ -424,6 +424,24 @@ static void secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(const secp256k1_cont
     FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
 }
 
+static void secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(const unsigned char *msg32, const unsigned char *key32, const unsigned char *extra32) {
+    unsigned char nonce32[32];
+    unsigned char zero32[32] = { 0 };
+
+    FUZZ_CHECK(secp256k1_nonce_function_rfc6979(NULL, msg32, key32, NULL, (void *)extra32, 0) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_rfc6979(nonce32, NULL, key32, NULL, (void *)extra32, 0) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_default(nonce32, msg32, NULL, NULL, (void *)extra32, 0) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_rfc6979(nonce32, msg32, key32, NULL, (void *)extra32, 0) == 1);
+}
+
 static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
@@ -774,6 +792,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 11);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
     secp256k1_fuzz_derive(nonce_extra32, sizeof(nonce_extra32), input, size, 43);
+    secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(msg32, seckey, nonce_extra32);
     nonce_data.self = &nonce_data;
     nonce_data.extra32 = nonce_extra32;
     nonce_data.calls = 0;
