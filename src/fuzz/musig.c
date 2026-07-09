@@ -143,7 +143,26 @@ static void secp256k1_fuzz_check_musig_aggnonce_parse(const secp256k1_context *c
     }
 }
 
-static void secp256k1_fuzz_check_musig_partial_sig_parse(const secp256k1_context *ctx, const unsigned char *input32) {
+static void secp256k1_fuzz_check_musig_partial_sig_serialize_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_partial_sig *valid_sig) {
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    unsigned char serialized[32];
+    unsigned char zero32[32] = { 0 };
+    secp256k1_musig_partial_sig invalid_sig = *valid_sig;
+
+    invalid_sig.data[0] ^= 1u;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+
+    memset(serialized, 0xA5, sizeof(serialized));
+    FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, serialized, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(serialized, zero32, sizeof(serialized)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
+static void secp256k1_fuzz_check_musig_partial_sig_parse(secp256k1_context *ctx, const unsigned char *input32) {
     unsigned char serialized[32];
     unsigned char zero_sig[sizeof(secp256k1_musig_partial_sig)] = { 0 };
     secp256k1_musig_partial_sig sig;
@@ -155,6 +174,7 @@ static void secp256k1_fuzz_check_musig_partial_sig_parse(const secp256k1_context
         FUZZ_CHECK(memcmp(serialized, input32, sizeof(serialized)) == 0);
         FUZZ_CHECK(secp256k1_musig_partial_sig_parse(ctx, &reparsed, serialized) == 1);
         FUZZ_CHECK(memcmp(&sig, &reparsed, sizeof(sig)) == 0);
+        secp256k1_fuzz_check_musig_partial_sig_serialize_failure_cleanup(ctx, &sig);
     } else {
         FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
     }
