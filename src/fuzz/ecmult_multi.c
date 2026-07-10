@@ -25,6 +25,20 @@ typedef struct {
     size_t calls;
 } secp256k1_fuzz_ecmult_multi_repeat_data;
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_ecmult_multi_error_data;
+
+static void secp256k1_fuzz_ecmult_multi_error_callback(const char *message, void *data) {
+    secp256k1_fuzz_ecmult_multi_error_data *error_data = (secp256k1_fuzz_ecmult_multi_error_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(error_data != NULL);
+    FUZZ_CHECK(error_data->self == error_data);
+    error_data->calls++;
+}
+
 static size_t secp256k1_fuzz_size_t(const unsigned char *input, size_t size, unsigned int salt) {
     unsigned char bytes[sizeof(size_t)];
     size_t ret = 0;
@@ -99,6 +113,19 @@ static void secp256k1_fuzz_check_scratch_create_boundaries(const secp256k1_conte
     FUZZ_CHECK(secp256k1_scratch_create(&ctx->error_callback, SIZE_MAX) == NULL);
     FUZZ_CHECK(base_alloc != 0);
     FUZZ_CHECK(secp256k1_scratch_create(&ctx->error_callback, SIZE_MAX - base_alloc + 1u) == NULL);
+}
+
+static void secp256k1_fuzz_check_error_callback_routing(secp256k1_context *ctx) {
+    secp256k1_fuzz_ecmult_multi_error_data error_data;
+    secp256k1_scratch invalid_scratch;
+
+    error_data.self = &error_data;
+    error_data.calls = 0;
+    memset(&invalid_scratch, 0, sizeof(invalid_scratch));
+    secp256k1_context_set_error_callback(ctx, secp256k1_fuzz_ecmult_multi_error_callback, &error_data);
+    secp256k1_scratch_destroy(&ctx->error_callback, &invalid_scratch);
+    FUZZ_CHECK(error_data.calls == 1);
+    secp256k1_context_set_error_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_ecmult_multi_reset_trace(secp256k1_fuzz_ecmult_multi_data *data) {
@@ -352,6 +379,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
     secp256k1_fuzz_check_scratch_create_boundaries(ctx);
+    secp256k1_fuzz_check_error_callback_routing(ctx);
 
     secp256k1_fuzz_scalar32(scalar32, input, size, 223);
     secp256k1_scalar_set_b32(&g_sc, scalar32, &overflow);
