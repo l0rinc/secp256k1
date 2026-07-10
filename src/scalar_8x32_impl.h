@@ -692,6 +692,11 @@ SECP256K1_INLINE static void secp256k1_scalar_mul_shift_var(secp256k1_scalar *r,
     SECP256K1_SCALAR_VERIFY(b);
     VERIFY_CHECK(shift >= 256);
 
+    if (shift > 512) {
+        secp256k1_scalar_set_int(r, 0);
+        return;
+    }
+
     secp256k1_scalar_mul_512(l, a, b);
     shiftlimbs = shift >> 5;
     shiftlow = shift & 0x1F;
