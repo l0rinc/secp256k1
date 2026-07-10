@@ -457,6 +457,44 @@ static void secp256k1_fuzz_scalar_check_wnaf(const secp256k1_scalar *number) {
     }
 }
 
+static void secp256k1_fuzz_scalar_check_fixed_wnaf(const secp256k1_scalar *number) {
+    secp256k1_scalar num;
+    secp256k1_scalar unused;
+    secp256k1_scalar adjusted;
+    secp256k1_scalar reconstructed;
+    secp256k1_scalar shift;
+    int wnaf[WNAF_SIZE(2)];
+    int w;
+
+    /* The fixed helper is defined for the low 128 bits of its input. */
+    secp256k1_scalar_split_128(&num, &unused, number);
+    for (w = 2; w <= PIPPENGER_MAX_BUCKET_WINDOW + 1; w++) {
+        int skew;
+        int i;
+
+        secp256k1_scalar_set_int(&reconstructed, 0);
+        secp256k1_scalar_set_int(&shift, 1u << w);
+        skew = secp256k1_wnaf_fixed(wnaf, &num, w);
+        for (i = WNAF_SIZE(w) - 1; i >= 0; i--) {
+            secp256k1_scalar term;
+            int digit = wnaf[i];
+
+            FUZZ_CHECK(digit == 0 || (digit & 1) != 0);
+            FUZZ_CHECK(digit > -(1 << w));
+            FUZZ_CHECK(digit < (1 << w));
+            secp256k1_scalar_mul(&reconstructed, &reconstructed, &shift);
+            secp256k1_scalar_set_int(&term, (unsigned int)(digit < 0 ? -digit : digit));
+            if (digit < 0) {
+                secp256k1_scalar_negate(&term, &term);
+            }
+            secp256k1_scalar_add(&reconstructed, &reconstructed, &term);
+        }
+        adjusted = num;
+        secp256k1_scalar_cadd_bit(&adjusted, 0, skew == 1);
+        FUZZ_CHECK(secp256k1_scalar_eq(&reconstructed, &adjusted));
+    }
+}
+
 static int secp256k1_fuzz_scalar_fits_128(const unsigned char *input32) {
     size_t i;
 
@@ -543,6 +581,7 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_modular_arithmetic(&a, &b, a32, product);
     secp256k1_fuzz_scalar_check_linear_arithmetic(&a, &b, a32, b32, input, size, salt + 17u);
     secp256k1_fuzz_scalar_check_splits(&a, a32);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&a);
 
     for (i = 0; i < sizeof(boundary_shifts) / sizeof(boundary_shifts[0]); i++) {
         secp256k1_fuzz_scalar_check_shift(&a, &b, product, boundary_shifts[i]);
@@ -565,8 +604,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(a32, sizeof(a32), input, size, 31);
     secp256k1_fuzz_derive(b32, sizeof(b32), input, size, 37);
     secp256k1_fuzz_scalar_check_pair(a32, b32, input, size, 41);
+    secp256k1_scalar_set_int(&wnaf_boundary, 0);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary);
     secp256k1_scalar_set_int(&wnaf_boundary, 0x7fffffffU);
     secp256k1_fuzz_scalar_check_wnaf(&wnaf_boundary);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary);
 
     secp256k1_fuzz_scalar_decrement(order_minus_one32, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
