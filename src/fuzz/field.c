@@ -88,6 +88,31 @@ static void secp256k1_fuzz_fe_check_raised_zero(const unsigned char *input, size
     secp256k1_fuzz_fe_check_normalize_paths(&value, &expected);
 }
 
+#if defined(SECP256K1_WIDEMUL_INT64)
+static void secp256k1_fuzz_fe_check_shifted_zero(void) {
+    secp256k1_fe shifted_zero;
+    secp256k1_fe expected;
+
+    /* This is p with 63 base-2^26 units shifted from limb 1 into limb 0.
+     * It is still a valid magnitude-32 representation of zero, but its low
+     * limb is close enough to UINT32_MAX to exercise the carry into limb 1. */
+    secp256k1_fe_get_bounds(&shifted_zero, 32);
+    shifted_zero.n[0] = 0xFFFFFC2FUL;
+    shifted_zero.n[1] = 0x03FFFF80UL;
+    shifted_zero.n[2] = 0x03FFFFFFUL;
+    shifted_zero.n[3] = 0x03FFFFFFUL;
+    shifted_zero.n[4] = 0x03FFFFFFUL;
+    shifted_zero.n[5] = 0x03FFFFFFUL;
+    shifted_zero.n[6] = 0x03FFFFFFUL;
+    shifted_zero.n[7] = 0x03FFFFFFUL;
+    shifted_zero.n[8] = 0x03FFFFFFUL;
+    shifted_zero.n[9] = 0x003FFFFFUL;
+    secp256k1_fe_set_int(&expected, 0);
+    secp256k1_fe_normalize_var(&expected);
+    secp256k1_fuzz_fe_check_normalize_paths(&shifted_zero, &expected);
+}
+#endif
+
 static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_t size) {
     unsigned char x32[32];
     unsigned char y32[32];
@@ -199,6 +224,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_fe_check_bounds_sum(left_magnitude, right_magnitude);
     }
     secp256k1_fuzz_fe_check_raised_zero(input, size);
+#if defined(SECP256K1_WIDEMUL_INT64)
+    secp256k1_fuzz_fe_check_shifted_zero();
+#endif
     secp256k1_fuzz_fe_check_arithmetic(input, size);
 
     return 0;
