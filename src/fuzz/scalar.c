@@ -169,6 +169,91 @@ static void secp256k1_fuzz_scalar_limbs_sub_order(uint16_t *value, const uint16_
     value[SECP256K1_FUZZ_SCALAR_LIMBS] = (uint16_t)(value[SECP256K1_FUZZ_SCALAR_LIMBS] - borrow);
 }
 
+static int secp256k1_fuzz_scalar_add_reference(unsigned char *out32, const unsigned char *a32, const unsigned char *b32) {
+    uint16_t a[SECP256K1_FUZZ_SCALAR_LIMBS];
+    uint16_t b[SECP256K1_FUZZ_SCALAR_LIMBS];
+    uint16_t order[SECP256K1_FUZZ_SCALAR_LIMBS];
+    uint16_t sum[SECP256K1_FUZZ_SCALAR_LIMBS + 1] = { 0 };
+    uint32_t carry = 0;
+    int overflow;
+    int i;
+
+    secp256k1_fuzz_scalar_bytes_to_limbs(a, a32);
+    secp256k1_fuzz_scalar_bytes_to_limbs(b, b32);
+    secp256k1_fuzz_scalar_bytes_to_limbs(order, secp256k1_fuzz_scalar_order);
+    for (i = 0; i < SECP256K1_FUZZ_SCALAR_LIMBS; i++) {
+        uint32_t value = (uint32_t)a[i] + b[i] + carry;
+        sum[i] = (uint16_t)value;
+        carry = value >> 16;
+    }
+    sum[SECP256K1_FUZZ_SCALAR_LIMBS] = (uint16_t)carry;
+    overflow = secp256k1_fuzz_scalar_limbs_ge_order(sum, order);
+    if (overflow) {
+        secp256k1_fuzz_scalar_limbs_sub_order(sum, order);
+    }
+    FUZZ_CHECK(sum[SECP256K1_FUZZ_SCALAR_LIMBS] == 0);
+    secp256k1_fuzz_scalar_limbs_to_bytes(out32, sum);
+    return overflow;
+}
+
+static void secp256k1_fuzz_scalar_negate_reference(unsigned char *out32, const unsigned char *input32) {
+    if (memcmp(input32, secp256k1_fuzz_scalar_zero, 32) == 0) {
+        memset(out32, 0, 32);
+    } else {
+        secp256k1_fuzz_scalar_bytes_sub(out32, secp256k1_fuzz_scalar_order, input32);
+    }
+}
+
+static void secp256k1_fuzz_scalar_half_reference(unsigned char *out32, const unsigned char *input32) {
+    unsigned char sum[33] = { 0 };
+    unsigned int carry = 0;
+    int i;
+
+    for (i = 31; i >= 0; i--) {
+        unsigned int value = input32[i] + carry;
+        if (input32[31] & 1) {
+            value += secp256k1_fuzz_scalar_order[i];
+        }
+        sum[i + 1] = (unsigned char)value;
+        carry = value >> 8;
+    }
+    sum[0] = (unsigned char)carry;
+    carry = 0;
+    for (i = 0; i < 33; i++) {
+        unsigned int next_carry = sum[i] & 1u;
+        sum[i] = (unsigned char)((sum[i] >> 1) | (carry << 7));
+        carry = next_carry;
+    }
+    FUZZ_CHECK(carry == 0);
+    FUZZ_CHECK(sum[0] == 0);
+    memcpy(out32, sum + 1, 32);
+}
+
+static uint32_t secp256k1_fuzz_scalar_bits_reference(const unsigned char *input32, unsigned int offset, unsigned int count) {
+    uint32_t ret = 0;
+    unsigned int bit;
+
+    FUZZ_CHECK(count > 0 && count <= 32);
+    FUZZ_CHECK(offset + count <= 256);
+    for (bit = 0; bit < count; bit++) {
+        unsigned int source_bit = offset + bit;
+        ret |= (uint32_t)((input32[31 - (source_bit >> 3)] >> (source_bit & 7)) & 1u) << bit;
+    }
+    return ret;
+}
+
+static int secp256k1_fuzz_scalar_all_zero(void *ptr, size_t len) {
+    const unsigned char *bytes = (const unsigned char *)ptr;
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        if (bytes[i] != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Reduce a full product with binary long division, independent of scalar code. */
 static void secp256k1_fuzz_scalar_reduce_product(unsigned char *out32, const uint16_t *product) {
     uint16_t order[SECP256K1_FUZZ_SCALAR_LIMBS];
@@ -253,6 +338,87 @@ static void secp256k1_fuzz_scalar_check_modular_arithmetic(const secp256k1_scala
     }
 }
 
+static void secp256k1_fuzz_scalar_check_linear_arithmetic(const secp256k1_scalar *a, const secp256k1_scalar *b, const unsigned char *a32, const unsigned char *b32, const unsigned char *input, size_t size, unsigned int salt) {
+    secp256k1_scalar actual;
+    secp256k1_scalar actual_alias;
+    unsigned char actual32[32];
+    unsigned char expected32[32];
+    unsigned char negated32[32];
+    unsigned char bit32[32] = { 0 };
+    unsigned int bit;
+    unsigned int count;
+    unsigned int offset;
+    int expected_overflow;
+    int expected_high;
+
+    expected_overflow = secp256k1_fuzz_scalar_add_reference(expected32, a32, b32);
+    FUZZ_CHECK(secp256k1_scalar_add(&actual, a, b) == expected_overflow);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(expected32)) == 0);
+    actual_alias = *a;
+    FUZZ_CHECK(secp256k1_scalar_add(&actual_alias, &actual_alias, b) == expected_overflow);
+    secp256k1_scalar_get_b32(actual32, &actual_alias);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(expected32)) == 0);
+
+    secp256k1_fuzz_scalar_negate_reference(negated32, a32);
+    secp256k1_scalar_negate(&actual, a);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, negated32, sizeof(negated32)) == 0);
+    actual_alias = *a;
+    secp256k1_scalar_negate(&actual_alias, &actual_alias);
+    secp256k1_scalar_get_b32(actual32, &actual_alias);
+    FUZZ_CHECK(memcmp(actual32, negated32, sizeof(negated32)) == 0);
+
+    secp256k1_fuzz_scalar_half_reference(expected32, a32);
+    actual_alias = *a;
+    secp256k1_scalar_half(&actual_alias, &actual_alias);
+    secp256k1_scalar_get_b32(actual32, &actual_alias);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(expected32)) == 0);
+
+    expected_high = memcmp(a32, secp256k1_fuzz_scalar_zero, sizeof(actual32)) != 0 && secp256k1_fuzz_scalar_bytes_cmp(a32, negated32) > 0;
+    FUZZ_CHECK(secp256k1_scalar_is_high(a) == expected_high);
+    FUZZ_CHECK(secp256k1_scalar_is_even(a) == ((a32[31] & 1u) == 0));
+
+    actual = *a;
+    secp256k1_scalar_cmov(&actual, b, 0);
+    FUZZ_CHECK(secp256k1_scalar_eq(&actual, a));
+    secp256k1_scalar_cmov(&actual, b, 1);
+    FUZZ_CHECK(secp256k1_scalar_eq(&actual, b));
+    actual = *a;
+    FUZZ_CHECK(secp256k1_scalar_cond_negate(&actual, 0) == 1);
+    FUZZ_CHECK(secp256k1_scalar_eq(&actual, a));
+    FUZZ_CHECK(secp256k1_scalar_cond_negate(&actual, 1) == -1);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, negated32, sizeof(negated32)) == 0);
+
+    offset = secp256k1_fuzz_byte(input, size, salt) % 256u;
+    count = 1u + secp256k1_fuzz_byte(input, size, salt + 1u) % (256u - offset < 32u ? 256u - offset : 32u);
+    FUZZ_CHECK(secp256k1_scalar_get_bits_var(a, offset, count) == secp256k1_fuzz_scalar_bits_reference(a32, offset, count));
+    FUZZ_CHECK(secp256k1_scalar_get_bits_var(a, 0, 32) == secp256k1_fuzz_scalar_bits_reference(a32, 0, 32));
+    FUZZ_CHECK(secp256k1_scalar_get_bits_var(a, 224, 32) == secp256k1_fuzz_scalar_bits_reference(a32, 224, 32));
+    offset = (secp256k1_fuzz_byte(input, size, salt + 2u) % 8u) * 32u + secp256k1_fuzz_byte(input, size, salt + 3u) % 32u;
+    count = 1u + secp256k1_fuzz_byte(input, size, salt + 4u) % (32u - (offset & 31u));
+    FUZZ_CHECK(secp256k1_scalar_get_bits_limb32(a, offset, count) == secp256k1_fuzz_scalar_bits_reference(a32, offset, count));
+
+    bit = secp256k1_fuzz_byte(input, size, salt + 5u) % 256u;
+    bit32[31 - (bit >> 3)] = (unsigned char)(1u << (bit & 7));
+    expected_overflow = secp256k1_fuzz_scalar_add_reference(expected32, a32, bit32);
+    if (!expected_overflow) {
+        actual = *a;
+        secp256k1_scalar_cadd_bit(&actual, bit, 1);
+        secp256k1_scalar_get_b32(actual32, &actual);
+        FUZZ_CHECK(memcmp(actual32, expected32, sizeof(expected32)) == 0);
+        secp256k1_scalar_cadd_bit(&actual, bit, 0);
+        secp256k1_scalar_get_b32(actual32, &actual);
+        FUZZ_CHECK(memcmp(actual32, expected32, sizeof(expected32)) == 0);
+    }
+
+    actual = *a;
+    secp256k1_scalar_clear(&actual);
+    SECP256K1_CHECKMEM_DEFINE(&actual, sizeof(actual));
+    FUZZ_CHECK(secp256k1_fuzz_scalar_all_zero(&actual, sizeof(actual)));
+}
+
 static void secp256k1_fuzz_scalar_check_shift(const secp256k1_scalar *a, const secp256k1_scalar *b, const uint16_t *product, unsigned int shift) {
     secp256k1_scalar actual;
     unsigned char actual32[32];
@@ -282,6 +448,7 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_decode(&b, b32, b_input32);
     secp256k1_fuzz_scalar_product(product, a32, b32);
     secp256k1_fuzz_scalar_check_modular_arithmetic(&a, &b, a32, product);
+    secp256k1_fuzz_scalar_check_linear_arithmetic(&a, &b, a32, b32, input, size, salt + 17u);
 
     for (i = 0; i < sizeof(boundary_shifts) / sizeof(boundary_shifts[0]); i++) {
         secp256k1_fuzz_scalar_check_shift(&a, &b, product, boundary_shifts[i]);
