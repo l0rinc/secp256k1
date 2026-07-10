@@ -115,17 +115,18 @@ static void secp256k1_fuzz_group_check_zinv_addition(const secp256k1_gej *a, con
     secp256k1_fe bz3;
     secp256k1_gej result;
     secp256k1_gej copy = *b;
+    int b_is_infinity;
 
-    if (secp256k1_gej_is_infinity(a) || secp256k1_gej_is_infinity(b)) {
-        return;
-    }
     secp256k1_ge_set_gej_var(&b_affine, &copy);
-    secp256k1_fe_inv_var(&bz3, bzinv);
-    secp256k1_fe_sqr(&bz2, &bz3);
-    secp256k1_fe_mul(&bz3, &bz3, &bz2);
     b_scaled = b_affine;
-    secp256k1_fe_mul(&b_scaled.x, &b_scaled.x, &bz2);
-    secp256k1_fe_mul(&b_scaled.y, &b_scaled.y, &bz3);
+    b_is_infinity = secp256k1_ge_is_infinity(&b_affine);
+    if (!b_is_infinity) {
+        secp256k1_fe_inv_var(&bz3, bzinv);
+        secp256k1_fe_sqr(&bz2, &bz3);
+        secp256k1_fe_mul(&bz3, &bz3, &bz2);
+        secp256k1_fe_mul(&b_scaled.x, &b_scaled.x, &bz2);
+        secp256k1_fe_mul(&b_scaled.y, &b_scaled.y, &bz3);
+    }
     secp256k1_gej_add_zinv_var(&result, a, &b_scaled, bzinv);
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
 }
@@ -189,6 +190,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_gej negated;
     secp256k1_gej cancelled;
     secp256k1_gej rescaled;
+    secp256k1_gej infinity;
+    secp256k1_gej finite;
     secp256k1_fe scale;
     unsigned char a32[32];
     unsigned char b32[32];
@@ -222,6 +225,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fe_set_int(&scale, 1);
     }
     secp256k1_fuzz_group_check_zinv_addition(&a, &b, &sum, &scale);
+    secp256k1_gej_set_infinity(&infinity);
+    secp256k1_fuzz_group_make_point(ctx, &finite, &secp256k1_scalar_one);
+    secp256k1_fuzz_group_check_zinv_addition(&infinity, &finite, &finite, &scale);
+    secp256k1_fuzz_group_check_zinv_addition(&finite, &infinity, &finite, &scale);
+    secp256k1_fuzz_group_check_zinv_addition(&infinity, &infinity, &infinity, &scale);
     rescaled = a;
     secp256k1_gej_rescale(&rescaled, &scale);
     FUZZ_CHECK(secp256k1_gej_eq_var(&rescaled, &a));
