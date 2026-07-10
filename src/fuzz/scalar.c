@@ -419,6 +419,44 @@ static void secp256k1_fuzz_scalar_check_linear_arithmetic(const secp256k1_scalar
     FUZZ_CHECK(secp256k1_fuzz_scalar_all_zero(&actual, sizeof(actual)));
 }
 
+static void secp256k1_fuzz_scalar_check_wnaf(const secp256k1_scalar *number) {
+    secp256k1_scalar reconstructed;
+    secp256k1_scalar two;
+    int wnaf[256];
+    int w;
+
+    secp256k1_scalar_set_int(&two, 2);
+    for (w = 2; w <= 31; w++) {
+        int bits;
+        int zeroes = -1;
+        int i;
+
+        bits = secp256k1_ecmult_wnaf(wnaf, 256, number, w);
+        secp256k1_scalar_set_int(&reconstructed, 0);
+        for (i = bits - 1; i >= 0; i--) {
+            int digit = wnaf[i];
+            secp256k1_scalar term;
+
+            secp256k1_scalar_mul(&reconstructed, &reconstructed, &two);
+            if (digit != 0) {
+                FUZZ_CHECK(zeroes == -1 || zeroes >= w - 1);
+                FUZZ_CHECK((digit & 1) != 0);
+                FUZZ_CHECK(digit <= (int)((INT64_C(1) << (w - 1)) - 1));
+                FUZZ_CHECK(digit >= -(int)((INT64_C(1) << (w - 1)) - 1));
+                zeroes = 0;
+                secp256k1_scalar_set_int(&term, (unsigned int)(digit < 0 ? -digit : digit));
+                if (digit < 0) {
+                    secp256k1_scalar_negate(&term, &term);
+                }
+                secp256k1_scalar_add(&reconstructed, &reconstructed, &term);
+            } else if (zeroes != -1) {
+                zeroes++;
+            }
+        }
+        FUZZ_CHECK(secp256k1_scalar_eq(&reconstructed, number));
+    }
+}
+
 static int secp256k1_fuzz_scalar_fits_128(const unsigned char *input32) {
     size_t i;
 
@@ -522,10 +560,13 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char a32[32];
     unsigned char b32[32];
     unsigned char order_minus_one32[32];
+    secp256k1_scalar wnaf_boundary;
 
     secp256k1_fuzz_derive(a32, sizeof(a32), input, size, 31);
     secp256k1_fuzz_derive(b32, sizeof(b32), input, size, 37);
     secp256k1_fuzz_scalar_check_pair(a32, b32, input, size, 41);
+    secp256k1_scalar_set_int(&wnaf_boundary, 0x7fffffffU);
+    secp256k1_fuzz_scalar_check_wnaf(&wnaf_boundary);
 
     secp256k1_fuzz_scalar_decrement(order_minus_one32, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
