@@ -222,6 +222,42 @@ static void secp256k1_fuzz_group_check_affine_representations(const secp256k1_ge
     FUZZ_CHECK(secp256k1_ge_eq_var(&lambda_thrice, &affine));
 }
 
+static void secp256k1_fuzz_group_check_xo(const secp256k1_ge *point) {
+    secp256k1_ge even;
+    secp256k1_ge odd;
+    secp256k1_ge negated;
+    int on_curve;
+    int even_ret;
+    int odd_ret;
+
+    on_curve = secp256k1_ge_x_on_curve_var(&point->x);
+    even_ret = secp256k1_ge_set_xo_var(&even, &point->x, 0);
+    odd_ret = secp256k1_ge_set_xo_var(&odd, &point->x, 1);
+    FUZZ_CHECK(even_ret == on_curve);
+    FUZZ_CHECK(odd_ret == on_curve);
+
+    if (!on_curve) {
+        return;
+    }
+
+    FUZZ_CHECK(!secp256k1_ge_is_infinity(&even));
+    FUZZ_CHECK(!secp256k1_ge_is_infinity(&odd));
+    FUZZ_CHECK(!secp256k1_ge_is_infinity(point));
+    secp256k1_fe_normalize_var(&even.y);
+    secp256k1_fe_normalize_var(&odd.y);
+    FUZZ_CHECK(secp256k1_fe_equal(&even.x, &point->x));
+    FUZZ_CHECK(secp256k1_fe_equal(&odd.x, &point->x));
+    FUZZ_CHECK(!secp256k1_fe_is_odd(&even.y));
+    FUZZ_CHECK(secp256k1_fe_is_odd(&odd.y));
+    FUZZ_CHECK(secp256k1_ge_is_valid_var(&even));
+    FUZZ_CHECK(secp256k1_ge_is_valid_var(&odd));
+
+    negated = *point;
+    secp256k1_ge_neg(&negated, &negated);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&even, point) || secp256k1_ge_eq_var(&even, &negated));
+    FUZZ_CHECK(secp256k1_ge_eq_var(&odd, point) || secp256k1_ge_eq_var(&odd, &negated));
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
@@ -256,6 +292,12 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_affine(&b);
     secp256k1_fuzz_group_check_affine(&sum);
     secp256k1_fuzz_group_check_affine_representations(&a);
+    if (!secp256k1_gej_is_infinity(&a)) {
+        secp256k1_ge affine_a;
+        secp256k1_gej copy = a;
+        secp256k1_ge_set_gej_var(&affine_a, &copy);
+        secp256k1_fuzz_group_check_xo(&affine_a);
+    }
     secp256k1_fuzz_group_check_addition(&a, &b, &sum);
     secp256k1_fuzz_group_check_double(&a, &doubled);
     secp256k1_fuzz_group_check_batch(&a, &b, &sum);
