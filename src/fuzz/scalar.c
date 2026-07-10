@@ -419,6 +419,61 @@ static void secp256k1_fuzz_scalar_check_linear_arithmetic(const secp256k1_scalar
     FUZZ_CHECK(secp256k1_fuzz_scalar_all_zero(&actual, sizeof(actual)));
 }
 
+static int secp256k1_fuzz_scalar_fits_128(const unsigned char *input32) {
+    size_t i;
+
+    for (i = 0; i < 16; i++) {
+        if (input32[i] != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void secp256k1_fuzz_scalar_check_splits(const secp256k1_scalar *a, const unsigned char *a32) {
+    secp256k1_scalar low;
+    secp256k1_scalar high;
+    secp256k1_scalar split1;
+    secp256k1_scalar split2;
+    unsigned char low32[32];
+    unsigned char high32[32];
+    unsigned char split1_32[32];
+    unsigned char split2_32[32];
+    unsigned char lambda32[32];
+    unsigned char two128_32[32] = { 0 };
+    unsigned char expected32[32];
+    unsigned char negated32[32];
+    uint16_t product[SECP256K1_FUZZ_SCALAR_PRODUCT_LIMBS];
+
+    secp256k1_scalar_split_128(&low, &high, a);
+    secp256k1_scalar_get_b32(low32, &low);
+    secp256k1_scalar_get_b32(high32, &high);
+    memset(expected32, 0, sizeof(expected32));
+    memcpy(expected32 + 16, a32 + 16, 16);
+    FUZZ_CHECK(memcmp(low32, expected32, sizeof(expected32)) == 0);
+    memset(expected32, 0, sizeof(expected32));
+    memcpy(expected32 + 16, a32, 16);
+    FUZZ_CHECK(memcmp(high32, expected32, sizeof(expected32)) == 0);
+    two128_32[15] = 1;
+    secp256k1_fuzz_scalar_product(product, high32, two128_32);
+    secp256k1_fuzz_scalar_reduce_product(expected32, product);
+    (void)secp256k1_fuzz_scalar_add_reference(expected32, expected32, low32);
+    FUZZ_CHECK(memcmp(expected32, a32, sizeof(expected32)) == 0);
+
+    secp256k1_scalar_split_lambda(&split1, &split2, a);
+    secp256k1_scalar_get_b32(split1_32, &split1);
+    secp256k1_scalar_get_b32(split2_32, &split2);
+    secp256k1_scalar_get_b32(lambda32, &secp256k1_const_lambda);
+    secp256k1_fuzz_scalar_product(product, lambda32, split2_32);
+    secp256k1_fuzz_scalar_reduce_product(expected32, product);
+    (void)secp256k1_fuzz_scalar_add_reference(expected32, expected32, split1_32);
+    FUZZ_CHECK(memcmp(expected32, a32, sizeof(expected32)) == 0);
+    secp256k1_fuzz_scalar_negate_reference(negated32, split1_32);
+    FUZZ_CHECK(secp256k1_fuzz_scalar_fits_128(split1_32) || secp256k1_fuzz_scalar_fits_128(negated32));
+    secp256k1_fuzz_scalar_negate_reference(negated32, split2_32);
+    FUZZ_CHECK(secp256k1_fuzz_scalar_fits_128(split2_32) || secp256k1_fuzz_scalar_fits_128(negated32));
+}
+
 static void secp256k1_fuzz_scalar_check_shift(const secp256k1_scalar *a, const secp256k1_scalar *b, const uint16_t *product, unsigned int shift) {
     secp256k1_scalar actual;
     unsigned char actual32[32];
@@ -449,6 +504,7 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_product(product, a32, b32);
     secp256k1_fuzz_scalar_check_modular_arithmetic(&a, &b, a32, product);
     secp256k1_fuzz_scalar_check_linear_arithmetic(&a, &b, a32, b32, input, size, salt + 17u);
+    secp256k1_fuzz_scalar_check_splits(&a, a32);
 
     for (i = 0; i < sizeof(boundary_shifts) / sizeof(boundary_shifts[0]); i++) {
         secp256k1_fuzz_scalar_check_shift(&a, &b, product, boundary_shifts[i]);
