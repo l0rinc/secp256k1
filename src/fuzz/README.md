@@ -9,6 +9,7 @@ Targets:
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
+- `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization and maximum-magnitude consistency
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
@@ -36,9 +37,9 @@ Autotools standalone build:
 mkdir -p build-autotools-fuzz
 cd build-autotools-fuzz
 ../configure --enable-fuzz --enable-module-recovery
-make -j"$(nproc)" fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_field fuzz_ecmult_multi fuzz_ecdh \
+make -j"$(nproc)" fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_ecmult_multi fuzz_ecdh \
   fuzz_ellswift fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig
-make check TESTS="fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_field fuzz_ecmult_multi fuzz_ecdh fuzz_ellswift fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig"
+make check TESTS="fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_ecmult_multi fuzz_ecdh fuzz_ellswift fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig"
 ```
 
 ASan/UBSan replay:

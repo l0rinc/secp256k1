@@ -2463,6 +2463,15 @@ static void run_scalar_tests(void) {
     }
 
     {
+        /* Products are at most 512 bits, so larger rounded shifts are zero. */
+        secp256k1_scalar r;
+        secp256k1_scalar_mul_shift_var(&r, &secp256k1_scalar_one, &secp256k1_scalar_one, 513);
+        CHECK(secp256k1_scalar_is_zero(&r));
+        secp256k1_scalar_mul_shift_var(&r, &secp256k1_scalar_one, &secp256k1_scalar_one, ~(unsigned int)0);
+        CHECK(secp256k1_scalar_is_zero(&r));
+    }
+
+    {
         /* Test that halving and doubling roundtrips on some fixed values. */
         static const secp256k1_scalar HALF_TESTS[] = {
             /* 0 */
