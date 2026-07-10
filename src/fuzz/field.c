@@ -156,6 +156,56 @@ static void secp256k1_fuzz_fe_check_half(const unsigned char *input, size_t size
     }
 }
 
+static void secp256k1_fuzz_fe_check_comparisons(const unsigned char *input, size_t size) {
+    secp256k1_fe canonical;
+    secp256k1_fe other;
+    secp256k1_fe zero29;
+    secp256k1_fe a;
+    secp256k1_fe b;
+    unsigned char canonical32[32];
+    unsigned char other32[32];
+    int expected_cmp;
+
+    secp256k1_fuzz_derive(canonical32, sizeof(canonical32), input, size, 179);
+    secp256k1_fuzz_derive(other32, sizeof(other32), input, size, 181);
+    secp256k1_fe_set_b32_mod(&canonical, canonical32);
+    secp256k1_fe_set_b32_mod(&other, other32);
+    secp256k1_fe_normalize_var(&canonical);
+    secp256k1_fe_normalize_var(&other);
+    secp256k1_fe_get_b32(canonical32, &canonical);
+    secp256k1_fe_get_b32(other32, &other);
+    expected_cmp = memcmp(canonical32, other32, sizeof(canonical32));
+    expected_cmp = (expected_cmp > 0) - (expected_cmp < 0);
+    FUZZ_CHECK(secp256k1_fe_cmp_var(&canonical, &other) == expected_cmp);
+    FUZZ_CHECK(secp256k1_fe_cmp_var(&other, &canonical) == -expected_cmp);
+
+    secp256k1_fe_set_int(&a, 0);
+    secp256k1_fe_set_int(&b, 1);
+    FUZZ_CHECK(secp256k1_fe_cmp_var(&a, &b) == -1);
+    FUZZ_CHECK(secp256k1_fe_cmp_var(&b, &a) == 1);
+
+    /* Pin the documented maximum b magnitude of fe_equal. */
+    secp256k1_fe_set_int(&zero29, 0);
+    secp256k1_fe_negate(&zero29, &zero29, 0);
+    secp256k1_fe_mul_int_unchecked(&zero29, 29);
+    b = canonical;
+    secp256k1_fe_add(&b, &zero29);
+#ifdef VERIFY
+    FUZZ_CHECK(b.magnitude == 30);
+#endif
+    FUZZ_CHECK(secp256k1_fe_equal(&canonical, &b));
+
+    other = canonical;
+    secp256k1_fe_add_int(&other, 1);
+    secp256k1_fe_normalize_var(&other);
+    b = other;
+    secp256k1_fe_add(&b, &zero29);
+#ifdef VERIFY
+    FUZZ_CHECK(b.magnitude == 30);
+#endif
+    FUZZ_CHECK(!secp256k1_fe_equal(&canonical, &b));
+}
+
 static void secp256k1_fuzz_fe_check_cmov(const secp256k1_fe *a, const secp256k1_fe *b) {
     secp256k1_fe selected;
     secp256k1_fe expected;
@@ -350,6 +400,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_fe_check_raised_zero(input, size);
     secp256k1_fuzz_fe_check_half(input, size);
+    secp256k1_fuzz_fe_check_comparisons(input, size);
 #if defined(SECP256K1_WIDEMUL_INT64)
     secp256k1_fuzz_fe_check_shifted_zero();
 #endif
