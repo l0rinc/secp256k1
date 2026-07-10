@@ -101,6 +101,8 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
     secp256k1_fe square_alias;
     secp256k1_fe inverse;
     secp256k1_fe inverse_var;
+    secp256k1_fe inverse_alias;
+    secp256k1_fe inverse_var_alias;
     secp256k1_fe inverse_product;
     secp256k1_fe negative_square;
     secp256k1_fe root;
@@ -149,6 +151,12 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
     secp256k1_fe_inv(&inverse, &x);
     secp256k1_fe_inv_var(&inverse_var, &x);
     FUZZ_CHECK(secp256k1_fuzz_fe_identical(&inverse, &inverse_var));
+    inverse_alias = x;
+    secp256k1_fe_inv(&inverse_alias, &inverse_alias);
+    FUZZ_CHECK(secp256k1_fuzz_fe_identical(&inverse_alias, &inverse));
+    inverse_var_alias = x;
+    secp256k1_fe_inv_var(&inverse_var_alias, &inverse_var_alias);
+    FUZZ_CHECK(secp256k1_fuzz_fe_identical(&inverse_var_alias, &inverse_var));
     if (x_is_zero) {
         FUZZ_CHECK(secp256k1_fe_is_zero(&inverse));
     } else {
