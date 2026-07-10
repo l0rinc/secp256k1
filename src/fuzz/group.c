@@ -130,6 +130,51 @@ static void secp256k1_fuzz_group_check_zinv_addition(const secp256k1_gej *a, con
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
 }
 
+static void secp256k1_fuzz_group_check_affine_representations(const secp256k1_gej *point) {
+    secp256k1_ge affine;
+    secp256k1_ge lambda;
+    secp256k1_ge lambda_twice;
+    secp256k1_ge lambda_thrice;
+    secp256k1_ge from_storage;
+    secp256k1_ge from_bytes;
+    secp256k1_ge from_bytes_ext;
+    secp256k1_gej copy = *point;
+    secp256k1_ge_storage storage;
+    unsigned char bytes[64];
+    unsigned char bytes_ext[64];
+
+    secp256k1_ge_set_gej_var(&affine, &copy);
+    secp256k1_ge_to_bytes_ext(bytes_ext, &affine);
+    secp256k1_ge_from_bytes_ext(&from_bytes_ext, bytes_ext);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&from_bytes_ext, &affine));
+    if (secp256k1_ge_is_infinity(&affine)) {
+        FUZZ_CHECK(secp256k1_fuzz_group_all_zero(bytes_ext, sizeof(bytes_ext)));
+        return;
+    }
+
+    secp256k1_ge_to_storage(&storage, &affine);
+    secp256k1_ge_from_storage(&from_storage, &storage);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&from_storage, &affine));
+    secp256k1_ge_to_bytes(bytes, &affine);
+    secp256k1_ge_from_bytes(&from_bytes, bytes);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&from_bytes, &affine));
+    FUZZ_CHECK(memcmp(bytes, bytes_ext, sizeof(bytes)) == 0);
+
+    lambda = affine;
+    secp256k1_ge_mul_lambda(&lambda, &lambda);
+    FUZZ_CHECK(secp256k1_fe_equal(&lambda.y, &affine.y));
+    {
+        secp256k1_fe expected_x;
+        secp256k1_fe_mul(&expected_x, &affine.x, &secp256k1_const_beta);
+        FUZZ_CHECK(secp256k1_fe_equal(&lambda.x, &expected_x));
+    }
+    lambda_twice = lambda;
+    secp256k1_ge_mul_lambda(&lambda_twice, &lambda_twice);
+    lambda_thrice = lambda_twice;
+    secp256k1_ge_mul_lambda(&lambda_thrice, &lambda_thrice);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&lambda_thrice, &affine));
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
@@ -161,6 +206,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_affine(&a);
     secp256k1_fuzz_group_check_affine(&b);
     secp256k1_fuzz_group_check_affine(&sum);
+    secp256k1_fuzz_group_check_affine_representations(&a);
     secp256k1_fuzz_group_check_addition(&a, &b, &sum);
     secp256k1_fuzz_group_check_double(&a, &doubled);
     secp256k1_fuzz_group_check_batch(&a, &b, &sum);
