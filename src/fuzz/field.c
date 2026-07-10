@@ -132,6 +132,9 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
     secp256k1_fe negative_square;
     secp256k1_fe root;
     secp256k1_fe root_squared;
+    secp256k1_fe zero7;
+    secp256k1_fe raised_square;
+    secp256k1_fe raised_negative_square;
     secp256k1_fe_storage storage;
     int x_is_zero;
     int sqrt_ret;
@@ -210,6 +213,22 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
     } else {
         FUZZ_CHECK(secp256k1_fuzz_fe_identical(&root_squared, &square));
     }
+
+    /* is_square_var accepts inputs up to magnitude 8, not only normalized
+     * values. Raise both a square and its negation without changing value. */
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised_square = square;
+    secp256k1_fe_add(&raised_square, &zero7);
+    raised_negative_square = negative_square;
+    secp256k1_fe_add(&raised_negative_square, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_square.magnitude == 8);
+    FUZZ_CHECK(raised_negative_square.magnitude == 8);
+#endif
+    FUZZ_CHECK(secp256k1_fe_is_square_var(&raised_square) == 1);
+    FUZZ_CHECK(secp256k1_fe_is_square_var(&raised_negative_square) == x_is_zero);
 }
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
