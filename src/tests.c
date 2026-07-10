@@ -4475,6 +4475,36 @@ static void run_gej_rescale_alias(void) {
     CHECK(secp256k1_gej_eq_var(&actual, &expected));
 }
 
+static void run_gej_zinv_in_place(void) {
+    secp256k1_ge b;
+    secp256k1_gej a;
+    secp256k1_gej b_j;
+    secp256k1_gej actual;
+    secp256k1_gej expected;
+    secp256k1_fe bzinv;
+    secp256k1_fe bz2;
+    secp256k1_fe bz3;
+
+    secp256k1_ecmult_gen_gej(&CTX->ecmult_gen_ctx, &a, &secp256k1_scalar_one);
+    b_j = a;
+    secp256k1_gej_double(&b_j, &b_j);
+    {
+        secp256k1_gej copy = b_j;
+        secp256k1_ge_set_gej_var(&b, &copy);
+    }
+    bzinv = a.y;
+    secp256k1_fe_inv_var(&bz3, &bzinv);
+    secp256k1_fe_sqr(&bz2, &bz3);
+    secp256k1_fe_mul(&b.x, &b.x, &bz2);
+    secp256k1_fe_mul(&b.y, &b.y, &bz3);
+
+    expected = a;
+    secp256k1_gej_add_zinv_var(&expected, &a, &b, &bzinv);
+    actual = a;
+    secp256k1_gej_add_zinv_var(&actual, &actual, &b, &actual.y);
+    CHECK(secp256k1_gej_eq_var(&actual, &expected));
+}
+
 static void test_ec_combine(void) {
     secp256k1_scalar sum = secp256k1_scalar_zero;
     secp256k1_pubkey data[6];
@@ -8286,6 +8316,7 @@ static const struct tf_test_entry tests_group[] = {
     CASE(ge),
     CASE(gej),
     CASE(gej_rescale_alias),
+    CASE(gej_zinv_in_place),
     CASE(group_decompress),
 };
 
