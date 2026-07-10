@@ -88,6 +88,74 @@ static void secp256k1_fuzz_fe_check_raised_zero(const unsigned char *input, size
     secp256k1_fuzz_fe_check_normalize_paths(&value, &expected);
 }
 
+static const unsigned char secp256k1_fuzz_field_prime[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
+};
+
+static void secp256k1_fuzz_fe_half_reference(unsigned char *out32, const unsigned char *in32) {
+    unsigned char sum[33] = { 0 };
+    unsigned int carry = 0;
+    size_t i;
+
+    memcpy(sum + 1, in32, 32);
+    if (in32[31] & 1u) {
+        for (i = 33; i-- > 1;) {
+            unsigned int value = (unsigned int)sum[i] + secp256k1_fuzz_field_prime[i - 1] + carry;
+            sum[i] = (unsigned char)value;
+            carry = value >> 8;
+        }
+        sum[0] = (unsigned char)carry;
+    }
+    for (i = 32; i > 0; i--) {
+        sum[i] = (unsigned char)((sum[i] >> 1) | ((sum[i - 1] & 1u) << 7));
+    }
+    sum[0] >>= 1;
+    memcpy(out32, sum + 1, 32);
+}
+
+static void secp256k1_fuzz_fe_check_half(const unsigned char *input, size_t size) {
+    secp256k1_fe canonical;
+    secp256k1_fe zero;
+    secp256k1_fe raised;
+    secp256k1_fe actual;
+    secp256k1_fe doubled;
+    unsigned char canonical32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    int magnitude;
+
+    secp256k1_fuzz_derive(canonical32, sizeof(canonical32), input, size, 167);
+    secp256k1_fe_set_b32_mod(&canonical, canonical32);
+    secp256k1_fe_normalize_var(&canonical);
+    secp256k1_fe_get_b32(canonical32, &canonical);
+    secp256k1_fuzz_fe_half_reference(expected32, canonical32);
+
+    /* Add multiples of p without changing the field value to exercise every
+     * input magnitude accepted by fe_half. */
+    secp256k1_fe_set_int(&zero, 0);
+    secp256k1_fe_negate(&zero, &zero, 0);
+    raised = canonical;
+    for (magnitude = 1; magnitude <= 31; magnitude++) {
+        if (magnitude > 1) {
+            secp256k1_fe_add(&raised, &zero);
+        }
+        actual = raised;
+        secp256k1_fe_half(&actual);
+        secp256k1_fe_normalize_var(&actual);
+        secp256k1_fe_get_b32(actual32, &actual);
+        FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+        doubled = actual;
+        secp256k1_fe_add(&doubled, &actual);
+        secp256k1_fe_normalize_var(&doubled);
+        secp256k1_fe_get_b32(actual32, &doubled);
+        FUZZ_CHECK(memcmp(actual32, canonical32, sizeof(actual32)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_fe_check_cmov(const secp256k1_fe *a, const secp256k1_fe *b) {
     secp256k1_fe selected;
     secp256k1_fe expected;
@@ -281,6 +349,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_fe_check_bounds_sum(left_magnitude, right_magnitude);
     }
     secp256k1_fuzz_fe_check_raised_zero(input, size);
+    secp256k1_fuzz_fe_check_half(input, size);
 #if defined(SECP256K1_WIDEMUL_INT64)
     secp256k1_fuzz_fe_check_shifted_zero();
 #endif
