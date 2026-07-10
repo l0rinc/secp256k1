@@ -108,6 +108,28 @@ static void secp256k1_fuzz_group_check_batch(const secp256k1_gej *a, const secp2
     }
 }
 
+static void secp256k1_fuzz_group_check_zinv_addition(const secp256k1_gej *a, const secp256k1_gej *b, const secp256k1_gej *expected, const secp256k1_fe *bzinv) {
+    secp256k1_ge b_affine;
+    secp256k1_ge b_scaled;
+    secp256k1_fe bz2;
+    secp256k1_fe bz3;
+    secp256k1_gej result;
+    secp256k1_gej copy = *b;
+
+    if (secp256k1_gej_is_infinity(a) || secp256k1_gej_is_infinity(b)) {
+        return;
+    }
+    secp256k1_ge_set_gej_var(&b_affine, &copy);
+    secp256k1_fe_inv_var(&bz3, bzinv);
+    secp256k1_fe_sqr(&bz2, &bz3);
+    secp256k1_fe_mul(&bz3, &bz3, &bz2);
+    b_scaled = b_affine;
+    secp256k1_fe_mul(&b_scaled.x, &b_scaled.x, &bz2);
+    secp256k1_fe_mul(&b_scaled.y, &b_scaled.y, &bz3);
+    secp256k1_gej_add_zinv_var(&result, a, &b_scaled, bzinv);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
@@ -153,6 +175,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (secp256k1_fe_is_zero(&scale)) {
         secp256k1_fe_set_int(&scale, 1);
     }
+    secp256k1_fuzz_group_check_zinv_addition(&a, &b, &sum, &scale);
     rescaled = a;
     secp256k1_gej_rescale(&rescaled, &scale);
     FUZZ_CHECK(secp256k1_gej_eq_var(&rescaled, &a));
