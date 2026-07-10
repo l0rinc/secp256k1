@@ -258,6 +258,22 @@ static void secp256k1_fuzz_group_check_xo(const secp256k1_ge *point) {
     FUZZ_CHECK(secp256k1_ge_eq_var(&odd, point) || secp256k1_ge_eq_var(&odd, &negated));
 }
 
+static void secp256k1_fuzz_group_check_eq_x(const secp256k1_gej *point) {
+    secp256k1_ge affine;
+    secp256k1_fe wrong_x;
+    secp256k1_gej copy = *point;
+
+    if (secp256k1_gej_is_infinity(point)) {
+        return;
+    }
+    secp256k1_ge_set_gej_var(&affine, &copy);
+    FUZZ_CHECK(secp256k1_gej_eq_x_var(&affine.x, point));
+    wrong_x = affine.x;
+    secp256k1_fe_add_int(&wrong_x, 1);
+    secp256k1_fe_normalize_var(&wrong_x);
+    FUZZ_CHECK(!secp256k1_gej_eq_x_var(&wrong_x, point));
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
@@ -298,6 +314,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_ge_set_gej_var(&affine_a, &copy);
         secp256k1_fuzz_group_check_xo(&affine_a);
     }
+    secp256k1_fuzz_group_check_eq_x(&a);
+    secp256k1_fuzz_group_check_eq_x(&b);
+    secp256k1_fuzz_group_check_eq_x(&sum);
     secp256k1_fuzz_group_check_addition(&a, &b, &sum);
     secp256k1_fuzz_group_check_double(&a, &doubled);
     secp256k1_fuzz_group_check_batch(&a, &b, &sum);
@@ -328,6 +347,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &infinity, &infinity, &scale);
     rescaled = a;
     secp256k1_gej_rescale(&rescaled, &scale);
+    secp256k1_fuzz_group_check_eq_x(&rescaled);
     FUZZ_CHECK(secp256k1_gej_eq_var(&rescaled, &a));
     secp256k1_fuzz_group_check_addition(&rescaled, &b, &sum);
 
