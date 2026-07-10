@@ -10,7 +10,7 @@ Targets:
 - `fuzz_context`: context randomize, clone, reset, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
-- `fuzz_field`: internal field normalization and maximum-magnitude consistency
+- `fuzz_field`: internal field normalization, arithmetic, encoding, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
