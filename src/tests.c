@@ -5786,6 +5786,9 @@ static void run_wnaf(void) {
 
     /* Test 0 for fixed wnaf */
     test_fixed_wnaf_small();
+    /* Exercise the largest window accepted by the generic WNAF helper. */
+    secp256k1_scalar_set_int(&n, 0x7fffffffU);
+    test_wnaf(&n, 31);
     /* Random tests */
     for (i = 0; i < COUNT; i++) {
         testutil_random_scalar_order(&n);

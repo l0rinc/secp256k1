@@ -118,8 +118,8 @@ SECP256K1_INLINE static void secp256k1_ecmult_table_verify(int n, int w) {
     (void)n;
     (void)w;
     VERIFY_CHECK(((n) & 1) == 1);
-    VERIFY_CHECK((n) >= -((1 << ((w)-1)) - 1));
-    VERIFY_CHECK((n) <=  ((1 << ((w)-1)) - 1));
+    VERIFY_CHECK((int64_t)n >= -((INT64_C(1) << ((w)-1)) - 1));
+    VERIFY_CHECK((int64_t)n <=  ((INT64_C(1) << ((w)-1)) - 1));
 }
 
 SECP256K1_INLINE static void secp256k1_ecmult_table_get_ge(secp256k1_ge *r, const secp256k1_ge *pre, int n, int w) {
@@ -164,12 +164,13 @@ static int secp256k1_ecmult_wnaf(int *wnaf, int len, const secp256k1_scalar *a, 
     int last_set_bit = -1;
     int bit = 0;
     int sign = 1;
-    int carry = 0;
+    int64_t carry = 0;
 
     VERIFY_CHECK(wnaf != NULL);
     VERIFY_CHECK(0 <= len && len <= 256);
     VERIFY_CHECK(a != NULL);
     VERIFY_CHECK(2 <= w && w <= 31);
+    VERIFY_CHECK(((INT64_C(1) << (w - 1)) - 1) <= INT_MAX);
 
     for (bit = 0; bit < len; bit++) {
         wnaf[bit] = 0;
@@ -184,7 +185,7 @@ static int secp256k1_ecmult_wnaf(int *wnaf, int len, const secp256k1_scalar *a, 
     bit = 0;
     while (bit < len) {
         int now;
-        int word;
+        int64_t word;
         if (secp256k1_scalar_get_bits_limb32(&s, bit, 1) == (unsigned int)carry) {
             bit++;
             continue;
@@ -195,12 +196,12 @@ static int secp256k1_ecmult_wnaf(int *wnaf, int len, const secp256k1_scalar *a, 
             now = len - bit;
         }
 
-        word = secp256k1_scalar_get_bits_var(&s, bit, now) + carry;
+        word = (int64_t)secp256k1_scalar_get_bits_var(&s, bit, now) + carry;
 
         carry = (word >> (w-1)) & 1;
         word -= carry << w;
 
-        wnaf[bit] = sign * word;
+        wnaf[bit] = sign * (int)word;
         last_set_bit = bit;
 
         bit += now;
