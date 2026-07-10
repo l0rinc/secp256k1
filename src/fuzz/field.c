@@ -88,6 +88,43 @@ static void secp256k1_fuzz_fe_check_raised_zero(const unsigned char *input, size
     secp256k1_fuzz_fe_check_normalize_paths(&value, &expected);
 }
 
+static void secp256k1_fuzz_fe_check_cmov(const secp256k1_fe *a, const secp256k1_fe *b) {
+    secp256k1_fe selected;
+    secp256k1_fe expected;
+    secp256k1_fe alias;
+    secp256k1_fe_storage storage_a;
+    secp256k1_fe_storage storage_b;
+    secp256k1_fe_storage storage_selected;
+    secp256k1_fe_storage storage_alias;
+    secp256k1_fe storage_result;
+    int flag;
+
+    secp256k1_fe_to_storage(&storage_a, a);
+    secp256k1_fe_to_storage(&storage_b, b);
+    for (flag = 0; flag <= 1; flag++) {
+        selected = *a;
+        expected = flag ? *b : *a;
+        secp256k1_fe_cmov(&selected, b, flag);
+        FUZZ_CHECK(secp256k1_fuzz_fe_identical(&selected, &expected));
+
+        alias = *a;
+        secp256k1_fe_cmov(&alias, &alias, flag);
+        FUZZ_CHECK(secp256k1_fuzz_fe_identical(&alias, a));
+
+        storage_selected = storage_a;
+        secp256k1_fe_storage_cmov(&storage_selected, &storage_b, flag);
+        secp256k1_fe_from_storage(&storage_result, &storage_selected);
+        secp256k1_fe_normalize_var(&storage_result);
+        FUZZ_CHECK(secp256k1_fuzz_fe_identical(&storage_result, &expected));
+
+        storage_alias = storage_a;
+        secp256k1_fe_storage_cmov(&storage_alias, &storage_alias, flag);
+        secp256k1_fe_from_storage(&storage_result, &storage_alias);
+        secp256k1_fe_normalize_var(&storage_result);
+        FUZZ_CHECK(secp256k1_fuzz_fe_identical(&storage_result, a));
+    }
+}
+
 #if defined(SECP256K1_WIDEMUL_INT64)
 static void secp256k1_fuzz_fe_check_shifted_zero(void) {
     secp256k1_fe shifted_zero;
@@ -146,6 +183,7 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
     secp256k1_fe_normalize_var(&x);
     secp256k1_fe_normalize_var(&y);
     x_is_zero = secp256k1_fe_is_zero(&x);
+    secp256k1_fuzz_fe_check_cmov(&x, &y);
 
     /* Canonical encoding, comparison, parity, and storage must agree. */
     secp256k1_fe_get_b32(roundtrip32, &x);
