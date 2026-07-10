@@ -131,6 +131,30 @@ static void secp256k1_fuzz_group_check_zinv_addition(const secp256k1_gej *a, con
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
 }
 
+static void secp256k1_fuzz_group_check_zinv_in_place(const secp256k1_gej *a, const secp256k1_ge *b) {
+    secp256k1_ge b_scaled;
+    secp256k1_gej expected;
+    secp256k1_gej actual;
+    secp256k1_fe bzinv;
+    secp256k1_fe bz2;
+    secp256k1_fe bz3;
+
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(a));
+    FUZZ_CHECK(!secp256k1_ge_is_infinity(b));
+    bzinv = a->y;
+    b_scaled = *b;
+    secp256k1_fe_inv_var(&bz3, &bzinv);
+    secp256k1_fe_sqr(&bz2, &bz3);
+    secp256k1_fe_mul(&b_scaled.x, &b_scaled.x, &bz2);
+    secp256k1_fe_mul(&b_scaled.y, &b_scaled.y, &bz3);
+
+    expected = *a;
+    secp256k1_gej_add_zinv_var(&expected, a, &b_scaled, &bzinv);
+    actual = *a;
+    secp256k1_gej_add_zinv_var(&actual, &actual, &b_scaled, &actual.y);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+}
+
 static void secp256k1_fuzz_group_check_rescale_alias(const secp256k1_gej *point) {
     secp256k1_gej expected;
     secp256k1_gej actual;
@@ -249,6 +273,13 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_zinv_addition(&a, &b, &sum, &scale);
     secp256k1_gej_set_infinity(&infinity);
     secp256k1_fuzz_group_make_point(ctx, &finite, &secp256k1_scalar_one);
+    {
+        secp256k1_ge finite_affine;
+        secp256k1_gej finite_other = finite;
+        secp256k1_gej_double(&finite_other, &finite_other);
+        secp256k1_ge_set_gej_var(&finite_affine, &finite_other);
+        secp256k1_fuzz_group_check_zinv_in_place(&finite, &finite_affine);
+    }
     secp256k1_fuzz_group_check_rescale_alias(&finite);
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &finite, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&finite, &infinity, &finite, &scale);
