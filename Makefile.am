@@ -150,8 +150,8 @@ FUZZ_LDADD = libsecp256k1.la
 FUZZ_INTERNAL_CPPFLAGS = $(FUZZ_CPPFLAGS) -I$(top_srcdir)/src -DVERIFY
 FUZZ_INTERNAL_LDADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
 
-noinst_PROGRAMS += fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_ecmult_multi
-TESTS += fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_ecmult_multi
+noinst_PROGRAMS += fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_group fuzz_ecmult_multi
+TESTS += fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_group fuzz_ecmult_multi
 
 fuzz_api_roundtrip_SOURCES = src/fuzz/api_roundtrip.c
 fuzz_api_roundtrip_CPPFLAGS = $(FUZZ_CPPFLAGS)
@@ -172,6 +172,10 @@ fuzz_scalar_LDADD = $(FUZZ_INTERNAL_LDADD)
 fuzz_field_SOURCES = src/fuzz/field.c
 fuzz_field_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_field_LDADD = $(FUZZ_INTERNAL_LDADD)
+
+fuzz_group_SOURCES = src/fuzz/group.c
+fuzz_group_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
+fuzz_group_LDADD = $(FUZZ_INTERNAL_LDADD)
 
 fuzz_ecmult_multi_SOURCES = src/fuzz/ecmult_multi.c
 fuzz_ecmult_multi_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
