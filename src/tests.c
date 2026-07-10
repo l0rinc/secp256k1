@@ -4454,6 +4454,27 @@ static void run_gej(void) {
     }
 }
 
+static void run_gej_rescale_alias(void) {
+    secp256k1_gej expected;
+    secp256k1_gej actual;
+    secp256k1_fe scale;
+
+    secp256k1_ecmult_gen_gej(&CTX->ecmult_gen_ctx, &actual, &secp256k1_scalar_one);
+
+    expected = actual;
+    scale = actual.z;
+    secp256k1_gej_rescale(&expected, &scale);
+    secp256k1_gej_rescale(&actual, &actual.z);
+    CHECK(secp256k1_gej_eq_var(&actual, &expected));
+
+    secp256k1_ecmult_gen_gej(&CTX->ecmult_gen_ctx, &actual, &secp256k1_scalar_one);
+    expected = actual;
+    scale = actual.y;
+    secp256k1_gej_rescale(&expected, &scale);
+    secp256k1_gej_rescale(&actual, &actual.y);
+    CHECK(secp256k1_gej_eq_var(&actual, &expected));
+}
+
 static void test_ec_combine(void) {
     secp256k1_scalar sum = secp256k1_scalar_zero;
     secp256k1_pubkey data[6];
@@ -8261,6 +8282,7 @@ static const struct tf_test_entry tests_field[] = {
 static const struct tf_test_entry tests_group[] = {
     CASE(ge),
     CASE(gej),
+    CASE(gej_rescale_alias),
     CASE(group_decompress),
 };
 

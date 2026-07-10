@@ -177,7 +177,8 @@ static void secp256k1_gej_cmov(secp256k1_gej *r, const secp256k1_gej *a, int fla
  * Both *r and *a must be initialized. Flag must be 0 or 1. */
 static void secp256k1_ge_storage_cmov(secp256k1_ge_storage *r, const secp256k1_ge_storage *a, int flag);
 
-/** Rescale a jacobian point by b which must be non-zero. Constant-time. */
+/** Rescale a jacobian point by b which must be non-zero. Constant-time.
+ * b may alias a coordinate of r. */
 static void secp256k1_gej_rescale(secp256k1_gej *r, const secp256k1_fe *b);
 
 /** Convert a group element that is not infinity to a 64-byte array. The output
