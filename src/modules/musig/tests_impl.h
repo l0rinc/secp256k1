@@ -540,6 +540,40 @@ static void musig_api_tests(void) {
     CHECK(secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce[0], &keypair[0], &keyagg_cache, &session) == 1);
     CHECK(secp256k1_musig_partial_sign(CTX, &partial_sig[1], &secnonce[1], &keypair[1], &keyagg_cache, &session) == 1);
 
+    {
+        /* A magic-preserving session must still contain only values produced by
+         * secp256k1_musig_session_save. */
+        invalid_session = session;
+        invalid_session.data[4] = 2;
+        memset(pre_sig, 0xA5, sizeof(pre_sig));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
+        CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+
+        invalid_session = session;
+        memset(invalid_session.data + 5, 0xFF, 32);
+        memset(pre_sig, 0x5A, sizeof(pre_sig));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
+        CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+
+        invalid_session = session;
+        memset(invalid_session.data + 37, 0xFF, 32);
+        memset(pre_sig, 0x3C, sizeof(pre_sig));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
+        CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+
+        invalid_session = session;
+        memset(invalid_session.data + 69, 0xFF, 32);
+        memset(pre_sig, 0x96, sizeof(pre_sig));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
+        CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+
+        invalid_session = session;
+        memset(invalid_session.data + 101, 0xFF, 32);
+        memset(pre_sig, 0xC3, sizeof(pre_sig));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
+        CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+    }
+
     CHECK(secp256k1_musig_partial_sig_serialize(CTX, buf, &partial_sig[0]) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, NULL, &partial_sig[0]));
     memset(buf, 1, sizeof(buf));
