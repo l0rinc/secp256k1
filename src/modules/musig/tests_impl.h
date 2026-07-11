@@ -206,6 +206,79 @@ static void musig_api_tests(void) {
     CHECK(secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, pk_ptr, 2) == 1);
 
     {
+        static const unsigned char field_p_plus_one[32] = {
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+        };
+        secp256k1_fe x;
+        secp256k1_fe noncanonical_x;
+        secp256k1_fe_storage x_storage;
+        secp256k1_ge point;
+        secp256k1_ge valid_point;
+        secp256k1_pubkey canonical_pk;
+        secp256k1_pubkey noncanonical_pk;
+        secp256k1_xonly_pubkey canonical_agg;
+        secp256k1_musig_keyagg_cache canonical_cache;
+        secp256k1_musig_keyagg_cache invalid_cache;
+        secp256k1_musig_keyagg_cache second_cache;
+        secp256k1_keyagg_cache_internal cache_i;
+        secp256k1_pubkey cache_output;
+        secp256k1_musig_secnonce failed_secnonce;
+        secp256k1_musig_pubnonce failed_pubnonce;
+        unsigned char nonce_rand[32];
+        const secp256k1_pubkey *noncanonical_ptrs[2];
+
+        /* p + 1 is a noncanonical storage encoding of the valid x=1 point. */
+        secp256k1_fe_set_int(&x, 1);
+        CHECK(secp256k1_ge_set_xo_var(&point, &x, 0) == 1);
+        secp256k1_pubkey_save(&canonical_pk, &point);
+        noncanonical_pk = canonical_pk;
+        secp256k1_fe_set_b32_mod(&noncanonical_x, field_p_plus_one);
+        secp256k1_fe_impl_to_storage(&x_storage, &noncanonical_x);
+        memcpy(noncanonical_pk.data, &x_storage, sizeof(x_storage));
+
+        CHECK(secp256k1_memcmp_var(&canonical_pk, &noncanonical_pk, sizeof(canonical_pk)) != 0);
+
+        valid_point = point;
+        CHECK_ILLEGAL(CTX, secp256k1_pubkey_load(CTX, &point, &noncanonical_pk));
+
+        memset(&cache_i, 0, sizeof(cache_i));
+        cache_i.pk = valid_point;
+        secp256k1_ge_set_infinity(&cache_i.second_pk);
+        cache_i.tweak = secp256k1_scalar_zero;
+        secp256k1_keyagg_cache_save(&canonical_cache, &cache_i);
+        invalid_cache = canonical_cache;
+        memcpy(invalid_cache.data + 4, &x_storage, sizeof(x_storage));
+        memset(&cache_output, 0xA5, sizeof(cache_output));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_get(CTX, &cache_output, &invalid_cache));
+        CHECK(memcmp(cache_output.data, zeros132, sizeof(cache_output.data)) == 0);
+        memset(nonce_rand, 0x42, sizeof(nonce_rand));
+        memset(&failed_secnonce, 0xA5, sizeof(failed_secnonce));
+        memset(&failed_pubnonce, 0xA5, sizeof(failed_pubnonce));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen(CTX, &failed_secnonce, &failed_pubnonce, nonce_rand, NULL, &canonical_pk, NULL, &invalid_cache, NULL));
+        CHECK(memcmp(&failed_secnonce, zeros132, sizeof(failed_secnonce)) == 0);
+        CHECK(memcmp(&failed_pubnonce, zeros132, sizeof(failed_pubnonce)) == 0);
+
+        cache_i.second_pk = valid_point;
+        secp256k1_keyagg_cache_save(&second_cache, &cache_i);
+        invalid_cache = second_cache;
+        memcpy(invalid_cache.data + 4 + 64, &x_storage, sizeof(x_storage));
+        memset(&cache_output, 0xA5, sizeof(cache_output));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_get(CTX, &cache_output, &invalid_cache));
+        CHECK(memcmp(cache_output.data, zeros132, sizeof(cache_output.data)) == 0);
+
+        noncanonical_ptrs[0] = &canonical_pk;
+        noncanonical_ptrs[1] = &noncanonical_pk;
+        memset(&canonical_agg, 0xA5, sizeof(canonical_agg));
+        memset(&canonical_cache, 0xA5, sizeof(canonical_cache));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_agg(CTX, &canonical_agg, &canonical_cache, noncanonical_ptrs, 2));
+        CHECK(memcmp_and_randomize(canonical_agg.data, zeros132, sizeof(canonical_agg.data)) == 0);
+        CHECK(memcmp_and_randomize(canonical_cache.data, zeros197, sizeof(canonical_cache.data)) == 0);
+    }
+
+    {
         unsigned char zero_tweak[32] = { 0 };
         secp256k1_musig_keyagg_cache invalid_cache;
         secp256k1_musig_keyagg_cache cache_before;
