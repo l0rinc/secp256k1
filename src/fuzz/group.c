@@ -123,12 +123,26 @@ static void secp256k1_fuzz_group_check_affine(const secp256k1_gej *point) {
     }
 }
 
+static void secp256k1_fuzz_group_check_z_ratio(const secp256k1_gej *a, const secp256k1_gej *result, const secp256k1_fe *rzr) {
+    secp256k1_fe expected_z = result->z;
+    secp256k1_fe actual_z;
+
+    secp256k1_fe_mul(&actual_z, &a->z, rzr);
+    secp256k1_fe_normalize_var(&actual_z);
+    secp256k1_fe_normalize_var(&expected_z);
+    FUZZ_CHECK(secp256k1_fe_equal(&actual_z, &expected_z));
+}
+
 static void secp256k1_fuzz_group_check_addition(const secp256k1_gej *a, const secp256k1_gej *b, const secp256k1_gej *expected) {
     secp256k1_gej result;
     secp256k1_ge b_affine;
+    secp256k1_fe rzr;
 
-    secp256k1_gej_add_var(&result, a, b, NULL);
+    secp256k1_gej_add_var(&result, a, b, a->infinity ? NULL : &rzr);
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
+    if (!a->infinity) {
+        secp256k1_fuzz_group_check_z_ratio(a, &result, &rzr);
+    }
     result = *a;
     secp256k1_gej_add_var(&result, &result, b, NULL);
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
@@ -137,8 +151,11 @@ static void secp256k1_fuzz_group_check_addition(const secp256k1_gej *a, const se
         secp256k1_gej copy = *b;
         secp256k1_ge_set_gej_var(&b_affine, &copy);
     }
-    secp256k1_gej_add_ge_var(&result, a, &b_affine, NULL);
+    secp256k1_gej_add_ge_var(&result, a, &b_affine, a->infinity ? NULL : &rzr);
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
+    if (!a->infinity) {
+        secp256k1_fuzz_group_check_z_ratio(a, &result, &rzr);
+    }
     result = *a;
     secp256k1_gej_add_ge_var(&result, &result, &b_affine, NULL);
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, expected));
@@ -154,11 +171,13 @@ static void secp256k1_fuzz_group_check_addition(const secp256k1_gej *a, const se
 static void secp256k1_fuzz_group_check_double(const secp256k1_gej *point, const secp256k1_gej *expected) {
     secp256k1_gej constant_time;
     secp256k1_gej variable_time;
+    secp256k1_fe rzr;
 
     secp256k1_gej_double(&constant_time, point);
-    secp256k1_gej_double_var(&variable_time, point, NULL);
+    secp256k1_gej_double_var(&variable_time, point, &rzr);
     FUZZ_CHECK(secp256k1_gej_eq_var(&constant_time, expected));
     FUZZ_CHECK(secp256k1_gej_eq_var(&variable_time, expected));
+    secp256k1_fuzz_group_check_z_ratio(point, &variable_time, &rzr);
     constant_time = *point;
     secp256k1_gej_double(&constant_time, &constant_time);
     variable_time = *point;
