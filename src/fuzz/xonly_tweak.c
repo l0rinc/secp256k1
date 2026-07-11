@@ -94,6 +94,46 @@ static void secp256k1_fuzz_check_xonly_parity_pair(const secp256k1_context *ctx,
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &negated_xonly) == 0);
 }
 
+static void secp256k1_fuzz_check_xonly_opaque_parity_barrier(secp256k1_context *ctx, const secp256k1_pubkey *pubkey, int pubkey_parity) {
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    secp256k1_pubkey odd_pubkey = *pubkey;
+    secp256k1_xonly_pubkey odd_xonly;
+    secp256k1_pubkey tweaked_pubkey;
+    unsigned char serialized[32];
+    unsigned char zero32[32] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    unsigned int calls;
+
+    FUZZ_CHECK(pubkey_parity == 0 || pubkey_parity == 1);
+    if (!pubkey_parity) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &odd_pubkey) == 1);
+    }
+    /* Keep a curve-valid point but violate the x-only even-Y representation. */
+    memcpy(&odd_xonly, &odd_pubkey, sizeof(odd_xonly));
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+
+    memset(serialized, 0xA5, sizeof(serialized));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, serialized, &odd_xonly) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(serialized, zero32, sizeof(serialized)) == 0);
+
+    memset(&tweaked_pubkey, 0xA5, sizeof(tweaked_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &tweaked_pubkey, &odd_xonly, zero32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add_check(ctx, zero32, 0, &odd_xonly, zero32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_xonly_tweaked_seckey(const secp256k1_context *ctx, unsigned char *out32, const unsigned char *seckey32, int parity, const unsigned char *tweak32) {
     memcpy(out32, seckey32, 32);
     if (parity) {
@@ -236,6 +276,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(keypair_parity == pubkey_parity);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_from_pubkey) == 0);
     secp256k1_fuzz_check_xonly_parity_pair(ctx, &pubkey);
+    secp256k1_fuzz_check_xonly_opaque_parity_barrier(ctx, &pubkey, pubkey_parity);
 
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
