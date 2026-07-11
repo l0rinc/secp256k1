@@ -411,6 +411,7 @@ static int secp256k1_musig_nonce_gen_internal(const secp256k1_context* ctx, secp
     secp256k1_ge nonce_pts[2];
     secp256k1_gej nonce_ptj[2];
     int i;
+    int invalid_nonce;
     unsigned char pk_ser[33];
     unsigned char aggpk_ser[32];
     unsigned char *aggpk_ser_ptr = NULL;
@@ -445,6 +446,14 @@ static int secp256k1_musig_nonce_gen_internal(const secp256k1_context* ctx, secp
     secp256k1_eckey_pubkey_serialize33(&pk, pk_ser);
 
     secp256k1_nonce_function_musig(secp256k1_get_hash_context(ctx), k, input_nonce, msg32, seckey, pk_ser, aggpk_ser_ptr, extra_input32);
+    invalid_nonce = secp256k1_scalar_is_zero(&k[0]) || secp256k1_scalar_is_zero(&k[1]);
+    secp256k1_declassify(ctx, &invalid_nonce, sizeof(invalid_nonce));
+    if (invalid_nonce) {
+        secp256k1_musig_secnonce_invalidate(ctx, secnonce, 1);
+        secp256k1_scalar_clear(&k[0]);
+        secp256k1_scalar_clear(&k[1]);
+        return 0;
+    }
     VERIFY_CHECK(!secp256k1_scalar_is_zero(&k[0]));
     VERIFY_CHECK(!secp256k1_scalar_is_zero(&k[1]));
     secp256k1_musig_secnonce_save(secnonce, k, &pk);
@@ -465,8 +474,8 @@ static int secp256k1_musig_nonce_gen_internal(const secp256k1_context* ctx, secp
     for (i = 0; i < 2; i++) {
         secp256k1_declassify(ctx, &nonce_pts[i], sizeof(nonce_pts[i]));
     }
-    /* None of the nonce_pts will be infinity because k != 0 with overwhelming
-     * probability */
+    /* None of the nonce_pts will be infinity because zero nonce scalars were
+     * rejected above. */
     secp256k1_musig_pubnonce_save(pubnonce, nonce_pts);
     secp256k1_memczero(pubnonce, sizeof(*pubnonce), !ret);
     return ret;
