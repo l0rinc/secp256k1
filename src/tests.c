@@ -6491,6 +6491,7 @@ static void run_eckey_edge_case_test(void) {
     secp256k1_pubkey pubkey;
     secp256k1_pubkey pubkey2;
     secp256k1_pubkey invalid_pubkey;
+    secp256k1_ge invalid_ge;
     secp256k1_pubkey pubkey_one;
     secp256k1_pubkey pubkey_negone;
     const secp256k1_pubkey *pubkeys[3];
@@ -6675,6 +6676,26 @@ static void run_eckey_edge_case_test(void) {
     CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_combine(CTX, &pubkey, NULL, 1));
     SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(secp256k1_pubkey));
     CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) == 0);
+    pubkeys[0] = &invalid_pubkey;
+    memset(&pubkey, 255, sizeof(secp256k1_pubkey));
+    SECP256K1_CHECKMEM_UNDEFINE(&pubkey, sizeof(secp256k1_pubkey));
+    CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_combine(CTX, &pubkey, pubkeys, 1));
+    SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(secp256k1_pubkey));
+    CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) == 0);
+    /* A nonzero opaque point must still satisfy the curve equation. */
+    secp256k1_fe_set_int(&invalid_ge.x, 1);
+    secp256k1_fe_set_int(&invalid_ge.y, 1);
+    invalid_ge.infinity = 0;
+    CHECK(!secp256k1_ge_is_valid_var(&invalid_ge));
+    SECP256K1_CHECKMEM_UNDEFINE(&invalid_pubkey, sizeof(invalid_pubkey));
+    secp256k1_ge_to_bytes(invalid_pubkey.data, &invalid_ge);
+    SECP256K1_CHECKMEM_CHECK(&invalid_pubkey, sizeof(invalid_pubkey));
+    CHECK_ILLEGAL(CTX, secp256k1_pubkey_load(CTX, &invalid_ge, &invalid_pubkey));
+    len = 33;
+    memset(ctmp, 0xA5, sizeof(ctmp));
+    CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_serialize(CTX, ctmp, &len, &invalid_pubkey, SECP256K1_EC_COMPRESSED));
+    CHECK(len == 0);
+    CHECK(all_bytes_equal(ctmp, 0, sizeof(ctmp)));
     pubkeys[0] = &invalid_pubkey;
     memset(&pubkey, 255, sizeof(secp256k1_pubkey));
     SECP256K1_CHECKMEM_UNDEFINE(&pubkey, sizeof(secp256k1_pubkey));
