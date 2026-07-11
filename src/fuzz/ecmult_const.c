@@ -17,6 +17,21 @@ static void secp256k1_fuzz_ecmult_const_scalar(secp256k1_scalar *scalar, const u
     }
 }
 
+static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context *ctx, const secp256k1_scalar *scalar) {
+    secp256k1_gej generated;
+    secp256k1_gej generic;
+    secp256k1_gej constant_time;
+    secp256k1_gej generatorj;
+
+    secp256k1_gej_set_ge(&generatorj, &secp256k1_ge_const_g);
+    secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &generated, scalar);
+    secp256k1_ecmult(&generic, &generatorj, scalar, NULL);
+    secp256k1_ecmult_const(&constant_time, &secp256k1_ge_const_g, scalar);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&generated, &generic));
+    FUZZ_CHECK(secp256k1_gej_eq_var(&generated, &constant_time));
+    FUZZ_CHECK(secp256k1_gej_eq_var(&generic, &constant_time));
+}
+
 static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, const secp256k1_gej *expected, const secp256k1_scalar *scalar, const unsigned char *input, size_t size) {
     secp256k1_ge expected_affine;
     secp256k1_fe result;
@@ -74,6 +89,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_ecmult_const_scalar(&base_scalar, input, size, 101, 1);
     secp256k1_fuzz_ecmult_const_scalar(&scalar, input, size, 107, 1);
+    secp256k1_fuzz_ecmult_const_check_generator(ctx, &secp256k1_scalar_one);
+    secp256k1_fuzz_ecmult_const_check_generator(ctx, &base_scalar);
+    secp256k1_fuzz_ecmult_const_check_generator(ctx, &scalar);
     secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &basej, &base_scalar);
     {
         secp256k1_gej copy = basej;
