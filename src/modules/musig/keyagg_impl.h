@@ -45,6 +45,7 @@ static void secp256k1_keyagg_cache_save(secp256k1_musig_keyagg_cache *cache, con
 
 static int secp256k1_keyagg_cache_load(const secp256k1_context* ctx, secp256k1_keyagg_cache_internal *cache_i, const secp256k1_musig_keyagg_cache *cache) {
     const unsigned char *ptr = cache->data;
+    int overflow;
     ARG_CHECK(secp256k1_memcmp_var(ptr, secp256k1_musig_keyagg_cache_magic, 4) == 0);
     ptr += 4;
     secp256k1_ge_from_bytes(&cache_i->pk, ptr);
@@ -61,9 +62,11 @@ static int secp256k1_keyagg_cache_load(const secp256k1_context* ctx, secp256k1_k
     ptr += 64;
     memcpy(cache_i->pks_hash, ptr, 32);
     ptr += 32;
-    cache_i->parity_acc = *ptr & 1;
+    ARG_CHECK(*ptr <= 1);
+    cache_i->parity_acc = *ptr;
     ptr += 1;
-    secp256k1_scalar_set_b32(&cache_i->tweak, ptr, NULL);
+    secp256k1_scalar_set_b32(&cache_i->tweak, ptr, &overflow);
+    ARG_CHECK(!overflow);
     return 1;
 }
 

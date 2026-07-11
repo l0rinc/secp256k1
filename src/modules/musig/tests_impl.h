@@ -204,6 +204,30 @@ static void musig_api_tests(void) {
 
     /** Key aggregation **/
     CHECK(secp256k1_musig_pubkey_agg(CTX, &agg_pk, &keyagg_cache, pk_ptr, 2) == 1);
+
+    {
+        unsigned char zero_tweak[32] = { 0 };
+        secp256k1_musig_keyagg_cache invalid_cache;
+        secp256k1_musig_keyagg_cache cache_before;
+        secp256k1_pubkey output_pk;
+
+        invalid_cache = keyagg_cache;
+        invalid_cache.data[164] = 2;
+        cache_before = invalid_cache;
+        memset(&output_pk, 0xA5, sizeof(output_pk));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_xonly_tweak_add(CTX, &output_pk, &invalid_cache, zero_tweak));
+        CHECK(secp256k1_memcmp_var(&output_pk, zeros132, sizeof(output_pk)) == 0);
+        CHECK(secp256k1_memcmp_var(&invalid_cache, &cache_before, sizeof(invalid_cache)) == 0);
+
+        invalid_cache = keyagg_cache;
+        memset(invalid_cache.data + 165, 0xFF, 32);
+        cache_before = invalid_cache;
+        memset(&output_pk, 0x5A, sizeof(output_pk));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_ec_tweak_add(CTX, &output_pk, &invalid_cache, zero_tweak));
+        CHECK(secp256k1_memcmp_var(&output_pk, zeros132, sizeof(output_pk)) == 0);
+        CHECK(secp256k1_memcmp_var(&invalid_cache, &cache_before, sizeof(invalid_cache)) == 0);
+    }
+
     CHECK(secp256k1_musig_pubkey_agg(CTX, NULL, &keyagg_cache, pk_ptr, 2) == 1);
     CHECK(secp256k1_musig_pubkey_agg(CTX, &agg_pk, NULL, pk_ptr, 2) == 1);
     /* check that NULL in array of public key pointers is not allowed */
