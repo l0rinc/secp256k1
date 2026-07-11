@@ -87,6 +87,30 @@ static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_cont
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded);
 }
 
+static void secp256k1_fuzz_check_ellswift_zero_t_parity(const secp256k1_context *ctx) {
+    unsigned char zero_t[64] = { 0 };
+    unsigned char one_t[64] = { 0 };
+    unsigned char zero_t_ser[33];
+    unsigned char one_t_ser[33];
+    secp256k1_pubkey zero_t_pubkey;
+    secp256k1_pubkey one_t_pubkey;
+    size_t zero_t_len = sizeof(zero_t_ser);
+    size_t one_t_len = sizeof(one_t_ser);
+
+    /* t == 0 is remapped to 1 for the x-coordinate formula only. The original
+     * t parity remains the y-parity bit encoded by the wire format. */
+    one_t[63] = 1;
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &zero_t_pubkey, zero_t) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &one_t_pubkey, one_t) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, zero_t_ser, &zero_t_len, &zero_t_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, one_t_ser, &one_t_len, &one_t_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(zero_t_len == sizeof(zero_t_ser));
+    FUZZ_CHECK(one_t_len == sizeof(one_t_ser));
+    FUZZ_CHECK(zero_t_ser[0] == SECP256K1_TAG_PUBKEY_EVEN);
+    FUZZ_CHECK(one_t_ser[0] == SECP256K1_TAG_PUBKEY_ODD);
+    FUZZ_CHECK(memcmp(zero_t_ser + 1, one_t_ser + 1, 32) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_zero_u_barrier(secp256k1_context *ctx) {
     unsigned char zero32[32] = { 0 };
     unsigned char ell64[64];
@@ -314,6 +338,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_b64, &pubkey_b);
     FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell_no_aux64, seckey_a32, NULL) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_no_aux64, &pubkey_a);
+    secp256k1_fuzz_check_ellswift_zero_t_parity(ctx);
     secp256k1_fuzz_check_ellswift_zero_u_barrier(ctx);
 
     FUZZ_CHECK(secp256k1_ellswift_encode(ctx, ell_encoded_a64, &pubkey_a, rnd32) == 1);
