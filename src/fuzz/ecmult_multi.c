@@ -206,20 +206,20 @@ static void secp256k1_fuzz_ecmult_multi_make_point(const secp256k1_context *ctx,
 }
 
 static void secp256k1_fuzz_ecmult_multi_reference(secp256k1_gej *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data) {
-    secp256k1_gej infinity;
-    secp256k1_gej pointj;
     secp256k1_gej term;
     size_t i;
 
-    secp256k1_gej_set_infinity(&infinity);
     if (g_sc == NULL) {
         secp256k1_gej_set_infinity(expected);
     } else {
-        secp256k1_ecmult(expected, &infinity, &secp256k1_scalar_zero, g_sc);
+        secp256k1_ecmult_const(expected, &secp256k1_ge_const_g, g_sc);
     }
     for (i = 0; i < n_points; i++) {
-        secp256k1_gej_set_ge(&pointj, &data->pt[i]);
-        secp256k1_ecmult(&term, &pointj, &data->sc[i], NULL);
+        if (secp256k1_ge_is_infinity(&data->pt[i])) {
+            secp256k1_gej_set_infinity(&term);
+        } else {
+            secp256k1_ecmult_const(&term, &data->pt[i], &data->sc[i]);
+        }
         secp256k1_gej_add_var(expected, expected, &term, NULL);
     }
 }
