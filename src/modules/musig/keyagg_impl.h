@@ -48,11 +48,13 @@ static int secp256k1_keyagg_cache_load(const secp256k1_context* ctx, secp256k1_k
     int overflow;
     ARG_CHECK(secp256k1_memcmp_var(ptr, secp256k1_musig_keyagg_cache_magic, 4) == 0);
     ptr += 4;
+    ARG_CHECK(secp256k1_ge_storage_is_canonical(ptr));
     secp256k1_ge_from_bytes(&cache_i->pk, ptr);
     ARG_CHECK(!secp256k1_fe_is_zero(&cache_i->pk.x));
     ARG_CHECK(secp256k1_ge_is_valid_var(&cache_i->pk));
     ARG_CHECK(secp256k1_ge_is_in_correct_subgroup(&cache_i->pk));
     ptr += 64;
+    ARG_CHECK(secp256k1_ge_storage_is_canonical(ptr));
     secp256k1_ge_from_bytes_ext(&cache_i->second_pk, ptr);
     if (!secp256k1_ge_is_infinity(&cache_i->second_pk)) {
         ARG_CHECK(!secp256k1_fe_is_zero(&cache_i->second_pk.x));

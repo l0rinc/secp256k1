@@ -263,7 +263,29 @@ static SECP256K1_INLINE void secp256k1_declassify(const secp256k1_context* ctx, 
     if (EXPECT(ctx->declassify, 0)) SECP256K1_CHECKMEM_DEFINE(p, len);
 }
 
+static int secp256k1_ge_storage_is_canonical(const unsigned char *data) {
+    secp256k1_ge_storage storage;
+    secp256k1_fe x, y;
+
+    STATIC_ASSERT(sizeof(storage) == 64);
+    memcpy(&storage, data, sizeof(storage));
+    secp256k1_fe_impl_from_storage(&x, &storage.x);
+    secp256k1_fe_impl_from_storage(&y, &storage.y);
+#ifdef VERIFY
+    x.magnitude = 1;
+    x.normalized = 0;
+    y.magnitude = 1;
+    y.normalized = 0;
+#endif
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_normalize_var(&y);
+    secp256k1_fe_to_storage(&storage.x, &x);
+    secp256k1_fe_to_storage(&storage.y, &y);
+    return secp256k1_memcmp_var(&storage, data, sizeof(storage)) == 0;
+}
+
 static int secp256k1_pubkey_load(const secp256k1_context* ctx, secp256k1_ge* ge, const secp256k1_pubkey* pubkey) {
+    ARG_CHECK(secp256k1_ge_storage_is_canonical(pubkey->data));
     secp256k1_ge_from_bytes(ge, pubkey->data);
     ARG_CHECK(!secp256k1_fe_is_zero(&ge->x));
     ARG_CHECK(secp256k1_ge_is_valid_var(ge));
