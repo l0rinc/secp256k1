@@ -675,6 +675,20 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_shift(&a, &b, product, random_shift);
 }
 
+static void secp256k1_fuzz_scalar_check_cadd_bit_noop_boundary(void) {
+    secp256k1_scalar expected;
+    secp256k1_scalar actual;
+    unsigned char order_minus_high_bit32[32];
+
+    memcpy(order_minus_high_bit32, secp256k1_fuzz_scalar_order_minus_one, sizeof(order_minus_high_bit32));
+    order_minus_high_bit32[0] -= 0x80;
+    secp256k1_scalar_set_b32(&expected, order_minus_high_bit32, NULL);
+    actual = expected;
+    /* flag == 0 is a no-op even at the high-bit boundary. */
+    secp256k1_scalar_cadd_bit(&actual, 255, 0);
+    FUZZ_CHECK(secp256k1_scalar_eq(&actual, &expected));
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     unsigned char a32[32];
@@ -693,6 +707,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_scalar_decrement(order_minus_one32, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
+    secp256k1_fuzz_scalar_check_cadd_bit_noop_boundary();
 
     return 0;
 }
