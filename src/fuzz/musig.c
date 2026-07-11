@@ -258,18 +258,22 @@ static void secp256k1_fuzz_check_musig_nonce_process_failure_cleanup(secp256k1_c
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
-static void secp256k1_fuzz_negate_musig_pubnonce_parts(const secp256k1_context *ctx, unsigned char *negated66, const unsigned char *nonce66) {
+static void secp256k1_fuzz_negate_musig_pubnonce_part(const secp256k1_context *ctx, unsigned char *negated66, const unsigned char *nonce66, size_t part) {
     secp256k1_pubkey pubkey;
     size_t serialized_len;
-    int i;
 
-    for (i = 0; i < 2; i++) {
-        FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, nonce66 + 33*i, 33) == 1);
-        FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey) == 1);
-        serialized_len = 33;
-        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, negated66 + 33*i, &serialized_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
-        FUZZ_CHECK(serialized_len == 33);
-    }
+    FUZZ_CHECK(part < 2);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, nonce66 + 33*part, 33) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &pubkey) == 1);
+    serialized_len = 33;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, negated66 + 33*part, &serialized_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+}
+
+static void secp256k1_fuzz_negate_musig_pubnonce_parts(const secp256k1_context *ctx, unsigned char *negated66, const unsigned char *nonce66) {
+    memcpy(negated66, nonce66, 66);
+    secp256k1_fuzz_negate_musig_pubnonce_part(ctx, negated66, nonce66, 0);
+    secp256k1_fuzz_negate_musig_pubnonce_part(ctx, negated66, nonce66, 1);
 }
 
 static void secp256k1_fuzz_check_musig_nonce_agg_inverse(const secp256k1_context *ctx, const unsigned char *nonce66) {
@@ -708,11 +712,14 @@ static void secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(secp256k1_co
 
 static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, unsigned char seckey[3][32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
     unsigned char session_rand[3][32];
+    unsigned char pubnonce_ser[66];
+    unsigned char wrong_pubnonce_ser[66];
     unsigned char sig64[64];
     unsigned char sig64_replay[64];
     unsigned char zero132[132] = { 0 };
     secp256k1_musig_secnonce secnonce[3];
     secp256k1_musig_pubnonce pubnonce[3];
+    secp256k1_musig_pubnonce wrong_pubnonce;
     const secp256k1_musig_pubnonce *pubnonce_ptrs[3];
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_session session;
@@ -760,6 +767,13 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], &keyagg_cache, &session) == 1);
         FUZZ_CHECK(memcmp(secnonce[i].data, zero132, sizeof(secnonce[i].data)) == 0);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &keyagg_cache, &session) == 1);
+        /* Negating only R1 changes the effective nonce by -2R1. Since R1 is a
+         * nonzero generator multiple, this is a valid but different nonce. */
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, pubnonce_ser, &pubnonce[i]) == 1);
+        memcpy(wrong_pubnonce_ser, pubnonce_ser, sizeof(wrong_pubnonce_ser));
+        secp256k1_fuzz_negate_musig_pubnonce_part(ctx, wrong_pubnonce_ser, pubnonce_ser, 0);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &wrong_pubnonce, wrong_pubnonce_ser) == 1);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &wrong_pubnonce, &pubkeys[i], &keyagg_cache, &session) == 0);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &keyagg_cache, &session_replay) == 1);
         partial_sig_ptrs[i] = &partial_sig[i];
     }
