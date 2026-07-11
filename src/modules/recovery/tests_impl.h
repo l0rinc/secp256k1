@@ -123,9 +123,14 @@ static void test_ecdsa_recovery_end_to_end_internal(void) {
     secp256k1_ecdsa_signature signature[5];
     secp256k1_ecdsa_recoverable_signature rsignature[5];
     unsigned char sig[74];
+    unsigned char over_scalar[32];
+    unsigned char zero64[64] = { 0 };
     secp256k1_pubkey pubkey;
     secp256k1_pubkey recpubkey;
+    secp256k1_ecdsa_recoverable_signature invalid_recsig;
     int recid = 0;
+
+    memset(over_scalar, 0xff, sizeof(over_scalar));
 
     /* Generate a random key and message. */
     {
@@ -163,6 +168,38 @@ static void test_ecdsa_recovery_end_to_end_internal(void) {
     CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(CTX, &rsignature[4], sig, recid) == 1);
     CHECK(secp256k1_ecdsa_recover(CTX, &recpubkey, &rsignature[4], message) == 1);
     CHECK(secp256k1_memcmp_var(&pubkey, &recpubkey, sizeof(pubkey)) == 0);
+
+    {
+        int i;
+        for (i = 0; i < 2; i++) {
+            invalid_recsig = rsignature[4];
+            memcpy(invalid_recsig.data + i * 32, over_scalar, 32);
+            memset(sig, 0xA5, 64);
+            recid = 7;
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, &invalid_recsig));
+            CHECK(secp256k1_memcmp_var(sig, zero64, 64) == 0);
+            CHECK(recid == 0);
+            memset(&signature[4], 0xA5, sizeof(signature[4]));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_convert(CTX, &signature[4], &invalid_recsig));
+            CHECK(secp256k1_memcmp_var(&signature[4], zero64, sizeof(signature[4])) == 0);
+            memset(&recpubkey, 0xA5, sizeof(recpubkey));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recover(CTX, &recpubkey, &invalid_recsig, message));
+            CHECK(secp256k1_memcmp_var(&recpubkey, zero64, sizeof(recpubkey)) == 0);
+        }
+        invalid_recsig = rsignature[4];
+        invalid_recsig.data[64] = 4;
+        memset(sig, 0xA5, 64);
+        recid = 7;
+        CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, &invalid_recsig));
+        CHECK(secp256k1_memcmp_var(sig, zero64, 64) == 0);
+        CHECK(recid == 0);
+        memset(&signature[4], 0xA5, sizeof(signature[4]));
+        CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_convert(CTX, &signature[4], &invalid_recsig));
+        CHECK(secp256k1_memcmp_var(&signature[4], zero64, sizeof(signature[4])) == 0);
+        memset(&recpubkey, 0xA5, sizeof(recpubkey));
+        CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recover(CTX, &recpubkey, &invalid_recsig, message));
+        CHECK(secp256k1_memcmp_var(&recpubkey, zero64, sizeof(recpubkey)) == 0);
+    }
     /* Serialize/destroy/parse signature and verify again. */
     CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, &rsignature[4]) == 1);
     sig[testrand_bits(6)] += 1 + testrand_int(255);
