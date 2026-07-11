@@ -45,6 +45,23 @@ static int secp256k1_musig_ge_parse_ext(secp256k1_ge* ge, const unsigned char *i
     return secp256k1_ge_is_in_correct_subgroup(ge);
 }
 
+/* Load the internal affine representation used by opaque MuSig objects and
+ * establish the same curve contract as the public-key parser. */
+static int secp256k1_musig_ge_load(const secp256k1_context* ctx, secp256k1_ge *ge, const unsigned char *data, int allow_infinity) {
+    if (allow_infinity) {
+        secp256k1_ge_from_bytes_ext(ge, data);
+        if (secp256k1_ge_is_infinity(ge)) {
+            return 1;
+        }
+    } else {
+        secp256k1_ge_from_bytes(ge, data);
+    }
+    ARG_CHECK(!secp256k1_fe_is_zero(&ge->x));
+    ARG_CHECK(secp256k1_ge_is_valid_var(ge));
+    ARG_CHECK(secp256k1_ge_is_in_correct_subgroup(ge));
+    return 1;
+}
+
 static const unsigned char secp256k1_musig_secnonce_magic[4] = { 0x22, 0x0e, 0xdc, 0xf1 };
 
 static void secp256k1_musig_secnonce_save(secp256k1_musig_secnonce *secnonce, const secp256k1_scalar *k, const secp256k1_ge *pk) {
@@ -55,18 +72,18 @@ static void secp256k1_musig_secnonce_save(secp256k1_musig_secnonce *secnonce, co
 }
 
 static int secp256k1_musig_secnonce_load(const secp256k1_context* ctx, secp256k1_scalar *k, secp256k1_ge *pk, const secp256k1_musig_secnonce *secnonce) {
-    int is_zero;
+    int overflow0;
+    int overflow1;
+    int invalid;
     ARG_CHECK(secp256k1_memcmp_var(&secnonce->data[0], secp256k1_musig_secnonce_magic, 4) == 0);
-    /* We make very sure that the nonce isn't invalidated by checking the values
-     * in addition to the magic. */
-    is_zero = secp256k1_is_zero_array(&secnonce->data[4], 2 * 32);
-    secp256k1_declassify(ctx, &is_zero, sizeof(is_zero));
-    ARG_CHECK(!is_zero);
-
-    secp256k1_scalar_set_b32(&k[0], &secnonce->data[4], NULL);
-    secp256k1_scalar_set_b32(&k[1], &secnonce->data[36], NULL);
-    secp256k1_ge_from_bytes(pk, &secnonce->data[68]);
-    return 1;
+    secp256k1_scalar_set_b32(&k[0], &secnonce->data[4], &overflow0);
+    secp256k1_scalar_set_b32(&k[1], &secnonce->data[36], &overflow1);
+    invalid = overflow0 || overflow1
+           || secp256k1_scalar_is_zero(&k[0])
+           || secp256k1_scalar_is_zero(&k[1]);
+    secp256k1_declassify(ctx, &invalid, sizeof(invalid));
+    ARG_CHECK(!invalid);
+    return secp256k1_musig_ge_load(ctx, pk, &secnonce->data[68], 0);
 }
 
 /* If flag is 1, invalidate the secnonce; if flag is 0, leave it.
@@ -100,7 +117,9 @@ static int secp256k1_musig_pubnonce_load(const secp256k1_context* ctx, secp256k1
 
     ARG_CHECK(secp256k1_memcmp_var(&nonce->data[0], secp256k1_musig_pubnonce_magic, 4) == 0);
     for (i = 0; i < 2; i++) {
-        secp256k1_ge_from_bytes(&ges[i], nonce->data + 4 + 64*i);
+        if (!secp256k1_musig_ge_load(ctx, &ges[i], nonce->data + 4 + 64*i, 0)) {
+            return 0;
+        }
     }
     return 1;
 }
@@ -120,7 +139,9 @@ static int secp256k1_musig_aggnonce_load(const secp256k1_context* ctx, secp256k1
 
     ARG_CHECK(secp256k1_memcmp_var(&nonce->data[0], secp256k1_musig_aggnonce_magic, 4) == 0);
     for (i = 0; i < 2; i++) {
-        secp256k1_ge_from_bytes_ext(&ges[i], &nonce->data[4 + 64*i]);
+        if (!secp256k1_musig_ge_load(ctx, &ges[i], &nonce->data[4 + 64*i], 1)) {
+            return 0;
+        }
     }
     return 1;
 }
