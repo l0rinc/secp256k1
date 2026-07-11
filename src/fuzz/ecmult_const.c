@@ -83,6 +83,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_scalar product;
     secp256k1_gej basej;
     secp256k1_gej expected;
+    secp256k1_gej generic;
     secp256k1_gej result;
     secp256k1_ge base;
     secp256k1_ge infinity;
@@ -100,8 +101,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(!secp256k1_ge_is_infinity(&base));
     secp256k1_scalar_mul(&product, &base_scalar, &scalar);
     secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &expected, &product);
+    secp256k1_ecmult(&generic, &basej, &scalar, NULL);
     secp256k1_ecmult_const(&result, &base, &scalar);
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, &expected));
+    FUZZ_CHECK(secp256k1_gej_eq_var(&result, &generic));
+    FUZZ_CHECK(secp256k1_gej_eq_var(&generic, &expected));
     secp256k1_fuzz_ecmult_const_check_xonly(&base, &expected, &scalar, input, size);
 
     secp256k1_ecmult_const(&result, &base, &secp256k1_scalar_zero);

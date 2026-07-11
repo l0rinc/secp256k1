@@ -195,6 +195,9 @@ static void secp256k1_ecmult_const(secp256k1_gej *r, const secp256k1_ge *a, cons
     secp256k1_fe global_z;
     int group, i;
 
+    SECP256K1_GE_VERIFY(a);
+    SECP256K1_SCALAR_VERIFY(q);
+
     /* We're allowed to be non-constant time in the point, and the code below (in particular,
      * secp256k1_ecmult_const_odd_multiples_table_globalz) cannot deal with infinity in a
      * constant-time manner anyway. */
@@ -268,6 +271,7 @@ static void secp256k1_ecmult_const(secp256k1_gej *r, const secp256k1_ge *a, cons
     secp256k1_scalar_clear(&s);
     secp256k1_scalar_clear(&v1);
     secp256k1_scalar_clear(&v2);
+    SECP256K1_GEJ_VERIFY(r);
 }
 
 static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, const secp256k1_fe *d, const secp256k1_scalar *q, int known_on_curve) {
