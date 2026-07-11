@@ -305,6 +305,52 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger(const secp256k1_conte
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
+static void secp256k1_fuzz_ecmult_multi_repeated_strauss(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    secp256k1_fuzz_ecmult_multi_repeat_data data;
+    secp256k1_scratch *scratch;
+    secp256k1_scalar total_sc;
+    secp256k1_gej pointj;
+    secp256k1_gej actual;
+    secp256k1_gej expected;
+    size_t checkpoint;
+    size_t n_batches;
+    size_t n_batch_points;
+    const size_t n_points = 4;
+    unsigned char scalar32[32];
+    int overflow;
+
+    memset(&data, 0, sizeof(data));
+    secp256k1_fuzz_scalar32(scalar32, input, size, 487);
+    secp256k1_scalar_set_b32(&data.sc, scalar32, &overflow);
+    if (overflow) {
+        secp256k1_scalar_clear(&data.sc);
+    }
+    secp256k1_fuzz_ecmult_multi_make_point(ctx, &data.pt, input, size, 491);
+
+    /* This scratch size admits two Strauss points but not four, forcing two
+     * batches while keeping the case small enough for every fuzz execution. */
+    scratch = secp256k1_scratch_create(&ctx->error_callback, secp256k1_strauss_scratch_size(2) + STRAUSS_SCRATCH_OBJECTS * ALIGNMENT);
+    FUZZ_CHECK(scratch != NULL);
+    FUZZ_CHECK(secp256k1_pippenger_max_points(&ctx->error_callback, scratch) < ECMULT_PIPPENGER_THRESHOLD);
+    FUZZ_CHECK(secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, secp256k1_strauss_max_points(&ctx->error_callback, scratch), n_points) == 1);
+    FUZZ_CHECK(n_batches == 2);
+    FUZZ_CHECK(n_batch_points == 2);
+
+    secp256k1_scalar_set_int(&total_sc, (unsigned int)n_points);
+    secp256k1_scalar_mul(&total_sc, &total_sc, &data.sc);
+    secp256k1_gej_set_ge(&pointj, &data.pt);
+    secp256k1_ecmult(&expected, &pointj, &total_sc, &secp256k1_scalar_one);
+
+    checkpoint = scratch->alloc_size;
+    secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
+    FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &secp256k1_scalar_one, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 1);
+    FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+}
+
 static void secp256k1_fuzz_ecmult_multi_empty(const secp256k1_context *ctx, size_t scratch_size, const secp256k1_scalar *g_sc, secp256k1_fuzz_ecmult_multi_data *data) {
     secp256k1_scratch *scratch = NULL;
     secp256k1_gej actual;
@@ -428,6 +474,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_empty(ctx, 4096, g_sc_ptr, &data);
     secp256k1_fuzz_ecmult_multi_fail_callback(ctx, g_sc_ptr, n_points, &data);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
+    secp256k1_fuzz_ecmult_multi_repeated_strauss(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
     return 0;
