@@ -872,6 +872,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     secp256k1_musig_secnonce secnonce[3];
     secp256k1_musig_pubnonce pubnonce[3];
     secp256k1_musig_pubnonce wrong_pubnonce;
+    secp256k1_pubkey wrong_pubkey;
     const secp256k1_musig_pubnonce *pubnonce_ptrs[3];
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_session session;
@@ -919,6 +920,14 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], &keyagg_cache, &session) == 1);
         FUZZ_CHECK(memcmp(secnonce[i].data, zero132, sizeof(secnonce[i].data)) == 0);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &keyagg_cache, &session) == 1);
+        /* The verifier must bind a partial signature to the signer's key from
+         * key aggregation, not merely to any valid curve point. */
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &wrong_pubkey, secp256k1_fuzz_scalar_one) == 1);
+        if (secp256k1_ec_pubkey_cmp(ctx, &wrong_pubkey, &pubkeys[i]) == 0) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &wrong_pubkey, secp256k1_fuzz_scalar_order_minus_one) == 1);
+        }
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &wrong_pubkey, &pubkeys[i]) != 0);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &wrong_pubkey, &keyagg_cache, &session) == 0);
         /* Negating only R1 changes the effective nonce by -2R1. Since R1 is a
          * nonzero generator multiple, this is a valid but different nonce. */
         FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, pubnonce_ser, &pubnonce[i]) == 1);
