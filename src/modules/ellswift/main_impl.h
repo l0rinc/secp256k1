@@ -142,8 +142,14 @@ static void secp256k1_ellswift_xswiftec_var(secp256k1_fe *x, const secp256k1_fe 
 /** Decode ElligatorSwift encoding (u, t) to point P. */
 static void secp256k1_ellswift_swiftec_var(secp256k1_ge *p, const secp256k1_fe *u, const secp256k1_fe *t) {
     secp256k1_fe x;
+    int ret;
     secp256k1_ellswift_xswiftec_var(&x, u, t);
-    secp256k1_ge_set_xo_var(p, &x, secp256k1_fe_is_odd(t));
+    /* xswiftec_var guarantees a curve X coordinate for every encoding. */
+    ret = secp256k1_ge_set_xo_var(p, &x, secp256k1_fe_is_odd(t));
+    VERIFY_CHECK(ret);
+#ifndef VERIFY
+    (void)ret;
+#endif
 }
 
 /* Try to complete an ElligatorSwift encoding (u, t) for X coordinate x, given u and x.
@@ -563,6 +569,7 @@ int secp256k1_ellswift_xdh(const secp256k1_context *ctx, unsigned char *output, 
     const unsigned char* theirs64;
     int known_hashfp = hashfp == secp256k1_ellswift_xdh_hash_function_bip324
                     || hashfp == secp256k1_ellswift_xdh_hash_function_prefix;
+    int ecmult_ret;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output != NULL);
@@ -590,7 +597,13 @@ int secp256k1_ellswift_xdh(const secp256k1_context *ctx, unsigned char *output, 
     secp256k1_scalar_cmov(&s, &secp256k1_scalar_one, overflow);
 
     /* Compute shared X coordinate. */
-    secp256k1_ecmult_const_xonly(&px, &xn, &xd, &s, 1);
+    /* xswiftec_frac_var guarantees a valid fraction and q is nonzero after
+     * the invalid-secret fallback, so x-only multiplication must succeed. */
+    ecmult_ret = secp256k1_ecmult_const_xonly(&px, &xn, &xd, &s, 1);
+    VERIFY_CHECK(ecmult_ret);
+#ifndef VERIFY
+    (void)ecmult_ret;
+#endif
     secp256k1_fe_normalize(&px);
     secp256k1_fe_get_b32(sx, &px);
 
