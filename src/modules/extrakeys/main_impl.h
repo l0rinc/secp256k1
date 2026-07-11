@@ -204,6 +204,22 @@ static int secp256k1_keypair_load(const secp256k1_context* ctx, secp256k1_scalar
     ret = secp256k1_pubkey_load(ctx, pk, pubkey);
     if (sk != NULL) {
         ret = ret && secp256k1_keypair_seckey_load(ctx, sk, keypair);
+        if (ret) {
+            secp256k1_ge expected_pk;
+
+            if (!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)) {
+                ret = 0;
+                secp256k1_callback_call(&ctx->illegal_callback, "secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)");
+            } else {
+                secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &expected_pk, sk);
+                ret = secp256k1_ge_eq_var(pk, &expected_pk);
+                secp256k1_ge_clear(&expected_pk);
+                secp256k1_declassify(ctx, &ret, sizeof(ret));
+                if (!ret) {
+                    secp256k1_callback_call(&ctx->illegal_callback, "keypair public key does not match secret key");
+                }
+            }
+        }
     }
     if (!ret) {
         *pk = secp256k1_ge_const_g;
