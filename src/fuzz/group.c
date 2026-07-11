@@ -19,6 +19,79 @@ static int secp256k1_fuzz_group_all_zero(void *ptr, size_t len) {
     return 1;
 }
 
+typedef struct {
+    const void *self;
+    unsigned int calls;
+} secp256k1_fuzz_group_illegal_data;
+
+static void secp256k1_fuzz_group_illegal_callback(const char *message, void *data) {
+    secp256k1_fuzz_group_illegal_data *illegal_data = (secp256k1_fuzz_group_illegal_data *)data;
+
+    FUZZ_CHECK(message != NULL);
+    FUZZ_CHECK(illegal_data != NULL);
+    FUZZ_CHECK(illegal_data->self == illegal_data);
+    illegal_data->calls++;
+}
+
+static void secp256k1_fuzz_group_check_opaque_pubkey_barrier(secp256k1_context *ctx) {
+    secp256k1_fuzz_group_illegal_data illegal_data;
+    secp256k1_ge invalid_ge;
+    secp256k1_ge loaded_ge;
+    secp256k1_pubkey invalid_pubkey;
+    secp256k1_pubkey mutated_pubkey;
+    secp256k1_pubkey combined_pubkey;
+    const secp256k1_pubkey *inputs[1];
+    unsigned char serialized[33];
+    unsigned char tweak32[32] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    size_t serialized_len;
+    unsigned int calls;
+
+    /* Build a structurally valid storage object for a point that is not on the curve. */
+    secp256k1_fe_set_int(&invalid_ge.x, 1);
+    secp256k1_fe_set_int(&invalid_ge.y, 1);
+    invalid_ge.infinity = 0;
+    FUZZ_CHECK(!secp256k1_ge_is_valid_var(&invalid_ge));
+    secp256k1_ge_to_bytes(invalid_pubkey.data, &invalid_ge);
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_group_illegal_callback, &illegal_data);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_pubkey_load(ctx, &loaded_ge, &invalid_pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+
+    memset(serialized, 0xA5, sizeof(serialized));
+    serialized_len = sizeof(serialized);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &invalid_pubkey, SECP256K1_EC_COMPRESSED) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(serialized_len == 0);
+    FUZZ_CHECK(secp256k1_fuzz_group_all_zero(serialized, sizeof(serialized)));
+
+    inputs[0] = &invalid_pubkey;
+    memset(&combined_pubkey, 0xA5, sizeof(combined_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined_pubkey, inputs, 1) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&combined_pubkey, zero_pubkey, sizeof(combined_pubkey)) == 0);
+
+    mutated_pubkey = invalid_pubkey;
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &mutated_pubkey, tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&mutated_pubkey, zero_pubkey, sizeof(mutated_pubkey)) == 0);
+
+    mutated_pubkey = invalid_pubkey;
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &mutated_pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&mutated_pubkey, zero_pubkey, sizeof(mutated_pubkey)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_group_scalar(secp256k1_scalar *scalar, unsigned char *scalar32, const unsigned char *input, size_t size, unsigned int salt) {
     secp256k1_fuzz_scalar32(scalar32, input, size, salt);
     secp256k1_scalar_set_b32(scalar, scalar32, NULL);
@@ -343,6 +416,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char b32[32];
     unsigned char scale32[32];
 
+    secp256k1_fuzz_group_check_opaque_pubkey_barrier(ctx);
     secp256k1_fuzz_group_scalar(&a_scalar, a32, input, size, 79);
     secp256k1_fuzz_group_scalar(&b_scalar, b32, input, size, 83);
     (void)secp256k1_scalar_add(&sum_scalar, &a_scalar, &b_scalar);
