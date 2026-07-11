@@ -153,6 +153,31 @@ static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1
     FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
 }
 
+static void secp256k1_fuzz_check_schnorrsig_extraparams_magic(secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_keypair *keypair) {
+    static const unsigned char expected_magic[4] = SECP256K1_SCHNORRSIG_EXTRAPARAMS_MAGIC;
+    secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
+    secp256k1_schnorrsig_extraparams extraparams;
+    unsigned char sig64[64];
+    unsigned char zero64[64] = { 0 };
+    unsigned int calls;
+    size_t i;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_schnorrsig_illegal_callback, &illegal_data);
+    for (i = 0; i < sizeof(extraparams.magic); i++) {
+        memset(&extraparams, 0, sizeof(extraparams));
+        memcpy(extraparams.magic, expected_magic, sizeof(extraparams.magic));
+        extraparams.magic[i] ^= 1u;
+        memset(sig64, 0xA5, sizeof(sig64));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64, msg32, 32, keypair, &extraparams) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+    }
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_bip340_nonce_failure_cleanup(const unsigned char *msg, size_t msglen, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *aux32) {
     static const unsigned char expected_algo[13] = {'B', 'I', 'P', '0', '3', '4', '0', '/', 'n', 'o', 'n', 'c', 'e'};
     unsigned char nonce32[32];
@@ -461,6 +486,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64, sizeof(sig64_explicit_bip340)) == 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
+    secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);
     secp256k1_fuzz_check_schnorrsig_impossible_msglen(ctx, sig64, input, &keypair, &xonly, aux32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32) - 1, &xonly) == 0);
