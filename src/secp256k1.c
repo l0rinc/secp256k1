@@ -588,7 +588,7 @@ static int nonce_function_rfc6979_impl(const secp256k1_hash_ctx *hash_ctx, unsig
    unsigned int i;
    secp256k1_scalar msg;
    unsigned char msgmod32[32];
-   if (nonce32 == NULL || msg32 == NULL || key32 == NULL) {
+   if (nonce32 == NULL || msg32 == NULL || key32 == NULL || counter == UINT_MAX) {
        if (nonce32 != NULL) {
            memset(nonce32, 0, 32);
        }
