@@ -863,6 +863,12 @@ static void secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(secp256k1_co
 }
 
 static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, unsigned char seckey[3][32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
+    static const unsigned char scalar_two[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+    };
     unsigned char session_rand[3][32];
     unsigned char pubnonce_ser[66];
     unsigned char wrong_pubnonce_ser[66];
@@ -877,11 +883,16 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_session session;
     secp256k1_musig_session session_replay;
+    secp256k1_musig_session wrong_cache_session;
     secp256k1_musig_partial_sig partial_sig[3];
     const secp256k1_musig_partial_sig *partial_sig_ptrs[3];
     const secp256k1_pubkey *pubkey_ptrs[3];
     secp256k1_musig_keyagg_cache keyagg_cache;
+    secp256k1_musig_keyagg_cache wrong_cache;
     secp256k1_xonly_pubkey agg_pk;
+    secp256k1_xonly_pubkey wrong_cache_agg_pk;
+    secp256k1_pubkey wrong_cache_pubkey;
+    const secp256k1_pubkey *wrong_cache_pubkey_ptrs[1];
     size_t n_signers = n_pubkeys < 2 ? 2 : n_pubkeys;
     size_t i;
 
@@ -889,6 +900,18 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
         pubkey_ptrs[i] = &pubkeys[i];
     }
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_pk, &keyagg_cache, pubkey_ptrs, n_signers) == 1);
+    wrong_cache_pubkey_ptrs[0] = &wrong_cache_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &wrong_cache_pubkey, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &wrong_cache_agg_pk, &wrong_cache, wrong_cache_pubkey_ptrs, 1) == 1);
+    if (secp256k1_xonly_pubkey_cmp(ctx, &wrong_cache_agg_pk, &agg_pk) == 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &wrong_cache_pubkey, secp256k1_fuzz_scalar_order_minus_one) == 1);
+        FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &wrong_cache_agg_pk, &wrong_cache, wrong_cache_pubkey_ptrs, 1) == 1);
+    }
+    if (secp256k1_xonly_pubkey_cmp(ctx, &wrong_cache_agg_pk, &agg_pk) == 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &wrong_cache_pubkey, scalar_two) == 1);
+        FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &wrong_cache_agg_pk, &wrong_cache, wrong_cache_pubkey_ptrs, 1) == 1);
+    }
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &wrong_cache_agg_pk, &agg_pk) != 0);
     secp256k1_fuzz_musig_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_musig_sha256_compression);
     for (i = 0; i < n_signers; i++) {
@@ -915,11 +938,16 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_fuzz_musig_noncecoef_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_fuzz_musig_challenge_sha256_compression_calls != 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &wrong_cache_session, &aggnonce, msg32, &wrong_cache) == 1);
     secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
     for (i = 0; i < n_signers; i++) {
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], &keyagg_cache, &session) == 1);
         FUZZ_CHECK(memcmp(secnonce[i].data, zero132, sizeof(secnonce[i].data)) == 0);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &keyagg_cache, &session) == 1);
+        /* A session and cache from different key aggregations must not be
+         * interchangeable, even when both opaque objects are valid. */
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &wrong_cache, &session) == 0);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &keyagg_cache, &wrong_cache_session) == 0);
         /* The verifier must bind a partial signature to the signer's key from
          * key aggregation, not merely to any valid curve point. */
         FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &wrong_pubkey, secp256k1_fuzz_scalar_one) == 1);
