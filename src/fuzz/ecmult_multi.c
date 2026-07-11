@@ -144,7 +144,10 @@ static void secp256k1_fuzz_ecmult_multi_check_success_trace(const secp256k1_fuzz
 }
 
 static void secp256k1_fuzz_ecmult_multi_check_failure_trace(const secp256k1_fuzz_ecmult_multi_data *data, size_t n_points) {
-    FUZZ_CHECK(data->calls <= n_points);
+    /* All ecmult_multi implementations enumerate input indices in order. Once
+     * the callback rejects fail_at, no later input may be requested. */
+    FUZZ_CHECK(data->fail_at < n_points);
+    FUZZ_CHECK(data->calls == data->fail_at + 1);
     FUZZ_CHECK((data->seen_mask & (1u << data->fail_at)) != 0);
 }
 
