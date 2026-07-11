@@ -774,6 +774,32 @@ static void secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(secp256k1
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, session, invalid_partial_sig_ptrs, n_sigs) == 0);
     FUZZ_CHECK(illegal_data.calls == 2);
     FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+
+    /* A malformed suffix must not be ignored after valid partial signatures
+     * have already been accumulated. */
+    if (n_sigs > 1) {
+        for (i = 0; i < n_sigs; i++) {
+            invalid_partial_sig_ptrs[i] = partial_sig_ptrs[i];
+        }
+        invalid_partial_sig = *partial_sig_ptrs[n_sigs - 1];
+        invalid_partial_sig.data[0] ^= 1u;
+        invalid_partial_sig_ptrs[n_sigs - 1] = &invalid_partial_sig;
+        memset(sig64, 0x3C, sizeof(sig64));
+        FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, session, invalid_partial_sig_ptrs, n_sigs) == 0);
+        FUZZ_CHECK(illegal_data.calls == 3);
+        FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+
+        for (i = 0; i < n_sigs; i++) {
+            invalid_partial_sig_ptrs[i] = partial_sig_ptrs[i];
+        }
+        invalid_partial_sig = *partial_sig_ptrs[n_sigs - 1];
+        memset(invalid_partial_sig.data + 4, 0xFF, 32);
+        invalid_partial_sig_ptrs[n_sigs - 1] = &invalid_partial_sig;
+        memset(sig64, 0x96, sizeof(sig64));
+        FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, session, invalid_partial_sig_ptrs, n_sigs) == 0);
+        FUZZ_CHECK(illegal_data.calls == 4);
+        FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+    }
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
