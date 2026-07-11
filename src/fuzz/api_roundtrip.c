@@ -606,6 +606,10 @@ static void secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(const unsigned ch
 
     memset(nonce32, 0xA5, sizeof(nonce32));
     FUZZ_CHECK(secp256k1_nonce_function_rfc6979(nonce32, msg32, key32, NULL, (void *)extra32, 0) == 1);
+
+    memset(nonce32, 0xA5, sizeof(nonce32));
+    FUZZ_CHECK(secp256k1_nonce_function_rfc6979(nonce32, msg32, key32, NULL, (void *)extra32, UINT_MAX) == 0);
+    FUZZ_CHECK(memcmp(nonce32, zero32, sizeof(nonce32)) == 0);
 }
 
 static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
