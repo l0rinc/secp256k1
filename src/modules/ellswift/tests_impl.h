@@ -446,6 +446,39 @@ void ellswift_xdh_correctness_tests(void) {
 }
 
 DEFINE_SHA256_TRANSFORM_PROBE(sha256_ellswift_xdh)
+static size_t sha256_ellswift_zero_u_calls;
+static int sha256_ellswift_zero_u_forced;
+static void sha256_ellswift_zero_u(uint32_t *s, const unsigned char *msg, size_t rounds) {
+    sha256_ellswift_zero_u_calls += rounds;
+    secp256k1_sha256_transform(s, msg, rounds);
+    if (sha256_ellswift_zero_u_calls == 3) {
+        sha256_ellswift_zero_u_forced = 1;
+        memset(s, 0, 8 * sizeof(*s));
+    }
+}
+
+void ellswift_zero_u_tests(void) {
+    secp256k1_context *ctx = secp256k1_context_clone(CTX);
+    unsigned char seckey[32] = { 0 };
+    unsigned char zero32[32] = { 0 };
+    unsigned char ell64[64];
+    secp256k1_pubkey expected;
+    secp256k1_pubkey decoded;
+
+    seckey[31] = 1;
+    CHECK(secp256k1_ec_pubkey_create(ctx, &expected, seckey) == 1);
+    sha256_ellswift_zero_u_calls = 0;
+    sha256_ellswift_zero_u_forced = 0;
+    ctx->hash_ctx.fn_sha256_compression = sha256_ellswift_zero_u;
+    CHECK(secp256k1_ellswift_create(ctx, ell64, seckey, NULL) == 1);
+    CHECK(sha256_ellswift_zero_u_forced == 1);
+    CHECK(sha256_ellswift_zero_u_calls >= 3);
+    CHECK(secp256k1_memcmp_var(ell64, zero32, sizeof(zero32)) != 0);
+    CHECK(secp256k1_ellswift_decode(ctx, &decoded, ell64) == 1);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &decoded, &expected) == 0);
+    secp256k1_context_destroy(ctx);
+}
+
 void ellswift_xdh_ctx_sha256_tests(void) {
     /* Check ctx-provided SHA256 compression override takes effect */
     secp256k1_context *ctx = secp256k1_context_clone(CTX);
@@ -560,6 +593,7 @@ static const struct tf_test_entry tests_ellswift[] = {
     CASE1(ellswift_xdh_test_vectors_tests),
     CASE1(ellswift_encode_decode_roundtrip_tests),
     CASE1(ellswift_create_tests),
+    CASE1(ellswift_zero_u_tests),
     CASE1(ellswift_compute_shared_secret_tests),
     CASE1(ellswift_xdh_correctness_tests),
     CASE1(ellswift_hash_init_tests),
