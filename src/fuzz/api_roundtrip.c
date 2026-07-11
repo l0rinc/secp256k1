@@ -720,11 +720,16 @@ static void secp256k1_fuzz_der_expected_scalar(unsigned char *out32, const unsig
 
 static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature parsed_sig;
+    secp256k1_ecdsa_signature lax_sig;
+    secp256k1_ecdsa_signature reparsed_lax_sig;
     unsigned char compact[64];
+    unsigned char lax_compact[64];
+    unsigned char reparsed_lax_compact[64];
     unsigned char roundtrip_der[72];
     unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = { 0 };
     size_t roundtrip_der_len = sizeof(roundtrip_der);
     int parsed_der;
+    int parsed_lax;
 
     memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
     parsed_der = secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, input, inputlen);
@@ -739,6 +744,22 @@ static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_conte
         secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
     } else {
         FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
+    }
+
+    /* The compatibility parser must initialize its output even when it
+     * rejects the input, and any accepted strict DER must keep its value. */
+    memset(&lax_sig, 0xA5, sizeof(lax_sig));
+    parsed_lax = ecdsa_signature_parse_der_lax(ctx, &lax_sig, input, inputlen);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, lax_compact, &lax_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &reparsed_lax_sig, lax_compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, reparsed_lax_compact, &reparsed_lax_sig) == 1);
+    FUZZ_CHECK(memcmp(lax_compact, reparsed_lax_compact, sizeof(lax_compact)) == 0);
+    if (!parsed_lax) {
+        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &lax_sig, msg32, pubkey) == 0);
+    }
+    if (parsed_der) {
+        FUZZ_CHECK(parsed_lax == 1);
+        FUZZ_CHECK(memcmp(lax_compact, compact, sizeof(lax_compact)) == 0);
     }
 }
 
@@ -954,6 +975,7 @@ static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const
 }
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
+    unsigned char canonical_32_der[70] = { 0 };
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 1);
     secp256k1_fuzz_ecdsa_nonce_data nonce_data;
@@ -984,6 +1006,15 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const secp256k1_pubkey *duplicate_pubkeys[4];
     const secp256k1_pubkey *duplicate_permuted_pubkeys[4];
     size_t i;
+
+    canonical_32_der[0] = 0x30;
+    canonical_32_der[1] = 0x44;
+    canonical_32_der[2] = 0x02;
+    canonical_32_der[3] = 0x20;
+    canonical_32_der[4] = 0x01;
+    canonical_32_der[36] = 0x02;
+    canonical_32_der[37] = 0x20;
+    canonical_32_der[38] = 0x01;
 
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
     secp256k1_fuzz_check_pubkey_parse(ctx, input, size);
@@ -1141,6 +1172,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_lax_long_lengths(ctx);
     secp256k1_fuzz_check_signature_parse_der_empty_integer(ctx, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_negative(ctx, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_input(ctx, canonical_32_der, sizeof(canonical_32_der), msg32, &pubkey);
     secp256k1_fuzz_derive(sig64, sizeof(sig64), input, size, 41);
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, sig64, sig64 + 32, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_trailing(ctx, sig64, sig64 + 32, secp256k1_fuzz_byte(input, size, 49));
