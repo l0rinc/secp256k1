@@ -409,6 +409,21 @@ static void musig_api_tests(void) {
     CHECK(memcmp_and_randomize(pubnonce_ser, zeros132, sizeof(pubnonce_ser)) == 0);
     CHECK(secp256k1_musig_pubnonce_serialize(CTX, pubnonce_ser, &pubnonce[0]) == 1);
 
+    {
+        secp256k1_musig_pubnonce invalid_point_pubnonce = pubnonce[0];
+        const secp256k1_musig_pubnonce *invalid_point_ptr[1];
+        unsigned char zeros66[66] = { 0 };
+        invalid_point_ptr[0] = &invalid_point_pubnonce;
+        memset(invalid_point_pubnonce.data + 4, 0, 64);
+        invalid_point_pubnonce.data[4] = 1;
+        memset(pubnonce_ser, 0xA5, sizeof(pubnonce_ser));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_serialize(CTX, pubnonce_ser, &invalid_point_pubnonce));
+        CHECK(secp256k1_memcmp_var(pubnonce_ser, zeros66, sizeof(pubnonce_ser)) == 0);
+        CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, invalid_point_ptr, 1));
+        CHECK(secp256k1_memcmp_var(aggnonce.data, zeros132, sizeof(aggnonce.data)) == 0);
+    }
+    CHECK(secp256k1_musig_pubnonce_serialize(CTX, pubnonce_ser, &pubnonce[0]) == 1);
+
     CHECK(secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], pubnonce_ser) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_parse(CTX, NULL, pubnonce_ser));
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_parse(CTX, &pubnonce[0], NULL));
@@ -451,6 +466,19 @@ static void musig_api_tests(void) {
         }
     }
     CHECK(secp256k1_musig_nonce_agg(CTX, &aggnonce, pubnonce_ptr, 2) == 1);
+
+    {
+        secp256k1_musig_aggnonce invalid_point_aggnonce = aggnonce;
+        unsigned char zeros66[66] = { 0 };
+        memset(invalid_point_aggnonce.data + 4, 0, 64);
+        invalid_point_aggnonce.data[4] = 1;
+        memset(aggnonce_ser, 0xA5, sizeof(aggnonce_ser));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_aggnonce_serialize(CTX, aggnonce_ser, &invalid_point_aggnonce));
+        CHECK(secp256k1_memcmp_var(aggnonce_ser, zeros66, sizeof(aggnonce_ser)) == 0);
+        memset(&session, 0xA5, sizeof(session));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &session, &invalid_point_aggnonce, msg, &keyagg_cache));
+        CHECK(secp256k1_memcmp_var(session.data, zeros133, sizeof(session.data)) == 0);
+    }
 
     /** Serialize and parse aggregate nonces **/
     CHECK(secp256k1_musig_aggnonce_serialize(CTX, aggnonce_ser, &aggnonce) == 1);
@@ -497,6 +525,15 @@ static void musig_api_tests(void) {
     CHECK(memcmp_and_randomize(session.data, zeros133, sizeof(session.data)) == 0);
 
     CHECK(secp256k1_musig_nonce_process(CTX, &session, &aggnonce, msg, &keyagg_cache) == 1);
+
+    {
+        secp256k1_musig_secnonce invalid_scalar_secnonce = secnonce[0];
+        memcpy(invalid_scalar_secnonce.data + 4, secp256k1_group_order_bytes, 32);
+        memset(&partial_sig[0], 0xA5, sizeof(partial_sig[0]));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sign(CTX, &partial_sig[0], &invalid_scalar_secnonce, &keypair[0], &keyagg_cache, &session));
+        CHECK(secp256k1_memcmp_var(partial_sig[0].data, zeros132, sizeof(partial_sig[0].data)) == 0);
+        CHECK(secp256k1_memcmp_var(invalid_scalar_secnonce.data, zeros132, sizeof(invalid_scalar_secnonce.data)) == 0);
+    }
 
     memcpy(&secnonce_tmp, &secnonce[0], sizeof(secnonce_tmp));
     CHECK(secp256k1_musig_partial_sign(CTX, &partial_sig[0], &secnonce_tmp, &keypair[0], &keyagg_cache, &session) == 1);
