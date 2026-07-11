@@ -990,6 +990,76 @@ static void secp256k1_fuzz_check_musig_keypair_consistency(secp256k1_context *ct
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_noncanonical_nonce_storage(secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
+    static const unsigned char field_p_plus_one[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+    };
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    unsigned char point_x_one[33] = { 0 };
+    unsigned char nonce_input[66] = { 0 };
+    unsigned char serialized66[66];
+    unsigned char zero66[66] = { 0 };
+    unsigned char zero132[132] = { 0 };
+    unsigned char zero133[133] = { 0 };
+    secp256k1_musig_pubnonce canonical_pubnonce;
+    secp256k1_musig_pubnonce invalid_pubnonce;
+    secp256k1_musig_aggnonce canonical_aggnonce;
+    secp256k1_musig_aggnonce invalid_aggnonce;
+    secp256k1_musig_aggnonce failed_aggnonce;
+    secp256k1_musig_session failed_session;
+    const secp256k1_musig_pubnonce *nonce_ptrs[1];
+    secp256k1_fe noncanonical_x;
+    secp256k1_fe_storage x_storage;
+    unsigned int calls;
+
+    STATIC_ASSERT(sizeof(secp256k1_fe_storage) == 32);
+    point_x_one[0] = 0x02;
+    point_x_one[32] = 0x01;
+    memcpy(nonce_input, point_x_one, sizeof(point_x_one));
+    memcpy(nonce_input + 33, point_x_one, sizeof(point_x_one));
+    FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &canonical_pubnonce, nonce_input) == 1);
+    secp256k1_fe_set_b32_mod(&noncanonical_x, field_p_plus_one);
+    secp256k1_fe_impl_to_storage(&x_storage, &noncanonical_x);
+
+    invalid_pubnonce = canonical_pubnonce;
+    memcpy(invalid_pubnonce.data + 4, &x_storage, sizeof(x_storage));
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    memset(serialized66, 0xA5, sizeof(serialized66));
+    FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized66, &invalid_pubnonce) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(serialized66, zero66, sizeof(serialized66)) == 0);
+
+    nonce_ptrs[0] = &invalid_pubnonce;
+    memset(&failed_aggnonce, 0xA5, sizeof(failed_aggnonce));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &failed_aggnonce, nonce_ptrs, 1) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&failed_aggnonce, zero132, sizeof(failed_aggnonce)) == 0);
+
+    nonce_ptrs[0] = &canonical_pubnonce;
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &canonical_aggnonce, nonce_ptrs, 1) == 1);
+    invalid_aggnonce = canonical_aggnonce;
+    memcpy(invalid_aggnonce.data + 4, &x_storage, sizeof(x_storage));
+    memset(serialized66, 0xA5, sizeof(serialized66));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, serialized66, &invalid_aggnonce) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(serialized66, zero66, sizeof(serialized66)) == 0);
+
+    memset(&failed_session, 0xA5, sizeof(failed_session));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &failed_session, &invalid_aggnonce, msg32, keyagg_cache) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&failed_session, zero133, sizeof(failed_session)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_musig_secnonce secnonce;
@@ -1179,6 +1249,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_keyagg_cache_semantic_barrier(ctx, &cache);
     secp256k1_fuzz_check_musig_keyagg_hash_routing(ctx, pubkey_ptrs, n_pubkeys, &agg_xonly, &cache);
     secp256k1_fuzz_check_musig_keypair_consistency(ctx, &keypairs[0], &pubkeys[1], tweak, &cache, session_rand);
+    secp256k1_fuzz_check_musig_noncanonical_nonce_storage(ctx, tweak, &cache);
     secp256k1_fuzz_check_musig_opaque_nonce_barriers(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
