@@ -104,6 +104,58 @@ static void secp256k1_fuzz_check_ellswift_raw_consistency(const secp256k1_contex
     FUZZ_CHECK(memcmp(shared_x32, serialized + 1, 32) == 0);
 }
 
+static void secp256k1_fuzz_check_ellswift_failure_cleanup(secp256k1_context *ctx, const unsigned char *rnd32, const unsigned char *auxrnd32) {
+    secp256k1_fuzz_ellswift_illegal_data illegal_data;
+    secp256k1_pubkey invalid_pubkey;
+    secp256k1_pubkey decoded_pubkey;
+    unsigned char ell64[64];
+    unsigned char zero64[64] = { 0 };
+    unsigned char zero_pubkey[sizeof(decoded_pubkey)] = { 0 };
+    int (*encode)(const secp256k1_context *, unsigned char *, const secp256k1_pubkey *, const unsigned char *) = secp256k1_ellswift_encode;
+    int (*decode)(const secp256k1_context *, secp256k1_pubkey *, const unsigned char *) = secp256k1_ellswift_decode;
+    unsigned int calls;
+
+    /* Failed fixed-size output APIs must not leave attacker-controlled or stale
+     * bytes for callers that inspect the output after a failed return. */
+    memset(&invalid_pubkey, 0, sizeof(invalid_pubkey));
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_ellswift_illegal_callback, &illegal_data);
+
+    memset(ell64, 0xA5, sizeof(ell64));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(encode(ctx, ell64, NULL, rnd32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(ell64, zero64, sizeof(ell64)) == 0);
+
+    memset(ell64, 0xA5, sizeof(ell64));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(encode(ctx, ell64, &invalid_pubkey, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(ell64, zero64, sizeof(ell64)) == 0);
+
+    memset(ell64, 0xA5, sizeof(ell64));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(encode(ctx, ell64, &invalid_pubkey, rnd32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(ell64, zero64, sizeof(ell64)) == 0);
+
+    memset(&decoded_pubkey, 0xA5, sizeof(decoded_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(decode(ctx, &decoded_pubkey, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&decoded_pubkey, zero_pubkey, sizeof(decoded_pubkey)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+    memset(ell64, 0xA5, sizeof(ell64));
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell64, secp256k1_fuzz_scalar_zero, auxrnd32) == 0);
+    FUZZ_CHECK(memcmp(ell64, zero64, sizeof(ell64)) == 0);
+
+    memset(ell64, 0xA5, sizeof(ell64));
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell64, secp256k1_fuzz_scalar_order, NULL) == 0);
+    FUZZ_CHECK(memcmp(ell64, zero64, sizeof(ell64)) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_xdh_pair(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey_a32, const unsigned char *seckey_b32, secp256k1_ellswift_xdh_hash_function hashfp, void *hash_data) {
     unsigned char shared_a[32];
     unsigned char shared_b[32];
@@ -213,6 +265,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ellswift_encode(ctx, ell_encoded_a64, &pubkey_a, rnd32) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_encoded_a64, &pubkey_a);
     secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32);
+    secp256k1_fuzz_check_ellswift_failure_cleanup(ctx, rnd32, auxrnd_a32);
 
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_x32, NULL);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_masked, &hash_data);
