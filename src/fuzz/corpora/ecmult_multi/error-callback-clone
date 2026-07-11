@@ -1,0 +1,1 @@
+error callback data survives heap and preallocated context clones
