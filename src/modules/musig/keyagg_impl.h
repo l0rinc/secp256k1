@@ -211,9 +211,13 @@ int secp256k1_musig_pubkey_agg(const secp256k1_context* ctx, secp256k1_xonly_pub
          * fail. */
         return 0;
     }
+    /* The aggregate point can be infinity if a keyagg coefficient is zero or
+     * if the weighted public keys cancel. */
+    if (secp256k1_gej_is_infinity(&pkj)) {
+        return 0;
+    }
     secp256k1_ge_set_gej(&pkp, &pkj);
     secp256k1_fe_normalize_var(&pkp.y);
-    /* The resulting public key is infinity with negligible probability */
     VERIFY_CHECK(!secp256k1_ge_is_infinity(&pkp));
     if (keyagg_cache != NULL) {
         secp256k1_keyagg_cache_internal cache_i = { 0 };

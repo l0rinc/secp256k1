@@ -185,7 +185,8 @@ SECP256K1_API int secp256k1_musig_partial_sig_serialize(
  *  This is useful to do before `pubkey_agg`, such that the order of pubkeys
  *  does not affect the aggregate public key.
  *
- *  Returns: 0 if the arguments are invalid, 1 otherwise
+ *  Returns: 0 if the arguments are invalid or the aggregate is the point at
+ *           infinity, 1 otherwise
  *  Args:        ctx: pointer to a context object
  *  Out:      agg_pk: the MuSig-aggregated x-only public key. If you do not need it,
  *                    this arg can be NULL.

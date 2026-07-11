@@ -462,6 +462,20 @@ static void secp256k1_fuzz_check_musig_pubkey_agg_failure_cleanup(secp256k1_cont
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_pubkey_agg_success(const secp256k1_context *ctx, const secp256k1_xonly_pubkey *agg_pk, const secp256k1_musig_keyagg_cache *keyagg_cache) {
+    unsigned char xonly32[32];
+    unsigned char compressed33[33];
+    secp256k1_pubkey full_agg_pk;
+    size_t compressed_len = sizeof(compressed33);
+
+    if (agg_pk != NULL) {
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, agg_pk) == 1);
+    }
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &full_agg_pk, keyagg_cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed33, &compressed_len, &full_agg_pk, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed33));
+}
+
 static void secp256k1_fuzz_check_musig_keyagg_cache_curve_barrier(secp256k1_context *ctx, const secp256k1_pubkey *valid_pubkey, const secp256k1_musig_keyagg_cache *valid_cache) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_pubkey invalid_pubkey;
@@ -1250,8 +1264,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     memset(ones32, 0xFF, sizeof(ones32));
 
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_xonly, &cache, pubkey_ptrs, n_pubkeys) == 1);
+    secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, &agg_xonly, &cache);
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &single_agg_xonly, &single_cache, pubkey_ptrs, 1) == 1);
+    secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, &single_agg_xonly, &single_cache);
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, NULL, &cache_no_output, pubkey_ptrs, n_pubkeys) == 1);
+    secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, NULL, &cache_no_output);
     secp256k1_fuzz_check_musig_pubkey_agg_failure_cleanup(ctx, &agg_xonly, &cache);
     secp256k1_fuzz_check_musig_keyagg_cache_curve_barrier(ctx, &pubkeys[0], &cache);
     secp256k1_fuzz_check_musig_keyagg_cache_semantic_barrier(ctx, &cache);
