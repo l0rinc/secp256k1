@@ -274,6 +274,55 @@ static void secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(secp256k1_cont
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_schnorrsig_keypair_consistency(secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_keypair *keypair, const secp256k1_keypair *other_keypair, const unsigned char *aux32) {
+    static const unsigned char scalar_two[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+    };
+    secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
+    secp256k1_keypair mismatched_keypair;
+    secp256k1_pubkey original_pubkey;
+    secp256k1_pubkey other_pubkey;
+    secp256k1_pubkey alternate_pubkey;
+    const secp256k1_pubkey *mismatched_pubkey = &other_pubkey;
+    unsigned char sig64[64];
+    unsigned char zero64[64] = { 0 };
+    unsigned int calls;
+
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &original_pubkey, keypair) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &other_pubkey, other_keypair) == 1);
+    if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) == 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, secp256k1_fuzz_scalar_one) == 1);
+        mismatched_pubkey = &alternate_pubkey;
+        if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) == 0) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, scalar_two) == 1);
+        }
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) != 0);
+    }
+
+    mismatched_keypair = *keypair;
+    memcpy(mismatched_keypair.data + 32, mismatched_pubkey->data, sizeof(mismatched_keypair.data) - 32);
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_schnorrsig_illegal_callback, &illegal_data);
+
+    calls = illegal_data.calls;
+    memset(sig64, 0xA5, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64, msg32, &mismatched_keypair, aux32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+
+    calls = illegal_data.calls;
+    memset(sig64, 0xA5, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64, msg32, 32, &mismatched_keypair, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_schnorrsig_impossible_msglen(secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, const secp256k1_keypair *keypair, const secp256k1_xonly_pubkey *xonly, const unsigned char *aux32) {
 #if SIZE_MAX > 0xffffffff
     secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
@@ -412,6 +461,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64, sizeof(sig64_explicit_bip340)) == 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
+    secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);
     secp256k1_fuzz_check_schnorrsig_impossible_msglen(ctx, sig64, input, &keypair, &xonly, aux32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32) - 1, &xonly) == 0);
     if (secp256k1_xonly_pubkey_cmp(ctx, &xonly, &other_xonly) != 0) {

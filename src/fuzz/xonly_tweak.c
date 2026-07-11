@@ -144,6 +144,35 @@ static void secp256k1_fuzz_check_keypair_null_tweak(secp256k1_context *ctx, cons
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
+
+static void secp256k1_fuzz_check_xonly_keypair_consistency(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *original_pubkey, const unsigned char *tweak32) {
+    static const unsigned char scalar_two[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+    };
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    secp256k1_keypair mismatched_keypair;
+    secp256k1_pubkey alternate_pubkey;
+    unsigned char zero_keypair[sizeof(*keypair)] = { 0 };
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, secp256k1_fuzz_scalar_one) == 1);
+    if (secp256k1_ec_pubkey_cmp(ctx, original_pubkey, &alternate_pubkey) == 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, scalar_two) == 1);
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, original_pubkey, &alternate_pubkey) != 0);
+    mismatched_keypair = *keypair;
+    memcpy(mismatched_keypair.data + 32, alternate_pubkey.data, sizeof(mismatched_keypair.data) - 32);
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &mismatched_keypair, tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&mismatched_keypair, zero_keypair, sizeof(mismatched_keypair)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -199,6 +228,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
+    secp256k1_fuzz_check_xonly_keypair_consistency(ctx, &keypair, &pubkey, tweak);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &keypair_parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_no_parity) == 0);

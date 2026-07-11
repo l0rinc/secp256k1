@@ -784,6 +784,46 @@ static void secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(secp256
     FUZZ_CHECK(memcmp(pubnonce.data, zero132, sizeof(pubnonce.data)) == 0);
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
+
+static void secp256k1_fuzz_check_musig_keypair_consistency(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *other_pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
+    static const unsigned char scalar_two[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+    };
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    secp256k1_keypair mismatched_keypair;
+    secp256k1_pubkey original_pubkey;
+    secp256k1_pubkey alternate_pubkey;
+    const secp256k1_pubkey *mismatched_pubkey = other_pubkey;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    unsigned char zero132[132] = { 0 };
+
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &original_pubkey, keypair) == 1);
+    if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) == 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, secp256k1_fuzz_scalar_one) == 1);
+        mismatched_pubkey = &alternate_pubkey;
+        if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) == 0) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, scalar_two) == 1);
+        }
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) != 0);
+    }
+
+    mismatched_keypair = *keypair;
+    memcpy(mismatched_keypair.data + 32, mismatched_pubkey->data, sizeof(mismatched_keypair.data) - 32);
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    memset(&secnonce, 0xA5, sizeof(secnonce));
+    memset(&pubnonce, 0xA5, sizeof(pubnonce));
+    FUZZ_CHECK(secp256k1_musig_nonce_gen_counter(ctx, &secnonce, &pubnonce, 0, &mismatched_keypair, msg32, keyagg_cache, extra_input32) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&secnonce, zero132, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -873,6 +913,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_pubkey_agg_failure_cleanup(ctx, &agg_xonly, &cache);
     secp256k1_fuzz_check_musig_keyagg_cache_curve_barrier(ctx, &pubkeys[0], &cache);
     secp256k1_fuzz_check_musig_keyagg_hash_routing(ctx, pubkey_ptrs, n_pubkeys, &agg_xonly, &cache);
+    secp256k1_fuzz_check_musig_keypair_consistency(ctx, &keypairs[0], &pubkeys[1], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
