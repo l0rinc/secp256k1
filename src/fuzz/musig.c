@@ -150,6 +150,7 @@ static void secp256k1_fuzz_check_musig_partial_sig_serialize_failure_cleanup(sec
     unsigned char serialized[32];
     unsigned char zero32[32] = { 0 };
     secp256k1_musig_partial_sig invalid_sig = *valid_sig;
+    secp256k1_musig_partial_sig overflow_sig = *valid_sig;
 
     invalid_sig.data[0] ^= 1u;
     illegal_data.self = &illegal_data;
@@ -159,6 +160,12 @@ static void secp256k1_fuzz_check_musig_partial_sig_serialize_failure_cleanup(sec
     memset(serialized, 0xA5, sizeof(serialized));
     FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, serialized, &invalid_sig) == 0);
     FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(serialized, zero32, sizeof(serialized)) == 0);
+
+    memset(overflow_sig.data + 4, 0xFF, 32);
+    memset(serialized, 0x5A, sizeof(serialized));
+    FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, serialized, &overflow_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == 2);
     FUZZ_CHECK(memcmp(serialized, zero32, sizeof(serialized)) == 0);
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
