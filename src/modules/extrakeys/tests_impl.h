@@ -66,6 +66,20 @@ static void test_xonly_pubkey(void) {
     secp256k1_fe_negate(&y, &pk2.y, 1);
     CHECK(secp256k1_fe_equal(&pk1.y, &y) == 1);
 
+    /* An x-only public key must contain the even-Y representative. An odd-Y
+     * full public key is otherwise a valid point, so this mutation preserves
+     * all curve and subgroup checks while violating the x-only contract. */
+    memcpy(&xonly_pk, &pk, sizeof(xonly_pk));
+    CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, buf32, &xonly_pk));
+    CHECK(secp256k1_memcmp_var(buf32, zeros64, sizeof(buf32)) == 0);
+    {
+        secp256k1_pubkey invalid_output;
+        memset(&invalid_output, 0xA5, sizeof(invalid_output));
+        CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_tweak_add(CTX, &invalid_output, &xonly_pk, zeros64));
+        CHECK(secp256k1_memcmp_var(&invalid_output, zeros64, sizeof(invalid_output)) == 0);
+    }
+    CHECK(secp256k1_xonly_pubkey_from_pubkey(CTX, &xonly_pk, NULL, &pk) == 1);
+
     /* Test xonly_pubkey_serialize and xonly_pubkey_parse */
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, NULL, &xonly_pk));
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, buf32, NULL));
