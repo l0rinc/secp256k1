@@ -266,6 +266,8 @@ static SECP256K1_INLINE void secp256k1_declassify(const secp256k1_context* ctx, 
 static int secp256k1_pubkey_load(const secp256k1_context* ctx, secp256k1_ge* ge, const secp256k1_pubkey* pubkey) {
     secp256k1_ge_from_bytes(ge, pubkey->data);
     ARG_CHECK(!secp256k1_fe_is_zero(&ge->x));
+    ARG_CHECK(secp256k1_ge_is_valid_var(ge));
+    ARG_CHECK(secp256k1_ge_is_in_correct_subgroup(ge));
     return 1;
 }
 
