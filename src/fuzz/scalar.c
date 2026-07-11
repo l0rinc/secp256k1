@@ -581,6 +581,8 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_modular_arithmetic(&a, &b, a32, product);
     secp256k1_fuzz_scalar_check_linear_arithmetic(&a, &b, a32, b32, input, size, salt + 17u);
     secp256k1_fuzz_scalar_check_splits(&a, a32);
+    secp256k1_fuzz_scalar_check_wnaf(&a);
+    secp256k1_fuzz_scalar_check_wnaf(&b);
     secp256k1_fuzz_scalar_check_fixed_wnaf(&a);
 
     for (i = 0; i < sizeof(boundary_shifts) / sizeof(boundary_shifts[0]); i++) {
