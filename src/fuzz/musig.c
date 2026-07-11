@@ -650,7 +650,7 @@ static void secp256k1_fuzz_check_musig_zero_counter_sign(secp256k1_context *ctx,
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, agg_pk) == 1);
 }
 
-static void secp256k1_fuzz_check_musig_infinity_nonce_process(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
+static void secp256k1_fuzz_check_musig_infinity_nonce_process(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_xonly_pubkey *agg_pk) {
     unsigned char sig64[64];
     unsigned char serialized66[66];
     unsigned char negated66[66];
@@ -700,6 +700,7 @@ static void secp256k1_fuzz_check_musig_infinity_nonce_process(secp256k1_context 
     FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &gen_xonly, NULL, &gen_pubkey) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, gen_xonly32, &gen_xonly) == 1);
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, agg_pk) == 0);
     FUZZ_CHECK(memcmp(sig64, gen_xonly32, sizeof(gen_xonly32)) == 0);
 }
 
@@ -1261,7 +1262,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
-    secp256k1_fuzz_check_musig_infinity_nonce_process(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache);
+    secp256k1_fuzz_check_musig_infinity_nonce_process(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, n_pubkeys, tweak);
     secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(ctx, &pubkeys[0], seckey[0], tweak, &cache, tweak, session_rand);
     FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &agg_full, &cache) == 1);
