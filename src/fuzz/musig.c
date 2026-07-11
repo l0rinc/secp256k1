@@ -214,6 +214,33 @@ static void secp256k1_fuzz_check_musig_nonce_agg_failure_cleanup(secp256k1_conte
     FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, invalid_pubnonce_ptrs, n_pubnonces) == 0);
     FUZZ_CHECK(illegal_data.calls == 1);
     FUZZ_CHECK(memcmp(&aggnonce, zero_aggnonce, sizeof(aggnonce)) == 0);
+
+    /* A malformed suffix must not be ignored after valid public nonces have
+     * already been accumulated. */
+    if (n_pubnonces > 1) {
+        for (i = 0; i < n_pubnonces; i++) {
+            invalid_pubnonce_ptrs[i] = pubnonce_ptrs[i];
+        }
+        invalid_pubnonce = *pubnonce_ptrs[n_pubnonces - 1];
+        invalid_pubnonce.data[0] ^= 1u;
+        invalid_pubnonce_ptrs[n_pubnonces - 1] = &invalid_pubnonce;
+        memset(&aggnonce, 0x5A, sizeof(aggnonce));
+        FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, invalid_pubnonce_ptrs, n_pubnonces) == 0);
+        FUZZ_CHECK(illegal_data.calls == 2);
+        FUZZ_CHECK(memcmp(&aggnonce, zero_aggnonce, sizeof(aggnonce)) == 0);
+
+        for (i = 0; i < n_pubnonces; i++) {
+            invalid_pubnonce_ptrs[i] = pubnonce_ptrs[i];
+        }
+        invalid_pubnonce = *pubnonce_ptrs[n_pubnonces - 1];
+        memset(invalid_pubnonce.data + 4, 0, 64);
+        invalid_pubnonce.data[4] = 1;
+        invalid_pubnonce_ptrs[n_pubnonces - 1] = &invalid_pubnonce;
+        memset(&aggnonce, 0x96, sizeof(aggnonce));
+        FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, invalid_pubnonce_ptrs, n_pubnonces) == 0);
+        FUZZ_CHECK(illegal_data.calls == 3);
+        FUZZ_CHECK(memcmp(&aggnonce, zero_aggnonce, sizeof(aggnonce)) == 0);
+    }
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
