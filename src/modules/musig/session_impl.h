@@ -211,8 +211,7 @@ static int secp256k1_musig_partial_sig_load(const secp256k1_context* ctx, secp25
 
     ARG_CHECK(secp256k1_memcmp_var(&sig->data[0], secp256k1_musig_partial_sig_magic, 4) == 0);
     secp256k1_scalar_set_b32(s, &sig->data[4], &overflow);
-    /* Parsed signatures can not overflow */
-    VERIFY_CHECK(!overflow);
+    ARG_CHECK(!overflow);
     return 1;
 }
 
