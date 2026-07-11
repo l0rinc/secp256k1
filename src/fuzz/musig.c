@@ -872,6 +872,7 @@ static void secp256k1_fuzz_check_musig_keypair_consistency(secp256k1_context *ct
 static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_secnonce invalid_signer_secnonce;
     secp256k1_musig_secnonce invalid_scalar_secnonce;
     secp256k1_musig_pubnonce pubnonce;
     secp256k1_musig_pubnonce invalid_point_pubnonce;
@@ -879,12 +880,21 @@ static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *
     secp256k1_musig_aggnonce invalid_point_aggnonce;
     secp256k1_musig_session session;
     secp256k1_musig_partial_sig partial_sig;
+    secp256k1_pubkey keypair_pubkey;
+    secp256k1_pubkey alternate_pubkey;
     const secp256k1_musig_pubnonce *pubnonce_ptrs[1];
     unsigned char serialized66[66];
     unsigned char zero66[66] = { 0 };
     unsigned char zero132[132] = { 0 };
     unsigned char zero133[133] = { 0 };
     unsigned int calls;
+
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_pubkey, keypair) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, secp256k1_fuzz_scalar_one) == 1);
+    if (secp256k1_ec_pubkey_cmp(ctx, &keypair_pubkey, &alternate_pubkey) == 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, secp256k1_fuzz_scalar_order_minus_one) == 1);
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &keypair_pubkey, &alternate_pubkey) != 0);
 
     FUZZ_CHECK(secp256k1_musig_nonce_gen_counter(ctx, &secnonce, &pubnonce, 0, keypair, msg32, keyagg_cache, extra_input32) == 1);
     pubnonce_ptrs[0] = &pubnonce;
@@ -933,6 +943,17 @@ static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *
     pubnonce_ptrs[0] = &pubnonce;
     FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 1) == 1);
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, keyagg_cache) == 1);
+
+    /* Keep both secret scalars intact and replace only the embedded signer key.
+     * A secnonce generated for one public key must not sign for another. */
+    invalid_signer_secnonce = secnonce;
+    memcpy(invalid_signer_secnonce.data + 4 + 2 * 32, alternate_pubkey.data, sizeof(alternate_pubkey.data));
+    memset(&partial_sig, 0xA5, sizeof(partial_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &invalid_signer_secnonce, keypair, keyagg_cache, &session) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&partial_sig, zero132, sizeof(partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_signer_secnonce, zero132, sizeof(invalid_signer_secnonce)) == 0);
 
     invalid_scalar_secnonce = secnonce;
     memcpy(invalid_scalar_secnonce.data + 4, secp256k1_fuzz_scalar_order, 32);
