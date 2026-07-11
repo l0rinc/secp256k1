@@ -232,6 +232,40 @@ static void musig_api_tests(void) {
 
     /* pubkey_get */
     CHECK(secp256k1_musig_pubkey_get(CTX, &full_agg_pk, &keyagg_cache) == 1);
+    {
+        secp256k1_ge invalid_ge;
+        secp256k1_musig_keyagg_cache offcurve_cache;
+        secp256k1_musig_keyagg_cache cache_before;
+        secp256k1_pubkey tmp_output_pk;
+        int cache_offset;
+
+        secp256k1_fe_set_int(&invalid_ge.x, 1);
+        secp256k1_fe_set_int(&invalid_ge.y, 1);
+        invalid_ge.infinity = 0;
+        CHECK(!secp256k1_ge_is_valid_var(&invalid_ge));
+        for (cache_offset = 0; cache_offset < 2; cache_offset++) {
+            offcurve_cache = keyagg_cache;
+            secp256k1_ge_to_bytes(offcurve_cache.data + 4 + 64 * cache_offset, &invalid_ge);
+            cache_before = offcurve_cache;
+
+            memset(&tmp_output_pk, 0xA5, sizeof(tmp_output_pk));
+            CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_get(CTX, &tmp_output_pk, &offcurve_cache));
+            CHECK(memcmp_and_randomize(tmp_output_pk.data, zeros132, sizeof(tmp_output_pk.data)) == 0);
+            CHECK(secp256k1_memcmp_var(&offcurve_cache, &cache_before, sizeof(offcurve_cache)) == 0);
+
+            offcurve_cache = cache_before;
+            memset(&tmp_output_pk, 0x5A, sizeof(tmp_output_pk));
+            CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_ec_tweak_add(CTX, &tmp_output_pk, &offcurve_cache, tweak));
+            CHECK(memcmp_and_randomize(tmp_output_pk.data, zeros132, sizeof(tmp_output_pk.data)) == 0);
+            CHECK(secp256k1_memcmp_var(&offcurve_cache, &cache_before, sizeof(offcurve_cache)) == 0);
+
+            offcurve_cache = cache_before;
+            memset(&tmp_output_pk, 0x3C, sizeof(tmp_output_pk));
+            CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_xonly_tweak_add(CTX, &tmp_output_pk, &offcurve_cache, tweak));
+            CHECK(memcmp_and_randomize(tmp_output_pk.data, zeros132, sizeof(tmp_output_pk.data)) == 0);
+            CHECK(secp256k1_memcmp_var(&offcurve_cache, &cache_before, sizeof(offcurve_cache)) == 0);
+        }
+    }
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_get(CTX, NULL, &keyagg_cache));
     CHECK_ILLEGAL(CTX, secp256k1_musig_pubkey_get(CTX, &full_agg_pk, NULL));
     CHECK(secp256k1_memcmp_var(&full_agg_pk, zeros132, sizeof(full_agg_pk)) == 0);
