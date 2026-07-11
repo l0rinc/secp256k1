@@ -48,6 +48,7 @@ static int secp256k1_musig_ge_parse_ext(secp256k1_ge* ge, const unsigned char *i
 /* Load the internal affine representation used by opaque MuSig objects and
  * establish the same curve contract as the public-key parser. */
 static int secp256k1_musig_ge_load(const secp256k1_context* ctx, secp256k1_ge *ge, const unsigned char *data, int allow_infinity) {
+    ARG_CHECK(secp256k1_ge_storage_is_canonical(data));
     if (allow_infinity) {
         secp256k1_ge_from_bytes_ext(ge, data);
         if (secp256k1_ge_is_infinity(ge)) {
