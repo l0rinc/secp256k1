@@ -9,6 +9,8 @@
 
 #ifdef ENABLE_MODULE_ELLSWIFT
 static size_t secp256k1_fuzz_ellswift_sha256_compression_calls = 0;
+static int secp256k1_fuzz_ellswift_force_zero_u = 0;
+static int secp256k1_fuzz_ellswift_zero_u_forced = 0;
 
 typedef struct {
     const void *self;
@@ -24,6 +26,10 @@ typedef struct {
 static void secp256k1_fuzz_ellswift_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_ellswift_sha256_compression_calls += n_blocks;
     secp256k1_sha256_transform(state, blocks64, n_blocks);
+    if (secp256k1_fuzz_ellswift_force_zero_u && secp256k1_fuzz_ellswift_sha256_compression_calls == 3) {
+        secp256k1_fuzz_ellswift_zero_u_forced = 1;
+        memset(state, 0, 8 * sizeof(*state));
+    }
 }
 
 static void secp256k1_fuzz_ellswift_illegal_callback(const char *message, void *data) {
@@ -79,6 +85,30 @@ static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_cont
     FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded, ell64) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &decoded, pubkey) == 0);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded);
+}
+
+static void secp256k1_fuzz_check_ellswift_zero_u_barrier(secp256k1_context *ctx) {
+    unsigned char zero32[32] = { 0 };
+    unsigned char ell64[64];
+    secp256k1_pubkey expected;
+    secp256k1_pubkey decoded;
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected, secp256k1_fuzz_scalar_one) == 1);
+    secp256k1_fuzz_ellswift_force_zero_u = 0;
+    secp256k1_fuzz_ellswift_zero_u_forced = 0;
+    secp256k1_fuzz_ellswift_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ellswift_sha256_compression);
+    secp256k1_fuzz_ellswift_sha256_compression_calls = 0;
+    secp256k1_fuzz_ellswift_force_zero_u = 1;
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell64, secp256k1_fuzz_scalar_one, NULL) == 1);
+    secp256k1_fuzz_ellswift_force_zero_u = 0;
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+
+    FUZZ_CHECK(secp256k1_fuzz_ellswift_zero_u_forced == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ellswift_sha256_compression_calls >= 3);
+    FUZZ_CHECK(memcmp(ell64, zero32, sizeof(zero32)) != 0);
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded, ell64) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &decoded, &expected) == 0);
 }
 
 static void secp256k1_fuzz_check_ellswift_raw_consistency(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
@@ -284,6 +314,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_b64, &pubkey_b);
     FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell_no_aux64, seckey_a32, NULL) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_no_aux64, &pubkey_a);
+    secp256k1_fuzz_check_ellswift_zero_u_barrier(ctx);
 
     FUZZ_CHECK(secp256k1_ellswift_encode(ctx, ell_encoded_a64, &pubkey_a, rnd32) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_encoded_a64, &pubkey_a);

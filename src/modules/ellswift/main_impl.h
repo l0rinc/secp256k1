@@ -355,12 +355,11 @@ static void secp256k1_ellswift_xelligatorswift_var(const secp256k1_context *ctx,
         branch = (branch_hash[branches_left >> 1] >> ((branches_left & 1) << 2)) & 7;
         /* Compute a new u value by hashing. */
         secp256k1_ellswift_prng(secp256k1_get_hash_context(ctx), u32, hasher, cnt++);
-        /* overflow is not a problem (we prefer uniform u32 over uniform u). */
+        /* overflow is not a problem (we prefer uniform u32 over uniform u).
+         * u=0 is not a valid input to the inverse, so replace the negligible
+         * probability zero hash output with one. */
         secp256k1_fe_set_b32_mod(&u, u32);
-        /* Since u is the output of a hash, it should practically never be 0. We could apply the
-         * u=0 to u=1 correction here too to deal with that case still, but it's such a low
-         * probability event that we do not bother. */
-        VERIFY_CHECK(!secp256k1_fe_normalizes_to_zero_var(&u));
+        secp256k1_fe_cmov(&u, &secp256k1_fe_one, secp256k1_fe_normalizes_to_zero(&u));
 
         /* Find a remainder t, and return it if found. */
         if (EXPECT(secp256k1_ellswift_xswiftec_inv_var(t, x, &u, branch), 0)) break;
