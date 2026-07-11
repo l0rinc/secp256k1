@@ -112,7 +112,7 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubnonce_parse(
 
 /** Serialize a signer's public nonce
  *
- *  Returns: 1 always
+ *  Returns: 0 if the nonce object is malformed, 1 otherwise
  *  Args:    ctx: pointer to a context object
  *  Out:   out66: pointer to a 66-byte array to store the serialized nonce
  *  In:    nonce: pointer to the nonce
@@ -138,7 +138,7 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_aggnonce_parse(
 
 /** Serialize an aggregate public nonce
  *
- *  Returns: 1 always
+ *  Returns: 0 if the nonce object is malformed, 1 otherwise
  *  Args:    ctx: pointer to a context object
  *  Out:   out66: pointer to a 66-byte array to store the serialized nonce
  *  In:    nonce: pointer to the nonce
