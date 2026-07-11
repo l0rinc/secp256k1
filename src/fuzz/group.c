@@ -103,6 +103,13 @@ static void secp256k1_fuzz_group_make_point(const secp256k1_context *ctx, secp25
     SECP256K1_GEJ_VERIFY(point);
 }
 
+static void secp256k1_fuzz_group_check_independent_generator(const secp256k1_gej *actual, const secp256k1_scalar *scalar) {
+    secp256k1_gej expected;
+
+    secp256k1_ecmult_const(&expected, &secp256k1_ge_const_g, scalar);
+    FUZZ_CHECK(secp256k1_gej_eq_var(actual, &expected));
+}
+
 static void secp256k1_fuzz_group_check_affine(const secp256k1_gej *point) {
     secp256k1_ge constant_time;
     secp256k1_ge variable_time;
@@ -444,6 +451,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_make_point(ctx, &b, &b_scalar);
     secp256k1_fuzz_group_make_point(ctx, &sum, &sum_scalar);
     secp256k1_fuzz_group_make_point(ctx, &doubled, &double_scalar);
+    secp256k1_fuzz_group_check_independent_generator(&a, &a_scalar);
+    secp256k1_fuzz_group_check_independent_generator(&b, &b_scalar);
+    secp256k1_fuzz_group_check_independent_generator(&sum, &sum_scalar);
+    secp256k1_fuzz_group_check_independent_generator(&doubled, &double_scalar);
 
     secp256k1_fuzz_group_check_affine(&a);
     secp256k1_fuzz_group_check_affine(&b);
@@ -485,6 +496,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_zinv_addition(&a, &b, &sum, &scale);
     secp256k1_gej_set_infinity(&infinity);
     secp256k1_fuzz_group_make_point(ctx, &finite, &secp256k1_scalar_one);
+    secp256k1_fuzz_group_check_independent_generator(&finite, &secp256k1_scalar_one);
     secp256k1_fuzz_group_check_gej_cmov(&infinity, &finite);
     secp256k1_fuzz_group_check_gej_cmov(&finite, &infinity);
     {
