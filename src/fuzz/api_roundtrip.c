@@ -437,6 +437,23 @@ static void secp256k1_fuzz_check_ecdsa_signature_state_barrier(secp256k1_context
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &invalid_sig, msg32, pubkey) == 0);
     FUZZ_CHECK(illegal_data.calls == calls + 1);
 
+    /* Normalization supports in-place operation. Keep that alias contract
+     * true on failure as well: a rejected signature must not remain live in
+     * the object the caller passed for both input and output. */
+    invalid_sig = *valid_sig;
+    memset(invalid_sig.data, 0xFF, 32);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &invalid_sig, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&invalid_sig, zero_sig, sizeof(invalid_sig)) == 0);
+
+    invalid_sig = *valid_sig;
+    memset(invalid_sig.data + 32, 0xFF, 32);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &invalid_sig, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&invalid_sig, zero_sig, sizeof(invalid_sig)) == 0);
+
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
