@@ -824,6 +824,83 @@ static void secp256k1_fuzz_check_musig_keypair_consistency(secp256k1_context *ct
     FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
+
+static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_secnonce invalid_scalar_secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    secp256k1_musig_pubnonce invalid_point_pubnonce;
+    secp256k1_musig_aggnonce aggnonce;
+    secp256k1_musig_aggnonce invalid_point_aggnonce;
+    secp256k1_musig_session session;
+    secp256k1_musig_partial_sig partial_sig;
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[1];
+    unsigned char serialized66[66];
+    unsigned char zero66[66] = { 0 };
+    unsigned char zero132[132] = { 0 };
+    unsigned char zero133[133] = { 0 };
+    unsigned int calls;
+
+    FUZZ_CHECK(secp256k1_musig_nonce_gen_counter(ctx, &secnonce, &pubnonce, 0, keypair, msg32, keyagg_cache, extra_input32) == 1);
+    pubnonce_ptrs[0] = &pubnonce;
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, keyagg_cache) == 1);
+
+    invalid_point_pubnonce = pubnonce;
+    memset(invalid_point_pubnonce.data + 4, 0, 64);
+    invalid_point_pubnonce.data[4] = 1;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+
+    memset(serialized66, 0xA5, sizeof(serialized66));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized66, &invalid_point_pubnonce) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(serialized66, zero66, sizeof(serialized66)) == 0);
+
+    pubnonce_ptrs[0] = &invalid_point_pubnonce;
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 1) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(aggnonce.data, zero132, sizeof(aggnonce.data)) == 0);
+
+    invalid_point_aggnonce = aggnonce;
+    /* Recreate a valid aggregate after the failed call, then corrupt only its
+     * first raw point while preserving the aggregate magic. */
+    pubnonce_ptrs[0] = &pubnonce;
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &invalid_point_aggnonce, pubnonce_ptrs, 1) == 1);
+    memset(invalid_point_aggnonce.data + 4, 0, 64);
+    invalid_point_aggnonce.data[4] = 1;
+
+    memset(serialized66, 0xA5, sizeof(serialized66));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, serialized66, &invalid_point_aggnonce) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(serialized66, zero66, sizeof(serialized66)) == 0);
+
+    memset(&session, 0xA5, sizeof(session));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &invalid_point_aggnonce, msg32, keyagg_cache) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&session, zero133, sizeof(session)) == 0);
+
+    pubnonce_ptrs[0] = &pubnonce;
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, keyagg_cache) == 1);
+
+    invalid_scalar_secnonce = secnonce;
+    memcpy(invalid_scalar_secnonce.data + 4, secp256k1_fuzz_scalar_order, 32);
+    memset(&partial_sig, 0xA5, sizeof(partial_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &invalid_scalar_secnonce, keypair, keyagg_cache, &session) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&partial_sig, zero132, sizeof(partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_scalar_secnonce, zero132, sizeof(invalid_scalar_secnonce)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -914,6 +991,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_keyagg_cache_curve_barrier(ctx, &pubkeys[0], &cache);
     secp256k1_fuzz_check_musig_keyagg_hash_routing(ctx, pubkey_ptrs, n_pubkeys, &agg_xonly, &cache);
     secp256k1_fuzz_check_musig_keypair_consistency(ctx, &keypairs[0], &pubkeys[1], tweak, &cache, session_rand);
+    secp256k1_fuzz_check_musig_opaque_nonce_barriers(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
