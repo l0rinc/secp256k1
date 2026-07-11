@@ -6970,6 +6970,28 @@ static void test_ecdsa_end_to_end(void) {
     CHECK(secp256k1_ecdsa_verify(CTX, &signature[1], message, &pubkey) == 1);
     CHECK(secp256k1_ecdsa_verify(CTX, &signature[2], message, &pubkey) == 1);
     CHECK(secp256k1_ecdsa_verify(CTX, &signature[3], message, &pubkey) == 1);
+
+    {
+        int i;
+        unsigned char zero64[64] = { 0 };
+        for (i = 0; i < 2; i++) {
+            signature[5] = signature[0];
+            memset(signature[5].data + i * 32, 0xFF, 32);
+            memset(sig, 0xA5, sizeof(sig));
+            siglen = sizeof(sig);
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_der(CTX, sig, &siglen, &signature[5]));
+            CHECK(siglen == 0);
+            CHECK(all_bytes_equal(sig, 0, sizeof(sig)));
+            memset(sig, 0xA5, sizeof(sig));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_compact(CTX, sig, &signature[5]));
+            CHECK(all_bytes_equal(sig, 0, sizeof(zero64)));
+            CHECK(sig[64] == 0xA5);
+            memset(&signature[4], 0xA5, sizeof(signature[4]));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_normalize(CTX, &signature[4], &signature[5]));
+            CHECK(all_bytes_equal(&signature[4], 0, sizeof(signature[4])));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_verify(CTX, &signature[5], message, &pubkey));
+        }
+    }
     /* Test lower-S form, malleate, verify and fail, test again, malleate again */
     CHECK(!secp256k1_ecdsa_signature_normalize(CTX, NULL, &signature[0]));
     secp256k1_ecdsa_signature_load(CTX, &r, &s, &signature[0]);
@@ -6988,6 +7010,7 @@ static void test_ecdsa_end_to_end(void) {
     CHECK(secp256k1_memcmp_var(&signature[5], &signature[0], 64) == 0);
 
     /* Serialize/parse DER and verify again */
+    siglen = sizeof(sig);
     CHECK(secp256k1_ecdsa_signature_serialize_der(CTX, sig, &siglen, &signature[0]) == 1);
     memset(&signature[0], 0, sizeof(signature[0]));
     CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &signature[0], sig, siglen) == 1);
