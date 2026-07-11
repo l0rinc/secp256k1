@@ -81,6 +81,29 @@ static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_cont
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded);
 }
 
+static void secp256k1_fuzz_check_ellswift_raw_consistency(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
+    secp256k1_pubkey decoded_a;
+    secp256k1_pubkey decoded_b;
+    secp256k1_pubkey shared_pubkey;
+    unsigned char shared_x32[32];
+    unsigned char serialized[65];
+    size_t serialized_len = sizeof(serialized);
+
+    /* Decode arbitrary wire encodings, then cross-check the independent
+     * fraction-based XDH path against ordinary public-key multiplication. */
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded_a, ell_a64) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded_b, ell_b64) == 1);
+    secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded_a);
+    secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded_b);
+
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    shared_pubkey = decoded_b;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &shared_pubkey, seckey32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &shared_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == sizeof(serialized));
+    FUZZ_CHECK(memcmp(shared_x32, serialized + 1, 32) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_xdh_pair(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey_a32, const unsigned char *seckey_b32, secp256k1_ellswift_xdh_hash_function hashfp, void *hash_data) {
     unsigned char shared_a[32];
     unsigned char shared_b[32];
@@ -153,6 +176,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char auxrnd_b32[32];
     unsigned char rnd32[32];
     unsigned char prefix64[64];
+    unsigned char raw_ell_a64[64];
+    unsigned char raw_ell_b64[64];
     unsigned char ell_a64[64];
     unsigned char ell_b64[64];
     unsigned char ell_encoded_a64[64];
@@ -167,6 +192,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(auxrnd_b32, sizeof(auxrnd_b32), input, size, 193);
     secp256k1_fuzz_derive(rnd32, sizeof(rnd32), input, size, 197);
     secp256k1_fuzz_derive(prefix64, sizeof(prefix64), input, size, 199);
+    secp256k1_fuzz_derive(raw_ell_a64, sizeof(raw_ell_a64), input, size, 223);
+    secp256k1_fuzz_derive(raw_ell_b64, sizeof(raw_ell_b64), input, size, 227);
     secp256k1_fuzz_derive(hash_data.mask32, sizeof(hash_data.mask32), input, size, 211);
     hash_data.self = &hash_data;
     hash_data.calls = 0;
@@ -185,6 +212,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_ellswift_encode(ctx, ell_encoded_a64, &pubkey_a, rnd32) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_encoded_a64, &pubkey_a);
+    secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32);
 
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_x32, NULL);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_masked, &hash_data);
