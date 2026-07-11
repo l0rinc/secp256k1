@@ -712,6 +712,16 @@ static void musig_api_tests(void) {
     CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, invalid_partial_sig_ptr, 2));
     CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+    {
+        secp256k1_musig_partial_sig invalid_overflow_sig = partial_sig[0];
+        const secp256k1_musig_partial_sig *original_ptr = invalid_partial_sig_ptr[0];
+        memset(invalid_overflow_sig.data + 4, 0xFF, 32);
+        invalid_partial_sig_ptr[0] = &invalid_overflow_sig;
+        memset(pre_sig, 0xA5, sizeof(pre_sig));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, invalid_partial_sig_ptr, 2));
+        CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
+        invalid_partial_sig_ptr[0] = original_ptr;
+    }
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 0));
     CHECK(memcmp_and_randomize(pre_sig, zeros132, sizeof(pre_sig)) == 0);
     CHECK(secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 1) == 1);
