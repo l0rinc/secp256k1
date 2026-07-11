@@ -369,6 +369,77 @@ static void secp256k1_fuzz_check_ecdsa_variable_output_cleanup(secp256k1_context
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_ecdsa_signature_state_barrier(secp256k1_context *ctx, const secp256k1_ecdsa_signature *valid_sig, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    secp256k1_ecdsa_signature invalid_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+    unsigned char der[74];
+    unsigned char compact[64];
+    unsigned char zero_der[sizeof(der)] = { 0 };
+    unsigned char zero_compact[sizeof(compact)] = { 0 };
+    unsigned char zero_sig[sizeof(normalized_sig)] = { 0 };
+    unsigned int calls;
+    size_t der_len;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    invalid_sig = *valid_sig;
+    memset(invalid_sig.data, 0xFF, 32);
+    memset(der, 0xA5, sizeof(der));
+    der_len = sizeof(der);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, der, &der_len, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(der_len == 0);
+    FUZZ_CHECK(memcmp(der, zero_der, sizeof(der)) == 0);
+
+    memset(compact, 0x5A, sizeof(compact));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(compact, zero_compact, sizeof(compact)) == 0);
+
+    memset(&normalized_sig, 0x3C, sizeof(normalized_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&normalized_sig, zero_sig, sizeof(normalized_sig)) == 0);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &invalid_sig, msg32, pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+
+    invalid_sig = *valid_sig;
+    memset(invalid_sig.data + 32, 0xFF, 32);
+    memset(der, 0x96, sizeof(der));
+    der_len = sizeof(der);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, der, &der_len, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(der_len == 0);
+    FUZZ_CHECK(memcmp(der, zero_der, sizeof(der)) == 0);
+
+    memset(compact, 0xC3, sizeof(compact));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(compact, zero_compact, sizeof(compact)) == 0);
+
+    memset(&normalized_sig, 0xA5, sizeof(normalized_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &invalid_sig) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&normalized_sig, zero_sig, sizeof(normalized_sig)) == 0);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &invalid_sig, msg32, pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_pubkey_cmp_order(const secp256k1_context *ctx, const secp256k1_pubkey *a, const secp256k1_pubkey *b) {
     unsigned char serialized_a[33];
     unsigned char serialized_b[33];
@@ -1017,6 +1088,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(sig64, sig_retry64, sizeof(sig64)) == 0);
     secp256k1_fuzz_check_ecdsa_variable_output_cleanup(ctx, &sig);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
+    secp256k1_fuzz_check_ecdsa_signature_state_barrier(ctx, &sig, msg32, &pubkey);
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &sig) == 0);
     secp256k1_fuzz_check_signature_roundtrip(ctx, &sig);
     secp256k1_fuzz_check_ecdsa_high_s(ctx, &sig, msg32, &pubkey);
