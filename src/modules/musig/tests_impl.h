@@ -227,6 +227,14 @@ static void musig_api_tests(void) {
         secp256k1_pubkey cache_output;
         secp256k1_musig_secnonce failed_secnonce;
         secp256k1_musig_pubnonce failed_pubnonce;
+        secp256k1_musig_pubnonce canonical_pubnonce;
+        secp256k1_musig_pubnonce invalid_nonce_pubnonce;
+        secp256k1_musig_aggnonce canonical_aggnonce;
+        secp256k1_musig_aggnonce invalid_aggnonce;
+        secp256k1_musig_session failed_session;
+        const secp256k1_musig_pubnonce *nonce_ptr[1];
+        unsigned char nonce_input[66];
+        unsigned char zero66[66] = { 0 };
         unsigned char nonce_rand[32];
         const secp256k1_pubkey *noncanonical_ptrs[2];
 
@@ -260,6 +268,35 @@ static void musig_api_tests(void) {
         CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen(CTX, &failed_secnonce, &failed_pubnonce, nonce_rand, NULL, &canonical_pk, NULL, &invalid_cache, NULL));
         CHECK(memcmp(&failed_secnonce, zeros132, sizeof(failed_secnonce)) == 0);
         CHECK(memcmp(&failed_pubnonce, zeros132, sizeof(failed_pubnonce)) == 0);
+
+        /* The same noncanonical field encoding must be rejected in MuSig's
+         * opaque nonce points before ge_from_storage can trip VERIFY. */
+        memset(nonce_input, 0, sizeof(nonce_input));
+        nonce_input[0] = 0x02;
+        nonce_input[32] = 0x01;
+        nonce_input[33] = 0x02;
+        nonce_input[65] = 0x01;
+        CHECK(secp256k1_musig_pubnonce_parse(CTX, &canonical_pubnonce, nonce_input) == 1);
+        invalid_nonce_pubnonce = canonical_pubnonce;
+        memcpy(invalid_nonce_pubnonce.data + 4, &x_storage, sizeof(x_storage));
+        nonce_ptr[0] = &invalid_nonce_pubnonce;
+        memset(pubnonce_ser, 0xA5, sizeof(pubnonce_ser));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_pubnonce_serialize(CTX, pubnonce_ser, &invalid_nonce_pubnonce));
+        CHECK(memcmp(pubnonce_ser, zero66, sizeof(pubnonce_ser)) == 0);
+        memset(&aggnonce, 0xA5, sizeof(aggnonce));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_agg(CTX, &aggnonce, nonce_ptr, 1));
+        CHECK(memcmp(&aggnonce, zeros132, sizeof(aggnonce)) == 0);
+
+        nonce_ptr[0] = &canonical_pubnonce;
+        CHECK(secp256k1_musig_nonce_agg(CTX, &canonical_aggnonce, nonce_ptr, 1) == 1);
+        invalid_aggnonce = canonical_aggnonce;
+        memcpy(invalid_aggnonce.data + 4, &x_storage, sizeof(x_storage));
+        memset(aggnonce_ser, 0xA5, sizeof(aggnonce_ser));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_aggnonce_serialize(CTX, aggnonce_ser, &invalid_aggnonce));
+        CHECK(memcmp(aggnonce_ser, zero66, sizeof(aggnonce_ser)) == 0);
+        memset(&failed_session, 0xA5, sizeof(failed_session));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_process(CTX, &failed_session, &invalid_aggnonce, msg, &keyagg_cache));
+        CHECK(memcmp(&failed_session, zeros133, sizeof(failed_session)) == 0);
 
         cache_i.second_pk = valid_point;
         secp256k1_keyagg_cache_save(&second_cache, &cache_i);
