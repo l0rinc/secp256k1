@@ -762,6 +762,15 @@ static void musig_api_tests(void) {
     memset(buf, 1, sizeof(buf));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, buf, &invalid_partial_sig));
     CHECK(secp256k1_memcmp_var(buf, zeros132, sizeof(buf)) == 0);
+    {
+        /* A magic-preserving overflow must be rejected just like parsing and
+         * the cryptographic partial-signature consumers reject it. */
+        secp256k1_musig_partial_sig invalid_overflow_sig = partial_sig[0];
+        memset(invalid_overflow_sig.data + 4, 0xFF, 32);
+        memset(buf, 0xA5, sizeof(buf));
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, buf, &invalid_overflow_sig));
+        CHECK(secp256k1_memcmp_var(buf, zeros132, sizeof(buf)) == 0);
+    }
     CHECK(secp256k1_musig_partial_sig_serialize(CTX, buf, &partial_sig[0]) == 1);
     CHECK(secp256k1_musig_partial_sig_parse(CTX, &partial_sig[0], buf) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_parse(CTX, NULL, buf));
