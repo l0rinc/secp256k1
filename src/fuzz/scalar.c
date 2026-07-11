@@ -495,6 +495,28 @@ static void secp256k1_fuzz_scalar_check_fixed_wnaf(const secp256k1_scalar *numbe
     }
 }
 
+static void secp256k1_fuzz_scalar_check_wnaf_small(const secp256k1_scalar *number) {
+    secp256k1_scalar low;
+    secp256k1_scalar unused;
+    int wnaf[129];
+    int8_t wnaf_small[129];
+    int w;
+
+    /* Strauss decomposes the lambda-split scalars into 129 entries and stores
+     * the digits in int8_t. Check that narrowing preserves the generic output. */
+    secp256k1_scalar_split_128(&low, &unused, number);
+    for (w = 2; w <= 8; w++) {
+        int bits = secp256k1_ecmult_wnaf(wnaf, 129, &low, w);
+        int small_bits = secp256k1_ecmult_wnaf_small(wnaf_small, 129, &low, w);
+        int i;
+
+        FUZZ_CHECK(small_bits == bits);
+        for (i = 0; i < 129; i++) {
+            FUZZ_CHECK(wnaf_small[i] == wnaf[i]);
+        }
+    }
+}
+
 static int secp256k1_fuzz_scalar_fits_128(const unsigned char *input32) {
     size_t i;
 
@@ -583,6 +605,8 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_splits(&a, a32);
     secp256k1_fuzz_scalar_check_wnaf(&a);
     secp256k1_fuzz_scalar_check_wnaf(&b);
+    secp256k1_fuzz_scalar_check_wnaf_small(&a);
+    secp256k1_fuzz_scalar_check_wnaf_small(&b);
     secp256k1_fuzz_scalar_check_fixed_wnaf(&a);
 
     for (i = 0; i < sizeof(boundary_shifts) / sizeof(boundary_shifts[0]); i++) {
