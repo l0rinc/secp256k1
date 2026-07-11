@@ -572,6 +572,60 @@ static void secp256k1_fuzz_scalar_check_splits(const secp256k1_scalar *a, const 
     FUZZ_CHECK(secp256k1_fuzz_scalar_fits_128(split2_32) || secp256k1_fuzz_scalar_fits_128(negated32));
 }
 
+static void secp256k1_fuzz_scalar_check_endo_split(const secp256k1_scalar *number) {
+    secp256k1_scalar raw1;
+    secp256k1_scalar raw2;
+    secp256k1_scalar expected1;
+    secp256k1_scalar expected2;
+    secp256k1_scalar split1;
+    secp256k1_scalar split2;
+    secp256k1_ge base;
+    secp256k1_ge expected_p1;
+    secp256k1_ge expected_p2;
+    secp256k1_ge p1;
+    secp256k1_ge p2;
+    secp256k1_gej basej;
+    secp256k1_gej expected;
+    secp256k1_gej term1;
+    secp256k1_gej term2;
+    secp256k1_gej actual;
+
+    /* Pippenger splits a scalar and its point together. Check the sign
+     * corrections independently before checking the resulting multiplication. */
+    secp256k1_scalar_split_lambda(&raw1, &raw2, number);
+    base = secp256k1_ge_const_g;
+    expected_p1 = base;
+    expected_p2 = base;
+    secp256k1_ge_mul_lambda(&expected_p2, &expected_p2);
+    expected1 = raw1;
+    expected2 = raw2;
+    if (secp256k1_scalar_is_high(&raw1)) {
+        secp256k1_scalar_negate(&expected1, &expected1);
+        secp256k1_ge_neg(&expected_p1, &expected_p1);
+    }
+    if (secp256k1_scalar_is_high(&raw2)) {
+        secp256k1_scalar_negate(&expected2, &expected2);
+        secp256k1_ge_neg(&expected_p2, &expected_p2);
+    }
+
+    p1 = base;
+    split1 = *number;
+    secp256k1_ecmult_endo_split(&split1, &split2, &p1, &p2);
+    FUZZ_CHECK(secp256k1_scalar_eq(&split1, &expected1));
+    FUZZ_CHECK(secp256k1_scalar_eq(&split2, &expected2));
+    FUZZ_CHECK(secp256k1_ge_eq_var(&p1, &expected_p1));
+    FUZZ_CHECK(secp256k1_ge_eq_var(&p2, &expected_p2));
+
+    secp256k1_gej_set_ge(&basej, &base);
+    secp256k1_ecmult(&expected, &basej, number, NULL);
+    secp256k1_gej_set_ge(&basej, &p1);
+    secp256k1_ecmult(&term1, &basej, &split1, NULL);
+    secp256k1_gej_set_ge(&basej, &p2);
+    secp256k1_ecmult(&term2, &basej, &split2, NULL);
+    secp256k1_gej_add_var(&actual, &term1, &term2, NULL);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+}
+
 static void secp256k1_fuzz_scalar_check_shift(const secp256k1_scalar *a, const secp256k1_scalar *b, const uint16_t *product, unsigned int shift) {
     secp256k1_scalar actual;
     unsigned char actual32[32];
@@ -603,6 +657,7 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_modular_arithmetic(&a, &b, a32, product);
     secp256k1_fuzz_scalar_check_linear_arithmetic(&a, &b, a32, b32, input, size, salt + 17u);
     secp256k1_fuzz_scalar_check_splits(&a, a32);
+    secp256k1_fuzz_scalar_check_endo_split(&a);
     secp256k1_fuzz_scalar_check_wnaf(&a);
     secp256k1_fuzz_scalar_check_wnaf(&b);
     secp256k1_fuzz_scalar_check_wnaf_small(&a);
