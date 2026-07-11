@@ -30,6 +30,70 @@ static void secp256k1_fuzz_hash_derive_bytes(unsigned char *out, size_t outlen, 
     }
 }
 
+static void secp256k1_fuzz_check_sha256_vectors(const secp256k1_hash_ctx *hash_ctx) {
+    static const unsigned char zeroes[65] = { 0 };
+    static const size_t zero_lengths[] = { 0, 55, 56, 63, 64, 65 };
+    static const unsigned char zero_outputs[][32] = {
+        { 0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24, 0x27,
+          0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55 },
+        { 0x02, 0x77, 0x94, 0x66, 0xcd, 0xec, 0x16, 0x38, 0x11, 0xd0, 0x78, 0x81, 0x5c, 0x63, 0x3f, 0x21,
+          0x90, 0x14, 0x13, 0x08, 0x14, 0x49, 0x00, 0x2f, 0x24, 0xaa, 0x3e, 0x80, 0xf0, 0xb8, 0x8e, 0xf7 },
+        { 0xd4, 0x81, 0x7a, 0xa5, 0x49, 0x76, 0x28, 0xe7, 0xc7, 0x7e, 0x6b, 0x60, 0x61, 0x07, 0x04, 0x2b,
+          0xbb, 0xa3, 0x13, 0x08, 0x88, 0xc5, 0xf4, 0x7a, 0x37, 0x5e, 0x61, 0x79, 0xbe, 0x78, 0x9f, 0xbb },
+        { 0xc7, 0x72, 0x3f, 0xa1, 0xe0, 0x12, 0x79, 0x75, 0xe4, 0x9e, 0x62, 0xe7, 0x53, 0xdb, 0x53, 0x92,
+          0x4c, 0x1b, 0xd8, 0x4b, 0x8a, 0xc1, 0xac, 0x08, 0xdf, 0x78, 0xd0, 0x92, 0x70, 0xf3, 0xd9, 0x71 },
+        { 0xf5, 0xa5, 0xfd, 0x42, 0xd1, 0x6a, 0x20, 0x30, 0x27, 0x98, 0xef, 0x6e, 0xd3, 0x09, 0x97, 0x9b,
+          0x43, 0x00, 0x3d, 0x23, 0x20, 0xd9, 0xf0, 0xe8, 0xea, 0x98, 0x31, 0xa9, 0x27, 0x59, 0xfb, 0x4b },
+        { 0x98, 0xce, 0x42, 0xde, 0xef, 0x51, 0xd4, 0x02, 0x69, 0xd5, 0x42, 0xf5, 0x31, 0x4b, 0xef, 0x2c,
+          0x74, 0x68, 0xd4, 0x01, 0xad, 0x5d, 0x85, 0x16, 0x8b, 0xfa, 0xb4, 0xc0, 0x10, 0x8f, 0x75, 0xf7 }
+    };
+    static const unsigned char abc[] = { 'a', 'b', 'c' };
+    static const unsigned char abc_output[32] = {
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
+    };
+    secp256k1_sha256 one_shot;
+    secp256k1_sha256 split;
+    unsigned char one_shot_out[32];
+    unsigned char split_out[32];
+    size_t i;
+    size_t split_at;
+
+    for (i = 0; i < sizeof(zero_lengths) / sizeof(zero_lengths[0]); i++) {
+        secp256k1_sha256_initialize(&one_shot);
+        secp256k1_sha256_write(hash_ctx, &one_shot, zeroes, zero_lengths[i]);
+        secp256k1_sha256_finalize(hash_ctx, &one_shot, one_shot_out);
+        FUZZ_CHECK(memcmp(one_shot_out, zero_outputs[i], sizeof(one_shot_out)) == 0);
+
+        secp256k1_sha256_initialize(&split);
+        split_at = zero_lengths[i] / 2;
+        secp256k1_sha256_write(hash_ctx, &split, zeroes, split_at);
+        secp256k1_sha256_write(hash_ctx, &split, zeroes + split_at, zero_lengths[i] - split_at);
+        secp256k1_sha256_finalize(hash_ctx, &split, split_out);
+        FUZZ_CHECK(memcmp(split_out, zero_outputs[i], sizeof(split_out)) == 0);
+        FUZZ_CHECK(memcmp(one_shot_out, split_out, sizeof(one_shot_out)) == 0);
+        secp256k1_sha256_clear(&one_shot);
+        secp256k1_sha256_clear(&split);
+        FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&one_shot, sizeof(one_shot)));
+        FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&split, sizeof(split)));
+    }
+
+    secp256k1_sha256_initialize(&one_shot);
+    secp256k1_sha256_write(hash_ctx, &one_shot, abc, sizeof(abc));
+    secp256k1_sha256_finalize(hash_ctx, &one_shot, one_shot_out);
+    FUZZ_CHECK(memcmp(one_shot_out, abc_output, sizeof(one_shot_out)) == 0);
+    secp256k1_sha256_initialize(&split);
+    secp256k1_sha256_write(hash_ctx, &split, abc, 1);
+    secp256k1_sha256_write(hash_ctx, &split, abc + 1, sizeof(abc) - 1);
+    secp256k1_sha256_finalize(hash_ctx, &split, split_out);
+    FUZZ_CHECK(memcmp(split_out, abc_output, sizeof(split_out)) == 0);
+    FUZZ_CHECK(memcmp(one_shot_out, split_out, sizeof(one_shot_out)) == 0);
+    secp256k1_sha256_clear(&one_shot);
+    secp256k1_sha256_clear(&split);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&one_shot, sizeof(one_shot)));
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&split, sizeof(split)));
+}
+
 static void secp256k1_fuzz_check_hmac_sha256(const secp256k1_hash_ctx *hash_ctx, const unsigned char *key, size_t keylen, const unsigned char *msg, size_t msglen, size_t split) {
     secp256k1_hmac_sha256 one_shot;
     secp256k1_hmac_sha256 chunked;
@@ -97,6 +161,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_hash_derive_bytes(msg, sizeof(msg), input, size, 19);
     secp256k1_hash_ctx_init(&hash_ctx);
 
+    secp256k1_fuzz_check_sha256_vectors(&hash_ctx);
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, key, keylen, msg, msglen, split);
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, long_key, sizeof(long_key), msg, msglen, split);
     secp256k1_fuzz_check_rfc6979(&hash_ctx, key, keylen);
