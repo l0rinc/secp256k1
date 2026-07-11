@@ -153,18 +153,28 @@ static void secp256k1_musig_session_save(secp256k1_musig_session *session, const
 
 static int secp256k1_musig_session_load(const secp256k1_context* ctx, secp256k1_musig_session_internal *session_i, const secp256k1_musig_session *session) {
     const unsigned char *ptr = session->data;
+    secp256k1_fe fin_nonce_x;
+    secp256k1_ge fin_nonce;
+    int overflow;
 
     ARG_CHECK(secp256k1_memcmp_var(ptr, secp256k1_musig_session_cache_magic, 4) == 0);
     ptr += 4;
     session_i->fin_nonce_parity = *ptr;
+    ARG_CHECK(session_i->fin_nonce_parity <= 1);
     ptr += 1;
     memcpy(session_i->fin_nonce, ptr, 32);
+    ARG_CHECK(secp256k1_fe_set_b32_limit(&fin_nonce_x, session_i->fin_nonce));
+    ARG_CHECK(secp256k1_ge_set_xo_var(&fin_nonce, &fin_nonce_x, session_i->fin_nonce_parity));
+    ARG_CHECK(secp256k1_ge_is_in_correct_subgroup(&fin_nonce));
     ptr += 32;
-    secp256k1_scalar_set_b32(&session_i->noncecoef, ptr, NULL);
+    secp256k1_scalar_set_b32(&session_i->noncecoef, ptr, &overflow);
+    ARG_CHECK(!overflow);
     ptr += 32;
-    secp256k1_scalar_set_b32(&session_i->challenge, ptr, NULL);
+    secp256k1_scalar_set_b32(&session_i->challenge, ptr, &overflow);
+    ARG_CHECK(!overflow);
     ptr += 32;
-    secp256k1_scalar_set_b32(&session_i->s_part, ptr, NULL);
+    secp256k1_scalar_set_b32(&session_i->s_part, ptr, &overflow);
+    ARG_CHECK(!overflow);
     return 1;
 }
 
