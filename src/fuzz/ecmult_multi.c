@@ -128,6 +128,49 @@ static void secp256k1_fuzz_check_error_callback_routing(secp256k1_context *ctx) 
     secp256k1_context_set_error_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_error_callback_clone(secp256k1_context *ctx) {
+    secp256k1_fuzz_ecmult_multi_error_data cloned_data;
+    secp256k1_fuzz_ecmult_multi_error_data original_data;
+    secp256k1_context *callback_clone;
+    secp256k1_context *callback_prealloc_clone;
+    secp256k1_scratch invalid_scratch;
+    void *callback_prealloc_clone_mem;
+    size_t prealloc_size;
+
+    cloned_data.self = &cloned_data;
+    cloned_data.calls = 0;
+    original_data.self = &original_data;
+    original_data.calls = 0;
+    memset(&invalid_scratch, 0, sizeof(invalid_scratch));
+
+    secp256k1_context_set_error_callback(ctx, secp256k1_fuzz_ecmult_multi_error_callback, &cloned_data);
+    callback_clone = secp256k1_context_clone(ctx);
+    FUZZ_CHECK(callback_clone != NULL);
+    prealloc_size = secp256k1_context_preallocated_clone_size(ctx);
+    callback_prealloc_clone_mem = malloc(prealloc_size);
+    FUZZ_CHECK(callback_prealloc_clone_mem != NULL);
+    callback_prealloc_clone = secp256k1_context_preallocated_clone(ctx, callback_prealloc_clone_mem);
+    FUZZ_CHECK(callback_prealloc_clone != NULL);
+
+    secp256k1_context_set_error_callback(ctx, secp256k1_fuzz_ecmult_multi_error_callback, &original_data);
+    secp256k1_scratch_destroy(&callback_clone->error_callback, &invalid_scratch);
+    FUZZ_CHECK(cloned_data.calls == 1);
+    FUZZ_CHECK(original_data.calls == 0);
+    secp256k1_scratch_destroy(&callback_prealloc_clone->error_callback, &invalid_scratch);
+    FUZZ_CHECK(cloned_data.calls == 2);
+    FUZZ_CHECK(original_data.calls == 0);
+    secp256k1_scratch_destroy(&ctx->error_callback, &invalid_scratch);
+    FUZZ_CHECK(cloned_data.calls == 2);
+    FUZZ_CHECK(original_data.calls == 1);
+
+    secp256k1_context_set_error_callback(ctx, NULL, NULL);
+    secp256k1_context_set_error_callback(callback_clone, NULL, NULL);
+    secp256k1_context_set_error_callback(callback_prealloc_clone, NULL, NULL);
+    secp256k1_context_destroy(callback_clone);
+    secp256k1_context_preallocated_destroy(callback_prealloc_clone);
+    free(callback_prealloc_clone_mem);
+}
+
 static void secp256k1_fuzz_ecmult_multi_reset_trace(secp256k1_fuzz_ecmult_multi_data *data) {
     data->calls = 0;
     data->seen_mask = 0;
@@ -429,6 +472,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
     secp256k1_fuzz_check_scratch_create_boundaries(ctx);
     secp256k1_fuzz_check_error_callback_routing(ctx);
+    secp256k1_fuzz_check_error_callback_clone(ctx);
 
     secp256k1_fuzz_scalar32(scalar32, input, size, 223);
     secp256k1_scalar_set_b32(&g_sc, scalar32, &overflow);
