@@ -165,6 +165,29 @@ static void secp256k1_fuzz_check_ellswift_xdh_pair(const secp256k1_context *ctx,
     FUZZ_CHECK(memcmp(shared_a, shared_b, sizeof(shared_a)) == 0);
 }
 
+static void secp256k1_fuzz_check_ellswift_party_boolean(const secp256k1_context *ctx) {
+    unsigned char seckey_a32[32] = { 0 };
+    unsigned char seckey_b32[32] = { 0 };
+    unsigned char ell_a64[64];
+    unsigned char ell_b64[64];
+    unsigned char party_one[32];
+    unsigned char party_two[32];
+    unsigned char party_negative[32];
+
+    /* The API documents party as zero for A and nonzero for B. Keep several
+     * nonzero encodings in the oracle so an implementation cannot silently
+     * narrow that contract to the literal value 1. */
+    seckey_a32[31] = 1;
+    seckey_b32[31] = 2;
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell_a64, seckey_a32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell_b64, seckey_b32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, party_one, ell_a64, ell_b64, seckey_b32, 1, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, party_two, ell_a64, ell_b64, seckey_b32, 2, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, party_negative, ell_a64, ell_b64, seckey_b32, -1, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(memcmp(party_one, party_two, sizeof(party_one)) == 0);
+    FUZZ_CHECK(memcmp(party_one, party_negative, sizeof(party_one)) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_built_in_cleanup(secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, const unsigned char *prefix64) {
     secp256k1_fuzz_ellswift_illegal_data illegal_data;
     unsigned char output[32];
@@ -270,6 +293,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_x32, NULL);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_masked, &hash_data);
     FUZZ_CHECK(hash_data.calls == 2);
+    secp256k1_fuzz_check_ellswift_party_boolean(ctx);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_ellswift_xdh_hash_function_bip324, NULL);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_ellswift_xdh_hash_function_prefix, prefix64);
 
