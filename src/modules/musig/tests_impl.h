@@ -129,6 +129,7 @@ static void musig_api_tests(void) {
     unsigned char sk[2][32];
     secp256k1_keypair keypair[2];
     secp256k1_keypair invalid_keypair;
+    secp256k1_keypair mismatched_keypair;
     unsigned char max64[64];
     unsigned char max132[132];
     unsigned char zeros132[132] = { 0 };
@@ -365,6 +366,14 @@ static void musig_api_tests(void) {
 
     /** Session creation with nonce_gen_counter **/
     CHECK(secp256k1_musig_nonce_gen_counter(CTX, &secnonce[0], &pubnonce[0], nonrepeating_cnt, &keypair[0], msg, &keyagg_cache, max64) == 1);
+    CHECK(secp256k1_ec_pubkey_cmp(CTX, &pk[0], &pk[1]) != 0);
+    mismatched_keypair = keypair[0];
+    memcpy(mismatched_keypair.data + 32, keypair[1].data + 32, sizeof(mismatched_keypair.data) - 32);
+    memset(&secnonce[0], 0xA5, sizeof(secnonce[0]));
+    memset(&pubnonce[0], 0xA5, sizeof(pubnonce[0]));
+    CHECK_ILLEGAL(CTX, secp256k1_musig_nonce_gen_counter(CTX, &secnonce[0], &pubnonce[0], nonrepeating_cnt, &mismatched_keypair, msg, &keyagg_cache, max64));
+    CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
+    CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);
     CHECK_ILLEGAL(STATIC_CTX, secp256k1_musig_nonce_gen_counter(STATIC_CTX, &secnonce[0], &pubnonce[0], nonrepeating_cnt, &keypair[0], msg, &keyagg_cache, max64));
     CHECK(memcmp_and_randomize(secnonce[0].data, zeros132, sizeof(secnonce[0].data)) == 0);
     CHECK(memcmp_and_randomize(pubnonce[0].data, zeros132, sizeof(pubnonce[0].data)) == 0);

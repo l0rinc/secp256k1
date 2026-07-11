@@ -385,6 +385,7 @@ static void test_keypair(void) {
 static void test_keypair_add(void) {
     unsigned char sk[32];
     secp256k1_keypair keypair;
+    secp256k1_keypair mismatched_keypair;
     unsigned char overflows[32];
     unsigned char zeros96[96] = { 0 };
     unsigned char tweak[32];
@@ -395,6 +396,34 @@ static void test_keypair_add(void) {
     testrand256(tweak);
     memset(overflows, 0xFF, 32);
     CHECK(secp256k1_keypair_create(CTX, &keypair, sk) == 1);
+
+    {
+        static const unsigned char scalar_one[32] = {
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+        };
+        static const unsigned char scalar_two[32] = {
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+        };
+        secp256k1_pubkey original_pubkey;
+        secp256k1_pubkey alternate_pubkey;
+
+        CHECK(secp256k1_keypair_pub(CTX, &original_pubkey, &keypair) == 1);
+        CHECK(secp256k1_ec_pubkey_create(CTX, &alternate_pubkey, scalar_one) == 1);
+        if (secp256k1_ec_pubkey_cmp(CTX, &original_pubkey, &alternate_pubkey) == 0) {
+            CHECK(secp256k1_ec_pubkey_create(CTX, &alternate_pubkey, scalar_two) == 1);
+        }
+        CHECK(secp256k1_ec_pubkey_cmp(CTX, &original_pubkey, &alternate_pubkey) != 0);
+        mismatched_keypair = keypair;
+        memcpy(mismatched_keypair.data + 32, alternate_pubkey.data, sizeof(mismatched_keypair.data) - 32);
+        CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_tweak_add(CTX, &mismatched_keypair, tweak));
+        CHECK(secp256k1_memcmp_var(&mismatched_keypair, zeros96, sizeof(mismatched_keypair)) == 0);
+    }
 
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);

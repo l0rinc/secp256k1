@@ -481,6 +481,8 @@ int secp256k1_musig_nonce_gen_counter(const secp256k1_context* ctx, secp256k1_mu
     unsigned char buf[32] = { 0 };
     unsigned char seckey[32];
     secp256k1_pubkey pubkey;
+    secp256k1_scalar sk;
+    secp256k1_ge pk;
     int ret;
 
     VERIFY_CHECK(ctx != NULL);
@@ -491,13 +493,14 @@ int secp256k1_musig_nonce_gen_counter(const secp256k1_context* ctx, secp256k1_mu
     ARG_CHECK(keypair != NULL);
 
     secp256k1_write_be64(buf, nonrepeating_cnt);
-    /* keypair_sec and keypair_pub do not fail if the arguments are not NULL */
-    ret = secp256k1_keypair_sec(ctx, seckey, keypair);
-    ret &= secp256k1_keypair_pub(ctx, &pubkey, keypair);
-    VERIFY_CHECK(ret);
-#ifndef VERIFY
-    (void) ret;
-#endif
+    ret = secp256k1_keypair_load(ctx, &sk, &pk, keypair);
+    if (!ret) {
+        secp256k1_scalar_clear(&sk);
+        return 0;
+    }
+    secp256k1_scalar_get_b32(seckey, &sk);
+    secp256k1_pubkey_save(&pubkey, &pk);
+    secp256k1_scalar_clear(&sk);
 
     ret = secp256k1_musig_nonce_gen_internal(ctx, secnonce, pubnonce, buf, seckey, &pubkey, msg32, keyagg_cache, extra_input32);
     secp256k1_memclear_explicit(seckey, sizeof(seckey));

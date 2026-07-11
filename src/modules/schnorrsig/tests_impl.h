@@ -132,9 +132,11 @@ static void test_schnorrsig_api(void) {
     unsigned char msg[32];
     secp256k1_keypair keypairs[3];
     secp256k1_keypair invalid_keypair = {{ 0 }};
+    secp256k1_keypair mismatched_keypair;
     secp256k1_xonly_pubkey pk[3];
     secp256k1_xonly_pubkey zero_pk;
     unsigned char sig[64];
+    const unsigned char zero_sig[64] = { 0 };
     secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
     secp256k1_schnorrsig_extraparams invalid_extraparams = {{ 0 }, NULL, NULL};
 
@@ -152,6 +154,15 @@ static void test_schnorrsig_api(void) {
 
     /** main test body **/
     CHECK(secp256k1_schnorrsig_sign32(CTX, sig, msg, &keypairs[0], NULL) == 1);
+    CHECK(secp256k1_xonly_pubkey_cmp(CTX, &pk[0], &pk[1]) != 0);
+    mismatched_keypair = keypairs[0];
+    memcpy(mismatched_keypair.data + 32, keypairs[1].data + 32, sizeof(mismatched_keypair.data) - 32);
+    memset(sig, 0xA5, sizeof(sig));
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign32(CTX, sig, msg, &mismatched_keypair, NULL));
+    CHECK(secp256k1_memcmp_var(sig, zero_sig, sizeof(sig)) == 0);
+    memset(sig, 0xA5, sizeof(sig));
+    CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign_custom(CTX, sig, msg, sizeof(msg), &mismatched_keypair, NULL));
+    CHECK(secp256k1_memcmp_var(sig, zero_sig, sizeof(sig)) == 0);
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign32(CTX, NULL, msg, &keypairs[0], NULL));
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign32(CTX, sig, NULL, &keypairs[0], NULL));
     CHECK_ILLEGAL(CTX, secp256k1_schnorrsig_sign32(CTX, sig, msg, NULL, NULL));
