@@ -52,11 +52,9 @@ static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, co
     FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_affine.x));
     FUZZ_CHECK(secp256k1_fe_equal(&result_known, &expected_affine.x));
 
+    /* x = 0 is deterministically off-curve for secp256k1 (7 is nonsquare). */
     secp256k1_fe_set_int(&invalid_x, 0);
-    while (secp256k1_ge_x_on_curve_var(&invalid_x)) {
-        secp256k1_fe_add_int(&invalid_x, 1);
-        secp256k1_fe_normalize_var(&invalid_x);
-    }
+    FUZZ_CHECK(!secp256k1_ge_x_on_curve_var(&invalid_x));
     FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &invalid_x, NULL, scalar, 0) == 0);
     secp256k1_fe_mul(&numerator, &invalid_x, &denominator);
     FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 0) == 0);
