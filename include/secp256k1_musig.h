@@ -164,7 +164,8 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_partial_sig_parse
 
 /** Serialize a MuSig partial signature
  *
- *  Returns: 1 always
+ *  Returns: 0 if the arguments are invalid or the signature object is malformed,
+ *           1 otherwise
  *  Args:    ctx: pointer to a context object
  *  Out:   out32: pointer to a 32-byte array to store the serialized signature
  *  In:      sig: pointer to the signature
