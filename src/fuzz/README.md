@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, encoding, add-int boundaries, and maximum-magnitude consistency
-- `fuzz_group`: Jacobian/affine group-operation agreement and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, batch conversion, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
@@ -210,6 +210,12 @@ documented in its commit message.
   valid key, the reverse comparison is above, and two invalid keys compare
   equal. Clean master already has this behavior; changing the comparator's
   invalid-key fallback makes the focused seed abort.
+  The group target also compares the constant-time and variable-time batch
+  Jacobian-to-affine conversions on finite points. Clean master already agrees
+  on this internal representation contract; changing the constant-time
+  prefix-product initialization makes the focused seed abort. Infinity points
+  remain in the variable-time-only path because the constant-time helper's
+  caller contract requires finite inputs.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
