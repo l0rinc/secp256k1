@@ -949,6 +949,16 @@ static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_conte
     }
 }
 
+static void secp256k1_fuzz_check_signature_parse_der_size_boundary(const secp256k1_context *ctx) {
+    static const unsigned char non_der[1] = {0};
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = {0};
+    secp256k1_ecdsa_signature parsed_sig;
+
+    memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, non_der, SIZE_MAX) == 0);
+    FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
+}
+
 static void secp256k1_fuzz_check_signature_parse_der_boundary(const secp256k1_context *ctx, const unsigned char *r32, const unsigned char *s32, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char der[72];
@@ -1356,6 +1366,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_zero, secp256k1_fuzz_scalar_one, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_one, secp256k1_fuzz_scalar_zero, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_size_boundary(ctx);
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_order_minus_one, secp256k1_fuzz_scalar_order_minus_one, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_order, secp256k1_fuzz_scalar_one, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, secp256k1_fuzz_scalar_one, secp256k1_fuzz_scalar_order, msg32, &pubkey);
