@@ -4,6 +4,7 @@
  * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
  ***********************************************************************/
 
+#include "../secp256k1.c"
 #include "fuzz.h"
 #include "../hash_impl.h"
 
@@ -122,6 +123,48 @@ static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_cont
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded);
 }
 
+static void secp256k1_fuzz_check_ellswift_inverse_vector(const secp256k1_context *ctx, const unsigned char *ell64, const secp256k1_pubkey *pubkey) {
+    secp256k1_ge point;
+    secp256k1_fe u;
+    secp256k1_fe x;
+    secp256k1_fe successful_t[8];
+    int successful = 0;
+    int c;
+    int i;
+
+    /* Check the inverse helper against a fixed vector rather than relying on
+     * the encoder to provide both sides of the same relation. */
+    FUZZ_CHECK(secp256k1_pubkey_load(ctx, &point, pubkey) == 1);
+    x = point.x;
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_set_b32_mod(&u, ell64);
+    secp256k1_fe_normalize_var(&u);
+    FUZZ_CHECK(!secp256k1_fe_is_zero(&u));
+
+    for (c = 0; c < 8; c++) {
+        secp256k1_fe t;
+        secp256k1_fe roundtrip_x;
+        int ret;
+
+        ret = secp256k1_ellswift_xswiftec_inv_var(&t, &x, &u, c);
+        if (!ret) {
+            continue;
+        }
+
+        secp256k1_fe_normalize_var(&t);
+        FUZZ_CHECK(!secp256k1_fe_is_zero(&t));
+        secp256k1_ellswift_xswiftec_var(&roundtrip_x, &u, &t);
+        secp256k1_fe_normalize_var(&roundtrip_x);
+        FUZZ_CHECK(secp256k1_fe_equal(&x, &roundtrip_x));
+        for (i = 0; i < successful; i++) {
+            FUZZ_CHECK(!secp256k1_fe_equal(&successful_t[i], &t));
+        }
+        successful_t[successful++] = t;
+    }
+    FUZZ_CHECK(successful > 0);
+    secp256k1_ge_clear(&point);
+}
+
 static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_context *ctx) {
     /* This vector was generated independently and is part of the BIP324
      * ElligatorSwift decode test set. Do not pin encode/create output: those
@@ -145,6 +188,7 @@ static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_c
     FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
     FUZZ_CHECK(compressed_len == sizeof(compressed));
     FUZZ_CHECK(memcmp(compressed, expected_compressed, sizeof(compressed)) == 0);
+    secp256k1_fuzz_check_ellswift_inverse_vector(ctx, ell64, &pubkey);
 }
 
 static void secp256k1_fuzz_check_ellswift_zero_t_parity(const secp256k1_context *ctx) {

@@ -15,7 +15,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication and affine generator conversion against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency and scratch accounting
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
-- `fuzz_ellswift`: EllSwift encode/decode, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
+- `fuzz_ellswift`: EllSwift encode/decode, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
@@ -307,6 +307,18 @@ documented in its commit message.
   checks; because those public APIs explicitly do not guarantee stable output
   bytes across versions, that result is a stale/overbroad oracle and is not a
   production bug or a reason to pin unstable encodings.
+  The same independently sourced BIP324 vector now exercises every successful
+  `secp256k1_ellswift_xswiftec_inv_var` branch: each result must be nonzero,
+  distinct, and map back through the forward decoder to the vector's X coordinate,
+  with at least one valid branch. It deliberately does not require the inverse
+  helper to reproduce this vector's exact `t`, because the API documents excluded
+  encodings that may be valid for the forward decoder but omitted by the inverse.
+  Clean master passes, and replacing only the inverse helper's final multiplication makes the new seed
+  abort while the existing decode-vector assertion still passes with the oracle
+  disabled. This is informational internal-helper coverage, not a current-master
+  production finding. The inverse helper is now compiled as an internal fuzz target
+  so the assertion observes the same implementation and verification contracts as
+  the field/group fuzzers.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
