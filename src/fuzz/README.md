@@ -173,6 +173,11 @@ documented in its commit message.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.
+  The Schnorr target also checks that custom nonce callbacks receive the
+  normalized secret key and matching x-only public key. A mutation that passes
+  the secret-key buffer in place of the x-only key still produces signatures
+  accepted by ordinary verification, so this callback-domain contract needs
+  its own oracle (this commit).
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not

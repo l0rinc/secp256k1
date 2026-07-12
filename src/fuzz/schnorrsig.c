@@ -38,6 +38,8 @@ static void secp256k1_fuzz_schnorrsig_sha256_compression(uint32_t *state, const 
 typedef struct {
     const void *self;
     const unsigned char *aux32;
+    const unsigned char *expected_key32;
+    const unsigned char *expected_xonly_pk32;
     int calls;
 } secp256k1_fuzz_schnorrsig_nonce_data;
 
@@ -70,6 +72,12 @@ static int secp256k1_fuzz_schnorrsig_nonce(unsigned char *nonce32, const unsigne
     FUZZ_CHECK(msg != NULL || msglen == 0);
     FUZZ_CHECK(key32 != NULL);
     FUZZ_CHECK(xonly_pk32 != NULL);
+    if (nonce_data->expected_key32 != NULL) {
+        FUZZ_CHECK(memcmp(key32, nonce_data->expected_key32, 32) == 0);
+    }
+    if (nonce_data->expected_xonly_pk32 != NULL) {
+        FUZZ_CHECK(memcmp(xonly_pk32, nonce_data->expected_xonly_pk32, 32) == 0);
+    }
     FUZZ_CHECK(algo != NULL);
     FUZZ_CHECK(algolen == sizeof(expected_algo));
     FUZZ_CHECK(memcmp(algo, expected_algo, sizeof(expected_algo)) == 0);
@@ -86,6 +94,12 @@ static int secp256k1_fuzz_schnorrsig_nonce_fail(unsigned char *nonce32, const un
     FUZZ_CHECK(msg != NULL || msglen == 0);
     FUZZ_CHECK(key32 != NULL);
     FUZZ_CHECK(xonly_pk32 != NULL);
+    if (nonce_data->expected_key32 != NULL) {
+        FUZZ_CHECK(memcmp(key32, nonce_data->expected_key32, 32) == 0);
+    }
+    if (nonce_data->expected_xonly_pk32 != NULL) {
+        FUZZ_CHECK(memcmp(xonly_pk32, nonce_data->expected_xonly_pk32, 32) == 0);
+    }
     FUZZ_CHECK(algo != NULL);
     FUZZ_CHECK(algolen == sizeof(expected_algo));
     FUZZ_CHECK(memcmp(algo, expected_algo, sizeof(expected_algo)) == 0);
@@ -103,6 +117,12 @@ static int secp256k1_fuzz_schnorrsig_nonce_zero(unsigned char *nonce32, const un
     FUZZ_CHECK(msg != NULL || msglen == 0);
     FUZZ_CHECK(key32 != NULL);
     FUZZ_CHECK(xonly_pk32 != NULL);
+    if (nonce_data->expected_key32 != NULL) {
+        FUZZ_CHECK(memcmp(key32, nonce_data->expected_key32, 32) == 0);
+    }
+    if (nonce_data->expected_xonly_pk32 != NULL) {
+        FUZZ_CHECK(memcmp(xonly_pk32, nonce_data->expected_xonly_pk32, 32) == 0);
+    }
     FUZZ_CHECK(algo != NULL);
     FUZZ_CHECK(algolen == sizeof(expected_algo));
     FUZZ_CHECK(memcmp(algo, expected_algo, sizeof(expected_algo)) == 0);
@@ -203,6 +223,8 @@ static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1
 
     nonce_data.self = &nonce_data;
     nonce_data.aux32 = aux32;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_xonly_pk32 = NULL;
     nonce_data.calls = 0;
     extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce_fail;
     extraparams.ndata = &nonce_data;
@@ -608,6 +630,8 @@ static void secp256k1_fuzz_check_schnorrsig_impossible_msglen(secp256k1_context 
     illegal_data.calls = 0;
     nonce_data.self = &nonce_data;
     nonce_data.aux32 = aux32;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_xonly_pk32 = NULL;
     nonce_data.calls = 0;
     extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce;
     extraparams.ndata = &nonce_data;
@@ -685,6 +709,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char sig64_negated[64];
     int parity;
     int negated_parity;
+    unsigned char normalized_seckey[32];
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 127);
     secp256k1_fuzz_derive(aux32, sizeof(aux32), input, size, 131);
@@ -694,6 +719,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     custom_algolen = 14 + (secp256k1_fuzz_byte(input, size, 157) % (sizeof(custom_algo) - 13));
     nonce_data.self = &nonce_data;
     nonce_data.aux32 = aux32;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_xonly_pk32 = NULL;
     nonce_data.calls = 0;
     checked_extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce;
     checked_extraparams.ndata = &nonce_data;
@@ -701,6 +728,12 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    memcpy(normalized_seckey, seckey, sizeof(normalized_seckey));
+    if (parity) {
+        FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, normalized_seckey) == 1);
+    }
+    nonce_data.expected_key32 = normalized_seckey;
+    nonce_data.expected_xonly_pk32 = xonly32;
     secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, aux32);
     secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, NULL);
     secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(input, msglen, seckey, xonly32, custom_algo, custom_algolen, aux32);
