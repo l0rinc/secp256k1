@@ -258,6 +258,20 @@ static void secp256k1_fuzz_check_schnorrsig_deprecated_sign(const secp256k1_cont
     FUZZ_CHECK(memcmp(sign32_sig64, deprecated_sig64, sizeof(sign32_sig64)) == 0);
 }
 
+static void secp256k1_fuzz_check_schnorrsig_empty_message(const secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_xonly_pubkey *xonly) {
+    static const unsigned char empty_message = 0;
+    unsigned char null_message_sig[64];
+    unsigned char nonnull_message_sig[64];
+
+    /* The API deliberately permits NULL only for a zero-length message. The
+     * two legal representations must describe the same signing transcript. */
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, null_message_sig, NULL, 0, keypair, NULL) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, nonnull_message_sig, &empty_message, 0, keypair, NULL) == 1);
+    FUZZ_CHECK(memcmp(null_message_sig, nonnull_message_sig, sizeof(null_message_sig)) == 0);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, null_message_sig, NULL, 0, xonly) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, nonnull_message_sig, &empty_message, 0, xonly) == 1);
+}
+
 static void secp256k1_fuzz_check_schnorrsig_extraparams_magic(secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_keypair *keypair) {
     static const unsigned char expected_magic[4] = SECP256K1_SCHNORRSIG_EXTRAPARAMS_MAGIC;
     secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
@@ -728,6 +742,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    secp256k1_fuzz_check_schnorrsig_empty_message(ctx, &keypair, &xonly);
     memcpy(normalized_seckey, seckey, sizeof(normalized_seckey));
     if (parity) {
         FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, normalized_seckey) == 1);
