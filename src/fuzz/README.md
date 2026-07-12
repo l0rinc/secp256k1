@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
@@ -237,6 +237,13 @@ documented in its commit message.
   abort. The fraction predicate is already used by ElligatorSwift and
   deterministic tests, so this catches a regression in its rational-coordinate
   arithmetic without claiming a current-master vulnerability.
+  The API target also pins an independent ECDSA signing equation with a fixed
+  nonce: private key, message, and nonce are all one, so `r = x(G)` and
+  `s = r + 1`. Clean master passes; changing the production signing addition
+  to subtraction aborts on the focused seed. This is informational oracle
+  hardening rather than a current-master finding: the previous default/custom
+  nonce comparison delegated both paths to RFC6979 and could not independently
+  pin the signing equation.
   The EllSwift target also replays a full-width BIP324 decode vector from the
   independently generated module test set and checks the serialized X coordinate
   and parity. Clean master passes; replacing the decode input's `t` half with
