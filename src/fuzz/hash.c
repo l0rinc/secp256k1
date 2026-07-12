@@ -94,6 +94,34 @@ static void secp256k1_fuzz_check_sha256_vectors(const secp256k1_hash_ctx *hash_c
     FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&split, sizeof(split)));
 }
 
+static void secp256k1_fuzz_check_sha256_midstate(const secp256k1_hash_ctx *hash_ctx) {
+    static const unsigned char tag[] = "sha256_midstate_test_tag";
+    static const unsigned char suffix[] = "fuzz-midstate-suffix";
+    static const uint32_t midstate[8] = {
+        0xa9ec59eaul, 0x9b4c2ffful, 0x400821e2ul, 0x0dcf3847ul,
+        0xbe7ea179ul, 0xa5772bdcul, 0x7d29bfe3ul, 0xa486b855ul
+    };
+    secp256k1_sha256 generic;
+    secp256k1_sha256 optimized;
+    unsigned char generic_out[32];
+    unsigned char optimized_out[32];
+
+    secp256k1_sha256_initialize_tagged(hash_ctx, &generic, tag, sizeof(tag) - 1);
+    secp256k1_sha256_initialize_midstate(&optimized, 64, midstate);
+    FUZZ_CHECK(generic.bytes == optimized.bytes);
+    FUZZ_CHECK(memcmp(generic.s, optimized.s, sizeof(generic.s)) == 0);
+
+    secp256k1_sha256_write(hash_ctx, &generic, suffix, sizeof(suffix) - 1);
+    secp256k1_sha256_write(hash_ctx, &optimized, suffix, sizeof(suffix) - 1);
+    secp256k1_sha256_finalize(hash_ctx, &generic, generic_out);
+    secp256k1_sha256_finalize(hash_ctx, &optimized, optimized_out);
+    FUZZ_CHECK(memcmp(generic_out, optimized_out, sizeof(generic_out)) == 0);
+    secp256k1_sha256_clear(&generic);
+    secp256k1_sha256_clear(&optimized);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&generic, sizeof(generic)));
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&optimized, sizeof(optimized)));
+}
+
 static void secp256k1_fuzz_check_hmac_key_boundaries(const secp256k1_hash_ctx *hash_ctx) {
     static const size_t key_lengths[] = { 63, 64, 65, 127, 128, 129 };
     static const unsigned char expected[][32] = {
@@ -197,6 +225,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_hash_ctx_init(&hash_ctx);
 
     secp256k1_fuzz_check_sha256_vectors(&hash_ctx);
+    secp256k1_fuzz_check_sha256_midstate(&hash_ctx);
     secp256k1_fuzz_check_hmac_key_boundaries(&hash_ctx);
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, key, keylen, msg, msglen, split);
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, long_key, sizeof(long_key), msg, msglen, split);
