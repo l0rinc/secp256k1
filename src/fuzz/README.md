@@ -170,6 +170,9 @@ documented in its commit message.
   opaque-key API boundary (`ef25d27`), and the public-key serializer's wrong
   flag-type boundary currently pass on master; their mutations prove that the
   harness would catch a regression, not that master is presently vulnerable.
+  The context target also forces a multi-block custom SHA callback batch
+  (`sha256-multiblock`): master passes the independent digest check, while a
+  one-block production mutation aborts before it can hide a batching error.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
