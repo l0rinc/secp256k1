@@ -1141,6 +1141,8 @@ static void secp256k1_fuzz_check_signature_parse_der_negative(const secp256k1_co
 static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const unsigned char *seckey32, const unsigned char *input, size_t inputlen) {
     static const unsigned char overflow_len_der[] = { 0x30, 0x82, 0xff, 0xff };
     unsigned char exported[300];
+    unsigned char failed_export[300];
+    unsigned char expected_failed_export[300];
     unsigned char imported[32];
     unsigned char zero32[32] = { 0 };
     size_t exported_len;
@@ -1155,6 +1157,14 @@ static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const
         memset(imported, 0xA5, sizeof(imported));
         FUZZ_CHECK(ec_privkey_import_der(ctx, imported, exported, exported_len) == 1);
         FUZZ_CHECK(memcmp(imported, seckey32, sizeof(imported)) == 0);
+
+        memset(failed_export, 0xA5, sizeof(failed_export));
+        memset(expected_failed_export, 0, 279);
+        memset(expected_failed_export + 279, 0xA5, sizeof(expected_failed_export) - 279);
+        exported_len = sizeof(failed_export);
+        FUZZ_CHECK(ec_privkey_export_der(ctx, failed_export, &exported_len, secp256k1_fuzz_scalar_order, compressed) == 0);
+        FUZZ_CHECK(exported_len == 0);
+        FUZZ_CHECK(memcmp(failed_export, expected_failed_export, sizeof(failed_export)) == 0);
     }
 
     memset(imported, 0xA5, sizeof(imported));
