@@ -190,6 +190,12 @@ documented in its commit message.
   opaque-key API boundary (`ef25d27`), and the public-key serializer's wrong
   flag-type boundary currently pass on master; their mutations prove that the
   harness would catch a regression, not that master is presently vulnerable.
+  The existing `fuzz_ecmult_const` target also transitively covers
+  `secp256k1_ge_table_set_globalz`: replacing the accumulated `zs` inverse with
+  the per-entry `zr[i]` makes the `scalar-derived-xonly-fractions` seed abort,
+  while the restored clean-master helper replays successfully. No duplicate
+  helper-only assertion is needed; this is coverage evidence, not a new
+  production finding.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.
