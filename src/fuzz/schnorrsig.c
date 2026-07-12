@@ -153,6 +153,23 @@ static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1
     FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
 }
 
+static void secp256k1_fuzz_check_schnorrsig_deprecated_sign(const secp256k1_context *ctx, const secp256k1_keypair *keypair) {
+    static const unsigned char msg32[32] = { 0 };
+    static const unsigned char aux32[32] = {
+        0x42, 0x17, 0xA5, 0x6C, 0x39, 0xD0, 0x8E, 0xF1,
+        0x24, 0xB7, 0x5D, 0x03, 0x99, 0xCE, 0x71, 0x48,
+        0xDA, 0x2F, 0x86, 0x10, 0x5A, 0xE4, 0xBC, 0x67,
+        0x13, 0xF8, 0x40, 0x9B, 0x2D, 0x75, 0xC6, 0xAE
+    };
+    unsigned char sign32_sig64[64];
+    unsigned char deprecated_sig64[64];
+
+    /* Keep the deprecated entry point tied to sign32, including aux_rand32. */
+    FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sign32_sig64, msg32, keypair, aux32) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_sign(ctx, deprecated_sig64, msg32, keypair, aux32) == 1);
+    FUZZ_CHECK(memcmp(sign32_sig64, deprecated_sig64, sizeof(sign32_sig64)) == 0);
+}
+
 static void secp256k1_fuzz_check_schnorrsig_extraparams_magic(secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_keypair *keypair) {
     static const unsigned char expected_magic[4] = SECP256K1_SCHNORRSIG_EXTRAPARAMS_MAGIC;
     secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
@@ -631,6 +648,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64, msg32, &keypair, aux32) == 1);
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
+    secp256k1_fuzz_check_schnorrsig_deprecated_sign(ctx, &keypair);
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_negated, msg32, &negated_keypair, aux32) == 1);
     FUZZ_CHECK(memcmp(sig64, sig64_negated, sizeof(sig64)) == 0);
     secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
