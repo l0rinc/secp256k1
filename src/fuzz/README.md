@@ -10,7 +10,7 @@ Targets:
 - `fuzz_context`: context randomize, clone, reset, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
-- `fuzz_field`: internal field normalization, arithmetic, encoding, and maximum-magnitude consistency
+- `fuzz_field`: internal field normalization, arithmetic, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
@@ -182,6 +182,12 @@ documented in its commit message.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.
+  The field target also pins the largest valid `secp256k1_fe_add_int` input:
+  magnitude 31 plus `0x7fff` must normalize identically to a low-magnitude
+  reference. The production wrapper now asserts this precondition before the
+  magnitude can exceed the documented 32 limit. Clean master passed the valid
+  boundary; the invalid magnitude-32 call is a caller-domain violation, not a
+  current production finding.
   The Schnorr target also checks that custom nonce callbacks receive the
   normalized secret key and matching x-only public key. A mutation that passes
   the secret-key buffer in place of the x-only key still produces signatures
