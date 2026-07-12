@@ -9,6 +9,7 @@
 #include "secp256k1_preallocated.h"
 
 static size_t secp256k1_fuzz_sha256_compression_calls = 0;
+static size_t secp256k1_fuzz_sha256_compression_max_blocks = 0;
 
 #ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
 static unsigned int secp256k1_fuzz_default_illegal_calls = 0;
@@ -42,6 +43,9 @@ static void secp256k1_fuzz_context_illegal_callback(const char *message, void *d
 
 static void secp256k1_fuzz_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_sha256_compression_calls += n_blocks;
+    if (n_blocks > secp256k1_fuzz_sha256_compression_max_blocks) {
+        secp256k1_fuzz_sha256_compression_max_blocks = n_blocks;
+    }
     secp256k1_sha256_transform(state, blocks64, n_blocks);
 }
 
@@ -93,6 +97,7 @@ static void secp256k1_fuzz_check_tagged_sha256_compression(const secp256k1_conte
     secp256k1_fuzz_tagged_sha256_reference(expected, tag, taglen, msg, msglen);
     memset(hash32, 0xA5, sizeof(hash32));
     secp256k1_fuzz_sha256_compression_calls = 0;
+    secp256k1_fuzz_sha256_compression_max_blocks = 0;
     FUZZ_CHECK(secp256k1_tagged_sha256(ctx, hash32, tag, taglen, msg, msglen) == 1);
     FUZZ_CHECK(memcmp(hash32, expected, sizeof(hash32)) == 0);
     FUZZ_CHECK((secp256k1_fuzz_sha256_compression_calls != 0) == expect_custom_compression);
@@ -303,6 +308,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input + tag_offset, taglen, input + msg_offset, msglen, 0);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input, size, input, size, 1);
     secp256k1_fuzz_check_tagged_sha256_compression(prealloc_hash_clone, input, size, input, size, 1);
+    if (size >= 128) {
+        FUZZ_CHECK(secp256k1_fuzz_sha256_compression_max_blocks > 1);
+    }
     secp256k1_context_preallocated_destroy(prealloc_hash_clone);
     free(prealloc_hash_clone_mem);
     secp256k1_context_destroy(hash_clone);
