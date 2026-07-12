@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify and `sign32`/`sign_custom` equivalence
+- `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
 - `fuzz_musig`: MuSig key aggregation, tweak equivalence, x-only-tweak signing, nonce/signature round trips
 
 Standalone corpus replay:
@@ -217,7 +217,11 @@ documented in its commit message.
   normalized secret key and matching x-only public key. A mutation that passes
   the secret-key buffer in place of the x-only key still produces signatures
   accepted by ordinary verification, so this callback-domain contract needs
-  its own oracle (this commit).
+  its own oracle (this commit). It also exercises the documented empty-message
+  representation boundary: `sign_custom` and `verify` must accept both
+  `(NULL, 0)` and a non-NULL zero-length pointer, and both signatures must be
+  identical. Clean master already passes; this is an informational API oracle,
+  not a current-master production finding.
   The MuSig target also completes signing after deterministic x-only tweaks,
   including the zero tweak and both final-key parities. This binds the cache's
   accumulated parity to partial-signature verification and final Schnorr
