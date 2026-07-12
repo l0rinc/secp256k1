@@ -129,6 +129,36 @@ static void secp256k1_fuzz_check_ecdh_invalid_pubkey(secp256k1_context *ctx, con
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
+
+static void secp256k1_fuzz_check_ecdh_order_plus_one(const secp256k1_context *ctx, const secp256k1_pubkey *point, const unsigned char *mask32) {
+    secp256k1_fuzz_ecdh_hash_data hash_data;
+    unsigned char order_plus_one[32];
+    unsigned char custom_output[64];
+    unsigned char default_output[32];
+    unsigned char zero32[32] = { 0 };
+
+    /* Group order itself reduces to zero, so it also trips the zero-scalar
+     * check. Use n+1, which reduces to one, to distinguish overflow tracking
+     * from the zero check. */
+    memcpy(order_plus_one, secp256k1_fuzz_scalar_order, sizeof(order_plus_one));
+    order_plus_one[31]++;
+    hash_data.self = &hash_data;
+    memcpy(hash_data.mask32, mask32, sizeof(hash_data.mask32));
+    hash_data.calls = 0;
+
+    memset(custom_output, 0xA5, sizeof(custom_output));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, custom_output, point, order_plus_one, fuzz_ecdh_hash_with_data, &hash_data) == 0);
+    FUZZ_CHECK(hash_data.calls == 1);
+
+    memset(default_output, 0xA5, sizeof(default_output));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, default_output, point, order_plus_one, NULL, NULL) == 0);
+    FUZZ_CHECK(memcmp(default_output, zero32, sizeof(default_output)) == 0);
+
+    memset(default_output, 0xA5, sizeof(default_output));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, default_output, point, order_plus_one, secp256k1_ecdh_hash_function_default, NULL) == 0);
+    FUZZ_CHECK(memcmp(default_output, zero32, sizeof(default_output)) == 0);
+}
+
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -167,6 +197,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
     secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
+    secp256k1_fuzz_check_ecdh_order_plus_one(ctx, &pubkey_b, hash_data.mask32);
 
     secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdh_sha256_compression);
