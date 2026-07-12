@@ -228,10 +228,15 @@ static void secp256k1_fuzz_rfc6979_reference_generate(const secp256k1_hash_ctx *
 
 static void secp256k1_fuzz_check_rfc6979_reference(const secp256k1_hash_ctx *hash_ctx, const unsigned char *key, size_t keylen) {
     secp256k1_rfc6979_hmac_sha256 production;
+    secp256k1_rfc6979_hmac_sha256 production_one_shot;
     unsigned char reference_k[32];
     unsigned char reference_v[32];
+    unsigned char reference_one_shot_k[32];
+    unsigned char reference_one_shot_v[32];
     unsigned char production_out[96];
+    unsigned char production_one_shot_out[96];
     unsigned char reference_out[96];
+    unsigned char reference_one_shot_out[96];
 
     secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &production, key, keylen);
     secp256k1_rfc6979_hmac_sha256_generate(hash_ctx, &production, production_out, 32);
@@ -239,14 +244,27 @@ static void secp256k1_fuzz_check_rfc6979_reference(const secp256k1_hash_ctx *has
     secp256k1_rfc6979_hmac_sha256_finalize(&production);
     FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&production, sizeof(production)));
 
+    memset(production_one_shot_out, 0xA5, sizeof(production_one_shot_out));
+    secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &production_one_shot, key, keylen);
+    secp256k1_rfc6979_hmac_sha256_generate(hash_ctx, &production_one_shot, production_one_shot_out, sizeof(production_one_shot_out));
+    secp256k1_rfc6979_hmac_sha256_finalize(&production_one_shot);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&production_one_shot, sizeof(production_one_shot)));
+
     secp256k1_fuzz_rfc6979_reference_initialize(hash_ctx, reference_k, reference_v, key, keylen);
     secp256k1_fuzz_rfc6979_reference_generate(hash_ctx, reference_k, reference_v, 0, reference_out, 32);
     secp256k1_fuzz_rfc6979_reference_generate(hash_ctx, reference_k, reference_v, 1, reference_out + 32, sizeof(reference_out) - 32);
     FUZZ_CHECK(memcmp(production_out, reference_out, sizeof(production_out)) == 0);
+    secp256k1_fuzz_rfc6979_reference_initialize(hash_ctx, reference_one_shot_k, reference_one_shot_v, key, keylen);
+    secp256k1_fuzz_rfc6979_reference_generate(hash_ctx, reference_one_shot_k, reference_one_shot_v, 0, reference_one_shot_out, sizeof(reference_one_shot_out));
+    FUZZ_CHECK(memcmp(production_one_shot_out, reference_one_shot_out, sizeof(production_one_shot_out)) == 0);
     secp256k1_memclear_explicit(reference_k, sizeof(reference_k));
     secp256k1_memclear_explicit(reference_v, sizeof(reference_v));
+    secp256k1_memclear_explicit(reference_one_shot_k, sizeof(reference_one_shot_k));
+    secp256k1_memclear_explicit(reference_one_shot_v, sizeof(reference_one_shot_v));
     secp256k1_memclear_explicit(production_out, sizeof(production_out));
+    secp256k1_memclear_explicit(production_one_shot_out, sizeof(production_one_shot_out));
     secp256k1_memclear_explicit(reference_out, sizeof(reference_out));
+    secp256k1_memclear_explicit(reference_one_shot_out, sizeof(reference_one_shot_out));
 }
 
 static void secp256k1_fuzz_check_rfc6979(const secp256k1_hash_ctx *hash_ctx, const unsigned char *key, size_t keylen) {

@@ -8,7 +8,7 @@ Targets:
 
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, valid-nonce retry, empty sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
-- `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
+- `fuzz_hash`: full-stream HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
@@ -131,6 +131,16 @@ documented in its commit message.
   (`5cfe7f7`). This is a lifetime/cleanup finding rather than a demonstrated
   disclosure; severity must not be raised to critical without a memory-read
   primitive.
+- **Informational oracle hardening:** `fuzz_hash` now compares the complete
+  96-byte RFC6979 one-shot stream against an independently sequenced reference
+  generation. The previous independent reference used only chunked calls, so
+  an output-length-specific one-shot regression could survive it; a one-shot
+  call is deliberately not compared with a later retry call because RFC6979
+  changes state between generate calls. Clean master passes; shortening only
+  the production one-shot path makes the focused `rfc6979-one-shot-output`
+  seed abort. This is oracle hardening, not a current-master production
+  finding. The attempted one-shot-versus-chunked relation was classified as a
+  stale/overbroad oracle and reverted before commit.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting
