@@ -98,9 +98,13 @@ documented in its commit message.
   wire-format remote attacks.
 - **Low:** impossible SHA256 lengths (`ab36b78`), scalar rounded-shift
   bounds (`422bab2`), EllSwift zero-`u` normalization (`119b407`), built-in
-  ECDH failure-output cleanup (`bb15eb0`), and NULL preallocated context
-  storage (`a9253c2`). Public nonce cleanup (`52c573b`) is stale-state hygiene,
-  not critical secret erasure when the nonce has no cryptographic meaning.
+  ECDH failure-output cleanup (`bb15eb0`), NULL preallocated context
+  storage (`a9253c2`), and partial `ecmult_multi` results after a later batch
+  fails (`5bd9ae8`). The latter is an internal helper boundary: callers must
+  honor the failure return, so it is state hygiene rather than a remotely
+  reachable cryptographic defect. Public nonce cleanup (`52c573b`) is also
+  stale-state hygiene, not critical secret erasure when the nonce has no
+  cryptographic meaning.
 - **Informational oracle gaps:** empty public-key aggregation (`c5c0afe`),
   ECDSA verification's invalid-opaque-key API boundary (`ef25d27`), and the
   public-key serializer's wrong flag-type boundary currently pass on master;
