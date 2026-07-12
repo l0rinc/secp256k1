@@ -19,7 +19,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
-- `fuzz_musig`: MuSig key aggregation, tweak equivalence, x-only-tweak signing, nonce/signature round trips
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips
 
 Standalone corpus replay:
 
@@ -239,6 +239,11 @@ documented in its commit message.
   valid key, the reverse comparison is above, and two invalid keys compare
   equal. Clean master already has this behavior; changing the comparator's
   invalid-key fallback makes the focused seed abort.
+  The MuSig target also calls `secp256k1_musig_pubkey_agg` with both optional
+  output pointers set to `NULL`. Clean master accepts the valid input and
+  returns success; requiring either the x-only aggregate or cache output makes
+  the `aggregate-no-outputs` seed abort. This is informational optional-output
+  API coverage, not a current-master production finding.
   The group target also compares the constant-time and variable-time batch
   Jacobian-to-affine conversions on finite points. Clean master already agrees
   on this internal representation contract; changing the constant-time
