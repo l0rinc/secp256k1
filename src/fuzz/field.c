@@ -117,6 +117,23 @@ static const unsigned char secp256k1_fuzz_field_prime[32] = {
     0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
 };
 
+static void secp256k1_fuzz_fe_check_set_b32_limit(const unsigned char *input32) {
+    secp256k1_fe actual;
+    unsigned char actual32[32];
+    int expected = memcmp(input32, secp256k1_fuzz_field_prime, 32) < 0;
+    int actual_ret = secp256k1_fe_set_b32_limit(&actual, input32);
+
+    FUZZ_CHECK(actual_ret == expected);
+    if (actual_ret) {
+#ifdef VERIFY
+        FUZZ_CHECK(actual.normalized == 1);
+        FUZZ_CHECK(actual.magnitude == 1);
+#endif
+        secp256k1_fe_get_b32(actual32, &actual);
+        FUZZ_CHECK(memcmp(actual32, input32, sizeof(actual32)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_fe_reduce_reference(unsigned char *out32, const unsigned char *input32) {
     size_t i;
     int borrow = 0;
@@ -445,15 +462,24 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     unsigned char boundary[32];
+    unsigned char limit_input[32];
     int i;
 
+    secp256k1_fuzz_derive(limit_input, sizeof(limit_input), input, size, 11);
+    secp256k1_fuzz_fe_check_set_b32_limit(limit_input);
     memcpy(boundary, secp256k1_fuzz_field_prime, sizeof(boundary));
+    secp256k1_fuzz_fe_check_set_b32_limit(boundary);
     secp256k1_fuzz_fe_check_set_b32_mod(boundary);
     boundary[31]--;
+    secp256k1_fuzz_fe_check_set_b32_limit(boundary);
     secp256k1_fuzz_fe_check_set_b32_mod(boundary);
     boundary[31] += 2;
+    secp256k1_fuzz_fe_check_set_b32_limit(boundary);
     secp256k1_fuzz_fe_check_set_b32_mod(boundary);
+    memset(boundary, 0, sizeof(boundary));
+    secp256k1_fuzz_fe_check_set_b32_limit(boundary);
     memset(boundary, 0xFF, sizeof(boundary));
+    secp256k1_fuzz_fe_check_set_b32_limit(boundary);
     secp256k1_fuzz_fe_check_set_b32_mod(boundary);
     secp256k1_fuzz_fe_check_bounds_sum(16, 16);
     for (i = 0; i < 4; i++) {
