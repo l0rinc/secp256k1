@@ -689,6 +689,33 @@ static void secp256k1_fuzz_scalar_check_cadd_bit_noop_boundary(void) {
     FUZZ_CHECK(secp256k1_scalar_eq(&actual, &expected));
 }
 
+static void secp256k1_fuzz_scalar_check_cadd_bit_carry_boundaries(void) {
+    static const unsigned int bits[] = {
+        0, 1, 31, 32, 33, 63, 64, 65, 95, 96, 127,
+        128, 129, 159, 160, 191, 192, 193, 223, 224, 255
+    };
+    unsigned char bit32[32];
+    unsigned char order_minus_bit32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    secp256k1_scalar boundary;
+    secp256k1_scalar actual;
+    size_t i;
+
+    /* Exercise every limb boundary while keeping the result below the order. */
+    for (i = 0; i < sizeof(bits) / sizeof(bits[0]); i++) {
+        memset(bit32, 0, sizeof(bit32));
+        bit32[31 - (bits[i] >> 3)] = (unsigned char)(1u << (bits[i] & 7u));
+        secp256k1_fuzz_scalar_bytes_sub(order_minus_bit32, secp256k1_fuzz_scalar_order_minus_one, bit32);
+        FUZZ_CHECK(secp256k1_fuzz_scalar_add_reference(expected32, order_minus_bit32, bit32) == 0);
+        secp256k1_scalar_set_b32(&boundary, order_minus_bit32, NULL);
+        actual = boundary;
+        secp256k1_scalar_cadd_bit(&actual, bits[i], 1);
+        secp256k1_scalar_get_b32(actual32, &actual);
+        FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     unsigned char a32[32];
@@ -708,6 +735,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_scalar_decrement(order_minus_one32, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
     secp256k1_fuzz_scalar_check_cadd_bit_noop_boundary();
+    secp256k1_fuzz_scalar_check_cadd_bit_carry_boundaries();
 
     return 0;
 }
