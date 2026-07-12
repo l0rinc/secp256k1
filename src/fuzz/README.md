@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
-- `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency and scratch accounting
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
@@ -166,6 +166,12 @@ documented in its commit message.
   no read primitive is demonstrated. They are more relevant than public
   nonce-buffer cleanup, but should not be described as critical erasure without
   a memory-disclosure path.
+- **Low:** the internal `secp256k1_gej_rescale` scale-alias contract
+  (`61259f9`) also covers `&r->x`, not only the previously tested `&r->y` and
+  `&r->z` cases. On clean master, the exact `rescale-x-alias` seed and the
+  `gej_rescale_alias` unit test abort at the field overlap check; the existing
+  scale snapshot fixes all three aliases. This remains an internal availability/
+  correctness issue with no current public reachability or cryptographic impact.
 - **Low:** impossible SHA256 lengths (`ab36b78`), scalar rounded-shift
   bounds (`422bab2`), EllSwift zero-`u` normalization (`119b407`), built-in
   ECDH failure-output cleanup (`bb15eb0`), NULL preallocated context

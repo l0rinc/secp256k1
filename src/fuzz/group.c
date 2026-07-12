@@ -274,6 +274,13 @@ static void secp256k1_fuzz_group_check_rescale_alias(const secp256k1_gej *point)
     secp256k1_gej_rescale(&expected, &scale);
     secp256k1_gej_rescale(&actual, &actual.y);
     FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+
+    expected = *point;
+    actual = *point;
+    scale = actual.x;
+    secp256k1_gej_rescale(&expected, &scale);
+    secp256k1_gej_rescale(&actual, &actual.x);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
 }
 
 static void secp256k1_fuzz_group_check_affine_representations(const secp256k1_gej *point) {
