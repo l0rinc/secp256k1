@@ -431,6 +431,7 @@ static void run_scratch_tests(void) {
 static void run_invalid_scratch_space_tests(void) {
     secp256k1_scratch_space* scratch = checked_malloc(&CTX->error_callback, sizeof(*scratch));
     size_t magic_size = sizeof(scratch->magic);
+    unsigned char storage[32];
     memset(scratch, 0, sizeof(*scratch));
     /* catch accesses beyond the magic */
     SECP256K1_CHECKMEM_UNDEFINE((unsigned char*)scratch + magic_size, sizeof(*scratch) - magic_size);
@@ -439,6 +440,21 @@ static void run_invalid_scratch_space_tests(void) {
     CHECK_ERROR(CTX, secp256k1_scratch_alloc(&CTX->error_callback, scratch, 500));
     CHECK_ERROR_VOID(CTX, secp256k1_scratch_space_destroy(CTX, scratch));
 
+    free(scratch);
+
+    /* A magic-valid scratch object must still have consistent accounting. */
+    scratch = checked_malloc(&CTX->error_callback, sizeof(*scratch));
+    memset(scratch, 0, sizeof(*scratch));
+    memcpy(scratch->magic, "scratch", sizeof(scratch->magic));
+    scratch->data = storage;
+    memset(storage, 0xA5, sizeof(storage));
+    scratch->alloc_size = 1;
+    scratch->max_size = 0;
+    CHECK_ERROR(CTX, secp256k1_scratch_checkpoint(&CTX->error_callback, scratch));
+    CHECK_ERROR(CTX, secp256k1_scratch_max_allocation(&CTX->error_callback, scratch, 0));
+    CHECK_ERROR(CTX, secp256k1_scratch_alloc(&CTX->error_callback, scratch, 1));
+    CHECK_ERROR_VOID(CTX, secp256k1_scratch_apply_checkpoint(&CTX->error_callback, scratch, 0));
+    CHECK_ERROR_VOID(CTX, secp256k1_scratch_destroy(&CTX->error_callback, scratch));
     free(scratch);
 }
 
