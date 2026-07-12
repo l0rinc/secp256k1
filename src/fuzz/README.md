@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
+- `fuzz_ecmult_const`: constant-time multiplication and affine generator conversion against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency and scratch accounting
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
@@ -202,6 +202,11 @@ documented in its commit message.
   while the restored clean-master helper replays successfully. No duplicate
   helper-only assertion is needed; this is coverage evidence, not a new
   production finding.
+  It also compares the direct affine generator helper
+  `secp256k1_ecmult_gen_ge` against the independently converted Jacobian result.
+  Clean master passes; replacing its affine conversion with an infinity output
+  makes the dedicated `generator-affine-agreement` seed abort. This is
+  informational helper coverage, not a current-master production finding.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.
