@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
-- `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips
 
@@ -282,6 +282,13 @@ documented in its commit message.
   `secp256k1_ecdsa_sig_sign` to report success makes the dedicated
   `ecdsa-valid-nonce-retry` seed fail verification. This is informational
   retry-state hardening, not a current-master production finding.
+  The recovery target repeats this boundary through
+  `secp256k1_ecdsa_sign_recoverable` and verifies that the retry's recovery ID
+  still recovers the signer, not merely a valid ECDSA signature. Clean master
+  passes; forcing `secp256k1_ecdsa_sig_sign` to report success makes the
+  dedicated `recoverable-valid-nonce-retry` seed fail recovery. This is
+  informational wrapper/state coverage, not a current-master production
+  finding.
   It also exercises the valid zero-element `ec_pubkey_sort` boundary with a
   non-NULL array pointer. Clean master returns success; requiring at least one
   element in the production sort routine makes the focused seed abort. This is
