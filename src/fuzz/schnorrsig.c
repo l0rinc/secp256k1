@@ -254,6 +254,85 @@ static void secp256k1_fuzz_check_schnorrsig_nonce_overflow(const secp256k1_conte
     FUZZ_CHECK(memcmp(sig64_overflow, sig64_reduced, sizeof(sig64_overflow)) == 0);
 }
 
+static void secp256k1_fuzz_schnorrsig_reduce_scalar(unsigned char *out32, const unsigned char *input32) {
+    size_t i;
+    unsigned int borrow = 0;
+
+    memcpy(out32, input32, 32);
+    if (memcmp(out32, secp256k1_fuzz_scalar_order, 32) < 0) {
+        return;
+    }
+    for (i = 32; i > 0; i--) {
+        unsigned int a = out32[i - 1];
+        unsigned int b = secp256k1_fuzz_scalar_order[i - 1] + borrow;
+        out32[i - 1] = (unsigned char)(a - b);
+        borrow = a < b;
+    }
+    FUZZ_CHECK(borrow == 0);
+}
+
+/* Keep the BIP340 challenge and response equation independent from the
+ * optimized challenge path used by the signer and verifier. */
+static void secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(const secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_keypair *keypair) {
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    static const unsigned char nonce32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    };
+    secp256k1_fuzz_schnorrsig_fixed_nonce_data nonce_data;
+    secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
+    secp256k1_pubkey nonce_pubkey;
+    secp256k1_xonly_pubkey xonly;
+    unsigned char seckey[32];
+    unsigned char xonly32[32];
+    unsigned char nonce_serialized[33];
+    unsigned char challenge_input[96];
+    unsigned char challenge32[32];
+    unsigned char reduced_challenge32[32];
+    unsigned char expected_sig64[64];
+    unsigned char actual_sig64[64];
+    size_t nonce_serialized_len = sizeof(nonce_serialized);
+    int parity;
+
+    FUZZ_CHECK(secp256k1_keypair_sec(ctx, seckey, keypair) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &parity, keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &nonce_pubkey, nonce32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, nonce_serialized, &nonce_serialized_len, &nonce_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(nonce_serialized_len == sizeof(nonce_serialized));
+    FUZZ_CHECK(nonce_serialized[0] == SECP256K1_TAG_PUBKEY_EVEN);
+
+    memcpy(challenge_input, nonce_serialized + 1, 32);
+    memcpy(challenge_input + 32, xonly32, 32);
+    memcpy(challenge_input + 64, msg32, 32);
+    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, challenge32, challenge_tag, sizeof(challenge_tag) - 1, challenge_input, sizeof(challenge_input)) == 1);
+    secp256k1_fuzz_schnorrsig_reduce_scalar(reduced_challenge32, challenge32);
+    if (memcmp(reduced_challenge32, secp256k1_fuzz_scalar_zero, 32) == 0) {
+        memcpy(expected_sig64 + 32, nonce32, 32);
+    } else {
+        if (parity) {
+            FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, seckey) == 1);
+        }
+        FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, seckey, reduced_challenge32) == 1);
+        FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, seckey, nonce32) == 1);
+        memcpy(expected_sig64 + 32, seckey, 32);
+    }
+    memcpy(expected_sig64, nonce_serialized + 1, 32);
+
+    nonce_data.self = &nonce_data;
+    nonce_data.nonce32 = nonce32;
+    nonce_data.calls = 0;
+    extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce_fixed;
+    extraparams.ndata = &nonce_data;
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, actual_sig64, msg32, 32, keypair, &extraparams) == 1);
+    FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(memcmp(actual_sig64, expected_sig64, sizeof(actual_sig64)) == 0);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, actual_sig64, msg32, 32, &xonly) == 1);
+    secp256k1_memclear_explicit(seckey, sizeof(seckey));
+}
+
 static void secp256k1_fuzz_check_schnorrsig_rx_overflow(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const secp256k1_xonly_pubkey *xonly) {
     static const unsigned char field_p[32] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -485,6 +564,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
     FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64, sizeof(sig64_explicit_bip340)) == 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
+    secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);
