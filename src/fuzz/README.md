@@ -19,7 +19,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, and counter-nonce optional-input equivalence
 
 Standalone corpus replay:
 
@@ -294,6 +294,18 @@ documented in its commit message.
   harness remains green. This is informational API coverage, not a
   current-master production finding; the deterministic MuSig tests already
   cover the same argument combination.
+  The MuSig target also cross-checks `secp256k1_musig_nonce_gen_counter`
+  against `secp256k1_musig_nonce_gen` and an independent transcript reference
+  across all eight combinations of optional message, key-aggregation cache, and
+  extra-input pointers. Each case uses a distinct counter, and successful calls
+  must agree in secret nonce bytes, public nonce serialization, and the required
+  random-input clearing. Clean master passes; deterministic tests cover the
+  combinations individually, but the earlier fuzzer oracle covered only the
+  all-present combination. This is informational oracle hardening, not a
+  current-master production finding. A selective mutation that injects the
+  secret key as `extra_input32` only for the all-NULL combination makes the
+  dedicated `nonce-counter-optional-inputs` seed abort while the previous
+  all-present oracle and scalar barrier remain green.
   It also independently recomputes the one-key KeyAgg transcript. The absence
   of a second distinct key must not turn the sole key's coefficient into the
   identity scalar; the `keyagg-single-coefficient` seed compares the resulting
