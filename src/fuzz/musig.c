@@ -117,6 +117,79 @@ static void secp256k1_fuzz_check_musig_keyagg_reference(const secp256k1_context 
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_tweaked_sign_case(const secp256k1_context *ctx, const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, const secp256k1_musig_keyagg_cache *cache, const secp256k1_xonly_pubkey *agg_xonly) {
+    unsigned char msg32[32] = { 0 };
+    unsigned char sig64[64];
+    secp256k1_musig_secnonce secnonce[2];
+    secp256k1_musig_pubnonce pubnonce[2];
+    secp256k1_musig_aggnonce aggnonce;
+    secp256k1_musig_session session;
+    secp256k1_musig_partial_sig partial_sig[2];
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
+    const secp256k1_musig_partial_sig *partial_sig_ptrs[2];
+    size_t i;
+
+    for (i = 0; i < 2; i++) {
+        FUZZ_CHECK(secp256k1_musig_nonce_gen_counter(ctx, &secnonce[i], &pubnonce[i], (uint64_t)(i + 1), &keypairs[i], msg32, cache, NULL) == 1);
+        pubnonce_ptrs[i] = &pubnonce[i];
+        partial_sig_ptrs[i] = &partial_sig[i];
+    }
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, cache) == 1);
+    for (i = 0; i < 2; i++) {
+        FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], cache, &session) == 1);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], cache, &session) == 1);
+    }
+    FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), agg_xonly) == 1);
+}
+
+static void secp256k1_fuzz_check_musig_tweaked_signing(const secp256k1_context *ctx) {
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char tweak[32] = { 0 };
+    secp256k1_keypair keypairs[2];
+    secp256k1_pubkey pubkeys[2];
+    secp256k1_xonly_pubkey base_xonly;
+    secp256k1_xonly_pubkey tweaked_xonly;
+    secp256k1_musig_keyagg_cache base_cache;
+    secp256k1_musig_keyagg_cache tweaked_cache;
+    secp256k1_pubkey tweaked_full;
+    const secp256k1_pubkey *pubkey_ptrs[2];
+    unsigned int parity_seen[2] = { 0, 0 };
+    unsigned int parity_tested[2] = { 0, 0 };
+    unsigned int counter;
+
+    scalar_two[31] = 2;
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypairs[0], secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypairs[1], scalar_two) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkeys[0], &keypairs[0]) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkeys[1], &keypairs[1]) == 1);
+    pubkey_ptrs[0] = &pubkeys[0];
+    pubkey_ptrs[1] = &pubkeys[1];
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &base_xonly, &base_cache, pubkey_ptrs, 2) == 1);
+
+    /* Small plain tweaks are deterministic and provide both final-key parity
+     * branches without depending on the fuzzer input distribution. */
+    for (counter = 1; counter <= 32; counter++) {
+        int parity;
+        memset(tweak, 0, sizeof(tweak));
+        tweak[31] = (unsigned char)counter;
+        tweaked_cache = base_cache;
+        FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(ctx, &tweaked_full, &tweaked_cache, tweak) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &tweaked_xonly, &parity, &tweaked_full) == 1);
+        FUZZ_CHECK(parity == 0 || parity == 1);
+        parity_seen[parity] = 1;
+        if (!parity_tested[parity]) {
+            secp256k1_fuzz_check_musig_tweaked_sign_case(ctx, keypairs, pubkeys, &tweaked_cache, &tweaked_xonly);
+            parity_tested[parity] = 1;
+        }
+    }
+    FUZZ_CHECK(parity_seen[0] != 0);
+    FUZZ_CHECK(parity_seen[1] != 0);
+    FUZZ_CHECK(parity_tested[0] != 0);
+    FUZZ_CHECK(parity_tested[1] != 0);
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -1461,6 +1534,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[1], secp256k1_fuzz_scalar_order_minus_one) == 1);
     secp256k1_fuzz_check_musig_noncanonical_duplicate(ctx);
     secp256k1_fuzz_check_musig_keyagg_reference(ctx);
+    secp256k1_fuzz_check_musig_tweaked_signing(ctx);
     secp256k1_fuzz_scalar32(tweak, input, size, 173);
     secp256k1_fuzz_derive(session_rand, sizeof(session_rand), input, size, 197);
     if (memcmp(session_rand, secp256k1_fuzz_scalar_zero, sizeof(session_rand)) == 0) {
