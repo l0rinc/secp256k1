@@ -13,7 +13,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, and scratch accounting
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
@@ -197,6 +197,16 @@ documented in its commit message.
   abort. This is internal callback-index and failure-state coverage, not a
   current-master production finding; the existing target already covered
   single-batch Pippenger and multi-batch Strauss behavior.
+- **Sanitizer-only fuzzer fix:** the `ecmult_multi` harness now uses defined
+  scalar-zero initialization when constructing zero or overflow fallback cases.
+  Before this correction, MemorySanitizer reported an uninitialized read in the
+  harness's adjacent scalar-negation case for
+  `ecmult_multi/msan-defined-zero-scalar`; `secp256k1_scalar_clear` intentionally
+  poisons memory under MSan and is therefore not a logical zero constructor.
+  This is a fuzzer-domain defect, not a production finding: ASan/UBSan and the
+  library's normal builds cannot classify the poisoned cleared value as
+  uninitialized. The seed is retained so future oracle work cannot reintroduce
+  the invalid harness state.
 - **Low:** noncanonical MuSig nonce storage (`64250f7`) and overflowing opaque
   partial-signature serialization (`3c1d67b`) are local API-consistency and
   cross-build robustness failures. MuSig failed parse/aggregation/session and
