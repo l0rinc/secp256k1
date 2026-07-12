@@ -269,6 +269,14 @@ documented in its commit message.
   returns success; requiring either the x-only aggregate or cache output makes
   the `aggregate-no-outputs` seed abort. This is informational optional-output
   API coverage, not a current-master production finding.
+  It also independently recomputes the one-key KeyAgg transcript. The absence
+  of a second distinct key must not turn the sole key's coefficient into the
+  identity scalar; the `keyagg-single-coefficient` seed compares the resulting
+  full and x-only aggregates against the generic tagged-hash reference. Clean
+  master passes; treating an infinite `second_pk` as the identity-coefficient
+  branch makes the seed abort. This is informational oracle hardening, not a
+  current-master production finding; the existing one-signer sign/verify path
+  would otherwise share the same mistaken cache and fail to detect it.
   The group target also compares the constant-time and variable-time batch
   Jacobian-to-affine conversions on finite points. Clean master already agrees
   on this internal representation contract; changing the constant-time

@@ -266,6 +266,46 @@ static void secp256k1_fuzz_check_musig_keyagg_reference(const secp256k1_context 
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_single_keyagg_reference(const secp256k1_context *ctx) {
+    static const unsigned char keyagg_list_tag[] = "KeyAgg list";
+    static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
+    unsigned char serialized[33];
+    unsigned char pks_hash[32];
+    unsigned char coefficient_input[65];
+    unsigned char coefficient_hash[32];
+    unsigned char coefficient[32];
+    size_t serialized_len = sizeof(serialized);
+    secp256k1_pubkey pubkey;
+    secp256k1_pubkey expected_full;
+    secp256k1_pubkey actual_full;
+    secp256k1_xonly_pubkey expected_xonly;
+    secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_musig_keyagg_cache cache;
+    const secp256k1_pubkey *pubkey_ptrs[1];
+
+    /* With one key there is no second distinct key, so the coefficient is still
+     * KeyAggCoeff(pk_hash, pk), rather than the identity scalar. */
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == sizeof(serialized));
+    secp256k1_fuzz_musig_tagged_hash_reference(pks_hash, keyagg_list_tag, sizeof(keyagg_list_tag) - 1, serialized, sizeof(serialized));
+    memcpy(coefficient_input, pks_hash, sizeof(pks_hash));
+    memcpy(coefficient_input + sizeof(pks_hash), serialized, sizeof(serialized));
+    secp256k1_fuzz_musig_tagged_hash_reference(coefficient_hash, keyagg_coef_tag, sizeof(keyagg_coef_tag) - 1, coefficient_input, sizeof(coefficient_input));
+    secp256k1_fuzz_musig_reduce_scalar(coefficient, coefficient_hash);
+    FUZZ_CHECK(memcmp(coefficient, secp256k1_fuzz_scalar_zero, sizeof(coefficient)) != 0);
+    FUZZ_CHECK(memcmp(coefficient, secp256k1_fuzz_scalar_one, sizeof(coefficient)) != 0);
+
+    expected_full = pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &expected_full, coefficient) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &expected_xonly, NULL, &expected_full) == 1);
+    pubkey_ptrs[0] = &pubkey;
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly, &cache, pubkey_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &actual_full, &expected_full) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_three_keyagg_reference(const secp256k1_context *ctx) {
     static const unsigned char keyagg_list_tag[] = "KeyAgg list";
     static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
@@ -1848,6 +1888,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[1], secp256k1_fuzz_scalar_order_minus_one) == 1);
     secp256k1_fuzz_check_musig_noncanonical_duplicate(ctx);
     secp256k1_fuzz_check_musig_keyagg_reference(ctx);
+    secp256k1_fuzz_check_musig_single_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_three_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_tweaked_signing(ctx);
     secp256k1_fuzz_check_musig_xonly_tweaked_signing(ctx);
