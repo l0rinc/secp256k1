@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, XDH symmetry, built-in hash cleanup
-- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction
+- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify and `sign32`/`sign_custom` equivalence
 - `fuzz_musig`: MuSig key aggregation, tweak equivalence, x-only-tweak signing, nonce/signature round trips
@@ -205,6 +205,11 @@ documented in its commit message.
   initialized zero optional parity result. This is an informational local-state
   oracle: clean master already rejects the object, while skipping the
   `secp256k1_keypair_load` result check makes the focused seed abort.
+  It also checks that `secp256k1_xonly_pubkey_cmp` maps an invalid opaque
+  x-only key to the documented all-zero ordering sentinel: invalid is below a
+  valid key, the reverse comparison is above, and two invalid keys compare
+  equal. Clean master already has this behavior; changing the comparator's
+  invalid-key fallback makes the focused seed abort.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
