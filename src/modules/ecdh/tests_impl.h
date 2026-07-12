@@ -134,8 +134,10 @@ static void test_bad_scalar(void) {
     unsigned char s_overflow_plus1[32] = { 0 };
     unsigned char s_rand[32] = { 0 };
     unsigned char output[32];
+    const unsigned char *invalid_scalars[3];
     secp256k1_scalar rand;
     secp256k1_pubkey point;
+    int i;
 
     /* Create random point */
     testutil_random_scalar_order(&rand);
@@ -146,6 +148,9 @@ static void test_bad_scalar(void) {
     memcpy(s_overflow, secp256k1_group_order_bytes, 32);
     memcpy(s_overflow_plus1, secp256k1_group_order_bytes, 32);
     s_overflow_plus1[31] += 1;
+    invalid_scalars[0] = s_zero;
+    invalid_scalars[1] = s_overflow;
+    invalid_scalars[2] = s_overflow_plus1;
     memset(output, 1, sizeof(output));
     CHECK(secp256k1_ecdh(CTX, output, &point, s_zero, NULL, NULL) == 0);
     CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
@@ -155,6 +160,14 @@ static void test_bad_scalar(void) {
     memset(output, 1, sizeof(output));
     CHECK(secp256k1_ecdh(CTX, output, &point, s_overflow_plus1, NULL, NULL) == 0);
     CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
+    for (i = 0; i < 3; i++) {
+        memset(output, 1, sizeof(output));
+        CHECK(secp256k1_ecdh(CTX, output, &point, invalid_scalars[i], secp256k1_ecdh_hash_function_sha256, NULL) == 0);
+        CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
+        memset(output, 1, sizeof(output));
+        CHECK(secp256k1_ecdh(CTX, output, &point, invalid_scalars[i], secp256k1_ecdh_hash_function_default, NULL) == 0);
+        CHECK(secp256k1_memcmp_var(output, s_zero, sizeof(output)) == 0);
+    }
     /* ...and a good one */
     s_overflow[31] -= 1;
     CHECK(secp256k1_ecdh(CTX, output, &point, s_overflow, NULL, NULL) == 1);

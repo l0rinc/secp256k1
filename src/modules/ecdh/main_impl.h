@@ -41,6 +41,10 @@ const secp256k1_ecdh_hash_function secp256k1_ecdh_hash_function_default = ecdh_h
 int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const secp256k1_pubkey *point, const unsigned char *scalar, secp256k1_ecdh_hash_function hashfp, void *data) {
     int ret = 0;
     int overflow = 0;
+    /* Only library-owned callbacks have a fixed output contract on failure. */
+    int known_hashfp = hashfp == NULL
+        || hashfp == secp256k1_ecdh_hash_function_sha256
+        || hashfp == secp256k1_ecdh_hash_function_default;
     secp256k1_gej res;
     secp256k1_ge pt;
     secp256k1_scalar s;
@@ -49,14 +53,14 @@ int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const se
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output != NULL);
-    if (hashfp == NULL && (point == NULL || scalar == NULL)) {
+    if (known_hashfp && (point == NULL || scalar == NULL)) {
         memset(output, 0, 32);
     }
     ARG_CHECK(point != NULL);
     ARG_CHECK(scalar != NULL);
 
     if (!secp256k1_pubkey_load(ctx, &pt, point)) {
-        if (hashfp == NULL) {
+        if (known_hashfp) {
             memset(output, 0, 32);
         }
         return 0;
@@ -88,7 +92,7 @@ int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const se
     secp256k1_ge_clear(&pt);
     secp256k1_gej_clear(&res);
 
-    if (hashfp == NULL) {
+    if (known_hashfp) {
         secp256k1_memczero(output, 32, overflow || !ret);
     }
     return !!ret & !overflow;
