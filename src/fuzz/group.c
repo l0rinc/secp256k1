@@ -438,6 +438,45 @@ static void secp256k1_fuzz_group_check_batch_conversion_finite(const secp256k1_g
     }
 }
 
+static int secp256k1_fuzz_group_x_on_curve_reference(const secp256k1_fe *x) {
+    secp256k1_fe x2;
+    secp256k1_fe x3;
+
+    secp256k1_fe_sqr(&x2, x);
+    secp256k1_fe_mul(&x3, &x2, x);
+    secp256k1_fe_add_int(&x3, SECP256K1_B);
+    return secp256k1_fe_is_square_var(&x3);
+}
+
+static void secp256k1_fuzz_group_check_x_frac_curve(const unsigned char *input, size_t size) {
+    unsigned char numerator32[32];
+    unsigned char denominator32[32];
+    secp256k1_fe numerator;
+    secp256k1_fe denominator;
+    secp256k1_fe denominator_inverse;
+    secp256k1_fe quotient;
+
+    secp256k1_fuzz_derive(numerator32, sizeof(numerator32), input, size, 67);
+    secp256k1_fuzz_derive(denominator32, sizeof(denominator32), input, size, 73);
+    secp256k1_fe_set_b32_mod(&numerator, numerator32);
+    secp256k1_fe_set_b32_mod(&denominator, denominator32);
+    secp256k1_fe_normalize_var(&numerator);
+    secp256k1_fe_normalize_var(&denominator);
+    if (secp256k1_fe_is_zero(&denominator)) {
+        secp256k1_fe_set_int(&denominator, 1);
+    }
+
+    denominator_inverse = denominator;
+    secp256k1_fe_inv_var(&denominator_inverse, &denominator_inverse);
+    secp256k1_fe_mul(&quotient, &numerator, &denominator_inverse);
+    FUZZ_CHECK(secp256k1_ge_x_frac_on_curve_var(&numerator, &denominator) == secp256k1_fuzz_group_x_on_curve_reference(&quotient));
+
+    /* The generator gives a deterministic true case even when random input is not on-curve. */
+    denominator = secp256k1_fe_one;
+    numerator = secp256k1_ge_const_g.x;
+    FUZZ_CHECK(secp256k1_ge_x_frac_on_curve_var(&numerator, &denominator) == 1);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
@@ -459,6 +498,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char b32[32];
     unsigned char scale32[32];
 
+    secp256k1_fuzz_group_check_x_frac_curve(input, size);
     secp256k1_fuzz_group_check_opaque_pubkey_barrier(ctx);
     secp256k1_fuzz_group_scalar(&a_scalar, a32, input, size, 79);
     secp256k1_fuzz_group_scalar(&b_scalar, b32, input, size, 83);
