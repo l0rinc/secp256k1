@@ -316,6 +316,17 @@ documented in its commit message.
   secret key as `extra_input32` only for the all-NULL combination makes the
   dedicated `nonce-counter-optional-inputs` seed abort while the previous
   all-present oracle and scalar barrier remain green.
+  The nonce-generation failure oracle now also snapshots `session_secrand32`:
+  only a successful call may consume this caller-owned secret, while invalid
+  seckeys and invalid public keys must leave it available for a corrected
+  retry. Clean master passes; adding an unconditional wipe in the invalid
+  seckey branch or in the invalid-public-key branch made the existing corpus
+  pass before the new postcondition aborted on `state-output-failure-cleanup`
+  or `nonce-invalid-pubkey-cleanup`, respectively. This is informational
+  oracle hardening, not a clean-master production finding. A failure here
+  would be a low-severity retry/availability regression, not a nonce-secret
+  compromise; public nonce cleanup remains non-critical because that nonce has
+  no cryptographic meaning.
   It also independently recomputes the one-key KeyAgg transcript. The absence
   of a second distinct key must not turn the sole key's coefficient into the
   identity scalar; the `keyagg-single-coefficient` seed compares the resulting
