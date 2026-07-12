@@ -1861,6 +1861,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_pubkey zero_tweaked_full;
     secp256k1_xonly_pubkey agg_xonly;
     secp256k1_xonly_pubkey single_agg_xonly;
+    secp256k1_xonly_pubkey agg_xonly_no_cache;
     secp256k1_xonly_pubkey agg_xonly_from_full;
     secp256k1_xonly_pubkey tweaked_xonly;
     secp256k1_musig_keyagg_cache cache;
@@ -1921,6 +1922,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, &agg_xonly, &cache);
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &single_agg_xonly, &single_cache, pubkey_ptrs, 1) == 1);
     secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, &single_agg_xonly, &single_cache);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_xonly_no_cache, NULL, pubkey_ptrs, n_pubkeys) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &agg_xonly_no_cache, &agg_xonly) == 0);
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, NULL, &cache_no_output, pubkey_ptrs, n_pubkeys) == 1);
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, NULL, NULL, pubkey_ptrs, n_pubkeys) == 1);
     secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, NULL, &cache_no_output);
