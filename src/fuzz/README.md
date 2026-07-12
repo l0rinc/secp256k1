@@ -484,3 +484,13 @@ the discovery order intact. Fork patches are never used to prove that a
 current-master failure was absent; every important barrier still has its own
 seed or minimal production mutation, and severity is always assigned against
 the clean baseline before later fixes are applied.
+
+The additional fork refs were audited on 2026-07-13. The
+`musig-cleanup-failures` branch (`bb02b1e`) is an older cleanup stack whose
+production edits are already represented by the current MuSig cleanup commits
+and the stronger opaque-state barriers here; replaying it would duplicate or
+remove those barriers. `detached10` through `detached19` are alternative
+force-inline or field-CMOV optimization snapshots. `detached20` through
+`detached22` are broader snapshots containing the same optimization and
+behavior-changing stacks already classified above. None adds a distinct
+clean-master finding or a reason to change an existing severity rating.
