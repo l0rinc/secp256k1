@@ -7452,6 +7452,16 @@ static void test_ecdsa_der_lax_long_form_lengths(void) {
     CHECK(secp256k1_memcmp_var(compact, expected, sizeof(compact)) == 0);
 }
 
+static void test_ecdsa_der_size_boundary(void) {
+    static const unsigned char non_der[1] = {0};
+    static const unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = {0};
+    secp256k1_ecdsa_signature parsed;
+
+    memset(&parsed, 0xA5, sizeof(parsed));
+    CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &parsed, non_der, SIZE_MAX) == 0);
+    CHECK(secp256k1_memcmp_var(&parsed, zero_sig, sizeof(parsed)) == 0);
+}
+
 static void damage_array(unsigned char *sig, size_t *len) {
     int pos;
     int action = testrand_bits(3);
@@ -7628,6 +7638,7 @@ static void random_ber_signature(unsigned char *sig, size_t *len, int* certainly
 static void run_ecdsa_der_parse(void) {
     int i,j;
     test_ecdsa_der_lax_long_form_lengths();
+    test_ecdsa_der_size_boundary();
     for (i = 0; i < 200 * COUNT; i++) {
         unsigned char buffer[2048];
         size_t buflen = 0;
