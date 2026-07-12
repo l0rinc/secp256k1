@@ -287,6 +287,13 @@ documented in its commit message.
   returns success; requiring either the x-only aggregate or cache output makes
   the `aggregate-no-outputs` seed abort. This is informational optional-output
   API coverage, not a current-master production finding.
+  It also compares the aggregate x-only output when only the cache output is
+  omitted against the full-output call. Clean master accepts this independent
+  optional-output combination; rejecting `(agg_pk != NULL, keyagg_cache ==
+  NULL)` makes the `aggregate-xonly-without-cache` seed abort while the prior
+  harness remains green. This is informational API coverage, not a
+  current-master production finding; the deterministic MuSig tests already
+  cover the same argument combination.
   It also independently recomputes the one-key KeyAgg transcript. The absence
   of a second distinct key must not turn the sole key's coefficient into the
   identity scalar; the `keyagg-single-coefficient` seed compares the resulting
