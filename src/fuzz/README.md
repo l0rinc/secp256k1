@@ -19,7 +19,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify and `sign32`/`sign_custom` equivalence
-- `fuzz_musig`: MuSig key aggregation, tweak equivalence, nonce/signature round trips
+- `fuzz_musig`: MuSig key aggregation, tweak equivalence, x-only-tweak signing, nonce/signature round trips
 
 Standalone corpus replay:
 
@@ -193,6 +193,13 @@ documented in its commit message.
   the secret-key buffer in place of the x-only key still produces signatures
   accepted by ordinary verification, so this callback-domain contract needs
   its own oracle (this commit).
+  The MuSig target also completes signing after deterministic x-only tweaks,
+  including the zero tweak and both final-key parities. This binds the cache's
+  accumulated parity to partial-signature verification and final Schnorr
+  verification. Negating the `secp256k1_extrakeys_ge_even_y` condition in
+  `secp256k1_musig_pubkey_tweak_add_internal` makes the focused seed abort;
+  the existing x-only implementation passes, so this is oracle hardening
+  rather than a current-master finding.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
