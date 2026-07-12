@@ -129,6 +129,51 @@ static int secp256k1_fuzz_schnorrsig_nonce_fixed(unsigned char *nonce32, const u
     return 1;
 }
 
+static void secp256k1_fuzz_schnorrsig_tagged_hash_reference(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *part1, size_t part1_len, const unsigned char *part2, size_t part2_len, const unsigned char *part3, size_t part3_len) {
+    secp256k1_hash_ctx hash_ctx;
+    secp256k1_sha256 sha;
+    unsigned char taghash[32];
+
+    secp256k1_hash_ctx_init(&hash_ctx);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, tag, taglen);
+    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    if (part1_len != 0) {
+        secp256k1_sha256_write(&hash_ctx, &sha, part1, part1_len);
+    }
+    if (part2_len != 0) {
+        secp256k1_sha256_write(&hash_ctx, &sha, part2, part2_len);
+    }
+    if (part3_len != 0) {
+        secp256k1_sha256_write(&hash_ctx, &sha, part3, part3_len);
+    }
+    secp256k1_sha256_finalize(&hash_ctx, &sha, out32);
+    secp256k1_sha256_clear(&sha);
+}
+
+static void secp256k1_fuzz_check_schnorrsig_nonce_reference(const unsigned char *msg, size_t msglen, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *aux32) {
+    static const unsigned char aux_tag[] = "BIP0340/aux";
+    static const unsigned char nonce_tag[] = "BIP0340/nonce";
+    unsigned char zero32[32] = { 0 };
+    unsigned char masked_key[32];
+    unsigned char aux_hash[32];
+    unsigned char expected_nonce[32];
+    unsigned char actual_nonce[32];
+    const unsigned char *aux_input = aux32 == NULL ? zero32 : aux32;
+    size_t i;
+
+    secp256k1_fuzz_schnorrsig_tagged_hash_reference(aux_hash, aux_tag, sizeof(aux_tag) - 1, aux_input, sizeof(zero32), NULL, 0, NULL, 0);
+    for (i = 0; i < sizeof(masked_key); i++) {
+        masked_key[i] = (unsigned char)(aux_hash[i] ^ key32[i]);
+    }
+    secp256k1_fuzz_schnorrsig_tagged_hash_reference(expected_nonce, nonce_tag, sizeof(nonce_tag) - 1, masked_key, sizeof(masked_key), xonly_pk32, 32, msg, msglen);
+    FUZZ_CHECK(secp256k1_nonce_function_bip340(actual_nonce, msg, msglen, key32, xonly_pk32, nonce_tag, sizeof(nonce_tag) - 1, (void *)aux32) == 1);
+    FUZZ_CHECK(memcmp(actual_nonce, expected_nonce, sizeof(actual_nonce)) == 0);
+}
+
 static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1_context *ctx, const unsigned char *msg, size_t msglen, const secp256k1_keypair *keypair, const unsigned char *aux32) {
     secp256k1_fuzz_schnorrsig_nonce_data nonce_data;
     secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
@@ -631,6 +676,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, aux32);
+    secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, NULL);
     secp256k1_fuzz_check_bip340_nonce_failure_cleanup(input, msglen, seckey, xonly32, aux32);
     memcpy(negated_seckey, seckey, sizeof(negated_seckey));
     FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, negated_seckey) == 1);
