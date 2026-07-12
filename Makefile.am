@@ -149,46 +149,47 @@ FUZZ_CPPFLAGS = $(SECP_CONFIG_DEFINES) -I$(top_srcdir)/include
 FUZZ_LDADD = libsecp256k1.la
 FUZZ_INTERNAL_CPPFLAGS = $(FUZZ_CPPFLAGS) -I$(top_srcdir)/src -DVERIFY
 FUZZ_INTERNAL_LDADD = $(COMMON_LIB) $(PRECOMPUTED_LIB)
+FUZZ_COMMON_SOURCES = src/fuzz/external_callbacks.c
 
 noinst_PROGRAMS += fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_group fuzz_ecmult_const fuzz_ecmult_multi
 TESTS += fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field fuzz_group fuzz_ecmult_const fuzz_ecmult_multi
 
-fuzz_api_roundtrip_SOURCES = src/fuzz/api_roundtrip.c
+fuzz_api_roundtrip_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/api_roundtrip.c
 fuzz_api_roundtrip_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_api_roundtrip_LDADD = $(FUZZ_LDADD)
 
-fuzz_context_SOURCES = src/fuzz/context.c
+fuzz_context_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/context.c
 fuzz_context_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_context_LDADD = $(FUZZ_LDADD)
 
-fuzz_hash_SOURCES = src/fuzz/hash.c
+fuzz_hash_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/hash.c
 fuzz_hash_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_hash_LDADD = $(FUZZ_INTERNAL_LDADD)
 
-fuzz_scalar_SOURCES = src/fuzz/scalar.c
+fuzz_scalar_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/scalar.c
 fuzz_scalar_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_scalar_LDADD = $(FUZZ_INTERNAL_LDADD)
 
-fuzz_field_SOURCES = src/fuzz/field.c
+fuzz_field_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/field.c
 fuzz_field_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_field_LDADD = $(FUZZ_INTERNAL_LDADD)
 
-fuzz_group_SOURCES = src/fuzz/group.c
+fuzz_group_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/group.c
 fuzz_group_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_group_LDADD = $(FUZZ_INTERNAL_LDADD)
 
-fuzz_ecmult_const_SOURCES = src/fuzz/ecmult_const.c
+fuzz_ecmult_const_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/ecmult_const.c
 fuzz_ecmult_const_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_ecmult_const_LDADD = $(FUZZ_INTERNAL_LDADD)
 
-fuzz_ecmult_multi_SOURCES = src/fuzz/ecmult_multi.c
+fuzz_ecmult_multi_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/ecmult_multi.c
 fuzz_ecmult_multi_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
 fuzz_ecmult_multi_LDADD = $(FUZZ_INTERNAL_LDADD)
 
 if ENABLE_MODULE_ECDH
 noinst_PROGRAMS += fuzz_ecdh
 TESTS += fuzz_ecdh
-fuzz_ecdh_SOURCES = src/fuzz/ecdh.c
+fuzz_ecdh_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/ecdh.c
 fuzz_ecdh_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_ecdh_LDADD = $(FUZZ_LDADD)
 endif
@@ -196,15 +197,15 @@ endif
 if ENABLE_MODULE_ELLSWIFT
 noinst_PROGRAMS += fuzz_ellswift
 TESTS += fuzz_ellswift
-fuzz_ellswift_SOURCES = src/fuzz/ellswift.c
-fuzz_ellswift_CPPFLAGS = $(FUZZ_CPPFLAGS)
-fuzz_ellswift_LDADD = $(FUZZ_LDADD)
+fuzz_ellswift_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/ellswift.c
+fuzz_ellswift_CPPFLAGS = $(FUZZ_INTERNAL_CPPFLAGS)
+fuzz_ellswift_LDADD = $(FUZZ_INTERNAL_LDADD)
 endif
 
 if ENABLE_MODULE_EXTRAKEYS
 noinst_PROGRAMS += fuzz_xonly_tweak
 TESTS += fuzz_xonly_tweak
-fuzz_xonly_tweak_SOURCES = src/fuzz/xonly_tweak.c
+fuzz_xonly_tweak_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/xonly_tweak.c
 fuzz_xonly_tweak_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_xonly_tweak_LDADD = $(FUZZ_LDADD)
 endif
@@ -212,7 +213,7 @@ endif
 if ENABLE_MODULE_RECOVERY
 noinst_PROGRAMS += fuzz_recovery
 TESTS += fuzz_recovery
-fuzz_recovery_SOURCES = src/fuzz/recovery.c
+fuzz_recovery_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/recovery.c
 fuzz_recovery_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_recovery_LDADD = $(FUZZ_LDADD)
 endif
@@ -220,7 +221,7 @@ endif
 if ENABLE_MODULE_SCHNORRSIG
 noinst_PROGRAMS += fuzz_schnorrsig
 TESTS += fuzz_schnorrsig
-fuzz_schnorrsig_SOURCES = src/fuzz/schnorrsig.c
+fuzz_schnorrsig_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/schnorrsig.c
 fuzz_schnorrsig_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_schnorrsig_LDADD = $(FUZZ_LDADD)
 endif
@@ -228,7 +229,7 @@ endif
 if ENABLE_MODULE_MUSIG
 noinst_PROGRAMS += fuzz_musig
 TESTS += fuzz_musig
-fuzz_musig_SOURCES = src/fuzz/musig.c
+fuzz_musig_SOURCES = $(FUZZ_COMMON_SOURCES) src/fuzz/musig.c
 fuzz_musig_CPPFLAGS = $(FUZZ_CPPFLAGS)
 fuzz_musig_LDADD = $(FUZZ_LDADD)
 endif
