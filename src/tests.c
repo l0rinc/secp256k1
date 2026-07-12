@@ -8056,9 +8056,17 @@ static void run_ecdsa_edge_cases(void) {
         unsigned char privkey[300];
         const unsigned char *seckey = secp256k1_group_order_bytes;
         size_t outlen = 300;
+        memset(privkey, 0xA5, sizeof(privkey));
         CHECK(!ec_privkey_export_der(CTX, privkey, &outlen, seckey, 0));
+        CHECK(outlen == 0);
+        CHECK(all_bytes_equal(privkey, 0, 279));
+        CHECK(all_bytes_equal(privkey + 279, 0xA5, sizeof(privkey) - 279));
+        memset(privkey, 0xA5, sizeof(privkey));
         outlen = 300;
         CHECK(!ec_privkey_export_der(CTX, privkey, &outlen, seckey, 1));
+        CHECK(outlen == 0);
+        CHECK(all_bytes_equal(privkey, 0, 279));
+        CHECK(all_bytes_equal(privkey + 279, 0xA5, sizeof(privkey) - 279));
     }
 }
 
