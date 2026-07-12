@@ -178,6 +178,77 @@ static void secp256k1_fuzz_check_hmac_sha256(const secp256k1_hash_ctx *hash_ctx,
     FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&chunked, sizeof(chunked)));
 }
 
+static void secp256k1_fuzz_hmac_sha256_parts(const secp256k1_hash_ctx *hash_ctx, unsigned char out[32], const unsigned char *key, size_t keylen, const unsigned char *part_a, size_t part_a_len, const unsigned char *part_b, size_t part_b_len, const unsigned char *part_c, size_t part_c_len) {
+    secp256k1_hmac_sha256 hmac;
+
+    secp256k1_hmac_sha256_initialize(hash_ctx, &hmac, key, keylen);
+    if (part_a_len != 0) {
+        secp256k1_hmac_sha256_write(hash_ctx, &hmac, part_a, part_a_len);
+    }
+    if (part_b_len != 0) {
+        secp256k1_hmac_sha256_write(hash_ctx, &hmac, part_b, part_b_len);
+    }
+    if (part_c_len != 0) {
+        secp256k1_hmac_sha256_write(hash_ctx, &hmac, part_c, part_c_len);
+    }
+    secp256k1_hmac_sha256_finalize(hash_ctx, &hmac, out);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&hmac, sizeof(hmac)));
+}
+
+/* Keep RFC6979's state transitions independent of the production RNG. The
+ * HMAC implementation is shared intentionally: this isolates the protocol
+ * sequencing while the HMAC checks above cover its own state machine. */
+static void secp256k1_fuzz_rfc6979_reference_initialize(const secp256k1_hash_ctx *hash_ctx, unsigned char k[32], unsigned char v[32], const unsigned char *key, size_t keylen) {
+    static const unsigned char zero = 0x00;
+    static const unsigned char one = 0x01;
+
+    memset(k, 0x00, 32);
+    memset(v, 0x01, 32);
+    secp256k1_fuzz_hmac_sha256_parts(hash_ctx, k, k, 32, v, 32, &zero, 1, key, keylen);
+    secp256k1_fuzz_hmac_sha256_parts(hash_ctx, v, k, 32, v, 32, NULL, 0, NULL, 0);
+    secp256k1_fuzz_hmac_sha256_parts(hash_ctx, k, k, 32, v, 32, &one, 1, key, keylen);
+    secp256k1_fuzz_hmac_sha256_parts(hash_ctx, v, k, 32, v, 32, NULL, 0, NULL, 0);
+}
+
+static void secp256k1_fuzz_rfc6979_reference_generate(const secp256k1_hash_ctx *hash_ctx, unsigned char k[32], unsigned char v[32], int retry, unsigned char *out, size_t outlen) {
+    static const unsigned char zero = 0x00;
+
+    if (retry) {
+        secp256k1_fuzz_hmac_sha256_parts(hash_ctx, k, k, 32, v, 32, &zero, 1, NULL, 0);
+        secp256k1_fuzz_hmac_sha256_parts(hash_ctx, v, k, 32, v, 32, NULL, 0, NULL, 0);
+    }
+    while (outlen != 0) {
+        size_t now = outlen < 32 ? outlen : 32;
+        secp256k1_fuzz_hmac_sha256_parts(hash_ctx, v, k, 32, v, 32, NULL, 0, NULL, 0);
+        memcpy(out, v, now);
+        out += now;
+        outlen -= now;
+    }
+}
+
+static void secp256k1_fuzz_check_rfc6979_reference(const secp256k1_hash_ctx *hash_ctx, const unsigned char *key, size_t keylen) {
+    secp256k1_rfc6979_hmac_sha256 production;
+    unsigned char reference_k[32];
+    unsigned char reference_v[32];
+    unsigned char production_out[96];
+    unsigned char reference_out[96];
+
+    secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &production, key, keylen);
+    secp256k1_rfc6979_hmac_sha256_generate(hash_ctx, &production, production_out, 32);
+    secp256k1_rfc6979_hmac_sha256_generate(hash_ctx, &production, production_out + 32, sizeof(production_out) - 32);
+    secp256k1_rfc6979_hmac_sha256_finalize(&production);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&production, sizeof(production)));
+
+    secp256k1_fuzz_rfc6979_reference_initialize(hash_ctx, reference_k, reference_v, key, keylen);
+    secp256k1_fuzz_rfc6979_reference_generate(hash_ctx, reference_k, reference_v, 0, reference_out, 32);
+    secp256k1_fuzz_rfc6979_reference_generate(hash_ctx, reference_k, reference_v, 1, reference_out + 32, sizeof(reference_out) - 32);
+    FUZZ_CHECK(memcmp(production_out, reference_out, sizeof(production_out)) == 0);
+    secp256k1_memclear_explicit(reference_k, sizeof(reference_k));
+    secp256k1_memclear_explicit(reference_v, sizeof(reference_v));
+    secp256k1_memclear_explicit(production_out, sizeof(production_out));
+    secp256k1_memclear_explicit(reference_out, sizeof(reference_out));
+}
+
 static void secp256k1_fuzz_check_rfc6979(const secp256k1_hash_ctx *hash_ctx, const unsigned char *key, size_t keylen) {
     secp256k1_rfc6979_hmac_sha256 one_shot;
     secp256k1_rfc6979_hmac_sha256 chunked_a;
@@ -231,6 +302,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, long_key, sizeof(long_key), msg, msglen, split);
     secp256k1_fuzz_check_rfc6979(&hash_ctx, key, keylen);
     secp256k1_fuzz_check_rfc6979(&hash_ctx, long_key, sizeof(long_key));
+    secp256k1_fuzz_check_rfc6979_reference(&hash_ctx, key, keylen);
+    secp256k1_fuzz_check_rfc6979_reference(&hash_ctx, long_key, sizeof(long_key));
 
     return 0;
 }
