@@ -333,6 +333,91 @@ static void secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(const secp256k1
     secp256k1_memclear_explicit(seckey, sizeof(seckey));
 }
 
+/* BIP340 rejects a signature when its reconstructed nonce has odd Y, even if
+ * the scalar equation is otherwise valid. The normal signer always negates an
+ * odd nonce, so construct the pre-normalization case directly. */
+static void secp256k1_fuzz_check_schnorrsig_odd_nonce_rejection(const secp256k1_context *ctx) {
+    static const unsigned char msg32[32] = { 0 };
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    unsigned char seckey32[32] = { 0 };
+    unsigned char nonce32[32] = { 0 };
+    unsigned char pubkey33[33];
+    unsigned char xonly32[32];
+    unsigned char nonce_serialized[33];
+    unsigned char challenge_input[96];
+    unsigned char challenge32[32];
+    unsigned char reduced_challenge32[32];
+    unsigned char sig64[64];
+    unsigned char response_pubkey_serialized[65];
+    secp256k1_pubkey pubkey;
+    secp256k1_pubkey nonce_pubkey;
+    secp256k1_pubkey response_pubkey;
+    secp256k1_pubkey combined_pubkey;
+    secp256k1_pubkey challenge_pubkey;
+    secp256k1_pubkey negated_challenge_pubkey;
+    const secp256k1_pubkey *response_terms[2];
+    secp256k1_xonly_pubkey xonly;
+    size_t nonce_serialized_len;
+    size_t response_pubkey_serialized_len;
+    int nonce;
+    int found = 0;
+
+    seckey32[31] = 1;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey32) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly, NULL, &pubkey) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    pubkey33[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(pubkey33 + 1, xonly32, sizeof(xonly32));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &challenge_pubkey, pubkey33, sizeof(pubkey33)) == 1);
+
+    for (nonce = 1; nonce <= 32 && !found; nonce++) {
+        memset(nonce32, 0, sizeof(nonce32));
+        nonce32[31] = (unsigned char)nonce;
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &nonce_pubkey, nonce32) == 1);
+        nonce_serialized_len = sizeof(nonce_serialized);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, nonce_serialized, &nonce_serialized_len, &nonce_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(nonce_serialized_len == sizeof(nonce_serialized));
+        if (nonce_serialized[0] != SECP256K1_TAG_PUBKEY_ODD) {
+            continue;
+        }
+
+        memcpy(challenge_input, nonce_serialized + 1, 32);
+        memcpy(challenge_input + 32, xonly32, 32);
+        memcpy(challenge_input + 64, msg32, 32);
+        FUZZ_CHECK(secp256k1_tagged_sha256(ctx, challenge32, challenge_tag, sizeof(challenge_tag) - 1, challenge_input, sizeof(challenge_input)) == 1);
+        secp256k1_fuzz_schnorrsig_reduce_scalar(reduced_challenge32, challenge32);
+
+        memcpy(sig64, nonce_serialized + 1, 32);
+        if (memcmp(reduced_challenge32, secp256k1_fuzz_scalar_zero, 32) == 0) {
+            memcpy(sig64 + 32, nonce32, 32);
+        } else {
+            memcpy(sig64 + 32, seckey32, 32);
+            FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, sig64 + 32, reduced_challenge32) == 1);
+            FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, sig64 + 32, nonce32) == 1);
+        }
+
+        /* Independently reconstruct R = sG - eP through public API paths. */
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &response_pubkey, sig64 + 32) == 1);
+        if (memcmp(reduced_challenge32, secp256k1_fuzz_scalar_zero, 32) != 0) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &challenge_pubkey, reduced_challenge32) == 1);
+        }
+        negated_challenge_pubkey = challenge_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &negated_challenge_pubkey) == 1);
+        response_terms[0] = &response_pubkey;
+        response_terms[1] = &negated_challenge_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined_pubkey, response_terms, 2) == 1);
+        response_pubkey_serialized_len = sizeof(response_pubkey_serialized);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, response_pubkey_serialized, &response_pubkey_serialized_len, &combined_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+        FUZZ_CHECK(response_pubkey_serialized_len == sizeof(response_pubkey_serialized));
+        FUZZ_CHECK(response_pubkey_serialized[0] == SECP256K1_TAG_PUBKEY_UNCOMPRESSED);
+        FUZZ_CHECK(memcmp(response_pubkey_serialized + 1, sig64, 32) == 0);
+        FUZZ_CHECK((response_pubkey_serialized[64] & 1u) != 0);
+        FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 0);
+        found = 1;
+    }
+    FUZZ_CHECK(found);
+}
+
 static void secp256k1_fuzz_check_schnorrsig_rx_overflow(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const secp256k1_xonly_pubkey *xonly) {
     static const unsigned char field_p[32] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -565,6 +650,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64, sizeof(sig64_explicit_bip340)) == 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(ctx, msg32, &keypair);
+    secp256k1_fuzz_check_schnorrsig_odd_nonce_rejection(ctx);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);
