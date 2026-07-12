@@ -139,6 +139,28 @@ static int secp256k1_fuzz_ecdsa_nonce_fixed_one(unsigned char *nonce32, const un
     return 1;
 }
 
+static int secp256k1_fuzz_ecdsa_nonce_s_zero_then_two(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
+    secp256k1_fuzz_ecdsa_nonce_data *nonce_data = (secp256k1_fuzz_ecdsa_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(algo16 == NULL);
+    FUZZ_CHECK(attempt == nonce_data->calls);
+    nonce_data->calls++;
+    if (attempt == 0) {
+        memcpy(nonce32, secp256k1_fuzz_scalar_one, 32);
+        return 1;
+    }
+    if (attempt == 1) {
+        memset(nonce32, 0, 32);
+        nonce32[31] = 2;
+        return 1;
+    }
+    return 0;
+}
+
 static const unsigned char *secp256k1_fuzz_runtime_null_tweak(const unsigned char *input, size_t size) {
     return size == (size_t)-1 ? input : NULL;
 }
@@ -805,6 +827,44 @@ static void secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(const secp256k1_cont
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, one32, &pubkey) == 1);
 }
 
+static void secp256k1_fuzz_check_ecdsa_retry_after_zero_s(const secp256k1_context *ctx) {
+    static const unsigned char one32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    };
+    secp256k1_fuzz_ecdsa_nonce_data nonce_data;
+    secp256k1_ecdsa_signature sig;
+    secp256k1_pubkey generator;
+    unsigned char generator_uncompressed[65];
+    unsigned char zero_s_message[32];
+    unsigned char compact[64];
+    unsigned char zero32[32] = { 0 };
+    size_t generator_len = sizeof(generator_uncompressed);
+
+    /* For d = k = 1, choose z = -x(G) so the first valid nonce reaches the
+     * ECDSA equation's s == 0 rejection path. The callback then supplies k=2,
+     * making the retry observable instead of relying on a probabilistic case. */
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, one32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, generator_uncompressed, &generator_len, &generator, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(generator_len == sizeof(generator_uncompressed));
+    memcpy(zero_s_message, generator_uncompressed + 1, sizeof(zero_s_message));
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, zero_s_message) == 1);
+    FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, zero_s_message) == 1);
+
+    nonce_data.self = &nonce_data;
+    nonce_data.extra32 = NULL;
+    nonce_data.calls = 0;
+    memset(&sig, 0xA5, sizeof(sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, zero_s_message, one32, secp256k1_fuzz_ecdsa_nonce_s_zero_then_two, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls == 2);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &sig) == 1);
+    FUZZ_CHECK(memcmp(compact, zero32, sizeof(zero32)) != 0);
+    FUZZ_CHECK(memcmp(compact + 32, zero32, sizeof(zero32)) != 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, zero_s_message, &generator) == 1);
+}
+
 static void secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(const unsigned char *msg32, const unsigned char *key32, const unsigned char *extra32) {
     unsigned char nonce32[32];
     unsigned char zero32[32] = { 0 };
@@ -1403,6 +1463,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(ctx, msg32, seckey);
     secp256k1_fuzz_check_ecdsa_message_reduction(ctx, seckey, &pubkey);
     secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(ctx);
+    secp256k1_fuzz_check_ecdsa_retry_after_zero_s(ctx);
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, zero_compact) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, zero_compact, &parsed_sig) == 1);

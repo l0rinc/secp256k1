@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, empty sort, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, valid-nonce retry, empty sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
@@ -276,6 +276,12 @@ documented in its commit message.
   hardening rather than a current-master finding: the previous default/custom
   nonce comparison delegated both paths to RFC6979 and could not independently
   pin the signing equation.
+  It also forces a valid scalar nonce to produce an invalid ECDSA equation
+  (`s == 0`) and verifies that signing rejects that attempt, requests the next
+  nonce, and returns a verified signature. Clean master passes; forcing
+  `secp256k1_ecdsa_sig_sign` to report success makes the dedicated
+  `ecdsa-valid-nonce-retry` seed fail verification. This is informational
+  retry-state hardening, not a current-master production finding.
   It also exercises the valid zero-element `ec_pubkey_sort` boundary with a
   non-NULL array pointer. Clean master returns success; requiring at least one
   element in the production sort routine makes the focused seed abort. This is
