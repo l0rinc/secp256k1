@@ -1597,17 +1597,22 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
 
 static void secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *valid_seckey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, const unsigned char *session_rand32) {
     unsigned char session_rand[32];
+    unsigned char session_rand_before[32];
     unsigned char zero132[132] = { 0 };
     secp256k1_musig_secnonce secnonce;
     secp256k1_musig_pubnonce pubnonce;
 
+    /* Only successful nonce generation consumes the caller's session random;
+     * rejected inputs must leave it available for a corrected retry. */
     memcpy(session_rand, session_rand32, sizeof(session_rand));
     if (memcmp(session_rand, secp256k1_fuzz_scalar_zero, sizeof(session_rand)) == 0) {
         memcpy(session_rand, secp256k1_fuzz_scalar_one, sizeof(session_rand));
     }
+    memcpy(session_rand_before, session_rand, sizeof(session_rand));
     memset(&secnonce, 0xA5, sizeof(secnonce));
     memset(&pubnonce, 0xA5, sizeof(pubnonce));
     FUZZ_CHECK(secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, session_rand, secp256k1_fuzz_scalar_zero, pubkey, msg32, keyagg_cache, extra_input32) == 0);
+    FUZZ_CHECK(memcmp(session_rand, session_rand_before, sizeof(session_rand)) == 0);
     FUZZ_CHECK(memcmp(secnonce.data, zero132, sizeof(secnonce.data)) == 0);
     FUZZ_CHECK(memcmp(pubnonce.data, zero132, sizeof(pubnonce.data)) == 0);
 
@@ -1615,9 +1620,11 @@ static void secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(const secp256k1
     if (memcmp(session_rand, secp256k1_fuzz_scalar_zero, sizeof(session_rand)) == 0) {
         memcpy(session_rand, secp256k1_fuzz_scalar_one, sizeof(session_rand));
     }
+    memcpy(session_rand_before, session_rand, sizeof(session_rand));
     memset(&secnonce, 0xA5, sizeof(secnonce));
     memset(&pubnonce, 0xA5, sizeof(pubnonce));
     FUZZ_CHECK(secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, session_rand, secp256k1_fuzz_scalar_order, pubkey, msg32, keyagg_cache, extra_input32) == 0);
+    FUZZ_CHECK(memcmp(session_rand, session_rand_before, sizeof(session_rand)) == 0);
     FUZZ_CHECK(memcmp(secnonce.data, zero132, sizeof(secnonce.data)) == 0);
     FUZZ_CHECK(memcmp(pubnonce.data, zero132, sizeof(pubnonce.data)) == 0);
 
@@ -1635,6 +1642,7 @@ static void secp256k1_fuzz_check_musig_nonce_gen_invalid_pubkey_cleanup(secp256k
     secp256k1_musig_secnonce secnonce;
     secp256k1_musig_pubnonce pubnonce;
     unsigned char session_rand[32];
+    unsigned char session_rand_before[32];
     unsigned char zero132[132] = { 0 };
 
     /* This is a public output, so the severity is stale-state propagation,
@@ -1642,12 +1650,17 @@ static void secp256k1_fuzz_check_musig_nonce_gen_invalid_pubkey_cleanup(secp256k
      * leave an apparently usable nonce object behind. */
     invalid_pubkey.data[0] ^= 1u;
     memcpy(session_rand, session_rand32, sizeof(session_rand));
+    if (memcmp(session_rand, secp256k1_fuzz_scalar_zero, sizeof(session_rand)) == 0) {
+        memcpy(session_rand, secp256k1_fuzz_scalar_one, sizeof(session_rand));
+    }
+    memcpy(session_rand_before, session_rand, sizeof(session_rand));
     illegal_data.self = &illegal_data;
     illegal_data.calls = 0;
     secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
     memset(&secnonce, 0xA5, sizeof(secnonce));
     memset(&pubnonce, 0xA5, sizeof(pubnonce));
     FUZZ_CHECK(secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, session_rand, valid_seckey, &invalid_pubkey, msg32, NULL, NULL) == 0);
+    FUZZ_CHECK(memcmp(session_rand, session_rand_before, sizeof(session_rand)) == 0);
     FUZZ_CHECK(illegal_data.calls == 1);
     FUZZ_CHECK(memcmp(&secnonce, zero132, sizeof(secnonce)) == 0);
     FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
