@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, empty sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
@@ -244,6 +244,10 @@ documented in its commit message.
   hardening rather than a current-master finding: the previous default/custom
   nonce comparison delegated both paths to RFC6979 and could not independently
   pin the signing equation.
+  It also exercises the valid zero-element `ec_pubkey_sort` boundary with a
+  non-NULL array pointer. Clean master returns success; requiring at least one
+  element in the production sort routine makes the focused seed abort. This is
+  informational API-boundary coverage, not a current-master production bug.
   The EllSwift target also replays a full-width BIP324 decode vector from the
   independently generated module test set and checks the serialized X coordinate
   and parity. Clean master passes; replacing the decode input's `t` half with
