@@ -50,6 +50,73 @@ static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsig
     secp256k1_sha256_transform(state, blocks64, n_blocks);
 }
 
+static void secp256k1_fuzz_musig_reduce_scalar(unsigned char out[32], const unsigned char in[32]) {
+    size_t i;
+
+    memcpy(out, in, 32);
+    if (memcmp(out, secp256k1_fuzz_scalar_order, 32) >= 0) {
+        unsigned int borrow = 0;
+        for (i = 32; i-- > 0;) {
+            unsigned int minuend = out[i];
+            unsigned int subtrahend = secp256k1_fuzz_scalar_order[i] + borrow;
+            out[i] = (unsigned char)(minuend - subtrahend);
+            borrow = minuend < subtrahend;
+        }
+    }
+}
+
+static void secp256k1_fuzz_check_musig_keyagg_reference(const secp256k1_context *ctx) {
+    static const unsigned char keyagg_list_tag[] = "KeyAgg list";
+    static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char serialized[66];
+    unsigned char coefficient_input[65];
+    unsigned char coefficient_hash[32];
+    unsigned char coefficient[32];
+    size_t serialized_len;
+    secp256k1_pubkey pubkey_one;
+    secp256k1_pubkey pubkey_two;
+    secp256k1_pubkey scaled_one;
+    secp256k1_pubkey expected_full;
+    secp256k1_pubkey actual_full;
+    secp256k1_xonly_pubkey expected_xonly;
+    secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_musig_keyagg_cache cache;
+    const secp256k1_pubkey *pubkey_ptrs[2];
+    const secp256k1_pubkey *expected_ptrs[2];
+
+    scalar_two[31] = 2;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_one, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_two, scalar_two) == 1);
+    pubkey_ptrs[0] = &pubkey_one;
+    pubkey_ptrs[1] = &pubkey_two;
+    serialized_len = 33;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &pubkey_one, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+    serialized_len = 33;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized + 33, &serialized_len, &pubkey_two, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, coefficient_hash, keyagg_list_tag, sizeof(keyagg_list_tag) - 1, serialized, sizeof(serialized)) == 1);
+
+    memcpy(coefficient_input, coefficient_hash, 32);
+    memcpy(coefficient_input + 32, serialized, 33);
+    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, coefficient_hash, keyagg_coef_tag, sizeof(keyagg_coef_tag) - 1, coefficient_input, sizeof(coefficient_input)) == 1);
+    secp256k1_fuzz_musig_reduce_scalar(coefficient, coefficient_hash);
+    FUZZ_CHECK(memcmp(coefficient, secp256k1_fuzz_scalar_zero, sizeof(coefficient)) != 0);
+
+    scaled_one = pubkey_one;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &scaled_one, coefficient) == 1);
+    expected_ptrs[0] = &scaled_one;
+    expected_ptrs[1] = &pubkey_two;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected_full, expected_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &expected_xonly, NULL, &expected_full) == 1);
+
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly, &cache, pubkey_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &actual_full, &expected_full) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -1393,6 +1460,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[0], secp256k1_fuzz_scalar_one) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[1], secp256k1_fuzz_scalar_order_minus_one) == 1);
     secp256k1_fuzz_check_musig_noncanonical_duplicate(ctx);
+    secp256k1_fuzz_check_musig_keyagg_reference(ctx);
     secp256k1_fuzz_scalar32(tweak, input, size, 173);
     secp256k1_fuzz_derive(session_rand, sizeof(session_rand), input, size, 197);
     if (memcmp(session_rand, secp256k1_fuzz_scalar_zero, sizeof(session_rand)) == 0) {
