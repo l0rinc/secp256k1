@@ -310,6 +310,24 @@ static void secp256k1_fuzz_check_ellswift_built_in_cleanup(secp256k1_context *ct
     FUZZ_CHECK(memcmp(output, zero32, sizeof(output)) == 0);
 }
 
+static void secp256k1_fuzz_check_ellswift_overflow_secret(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64) {
+    unsigned char order_minus_one[32];
+    unsigned char order_plus_one[32];
+    unsigned char output[32];
+
+    /* n itself reduces to zero, so it does not distinguish overflow tracking
+     * from the zero-scalar check. Use n+1, which reduces to one. */
+    memcpy(order_minus_one, secp256k1_fuzz_scalar_order, sizeof(order_minus_one));
+    order_minus_one[31]--;
+    memcpy(order_plus_one, secp256k1_fuzz_scalar_order, sizeof(order_plus_one));
+    order_plus_one[31]++;
+
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, order_minus_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, order_minus_one, 1, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, order_plus_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 0);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, order_plus_one, 1, secp256k1_fuzz_ellswift_hash_x32, NULL) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_ctx_hash(secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, const unsigned char *prefix64) {
     unsigned char output[32];
 
@@ -394,6 +412,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(hash_data.calls == 1);
 
     secp256k1_fuzz_check_ellswift_built_in_cleanup(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
+    secp256k1_fuzz_check_ellswift_overflow_secret(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_ctx_hash(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
 
     secp256k1_context_destroy(ctx);
