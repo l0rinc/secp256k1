@@ -15,7 +15,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
-- `fuzz_ellswift`: EllSwift encode/decode, XDH symmetry, built-in hash cleanup
+- `fuzz_ellswift`: EllSwift encode/decode, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify and `sign32`/`sign_custom` equivalence
@@ -237,6 +237,15 @@ documented in its commit message.
   abort. The fraction predicate is already used by ElligatorSwift and
   deterministic tests, so this catches a regression in its rational-coordinate
   arithmetic without claiming a current-master vulnerability.
+  The EllSwift target also replays a full-width BIP324 decode vector from the
+  independently generated module test set and checks the serialized X coordinate
+  and parity. Clean master passes; replacing the decode input's `t` half with
+  its `u` half aborts on the dedicated seed. This is informational oracle
+  hardening, not a current production finding. A separate temporary mutation of
+  the EllSwift PRNG counter byte order passed the relational encode/create
+  checks; because those public APIs explicitly do not guarantee stable output
+  bytes across versions, that result is a stale/overbroad oracle and is not a
+  production bug or a reason to pin unstable encodings.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not

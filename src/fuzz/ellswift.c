@@ -122,6 +122,31 @@ static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_cont
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded);
 }
 
+static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_context *ctx) {
+    /* This vector was generated independently and is part of the BIP324
+     * ElligatorSwift decode test set. Do not pin encode/create output: those
+     * public APIs explicitly do not guarantee stable encodings across versions. */
+    static const unsigned char ell64[64] = {
+        0xc5, 0x98, 0x1b, 0xae, 0x27, 0xfd, 0x84, 0x40, 0x1c, 0x72, 0xa1, 0x55, 0xe5, 0x70, 0x7f, 0xbb,
+        0x81, 0x1b, 0x2b, 0x62, 0x06, 0x45, 0xd1, 0x02, 0x8e, 0xa2, 0x70, 0xcb, 0xe0, 0xee, 0x22, 0x5d,
+        0x4b, 0x62, 0xaa, 0x4d, 0xca, 0x65, 0x06, 0xc1, 0xac, 0xdb, 0xec, 0xc0, 0x55, 0x25, 0x69, 0xb4,
+        0xb2, 0x14, 0x36, 0xa5, 0x69, 0x2e, 0x25, 0xd9, 0x0d, 0x3b, 0xc2, 0xeb, 0x7c, 0xe2, 0x40, 0x78
+    };
+    static const unsigned char expected_compressed[33] = {
+        SECP256K1_TAG_PUBKEY_EVEN,
+        0x94, 0x8b, 0x40, 0xe7, 0x18, 0x17, 0x13, 0xbc, 0x01, 0x8e, 0xc1, 0x70, 0x2d, 0x3d, 0x05,
+        0x4d, 0x15, 0x74, 0x6c, 0x59, 0xa7, 0x02, 0x07, 0x30, 0xdd, 0x13, 0xec, 0xf9, 0x85, 0xa0, 0x10, 0xd7
+    };
+    secp256k1_pubkey pubkey;
+    unsigned char compressed[33];
+    size_t compressed_len = sizeof(compressed);
+
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &pubkey, ell64) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed));
+    FUZZ_CHECK(memcmp(compressed, expected_compressed, sizeof(compressed)) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_zero_t_parity(const secp256k1_context *ctx) {
     unsigned char zero_t[64] = { 0 };
     unsigned char one_t[64] = { 0 };
@@ -380,6 +405,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     hash_data.self = &hash_data;
     hash_data.calls = 0;
 
+    secp256k1_fuzz_check_ellswift_bip324_decode_vector(ctx);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b32) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey_a);
