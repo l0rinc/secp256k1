@@ -523,7 +523,7 @@ static void secp256k1_fuzz_ecmult_multi_repeated_strauss(const secp256k1_context
     secp256k1_fuzz_scalar32(scalar32, input, size, 487);
     secp256k1_scalar_set_b32(&data.sc, scalar32, &overflow);
     if (overflow) {
-        secp256k1_scalar_clear(&data.sc);
+        secp256k1_scalar_set_int(&data.sc, 0);
     }
     secp256k1_fuzz_ecmult_multi_make_point(ctx, &data.pt, input, size, 491);
 
@@ -647,7 +647,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_scalar32(scalar32, input, size, 223);
     secp256k1_scalar_set_b32(&g_sc, scalar32, &overflow);
     if (overflow) {
-        secp256k1_scalar_clear(&g_sc);
+        secp256k1_scalar_set_int(&g_sc, 0);
     }
     g_sc_ptr = (secp256k1_fuzz_byte(input, size, 7) & 1u) ? &g_sc : NULL;
 
@@ -655,7 +655,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
         secp256k1_fuzz_scalar32(scalar32, input, size, (unsigned int)(239 + i * 17u));
         secp256k1_scalar_set_b32(&data.sc[i], scalar32, &overflow);
         if (overflow) {
-            secp256k1_scalar_clear(&data.sc[i]);
+            secp256k1_scalar_set_int(&data.sc[i], 0);
         }
         secp256k1_fuzz_ecmult_multi_make_point(ctx, &data.pt[i], input, size, (unsigned int)(359 + i * 19u));
 
@@ -669,7 +669,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
             secp256k1_ge_set_infinity(&data.pt[i]);
             break;
         case 2:
-            secp256k1_scalar_clear(&data.sc[i]);
+            /* This is a logical zero used by later arithmetic, not secret-state cleanup. */
+            secp256k1_scalar_set_int(&data.sc[i], 0);
             break;
         default:
             if (i > 0) {
