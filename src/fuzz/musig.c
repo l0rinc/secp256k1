@@ -685,6 +685,48 @@ static void secp256k1_fuzz_check_musig_nonce_scalar_barrier(secp256k1_context *c
     FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized66, &pubnonce) == 1);
 }
 
+static void secp256k1_fuzz_check_musig_partial_sign_nonce_parity(secp256k1_context *ctx) {
+    unsigned char msg32[32] = { 0 };
+    unsigned char sig64[64];
+    secp256k1_keypair keypair;
+    secp256k1_pubkey pubkey;
+    secp256k1_xonly_pubkey agg_pk;
+    secp256k1_musig_keyagg_cache keyagg_cache;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    secp256k1_musig_aggnonce aggnonce;
+    secp256k1_musig_session session;
+    secp256k1_musig_partial_sig partial_sig;
+    const secp256k1_pubkey *pubkey_ptrs[1];
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[1];
+    const secp256k1_musig_partial_sig *partial_sig_ptrs[1];
+    unsigned int parity_seen[2] = { 0, 0 };
+    uint64_t counter;
+
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
+    pubkey_ptrs[0] = &pubkey;
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &agg_pk, &keyagg_cache, pubkey_ptrs, 1) == 1);
+    pubnonce_ptrs[0] = &pubnonce;
+    partial_sig_ptrs[0] = &partial_sig;
+
+    /* Keep both final-nonce parity branches live. The signature check makes
+     * the parity choice a functional postcondition, not just a byte check. */
+    for (counter = 0; counter < 16; counter++) {
+        FUZZ_CHECK(secp256k1_musig_nonce_gen_counter(ctx, &secnonce, &pubnonce, counter, &keypair, msg32, &keyagg_cache, NULL) == 1);
+        FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 1) == 1);
+        FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, &keyagg_cache) == 1);
+        FUZZ_CHECK(session.data[4] <= 1);
+        parity_seen[session.data[4]] = 1;
+        FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &secnonce, &keypair, &keyagg_cache, &session) == 1);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig, &pubnonce, &pubkey, &keyagg_cache, &session) == 1);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 1) == 1);
+        FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &agg_pk) == 1);
+    }
+    FUZZ_CHECK(parity_seen[0] != 0);
+    FUZZ_CHECK(parity_seen[1] != 0);
+}
+
 static void secp256k1_fuzz_check_musig_zero_counter_sign(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_xonly_pubkey *agg_pk) {
     unsigned char sig64[64];
     unsigned char zero132[132] = { 0 };
@@ -1393,6 +1435,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_nonce_scalar_barrier(ctx);
+    secp256k1_fuzz_check_musig_partial_sign_nonce_parity(ctx);
     secp256k1_fuzz_check_musig_infinity_nonce_process(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, n_pubkeys, tweak);
     secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(ctx, &pubkeys[0], seckey[0], tweak, &cache, tweak, session_rand);
