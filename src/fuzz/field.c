@@ -91,6 +91,25 @@ static void secp256k1_fuzz_fe_check_raised_zero(const unsigned char *input, size
     secp256k1_fuzz_fe_check_normalize_paths(&value, &expected);
 }
 
+static void secp256k1_fuzz_fe_check_add_int_boundary(void) {
+    secp256k1_fe actual;
+    secp256k1_fe expected;
+
+    /* add_int raises magnitude by one, so 31 is its largest valid input. */
+    secp256k1_fe_get_bounds(&actual, 31);
+    expected = actual;
+    secp256k1_fe_normalize_var(&expected);
+    secp256k1_fe_add_int(&actual, 0x7FFF);
+    secp256k1_fe_add_int(&expected, 0x7FFF);
+#ifdef VERIFY
+    FUZZ_CHECK(actual.magnitude == 32);
+    FUZZ_CHECK(expected.magnitude == 2);
+#endif
+    secp256k1_fe_normalize_var(&actual);
+    secp256k1_fe_normalize_var(&expected);
+    FUZZ_CHECK(secp256k1_fuzz_fe_identical(&actual, &expected));
+}
+
 static const unsigned char secp256k1_fuzz_field_prime[32] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -444,6 +463,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_fe_check_bounds_sum(left_magnitude, right_magnitude);
     }
     secp256k1_fuzz_fe_check_raised_zero(input, size);
+    secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_comparisons(input, size);
 #if defined(SECP256K1_WIDEMUL_INT64)

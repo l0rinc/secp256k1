@@ -228,6 +228,7 @@ static void secp256k1_fe_impl_add_int(secp256k1_fe *r, int a);
 SECP256K1_INLINE static void secp256k1_fe_add_int(secp256k1_fe *r, int a) {
     VERIFY_CHECK(0 <= a && a <= 0x7FFF);
     SECP256K1_FE_VERIFY(r);
+    SECP256K1_FE_VERIFY_MAGNITUDE(r, 31);
 
     secp256k1_fe_impl_add_int(r, a);
     r->magnitude += 1;

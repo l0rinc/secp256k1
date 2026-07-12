@@ -218,6 +218,7 @@ static void secp256k1_fe_negate_unchecked(secp256k1_fe *r, const secp256k1_fe *a
 
 /** Add a small integer to a field element.
  *
+ * On input, r must be a valid field element with magnitude at most 31.
  * Performs {r += a}. The magnitude of r increases by 1, and normalized is cleared.
  * a must be in range [0,0x7FFF].
  */
