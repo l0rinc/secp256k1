@@ -31,6 +31,24 @@ static void secp256k1_fuzz_check_ecdh_default_hash(const secp256k1_context *ctx,
     FUZZ_CHECK(memcmp(output32, expected, sizeof(expected)) == 0);
 }
 
+static void secp256k1_fuzz_check_ecdh_odd_y_default_hash(const secp256k1_context *ctx) {
+    secp256k1_pubkey shared_pubkey;
+    unsigned char output32[32];
+    unsigned char explicit_output32[32];
+    unsigned char compressed[33];
+    size_t compressed_len = sizeof(compressed);
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &shared_pubkey, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &shared_pubkey) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, &shared_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed));
+    FUZZ_CHECK(compressed[0] == SECP256K1_TAG_PUBKEY_ODD);
+    FUZZ_CHECK(secp256k1_ecdh(ctx, output32, &shared_pubkey, secp256k1_fuzz_scalar_one, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdh(ctx, explicit_output32, &shared_pubkey, secp256k1_fuzz_scalar_one, secp256k1_ecdh_hash_function_sha256, NULL) == 1);
+    FUZZ_CHECK(memcmp(output32, explicit_output32, sizeof(output32)) == 0);
+    secp256k1_fuzz_check_ecdh_default_hash(ctx, &shared_pubkey, output32);
+}
+
 static int fuzz_ecdh_hash_passthrough(unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
     (void)data;
     memcpy(output, x32, 32);
@@ -148,6 +166,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     hash_data.calls = 0;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
+    secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
 
     secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdh_sha256_compression);
