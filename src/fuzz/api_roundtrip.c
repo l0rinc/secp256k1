@@ -30,6 +30,19 @@ static const unsigned char secp256k1_fuzz_x_for_y_one[32] = {
     0x63, 0xF7, 0x44, 0x3E, 0x16, 0x58, 0x78, 0x3A,
     0xB4, 0x1F, 0x8E, 0xF9, 0x7C, 0x2A, 0x10, 0xB5
 };
+/* Compressed point R with x(R) = group_order + 2 and R = 2Q. */
+static const unsigned char secp256k1_fuzz_ecdsa_r_plus_order_point[33] = {
+    0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+    0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B,
+    0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x43
+};
+static const unsigned char secp256k1_fuzz_ecdsa_r_plus_order_pubkey[33] = {
+    0x02, 0xAD, 0x80, 0x2F, 0x21, 0x45, 0xDF, 0x54, 0x8C,
+    0xE1, 0xFC, 0x41, 0x8B, 0x85, 0x1C, 0xB3, 0x26,
+    0x69, 0xC5, 0xA6, 0xBB, 0x93, 0x9E, 0x6C, 0xAF,
+    0x74, 0x4D, 0xE9, 0x03, 0x10, 0xF8, 0xF1, 0xFF
+};
 
 static void secp256k1_fuzz_ecdsa_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     secp256k1_fuzz_ecdsa_sha256_compression_calls += n_blocks;
@@ -678,6 +691,27 @@ static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
 
+static void secp256k1_fuzz_check_ecdsa_r_plus_order(const secp256k1_context *ctx) {
+    secp256k1_ecdsa_signature sig;
+    secp256k1_pubkey r_point;
+    secp256k1_pubkey pubkey;
+    secp256k1_pubkey doubled;
+    unsigned char compact[64] = { 0 };
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char msg32[32] = { 0 };
+
+    compact[31] = 2;
+    compact[63] = 1;
+    scalar_two[31] = 2;
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &r_point, secp256k1_fuzz_ecdsa_r_plus_order_point, sizeof(secp256k1_fuzz_ecdsa_r_plus_order_point)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, secp256k1_fuzz_ecdsa_r_plus_order_pubkey, sizeof(secp256k1_fuzz_ecdsa_r_plus_order_pubkey)) == 1);
+    doubled = pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &doubled, scalar_two) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &doubled, &r_point) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &sig, compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
+}
+
 static void secp256k1_fuzz_check_ecdsa_high_s(const secp256k1_context *ctx, const secp256k1_ecdsa_signature *sig, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature high_sig;
     secp256k1_ecdsa_signature in_place_sig;
@@ -1200,6 +1234,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(sig_extra64, sig_checked64, sizeof(sig_extra64)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &checked_sig, msg32, &pubkey) == 1);
     secp256k1_context_set_sha256_compression(ctx, NULL);
+    secp256k1_fuzz_check_ecdsa_r_plus_order(ctx);
     secp256k1_fuzz_check_seckey_negate_failure(ctx);
     secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(ctx, msg32, seckey);
 
