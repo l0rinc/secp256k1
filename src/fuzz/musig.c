@@ -1487,6 +1487,31 @@ static void secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(const secp256k1
     FUZZ_CHECK(memcmp(pubnonce.data, zero132, sizeof(pubnonce.data)) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_nonce_gen_invalid_pubkey_cleanup(secp256k1_context *ctx, const secp256k1_pubkey *valid_pubkey, const unsigned char *valid_seckey, const unsigned char *msg32, const unsigned char *session_rand32) {
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    secp256k1_pubkey invalid_pubkey = *valid_pubkey;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    unsigned char session_rand[32];
+    unsigned char zero132[132] = { 0 };
+
+    /* This is a public output, so the severity is stale-state propagation,
+     * not disclosure of the secret nonce. Still require failed calls not to
+     * leave an apparently usable nonce object behind. */
+    invalid_pubkey.data[0] ^= 1u;
+    memcpy(session_rand, session_rand32, sizeof(session_rand));
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    memset(&secnonce, 0xA5, sizeof(secnonce));
+    memset(&pubnonce, 0xA5, sizeof(pubnonce));
+    FUZZ_CHECK(secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, session_rand, valid_seckey, &invalid_pubkey, msg32, NULL, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&secnonce, zero132, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_musig_keyagg_cache invalid_keyagg_cache = *keyagg_cache;
@@ -1824,6 +1849,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_infinity_nonce_process(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, n_pubkeys, tweak);
     secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(ctx, &pubkeys[0], seckey[0], tweak, &cache, tweak, session_rand);
+    secp256k1_fuzz_check_musig_nonce_gen_invalid_pubkey_cleanup(ctx, &pubkeys[0], seckey[0], tweak, session_rand);
     FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &agg_full, &cache) == 1);
     FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &cache_full, &cache_no_output) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &cache_full, &agg_full) == 0);
