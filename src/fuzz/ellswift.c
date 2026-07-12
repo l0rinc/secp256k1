@@ -79,6 +79,41 @@ static int secp256k1_fuzz_ellswift_hash_fail(unsigned char *output, const unsign
     return 0;
 }
 
+static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
+    static const unsigned char bip324_tag[] = "bip324_ellswift_xonly_ecdh";
+    secp256k1_hash_ctx hash_ctx;
+    secp256k1_sha256 sha;
+    unsigned char shared_x32[32];
+    unsigned char taghash[32];
+    unsigned char expected[32];
+    unsigned char output[32];
+    unsigned char prefix64[64];
+
+    /* Obtain only X through the custom callback, then independently compute
+     * the BIP324 transcript with the generic SHA256 interface. */
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    secp256k1_hash_ctx_init(&hash_ctx);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, bip324_tag, sizeof(bip324_tag) - 1);
+    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    secp256k1_sha256_write(&hash_ctx, &sha, ell_a64, 64);
+    secp256k1_sha256_write(&hash_ctx, &sha, ell_b64, 64);
+    secp256k1_sha256_write(&hash_ctx, &sha, shared_x32, sizeof(shared_x32));
+    secp256k1_sha256_finalize(&hash_ctx, &sha, expected);
+    secp256k1_sha256_clear(&sha);
+
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+    FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
+
+    memcpy(prefix64, taghash, sizeof(taghash));
+    memcpy(prefix64 + sizeof(taghash), taghash, sizeof(taghash));
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_prefix, prefix64) == 1);
+    FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_context *ctx, const unsigned char *ell64, const secp256k1_pubkey *pubkey) {
     secp256k1_pubkey decoded;
 
@@ -350,6 +385,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_masked, &hash_data);
     FUZZ_CHECK(hash_data.calls == 2);
     secp256k1_fuzz_check_ellswift_party_boolean(ctx);
+    secp256k1_fuzz_check_ellswift_bip324_hash_reference(ctx, ell_a64, ell_b64, seckey_a32);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_ellswift_xdh_hash_function_bip324, NULL);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_ellswift_xdh_hash_function_prefix, prefix64);
 
