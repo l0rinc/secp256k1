@@ -4489,6 +4489,13 @@ static void run_gej_rescale_alias(void) {
     secp256k1_gej_rescale(&expected, &scale);
     secp256k1_gej_rescale(&actual, &actual.y);
     CHECK(secp256k1_gej_eq_var(&actual, &expected));
+
+    secp256k1_ecmult_gen_gej(&CTX->ecmult_gen_ctx, &actual, &secp256k1_scalar_one);
+    expected = actual;
+    scale = actual.x;
+    secp256k1_gej_rescale(&expected, &scale);
+    secp256k1_gej_rescale(&actual, &actual.x);
+    CHECK(secp256k1_gej_eq_var(&actual, &expected));
 }
 
 static void run_gej_zinv_in_place(void) {
