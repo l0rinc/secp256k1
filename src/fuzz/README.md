@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication and affine generator conversion against scalar-derived points
+- `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency and scratch accounting
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
@@ -207,6 +207,14 @@ documented in its commit message.
   Clean master passes; replacing its affine conversion with an infinity output
   makes the dedicated `generator-affine-agreement` seed abort. This is
   informational helper coverage, not a current-master production finding.
+  The same target now directly compares `secp256k1_ecmult` with `ng == NULL`
+  against an explicit zero generator scalar for finite and infinity bases,
+  including zero and nonzero point scalars. Clean master passes; replacing the
+  NULL term with a nonzero generator term makes `null-generator-equivalence`
+  abort. This is informational coverage for the documented internal contract,
+  not a current-master production finding; master already has a focused unit
+  test, but its recent caller migration makes the fuzzer barrier useful for
+  unusual scalar and base-state combinations.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.

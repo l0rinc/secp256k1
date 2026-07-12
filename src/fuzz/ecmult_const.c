@@ -17,6 +17,16 @@ static void secp256k1_fuzz_ecmult_const_scalar(secp256k1_scalar *scalar, const u
     }
 }
 
+static void secp256k1_fuzz_ecmult_const_check_null_generator(const secp256k1_gej *base, const secp256k1_scalar *scalar) {
+    secp256k1_gej null_generator;
+    secp256k1_gej zero_generator;
+
+    /* The NULL generator term is documented as exactly equivalent to zero. */
+    secp256k1_ecmult(&null_generator, base, scalar, NULL);
+    secp256k1_ecmult(&zero_generator, base, scalar, &secp256k1_scalar_zero);
+    FUZZ_CHECK(secp256k1_gej_eq_var(&null_generator, &zero_generator));
+}
+
 static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context *ctx, const secp256k1_scalar *scalar) {
     secp256k1_gej generated;
     secp256k1_ge generated_affine;
@@ -27,6 +37,7 @@ static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context 
     secp256k1_gej generated_copy;
 
     secp256k1_gej_set_ge(&generatorj, &secp256k1_ge_const_g);
+    secp256k1_fuzz_ecmult_const_check_null_generator(&generatorj, scalar);
     secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &generated, scalar);
     secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &generated_affine, scalar);
     generated_copy = generated;
@@ -108,6 +119,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_ge_set_gej_var(&base, &copy);
     }
     FUZZ_CHECK(!secp256k1_ge_is_infinity(&base));
+    secp256k1_fuzz_ecmult_const_check_null_generator(&basej, &scalar);
     secp256k1_scalar_mul(&product, &base_scalar, &scalar);
     secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &expected, &product);
     secp256k1_ecmult(&generic, &basej, &scalar, NULL);
@@ -120,6 +132,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecmult_const(&result, &base, &secp256k1_scalar_zero);
     FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
     secp256k1_ge_set_infinity(&infinity);
+    secp256k1_fuzz_ecmult_const_check_null_generator(&basej, &secp256k1_scalar_zero);
+    secp256k1_gej_set_infinity(&basej);
+    secp256k1_fuzz_ecmult_const_check_null_generator(&basej, &scalar);
+    secp256k1_fuzz_ecmult_const_check_null_generator(&basej, &secp256k1_scalar_zero);
     secp256k1_ecmult_const(&result, &infinity, &scalar);
     FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
 
