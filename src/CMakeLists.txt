@@ -175,7 +175,7 @@ if(SECP256K1_BUILD_FUZZ)
   endif()
 
   function(add_secp256k1_fuzz_target name)
-    add_executable(fuzz_${name} fuzz/${name}.c)
+    add_executable(fuzz_${name} fuzz/${name}.c fuzz/external_callbacks.c)
     target_include_directories(fuzz_${name} PRIVATE
       ${PROJECT_SOURCE_DIR}/include
     )
@@ -200,7 +200,7 @@ if(SECP256K1_BUILD_FUZZ)
   endfunction()
 
   function(add_secp256k1_internal_fuzz_target name)
-    add_executable(fuzz_${name} fuzz/${name}.c)
+    add_executable(fuzz_${name} fuzz/${name}.c fuzz/external_callbacks.c)
     target_include_directories(fuzz_${name} PRIVATE
       ${PROJECT_SOURCE_DIR}/include
       ${PROJECT_SOURCE_DIR}/src

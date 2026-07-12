@@ -34,6 +34,10 @@
 #include "secp256k1_musig.h"
 #endif
 
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+extern unsigned int secp256k1_fuzz_default_illegal_calls;
+#endif
+
 #define FUZZ_CHECK(cond) do { \
     if (!(cond)) { \
         abort(); \

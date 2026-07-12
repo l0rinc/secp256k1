@@ -85,6 +85,23 @@ minor fix must not be allowed to hide a more serious master failure. Every
 production finding has a focused corpus and a mutation or deterministic proof
 documented in its commit message.
 
+- **Informational / low fuzzer-infrastructure:** before the shared callback
+  source was added, configuring CMake with
+  `SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON` left every fuzz executable
+  except `fuzz_context` with undefined references to the required external
+  default callback functions. The same omission affected Autotools fuzz
+  targets. This is a build-availability defect in the fuzz harness, not a
+  clean-master production vulnerability. Default builds did not expose it
+  because they use the callbacks defined in `util.h`, and the earlier external
+  build only linked `fuzz_context`. `external_callbacks.c` is now linked into
+  every CMake and Autotools fuzz target; the exact external build and all
+  available corpus replays are part of the commit verification. While proving
+  the Autotools path, the clean-master `fuzz_ellswift` target also failed for a
+  separate reason: its implementation-inclusive source requires the
+  precomputed internal library, but its Autotools rule linked only the public
+  library. Its rule now matches the internal CMake target, and the prior link
+  failure plus the post-fix 14-target `make check` are recorded in the commit.
+
 - **Low / informational:** `ecmult_multi/scratch-wrap-create` (`b827e0e`). The
   internal scratch constructor can wrap `base_alloc + size` before allocation,
   but caller-reachability is limited to static test, benchmark, and fuzz

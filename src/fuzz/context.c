@@ -11,22 +11,6 @@
 static size_t secp256k1_fuzz_sha256_compression_calls = 0;
 static size_t secp256k1_fuzz_sha256_compression_max_blocks = 0;
 
-#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
-static unsigned int secp256k1_fuzz_default_illegal_calls = 0;
-
-void secp256k1_default_illegal_callback_fn(const char *message, void *data) {
-    (void)data;
-    FUZZ_CHECK(message != NULL);
-    secp256k1_fuzz_default_illegal_calls++;
-}
-
-void secp256k1_default_error_callback_fn(const char *message, void *data) {
-    (void)data;
-    FUZZ_CHECK(message != NULL);
-    abort();
-}
-#endif
-
 typedef struct {
     const void *self;
     unsigned int calls;
