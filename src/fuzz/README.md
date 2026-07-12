@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, XDH symmetry, built-in hash cleanup
-- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence
+- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction
 - `fuzz_recovery`: recoverable ECDSA round trips when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify and `sign32`/`sign_custom` equivalence
 - `fuzz_musig`: MuSig key aggregation, tweak equivalence, x-only-tweak signing, nonce/signature round trips
@@ -200,6 +200,11 @@ documented in its commit message.
   `secp256k1_musig_pubkey_tweak_add_internal` makes the focused seed abort;
   the existing x-only implementation passes, so this is oracle hardening
   rather than a current-master finding.
+  The x-only target also rejects a zeroed opaque keypair at
+  `secp256k1_keypair_xonly_pub`, clears the x-only output, and preserves an
+  initialized zero optional parity result. This is an informational local-state
+  oracle: clean master already rejects the object, while skipping the
+  `secp256k1_keypair_load` result check makes the focused seed abort.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
