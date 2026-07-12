@@ -211,19 +211,26 @@ cherry-picked with new proof, and several heads are optimization stacks.
 - PR #3 (`7ed2abc`) repeats invalid-secret MuSig nonce-output coverage. The
   public nonce has no cryptographic meaning here, so its clearing is Low
   severity stale-state hygiene, not critical secret erasure (`52c573b`).
-- PR #4 (`b9a169b`) and PR #5 (`f06920c`) are optimization series: inlining,
-  WNAF/Pippenger tuning, ARM cmov selection, hash fast paths, and the same
-  behavior-preserving field serialization work. PR #6 (`ac915c9`) is the
-  standalone 5x52 force-inline subset. None adds a distinct production oracle.
+- PR #4 (`b9a169b`) is an optimization stack, but it is **not behavior-neutral
+  on top of this audit branch**. In addition to inlining and hash fast paths,
+  it removes HMAC/RFC6979 and EllSwift temporary clearing, restores unchecked
+  ECDH public-key loading and built-in failure-output behavior, and drops the
+  EllSwift zero-`u` and callback-input guards. Applying it here would revert or
+  mask already-rated clean-master findings (`5cfe7f7`, `35ffb87`, `119b407`,
+  `067d4a3`, and the cleanup series), so it was deliberately not cherry-picked.
+  Its optimizations may only be evaluated after those barriers are reapplied
+  and independently replayed. PR #5 (`f06920c`) and PR #6 (`ac915c9`) are
+  force-inline/field optimization subsets with no distinct production oracle;
+  they must not be treated as proof that the affected master behavior was safe.
 - PR #7 (`3f5fafa`) and PR #9 (`3f5fafa`, the same head) contain comments and
   test-maintenance changes. Their BER test encoding and aggregate-nonce
   assertions do not supersede the production findings or their dedicated
   mutations on this branch.
-- PR #8 (`248be19`) combines the PR #4 optimization stack with
-  `104f53e` hardening and test/tool follow-ups. The hardening pieces are
-  already present in master or in separately proven branch commits; replaying
-  the optimization stack after them would change performance, not expose a
-  new master behavior. Its BER test change is covered by `d4d1519`/`0cf6f5d`.
+- PR #8 (`248be19`) combines the PR #4 stack with `104f53e` hardening and
+  test/tool follow-ups. Its BER test change is covered by `d4d1519`/`0cf6f5d`,
+  but the inherited PR #4 behavior changes still conflict with the cleanup and
+  failure barriers above. Replaying that stack after the barriers would be a
+  separate optimization experiment, not evidence that clean master was safe.
 - PR #10 (`65d38b0`) contains two boundary fixes. The `fe_equal` bound change
   is already in master and is retained as regression coverage. The 10x26
   magnitude-32 normalization overflow was a real **Medium** latent
