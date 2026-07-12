@@ -665,6 +665,24 @@ static void secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(const secp256k1_cont
     FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
 }
 
+static void secp256k1_fuzz_check_ecdsa_message_reduction(const secp256k1_context *ctx, const unsigned char *seckey32, const secp256k1_pubkey *pubkey) {
+    unsigned char zero_msg32[32] = { 0 };
+    unsigned char zero_sig64[64];
+    unsigned char order_sig64[64];
+    secp256k1_ecdsa_signature zero_sig;
+    secp256k1_ecdsa_signature order_sig;
+
+    /* RFC6979 signs the scalar-reduced message, so hashes that differ by the
+     * group order must not produce different deterministic nonces. */
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &zero_sig, zero_msg32, seckey32, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &order_sig, secp256k1_fuzz_scalar_order, seckey32, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, zero_sig64, &zero_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, order_sig64, &order_sig) == 1);
+    FUZZ_CHECK(memcmp(zero_sig64, order_sig64, sizeof(zero_sig64)) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &zero_sig, zero_msg32, pubkey) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &order_sig, secp256k1_fuzz_scalar_order, pubkey) == 1);
+}
+
 static void secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(const unsigned char *msg32, const unsigned char *key32, const unsigned char *extra32) {
     unsigned char nonce32[32];
     unsigned char zero32[32] = { 0 };
@@ -1237,6 +1255,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_r_plus_order(ctx);
     secp256k1_fuzz_check_seckey_negate_failure(ctx);
     secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(ctx, msg32, seckey);
+    secp256k1_fuzz_check_ecdsa_message_reduction(ctx, seckey, &pubkey);
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, zero_compact) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, zero_compact, &parsed_sig) == 1);
