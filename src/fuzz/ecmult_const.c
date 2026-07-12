@@ -19,17 +19,26 @@ static void secp256k1_fuzz_ecmult_const_scalar(secp256k1_scalar *scalar, const u
 
 static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context *ctx, const secp256k1_scalar *scalar) {
     secp256k1_gej generated;
+    secp256k1_ge generated_affine;
+    secp256k1_ge expected_affine;
     secp256k1_gej generic;
     secp256k1_gej constant_time;
     secp256k1_gej generatorj;
+    secp256k1_gej generated_copy;
 
     secp256k1_gej_set_ge(&generatorj, &secp256k1_ge_const_g);
     secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &generated, scalar);
+    secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &generated_affine, scalar);
+    generated_copy = generated;
+    secp256k1_ge_set_gej(&expected_affine, &generated_copy);
+    secp256k1_gej_clear(&generated_copy);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&generated_affine, &expected_affine));
     secp256k1_ecmult(&generic, &generatorj, scalar, NULL);
     secp256k1_ecmult_const(&constant_time, &secp256k1_ge_const_g, scalar);
     FUZZ_CHECK(secp256k1_gej_eq_var(&generated, &generic));
     FUZZ_CHECK(secp256k1_gej_eq_var(&generated, &constant_time));
     FUZZ_CHECK(secp256k1_gej_eq_var(&generic, &constant_time));
+    secp256k1_gej_clear(&generated);
 }
 
 static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, const secp256k1_gej *expected, const secp256k1_scalar *scalar, const unsigned char *input, size_t size) {
