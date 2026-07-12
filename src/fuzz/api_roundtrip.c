@@ -618,6 +618,13 @@ static void secp256k1_fuzz_check_pubkey_sort(const secp256k1_context *ctx, const
     }
 }
 
+static void secp256k1_fuzz_check_empty_pubkey_sort(const secp256k1_context *ctx) {
+    const secp256k1_pubkey *empty[1] = { NULL };
+
+    /* The array pointer is required, but zero elements are a valid no-op. */
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, empty, 0) == 1);
+}
+
 static void secp256k1_fuzz_check_invalid_pubkey_sort(secp256k1_context *ctx, const secp256k1_pubkey *valid_pubkey) {
     secp256k1_fuzz_api_illegal_data illegal_data;
     secp256k1_pubkey invalid_pubkeys[2];
@@ -1314,6 +1321,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
+    secp256k1_fuzz_check_empty_pubkey_sort(ctx);
 
     sort_pubkeys[0] = pubkey;
     sort_pubkeys[1] = pubkey_neg_from_seckey;
