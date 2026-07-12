@@ -39,6 +39,8 @@ static void secp256k1_fuzz_fe_check_normalize_paths(const secp256k1_fe *input, c
     FUZZ_CHECK(secp256k1_fe_normalizes_to_zero_var(input) == expected_zero);
 }
 
+static void secp256k1_fuzz_fe_check_set_b32_mod(const unsigned char *input32);
+
 static void secp256k1_fuzz_fe_check_bounds_sum(int left_magnitude, int right_magnitude) {
     secp256k1_fe left;
     secp256k1_fe right;
@@ -73,6 +75,7 @@ static void secp256k1_fuzz_fe_check_raised_zero(const unsigned char *input, size
     secp256k1_fe zero31;
 
     secp256k1_fuzz_derive(bytes32, sizeof(bytes32), input, size, 33);
+    secp256k1_fuzz_fe_check_set_b32_mod(bytes32);
     secp256k1_fe_set_b32_mod(&value, bytes32);
     expected = value;
     secp256k1_fe_normalize_var(&expected);
@@ -94,6 +97,39 @@ static const unsigned char secp256k1_fuzz_field_prime[32] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
 };
+
+static void secp256k1_fuzz_fe_reduce_reference(unsigned char *out32, const unsigned char *input32) {
+    size_t i;
+    int borrow = 0;
+
+    if (memcmp(input32, secp256k1_fuzz_field_prime, 32) < 0) {
+        memcpy(out32, input32, 32);
+        return;
+    }
+    for (i = 32; i-- > 0;) {
+        int value = (int)input32[i] - secp256k1_fuzz_field_prime[i] - borrow;
+        if (value < 0) {
+            value += 256;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        out32[i] = (unsigned char)value;
+    }
+    FUZZ_CHECK(borrow == 0);
+}
+
+static void secp256k1_fuzz_fe_check_set_b32_mod(const unsigned char *input32) {
+    secp256k1_fe actual;
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+
+    secp256k1_fuzz_fe_reduce_reference(expected32, input32);
+    secp256k1_fe_set_b32_mod(&actual, input32);
+    secp256k1_fe_normalize_var(&actual);
+    secp256k1_fe_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
 
 static void secp256k1_fuzz_fe_half_reference(unsigned char *out32, const unsigned char *in32) {
     unsigned char sum[33] = { 0 };
@@ -389,8 +425,17 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
+    unsigned char boundary[32];
     int i;
 
+    memcpy(boundary, secp256k1_fuzz_field_prime, sizeof(boundary));
+    secp256k1_fuzz_fe_check_set_b32_mod(boundary);
+    boundary[31]--;
+    secp256k1_fuzz_fe_check_set_b32_mod(boundary);
+    boundary[31] += 2;
+    secp256k1_fuzz_fe_check_set_b32_mod(boundary);
+    memset(boundary, 0xFF, sizeof(boundary));
+    secp256k1_fuzz_fe_check_set_b32_mod(boundary);
     secp256k1_fuzz_fe_check_bounds_sum(16, 16);
     for (i = 0; i < 4; i++) {
         unsigned char selector = secp256k1_fuzz_byte(input, size, 17 + (size_t)i);
