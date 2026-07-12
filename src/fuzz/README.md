@@ -125,6 +125,14 @@ documented in its commit message.
   out-of-range pointer while evaluating a short caller buffer before rejecting
   the claimed length. This is parser-level undefined behavior in a
   caller-reachable contribution, distinct from the core DER signature parser.
+- **Low:** core ECDSA DER input-length pointer construction (`cd8c9f1`). On
+  clean master, a direct `secp256k1_ecdsa_signature_parse_der` call with a
+  one-byte non-DER buffer and `SIZE_MAX` input length forms `sig + size` before
+  rejecting the encoding; UBSan reports pointer overflow. The public API
+  requires an array of `inputlen` bytes, so this is not a remote DER or
+  cryptographic vulnerability. The offset parser removes the undefined
+  behavior while preserving valid DER behavior, and the `fuzz_api_roundtrip`
+  regression checks rejection plus cleared output state.
 - **Low to Medium:** fixed and variable output state left live after failed API
   calls (`c02dc5e`, `799a080`), including documented invalidation on NULL
   tweaks (`4759bd8`, `f48cd99`). A caller that ignores a failure can
