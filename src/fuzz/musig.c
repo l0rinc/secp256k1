@@ -65,6 +65,44 @@ static void secp256k1_fuzz_musig_reduce_scalar(unsigned char out[32], const unsi
     }
 }
 
+static void secp256k1_fuzz_musig_check_noncecoef_reference(const secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *msg32, const secp256k1_musig_session *session) {
+    static const unsigned char noncecoef_tag[] = "MuSig/noncecoef";
+    secp256k1_hash_ctx hash_ctx;
+    secp256k1_sha256 sha;
+    secp256k1_pubkey aggregate_pubkey;
+    unsigned char aggnonce66[66];
+    unsigned char aggregate_serialized[65];
+    unsigned char aggregate_x32[32];
+    unsigned char taghash[32];
+    unsigned char noncecoef_hash[32];
+    unsigned char expected_noncecoef[32];
+    size_t aggregate_serialized_len = sizeof(aggregate_serialized);
+
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, aggnonce66, aggnonce) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &aggregate_pubkey, keyagg_cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, aggregate_serialized, &aggregate_serialized_len, &aggregate_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(aggregate_serialized_len == sizeof(aggregate_serialized));
+    memcpy(aggregate_x32, aggregate_serialized + 1, sizeof(aggregate_x32));
+
+    /* Recompute TaggedHash with the generic SHA256 interface so the expected
+     * coefficient does not share MuSig's fixed-midstate implementation. */
+    secp256k1_hash_ctx_init(&hash_ctx);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, noncecoef_tag, sizeof(noncecoef_tag) - 1);
+    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
+    secp256k1_sha256_initialize(&sha);
+    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    secp256k1_sha256_write(&hash_ctx, &sha, aggnonce66, sizeof(aggnonce66));
+    secp256k1_sha256_write(&hash_ctx, &sha, aggregate_x32, sizeof(aggregate_x32));
+    secp256k1_sha256_write(&hash_ctx, &sha, msg32, 32);
+    secp256k1_sha256_finalize(&hash_ctx, &sha, noncecoef_hash);
+    secp256k1_sha256_clear(&sha);
+
+    secp256k1_fuzz_musig_reduce_scalar(expected_noncecoef, noncecoef_hash);
+    FUZZ_CHECK(memcmp(expected_noncecoef, session->data + 37, sizeof(expected_noncecoef)) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_keyagg_reference(const secp256k1_context *ctx) {
     static const unsigned char keyagg_list_tag[] = "KeyAgg list";
     static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
@@ -136,6 +174,7 @@ static void secp256k1_fuzz_check_musig_tweaked_sign_case(const secp256k1_context
     }
     FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 2) == 1);
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, cache) == 1);
+    secp256k1_fuzz_musig_check_noncecoef_reference(ctx, &aggnonce, cache, msg32, &session);
     for (i = 0; i < 2; i++) {
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], cache, &session) == 1);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], cache, &session) == 1);
@@ -1165,6 +1204,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
     secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, &keyagg_cache) == 1);
+    secp256k1_fuzz_musig_check_noncecoef_reference(ctx, &aggnonce, &keyagg_cache, msg32, &session);
     FUZZ_CHECK(secp256k1_fuzz_musig_noncecoef_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_fuzz_musig_challenge_sha256_compression_calls != 0);
     secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
