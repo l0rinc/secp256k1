@@ -228,6 +228,15 @@ static void secp256k1_fuzz_check_context_null_prealloc(void) {
 #endif
 }
 
+static void secp256k1_fuzz_check_context_invalid_flags(void) {
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    unsigned int calls = secp256k1_fuzz_default_illegal_calls;
+
+    FUZZ_CHECK(secp256k1_context_preallocated_size(SECP256K1_FLAGS_TYPE_COMPRESSION) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls + 1);
+#endif
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
@@ -256,6 +265,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     void *prealloc_hash_clone_mem;
 
     secp256k1_fuzz_check_context_null_prealloc();
+    secp256k1_fuzz_check_context_invalid_flags();
     FUZZ_CHECK(ctx != NULL);
     secp256k1_fuzz_derive(seed32, sizeof(seed32), input, size, 31);
     secp256k1_fuzz_derive(reset_seed32, sizeof(reset_seed32), input, size, 37);

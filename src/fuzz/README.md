@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, DER, private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, deterministic signing consistency
+- `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, encoding, add-int boundaries, and maximum-magnitude consistency
@@ -182,6 +182,12 @@ documented in its commit message.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.
+  It also checks that `secp256k1_context_preallocated_size` rejects a
+  compression-type flag in the external-default-callback build, where the
+  default illegal callback can be counted without aborting. Clean master
+  already returns zero; suppressing the invalid-type branch makes the focused
+  seed abort. Ordinary builds intentionally skip this direct call because
+  their default callback terminates the process.
   The field target also pins the largest valid `secp256k1_fe_add_int` input:
   magnitude 31 plus `0x7fff` must normalize identically to a low-magnitude
   reference. The production wrapper now asserts this precondition before the
