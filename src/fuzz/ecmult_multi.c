@@ -23,6 +23,8 @@ typedef struct {
     secp256k1_ge pt;
     uint64_t seen[(SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS + 63) / 64];
     size_t calls;
+    size_t fail_at;
+    int fail;
 } secp256k1_fuzz_ecmult_multi_repeat_data;
 
 typedef struct {
@@ -223,6 +225,19 @@ static void secp256k1_fuzz_ecmult_multi_repeat_check_trace(const secp256k1_fuzz_
     }
 }
 
+static void secp256k1_fuzz_ecmult_multi_repeat_check_failure_trace(const secp256k1_fuzz_ecmult_multi_repeat_data *data, size_t n_points) {
+    size_t i;
+
+    FUZZ_CHECK(data->fail_at < n_points);
+    FUZZ_CHECK(data->calls == data->fail_at + 1);
+    for (i = 0; i <= data->fail_at; i++) {
+        FUZZ_CHECK((data->seen[i / 64] & ((uint64_t)1 << (i % 64))) != 0);
+    }
+    for (i = data->fail_at + 1; i < n_points; i++) {
+        FUZZ_CHECK((data->seen[i / 64] & ((uint64_t)1 << (i % 64))) == 0);
+    }
+}
+
 static int secp256k1_fuzz_ecmult_multi_repeat_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
     secp256k1_fuzz_ecmult_multi_repeat_data *data = (secp256k1_fuzz_ecmult_multi_repeat_data *)cbdata;
     uint64_t bit;
@@ -232,6 +247,9 @@ static int secp256k1_fuzz_ecmult_multi_repeat_callback(secp256k1_scalar *sc, sec
     FUZZ_CHECK((data->seen[idx / 64] & bit) == 0);
     data->seen[idx / 64] |= bit;
     data->calls++;
+    if (data->fail && idx == data->fail_at) {
+        return 0;
+    }
     *sc = data->sc;
     *pt = data->pt;
     return 1;
@@ -348,6 +366,17 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger(const secp256k1_conte
     secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
     FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
 
+    /* Reject at every callback position in the Pippenger batch. */
+    data.fail = 1;
+    for (data.fail_at = 0; data.fail_at < n_points; data.fail_at++) {
+        checkpoint = scratch->alloc_size;
+        secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
+        FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &secp256k1_scalar_one, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 0);
+        secp256k1_fuzz_ecmult_multi_repeat_check_failure_trace(&data, n_points);
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    }
+    data.fail = 0;
+
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
@@ -393,6 +422,18 @@ static void secp256k1_fuzz_ecmult_multi_repeated_strauss(const secp256k1_context
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
     FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+
+    /* Reject from both the first and second Strauss batches. The latter is
+     * distinct from the existing single-batch failure oracle. */
+    data.fail = 1;
+    for (data.fail_at = 0; data.fail_at < n_points; data.fail_at++) {
+        checkpoint = scratch->alloc_size;
+        secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
+        FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &secp256k1_scalar_one, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 0);
+        secp256k1_fuzz_ecmult_multi_repeat_check_failure_trace(&data, n_points);
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    }
+    data.fail = 0;
 
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
