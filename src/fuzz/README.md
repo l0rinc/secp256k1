@@ -13,7 +13,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency and scratch accounting
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, and scratch accounting
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
@@ -179,6 +179,14 @@ documented in its commit message.
   fails (`5bd9ae8`). The latter is an internal helper boundary: callers must
   honor the failure return, so it is state hygiene rather than a remotely
   reachable cryptographic defect.
+- **Informational oracle hardening:** `fuzz_ecmult_multi` now forces a
+  Pippenger invocation across two batches, independently checks the repeated
+  point equation, and rejects callback failures immediately before and after
+  the batch boundary. Clean master passes; using a relative callback offset
+  for the second batch makes the focused `repeated-pippenger-batches` seed
+  abort. This is internal callback-index and failure-state coverage, not a
+  current-master production finding; the existing target already covered
+  single-batch Pippenger and multi-batch Strauss behavior.
 - **Low:** noncanonical MuSig nonce storage (`64250f7`) and overflowing opaque
   partial-signature serialization (`3c1d67b`) are local API-consistency and
   cross-build robustness failures. MuSig failed parse/aggregation/session and
