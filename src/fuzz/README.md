@@ -15,7 +15,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
-- `fuzz_ellswift`: EllSwift encode/decode, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
+- `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
@@ -393,6 +393,15 @@ documented in its commit message.
   production finding. The inverse helper is now compiled as an internal fuzz target
   so the assertion observes the same implementation and verification contracts as
   the field/group fuzzers.
+  The target also compares each EllSwift encoding with a second encoding made from
+  the same key and bitwise-complemented caller randomizer, requiring different
+  encodings that both decode to the original key. Clean master passes; removing
+  only the `rnd32` write in `secp256k1_ellswift_encode`, or only the optional
+  `auxrnd32` write in `secp256k1_ellswift_create`, makes the focused
+  `randomizer-effects` seed abort. Existing tests checked decode round trips but
+  never checked that these entropy inputs affected the result. This is
+  informational oracle hardening: no clean-master production defect is claimed,
+  and no unstable encoding bytes are pinned.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not

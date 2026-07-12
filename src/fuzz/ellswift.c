@@ -123,6 +123,29 @@ static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_cont
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded);
 }
 
+static void secp256k1_fuzz_check_ellswift_randomizer_effect(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey32, const unsigned char *auxrnd32, const unsigned char *rnd32, const unsigned char *ell64, const unsigned char *encoded64) {
+    unsigned char auxrnd_alt32[32];
+    unsigned char rnd_alt32[32];
+    unsigned char ell_alt64[64];
+    unsigned char encoded_alt64[64];
+    size_t i;
+
+    /* Randomizers are not stable serialization inputs, but eliding either one
+     * would remove entropy from an encoding without changing its decoded key. */
+    for (i = 0; i < 32; i++) {
+        auxrnd_alt32[i] = (unsigned char)~auxrnd32[i];
+        rnd_alt32[i] = (unsigned char)~rnd32[i];
+    }
+
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell_alt64, seckey32, auxrnd_alt32) == 1);
+    FUZZ_CHECK(memcmp(ell64, ell_alt64, sizeof(ell_alt64)) != 0);
+    secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_alt64, pubkey);
+
+    FUZZ_CHECK(secp256k1_ellswift_encode(ctx, encoded_alt64, pubkey, rnd_alt32) == 1);
+    FUZZ_CHECK(memcmp(encoded64, encoded_alt64, sizeof(encoded_alt64)) != 0);
+    secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, encoded_alt64, pubkey);
+}
+
 static void secp256k1_fuzz_check_ellswift_inverse_vector(const secp256k1_context *ctx, const unsigned char *ell64, const secp256k1_pubkey *pubkey) {
     secp256k1_ge point;
     secp256k1_fe u;
@@ -466,6 +489,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_ellswift_encode(ctx, ell_encoded_a64, &pubkey_a, rnd32) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_encoded_a64, &pubkey_a);
+    secp256k1_fuzz_check_ellswift_randomizer_effect(ctx, &pubkey_a, seckey_a32, auxrnd_a32, rnd32, ell_a64, ell_encoded_a64);
     secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32);
     secp256k1_fuzz_check_ellswift_failure_cleanup(ctx, rnd32, auxrnd_a32);
 
