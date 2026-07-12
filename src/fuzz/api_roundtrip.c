@@ -64,6 +64,7 @@ typedef int (*secp256k1_fuzz_ecdsa_serialize_der_fn)(const secp256k1_context *ct
 typedef int (*secp256k1_fuzz_ecdsa_normalize_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sigout, const secp256k1_ecdsa_signature *sigin);
 typedef int (*secp256k1_fuzz_ec_seckey_tweak_fn)(const secp256k1_context *ctx, unsigned char *seckey, const unsigned char *tweak32);
 typedef int (*secp256k1_fuzz_ec_pubkey_tweak_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const unsigned char *tweak32);
+typedef int (*secp256k1_fuzz_ec_pubkey_combine_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const secp256k1_pubkey * const *pubkeys, size_t n_pubkeys);
 
 static void secp256k1_fuzz_api_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_api_illegal_data *illegal_data = (secp256k1_fuzz_api_illegal_data *)data;
@@ -303,6 +304,36 @@ static void secp256k1_fuzz_check_pubkey_combine_invalid(secp256k1_context *ctx, 
     memset(&combined, 0x5A, sizeof(combined));
     calls = illegal_data.calls;
     FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
+static void secp256k1_fuzz_check_pubkey_combine_empty(secp256k1_context *ctx, const secp256k1_pubkey *pubkey) {
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    secp256k1_fuzz_ec_pubkey_combine_fn combine = secp256k1_ec_pubkey_combine;
+    const secp256k1_pubkey *inputs[1];
+    secp256k1_pubkey combined;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    unsigned int calls;
+
+    inputs[0] = pubkey;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    /* Empty aggregation is rejected before the input array is inspected. */
+    memset(&combined, 0xA5, sizeof(combined));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(combine(ctx, &combined, inputs, 0) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+
+    /* Keep the zero-sized case independent of the array pointer as well. */
+    memset(&combined, 0x5A, sizeof(combined));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(combine(ctx, &combined, NULL, 0) == 0);
     FUZZ_CHECK(illegal_data.calls == calls + 1);
     FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
 
@@ -1176,6 +1207,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &combine_pubkey, combine_seckey) == 1);
     secp256k1_fuzz_check_pubkey_combine(ctx, &pubkey, &pubkey_neg_from_seckey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
+    secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
 
     sort_pubkeys[0] = pubkey;
