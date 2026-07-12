@@ -101,10 +101,11 @@ documented in its commit message.
   ECDH failure-output cleanup (`bb15eb0`), and NULL preallocated context
   storage (`a9253c2`). Public nonce cleanup (`52c573b`) is stale-state hygiene,
   not critical secret erasure when the nonce has no cryptographic meaning.
-- **Informational oracle gaps:** empty public-key aggregation (`c5c0afe`) and
-  ECDSA verification's invalid-opaque-key API boundary (`ef25d27`) currently
-  pass on master; their mutations prove that the harness would catch a
-  regression, not that master is presently vulnerable.
+- **Informational oracle gaps:** empty public-key aggregation (`c5c0afe`),
+  ECDSA verification's invalid-opaque-key API boundary (`ef25d27`), and the
+  public-key serializer's wrong flag-type boundary currently pass on master;
+  their mutations prove that the harness would catch a regression, not that
+  master is presently vulnerable.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
