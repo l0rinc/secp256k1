@@ -501,6 +501,24 @@ static void secp256k1_fuzz_check_ecdsa_signature_state_barrier(secp256k1_context
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_ecdsa_invalid_pubkey(secp256k1_context *ctx, const secp256k1_ecdsa_signature *valid_sig, const unsigned char *msg32) {
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    secp256k1_pubkey invalid_pubkey;
+    unsigned int calls;
+
+    /* Verification must not treat an opaque zero pubkey as a group point. */
+    memset(&invalid_pubkey, 0, sizeof(invalid_pubkey));
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, valid_sig, msg32, &invalid_pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_pubkey_cmp_order(const secp256k1_context *ctx, const secp256k1_pubkey *a, const secp256k1_pubkey *b) {
     unsigned char serialized_a[33];
     unsigned char serialized_b[33];
@@ -1271,6 +1289,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_variable_output_cleanup(ctx, &sig);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
     secp256k1_fuzz_check_ecdsa_signature_state_barrier(ctx, &sig, msg32, &pubkey);
+    secp256k1_fuzz_check_ecdsa_invalid_pubkey(ctx, &sig, msg32);
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &sig) == 0);
     secp256k1_fuzz_check_signature_roundtrip(ctx, &sig);
     secp256k1_fuzz_check_ecdsa_high_s(ctx, &sig, msg32, &pubkey);
