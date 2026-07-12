@@ -196,6 +196,11 @@ static void secp256k1_fuzz_ecmult_multi_check_failure_trace(const secp256k1_fuzz
     FUZZ_CHECK((data->seen_mask & (1u << data->fail_at)) != 0);
 }
 
+static void secp256k1_fuzz_ecmult_multi_check_failure_output(const secp256k1_gej *result) {
+    /* A failed batch must not expose a partial accumulated result. */
+    FUZZ_CHECK(secp256k1_gej_is_infinity(result));
+}
+
 static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
     secp256k1_fuzz_ecmult_multi_data *data = (secp256k1_fuzz_ecmult_multi_data *)cbdata;
     FUZZ_CHECK(idx < 8);
@@ -373,6 +378,7 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger(const secp256k1_conte
         secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
         FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &secp256k1_scalar_one, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 0);
         secp256k1_fuzz_ecmult_multi_repeat_check_failure_trace(&data, n_points);
+        secp256k1_fuzz_ecmult_multi_check_failure_output(&actual);
         FUZZ_CHECK(scratch->alloc_size == checkpoint);
     }
     data.fail = 0;
@@ -431,6 +437,7 @@ static void secp256k1_fuzz_ecmult_multi_repeated_strauss(const secp256k1_context
         secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
         FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &secp256k1_scalar_one, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 0);
         secp256k1_fuzz_ecmult_multi_repeat_check_failure_trace(&data, n_points);
+        secp256k1_fuzz_ecmult_multi_check_failure_output(&actual);
         FUZZ_CHECK(scratch->alloc_size == checkpoint);
     }
     data.fail = 0;
@@ -484,6 +491,7 @@ static void secp256k1_fuzz_ecmult_multi_fail_callback(const secp256k1_context *c
     ret = secp256k1_ecmult_multi_var(&ctx->error_callback, NULL, &r, g_sc, secp256k1_fuzz_ecmult_multi_callback, data, n_points);
     FUZZ_CHECK(ret == 0);
     secp256k1_fuzz_ecmult_multi_check_failure_trace(data, n_points);
+    secp256k1_fuzz_ecmult_multi_check_failure_output(&r);
 
     scratch = secp256k1_scratch_create(&ctx->error_callback, 65536);
     FUZZ_CHECK(scratch != NULL);
@@ -493,6 +501,7 @@ static void secp256k1_fuzz_ecmult_multi_fail_callback(const secp256k1_context *c
     data->fail = 0;
     FUZZ_CHECK(ret == 0);
     secp256k1_fuzz_ecmult_multi_check_failure_trace(data, n_points);
+    secp256k1_fuzz_ecmult_multi_check_failure_output(&r);
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }

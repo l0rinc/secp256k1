@@ -5076,6 +5076,50 @@ static int ecmult_multi_false_callback(secp256k1_scalar *sc, secp256k1_ge *pt, s
     return 0;
 }
 
+typedef struct {
+    ecmult_multi_data *data;
+    size_t fail_at;
+} ecmult_multi_fail_data;
+
+static int ecmult_multi_fail_after_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
+    ecmult_multi_fail_data *fail_data = (ecmult_multi_fail_data *)cbdata;
+
+    if (idx == fail_data->fail_at) {
+        return 0;
+    }
+    return ecmult_multi_callback(sc, pt, idx, fail_data->data);
+}
+
+static void test_ecmult_multi_failure_output(void) {
+    secp256k1_scalar sc[4];
+    secp256k1_ge pt[4];
+    ecmult_multi_data data;
+    ecmult_multi_fail_data fail_data;
+    secp256k1_gej r;
+    secp256k1_scratch *scratch;
+    size_t i;
+
+    for (i = 0; i < 4; i++) {
+        sc[i] = secp256k1_scalar_one;
+        pt[i] = secp256k1_ge_const_g;
+    }
+    data.sc = sc;
+    data.pt = pt;
+    fail_data.data = &data;
+    fail_data.fail_at = 2;
+
+    /* Exercise the simple fallback first. */
+    CHECK(!secp256k1_ecmult_multi_var(&CTX->error_callback, NULL, &r, &secp256k1_scalar_zero, ecmult_multi_fail_after_callback, &fail_data, 4));
+    CHECK(secp256k1_gej_is_infinity(&r));
+
+    /* Force two batches, then reject the second one. A failed call must not
+     * leave the first batch's partial sum in the output. */
+    scratch = secp256k1_scratch_create(&CTX->error_callback, secp256k1_strauss_scratch_size(2) + STRAUSS_SCRATCH_OBJECTS * ALIGNMENT);
+    CHECK(!secp256k1_ecmult_multi_var(&CTX->error_callback, scratch, &r, &secp256k1_scalar_zero, ecmult_multi_fail_after_callback, &fail_data, 4));
+    CHECK(secp256k1_gej_is_infinity(&r));
+    secp256k1_scratch_destroy(&CTX->error_callback, scratch);
+}
+
 static void test_ecmult_multi(secp256k1_scratch *scratch, secp256k1_ecmult_multi_func ecmult_multi) {
     int ncount;
     secp256k1_scalar sc[32];
@@ -5674,6 +5718,7 @@ static void run_ecmult_multi_tests(void) {
 
     test_ecmult_multi_batch_size_helper();
     test_ecmult_multi_batching();
+    test_ecmult_multi_failure_output();
 }
 
 static void test_wnaf(const secp256k1_scalar *number, int w) {

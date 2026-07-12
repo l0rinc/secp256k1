@@ -798,6 +798,8 @@ static int secp256k1_ecmult_multi_simple_var(secp256k1_gej *r, const secp256k1_s
         secp256k1_gej pointj;
         secp256k1_scalar scalar;
         if (!cb(&scalar, &point, point_idx, cbdata)) {
+            /* Do not expose a partial accumulated result on failure. */
+            secp256k1_gej_set_infinity(r);
             return 0;
         }
         /* r += scalar*point */
@@ -867,6 +869,8 @@ static int secp256k1_ecmult_multi_var(const secp256k1_callback* error_callback, 
         size_t offset = n_batch_points*i;
         secp256k1_gej tmp;
         if (!f(error_callback, scratch, &tmp, i == 0 ? inp_g_sc : NULL, cb, cbdata, nbp, offset)) {
+            /* Do not expose a partial accumulated result on failure. */
+            secp256k1_gej_set_infinity(r);
             return 0;
         }
         secp256k1_gej_add_var(r, r, &tmp, NULL);
