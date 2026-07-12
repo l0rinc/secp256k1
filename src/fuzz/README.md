@@ -140,6 +140,15 @@ documented in its commit message.
   prefix. The known output sizes make these paths testable and fail-closed, but
   there is no direct memory corruption and callers are required to check return
   values.
+- **Low:** the contrib BER private-key exporter left its documented 279-byte
+  output buffer unchanged when an invalid secret key made export fail
+  (`36a009f`). Clean master still reset the output length to zero, so callers
+  that ignored the return value could retain stale private-key encoding bytes;
+  this was stale state rather than a cryptographic failure or memory-safety
+  issue. The deterministic `ecdsa` regression and the dedicated
+  `privkey-der-export-failure` corpus seed prove the failure for both encoding
+  modes and preserve the boundary between the cleared 279 bytes and the rest
+  of the caller's buffer.
 - **Low to Medium:** secret-derived stack/helper temporaries left live after use
   (`a3e30b3`, `a6f0b14`, `f94fec5`, `a884a2d`). These are code-path-proven
   lifetime reductions for scalar, field, Jacobian, EllSwift, and tweak state;
