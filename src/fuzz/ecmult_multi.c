@@ -41,6 +41,53 @@ static void secp256k1_fuzz_ecmult_multi_error_callback(const char *message, void
     error_data->calls++;
 }
 
+static void secp256k1_fuzz_check_scratch_accounting_boundary(secp256k1_context *ctx) {
+    secp256k1_fuzz_ecmult_multi_error_data error_data;
+    secp256k1_scratch *scratch;
+    unsigned char storage[8];
+    unsigned char expected_storage[sizeof(storage)];
+    unsigned int calls;
+
+    scratch = malloc(sizeof(*scratch));
+    FUZZ_CHECK(scratch != NULL);
+    memset(scratch, 0, sizeof(*scratch));
+    memcpy(scratch->magic, "scratch", sizeof(scratch->magic));
+    scratch->data = storage;
+    scratch->alloc_size = sizeof(storage) + 1;
+    scratch->max_size = sizeof(storage);
+    memset(storage, 0xA5, sizeof(storage));
+    memcpy(expected_storage, storage, sizeof(expected_storage));
+
+    error_data.self = &error_data;
+    error_data.calls = 0;
+    secp256k1_context_set_error_callback(ctx, secp256k1_fuzz_ecmult_multi_error_callback, &error_data);
+
+    calls = error_data.calls;
+    FUZZ_CHECK(secp256k1_scratch_checkpoint(&ctx->error_callback, scratch) == 0);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+    FUZZ_CHECK(scratch->alloc_size == sizeof(storage) + 1);
+
+    calls = error_data.calls;
+    FUZZ_CHECK(secp256k1_scratch_max_allocation(&ctx->error_callback, scratch, 0) == 0);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+
+    calls = error_data.calls;
+    FUZZ_CHECK(secp256k1_scratch_alloc(&ctx->error_callback, scratch, 1) == NULL);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(storage, expected_storage, sizeof(storage)) == 0);
+
+    calls = error_data.calls;
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, 0);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+    FUZZ_CHECK(scratch->alloc_size == sizeof(storage) + 1);
+
+    calls = error_data.calls;
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+    free(scratch);
+    secp256k1_context_set_error_callback(ctx, NULL, NULL);
+}
+
 static size_t secp256k1_fuzz_size_t(const unsigned char *input, size_t size, unsigned int salt) {
     unsigned char bytes[sizeof(size_t)];
     size_t ret = 0;
@@ -521,6 +568,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
     secp256k1_fuzz_check_scratch_create_boundaries(ctx);
+    secp256k1_fuzz_check_scratch_accounting_boundary(ctx);
     secp256k1_fuzz_check_error_callback_routing(ctx);
     secp256k1_fuzz_check_error_callback_clone(ctx);
 

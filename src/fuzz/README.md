@@ -13,7 +13,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency and scratch accounting
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
@@ -94,6 +94,17 @@ documented in its commit message.
   remotely reachable or exported production memory-corruption primitive. The
   original commit's High label is superseded by this clean-master reachability
   audit.
+- **Low / informational:** a magic-valid scratch object whose `alloc_size`
+  exceeds `max_size` makes clean master subtract in unsigned arithmetic before
+  the next allocation. The object is internal and no valid master path was
+  found that can create this state, so this is not a remotely reachable
+  production vulnerability. The shared scratch validator now rejects the
+  accounting violation through the error callback before checkpoint, capacity,
+  allocation, or destruction code can use it. The deterministic scratch test
+  and `scratch-accounting-boundary` corpus assert the rejection and preserve
+  the backing sentinel; removing the accounting guard makes the focused seed
+  fail. This is hardening against a future internal state-transition bug, not a
+  clean-master finding.
 - **Medium:** invalid and noncanonical opaque public-key state
   (`5ad8052`, `334bae0`, `2b7a931`), inconsistent opaque keypairs used for
   signing or nonce creation (`9e70605`), and opaque ECDSA and recoverable
