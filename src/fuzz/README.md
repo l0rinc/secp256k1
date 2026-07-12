@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, encoding, add-int boundaries, and maximum-magnitude consistency
-- `fuzz_group`: Jacobian/affine group-operation agreement, batch conversion, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication against scalar-derived points
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
@@ -222,6 +222,13 @@ documented in its commit message.
   prefix-product initialization makes the focused seed abort. Infinity points
   remain in the variable-time-only path because the constant-time helper's
   caller contract requires finite inputs.
+  It also compares the fractional X-coordinate curve predicate against an
+  independently computed quotient and curve equation, with the generator as a
+  deterministic on-curve case. Clean master passes this informational helper
+  oracle; inverting the production square-test result makes its focused seed
+  abort. The fraction predicate is already used by ElligatorSwift and
+  deterministic tests, so this catches a regression in its rational-coordinate
+  arithmetic without claiming a current-master vulnerability.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
