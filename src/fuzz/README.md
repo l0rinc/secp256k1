@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
-- `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, an independent recovery point equation, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and an independent partial-signature point equation
 
@@ -106,6 +106,23 @@ ASan/UBSan diagnostic, assertion failure, timeout, OOM, crash artifact, or
 nonzero worker result was observed across these batches. These runs add
 negative evidence for the current oracles and do not change any
 master-relative severity rating.
+
+Focused recoverable ECDSA point-equation replay (2026-07-13): the recovery
+corpus has 4 tracked inputs totaling 180 bytes, including
+`recovery-point-equation`. The independent oracle reconstructs the candidate
+`R` from serialized `r` and `recid` (including the `r + n` branch), reduces the
+message scalar with byte arithmetic, and checks `rQ = sR - zG` using public
+point operations rather than `secp256k1_ecdsa_verify` or the recovery
+implementation's internal multiscalar path. Default and forced-int64
+ASan/UBSan fixed replays each executed all 4 inputs; matching MSan replays did
+the same without a diagnostic. Clean coverage was 2,630 edges on default and
+4,775 on forced-int64. A temporary production mutation removing
+`secp256k1_scalar_negate(&u1, &u1);` from
+`src/modules/recovery/main_impl.h` made the focused seed exit 77 in the new
+oracle on both backends; `addr2line` resolved the abort to
+`secp256k1_fuzz_check_recovery_equation`. The production line was restored
+before the clean replays. This is informational oracle hardening, not a
+current-master production finding, and does not change any severity rating.
 
 Cross-backend campaign (2026-07-13): a separate ASan/UBSan libFuzzer build
 used `-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`, selecting the 10x26
@@ -362,6 +379,17 @@ documented in its commit message.
   nonce-term addition makes the seed abort in the new oracle on both backends;
   the mutation was restored before replay. This is oracle hardening, not a
   current-master production finding, and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_recovery` independently checks the
+  recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`
+  and `recid`, including the overflow branch. The previous target compared
+  recovery output with a signer-generated public key and delegated signature
+  validity to `secp256k1_ecdsa_verify`; neither independently modeled the
+  recovery equation. The clean current branch passes the new
+  `recovery-point-equation` seed on both field backends and under MSan. Removing
+  the production `secp256k1_scalar_negate(&u1, &u1);` step makes the seed abort
+  in the new oracle on both backends; the line was restored before replay. This
+  is oracle hardening, not a current-master production finding, and does not
+  change any severity rating.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting

@@ -26,6 +26,23 @@ static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
 
+static void secp256k1_fuzz_scalar32_reduce(unsigned char *out32, const unsigned char *input32) {
+    int i;
+    unsigned int borrow = 0;
+
+    memcpy(out32, input32, 32);
+    if (secp256k1_fuzz_scalar32_in_order(input32)) {
+        return;
+    }
+    for (i = 31; i >= 0; i--) {
+        unsigned int subtrahend = (unsigned int)secp256k1_fuzz_scalar_order[i] + borrow;
+        unsigned int value = out32[i];
+        out32[i] = (unsigned char)(value - subtrahend);
+        borrow = value < subtrahend;
+    }
+    FUZZ_CHECK(borrow == 0);
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -104,6 +121,68 @@ static int secp256k1_fuzz_recovery_nonce_fail(unsigned char *nonce32, const unsi
     nonce_data->calls++;
     memset(nonce32, 0xA5, 32);
     return 0;
+}
+
+/* Check recoverable ECDSA with public point operations instead of relying on
+ * ecdsa_verify or the recovery implementation's internal multiscalar path. */
+static void secp256k1_fuzz_check_recovery_equation(const secp256k1_context *ctx, const secp256k1_ecdsa_recoverable_signature *sig, const unsigned char *msg32, const secp256k1_pubkey *recovered_pubkey) {
+    secp256k1_pubkey r_point;
+    secp256k1_pubkey s_r_point;
+    secp256k1_pubkey generator;
+    secp256k1_pubkey z_g_point;
+    secp256k1_pubkey left;
+    secp256k1_pubkey expected;
+    const secp256k1_pubkey *terms[2];
+    unsigned char compact[64];
+    unsigned char rx32[32];
+    unsigned char z32[32];
+    unsigned char r_point33[33];
+    unsigned char zero32[32] = { 0 };
+    int recid;
+    int i;
+    unsigned int carry = 0;
+    size_t term_count = 0;
+
+    FUZZ_CHECK(sig != NULL);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(recovered_pubkey != NULL);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, compact, &recid, sig) == 1);
+    FUZZ_CHECK(recid >= 0 && recid <= 3);
+    FUZZ_CHECK(secp256k1_fuzz_scalar32_in_order(compact));
+    FUZZ_CHECK(secp256k1_fuzz_scalar32_in_order(compact + 32));
+    FUZZ_CHECK(memcmp(compact, zero32, sizeof(zero32)) != 0);
+    FUZZ_CHECK(memcmp(compact + 32, zero32, sizeof(zero32)) != 0);
+
+    memcpy(rx32, compact, sizeof(rx32));
+    if (recid & 2) {
+        for (i = 31; i >= 0; i--) {
+            unsigned int value = (unsigned int)rx32[i] + secp256k1_fuzz_scalar_order[i] + carry;
+            rx32[i] = (unsigned char)value;
+            carry = value >> 8;
+        }
+        FUZZ_CHECK(carry == 0);
+    }
+    r_point33[0] = (unsigned char)(SECP256K1_TAG_PUBKEY_EVEN + (recid & 1));
+    memcpy(r_point33 + 1, rx32, sizeof(rx32));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &r_point, r_point33, sizeof(r_point33)) == 1);
+
+    /* The recovery API reduces the message scalar modulo the group order. */
+    secp256k1_fuzz_scalar32_reduce(z32, msg32);
+
+    left = *recovered_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &left, compact) == 1);
+    s_r_point = r_point;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &s_r_point, compact + 32) == 1);
+    terms[term_count++] = &s_r_point;
+    if (memcmp(z32, zero32, sizeof(z32)) != 0) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+        z_g_point = generator;
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &z_g_point, z32) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &z_g_point) == 1);
+        terms[term_count++] = &z_g_point;
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected, terms, term_count) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &left, &expected) == 0);
 }
 
 static void secp256k1_fuzz_check_recoverable_parse_compact(const secp256k1_context *ctx, const unsigned char *input64, int recid) {
@@ -358,6 +437,7 @@ static void secp256k1_fuzz_check_recoverable_high_s(const secp256k1_context *ctx
     FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, compact + 32) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &high_sig, compact, recid ^ 1) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &high_sig, msg32) == 1);
+    secp256k1_fuzz_check_recovery_equation(ctx, &high_sig, msg32, &recovered_pubkey);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, pubkey, &recovered_pubkey) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &high_normal_sig, &high_sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &high_normal_sig, msg32, pubkey) == 0);
@@ -400,6 +480,7 @@ static void secp256k1_fuzz_check_recoverable_valid_nonce_retry(const secp256k1_c
     FUZZ_CHECK(memcmp(compact, zero32, sizeof(zero32)) != 0);
     FUZZ_CHECK(memcmp(compact + 32, zero32, sizeof(zero32)) != 0);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &sig, zero_s_message) == 1);
+    secp256k1_fuzz_check_recovery_equation(ctx, &sig, zero_s_message, &recovered_pubkey);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &generator, &recovered_pubkey) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &normal_sig, &sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normal_sig, zero_s_message, &generator) == 1);
@@ -481,6 +562,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 1);
+    secp256k1_fuzz_check_recovery_equation(ctx, &reparsed_sig, msg32, &recovered_pubkey);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &recovered_pubkey) == 0);
     secp256k1_fuzz_check_recoverable_signature_state_barrier(ctx, &reparsed_sig, msg32);
     secp256k1_fuzz_check_recovery_illegal_failure_cleanup(ctx, &reparsed_sig, compact, msg32, seckey);
@@ -500,6 +582,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig);
         FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
         if (secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32)) {
+            secp256k1_fuzz_check_recovery_equation(ctx, &reparsed_sig, msg32, &recovered_pubkey);
             FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &recovered_pubkey) != 0);
         }
     }
