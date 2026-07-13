@@ -13,7 +13,7 @@ Targets:
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, and byte-level maximum-residue references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, and normalized/non-normalized rational x-only fractions
+- `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
@@ -1135,6 +1135,23 @@ documented in its commit message.
   no sanitizer diagnostics or artifacts. This is informational internal-
   contract hardening, not a clean-master production finding; the
   master-relative severity ledger is unchanged.
+  The `ecmult_const` target now calls `secp256k1_ecmult_odd_multiples_table`
+  directly with `n == 4`, reconstructs every omitted projective Z coordinate
+  from the returned ratios, and compares the resulting `[a, 3a, 5a, 7a]`
+  points against an independent repeated-double/addition sequence. The
+  pre-existing `ecmult_const` corpus used only fixed-size production table
+  callers, so it never exercised this generic four-entry contract directly.
+  For the control proof, a temporary `VERIFY`-only mutation flipped one limb
+  of `zr[1]` when `n == 4`; the four old corpus inputs plus the dedicated
+  `odd-multiples-table` seed stayed green with only the new helper disabled,
+  while enabling it made the focused seed emit a libFuzzer deadly-signal
+  failure. The mutation was restored before the clean replay. Default and
+  forced-`int64` ASan/UBSan focused and full-corpus replays passed, as did
+  bounded `-workers=2 -jobs=2` campaigns with no sanitizer diagnostics or
+  crash artifacts. This is informational/Low internal-contract oracle
+  hardening, not a clean-master production bug; no public or cryptographic
+  impact was demonstrated and the master-relative severity ledger is
+  unchanged.
   It also compares the fractional X-coordinate curve predicate against an
   independently computed quotient and curve equation, with the generator as a
   deterministic on-curve case. Clean master passes this informational helper

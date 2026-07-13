@@ -147,6 +147,68 @@ static void secp256k1_fuzz_ecmult_const_check_nonnormalized_fraction(const secp2
     }
 }
 
+static void secp256k1_fuzz_ecmult_const_check_odd_multiples_table(const secp256k1_gej *input) {
+    enum { N = 4 };
+    secp256k1_ge pre[N];
+    secp256k1_fe zr[N];
+    secp256k1_fe omitted_z[N];
+    secp256k1_fe check_z;
+    secp256k1_gej expected;
+    secp256k1_gej step;
+    size_t i;
+
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(input));
+    secp256k1_ecmult_odd_multiples_table(N, pre, zr, &omitted_z[N - 1], input);
+
+    /* Recover the omitted projective coordinates from the documented ratios. */
+    for (i = N - 1; i > 0; i--) {
+        secp256k1_fe inverse_ratio;
+
+        FUZZ_CHECK(!secp256k1_fe_normalizes_to_zero_var(&zr[i]));
+        secp256k1_fe_inv_var(&inverse_ratio, &zr[i]);
+        secp256k1_fe_mul(&omitted_z[i - 1], &omitted_z[i], &inverse_ratio);
+        secp256k1_fe_mul(&check_z, &omitted_z[i - 1], &zr[i]);
+        secp256k1_fe_normalize_var(&check_z);
+        secp256k1_fe_normalize_var(&omitted_z[i]);
+        FUZZ_CHECK(secp256k1_fe_equal(&check_z, &omitted_z[i]));
+    }
+    secp256k1_fe_mul(&check_z, &input->z, &zr[0]);
+    secp256k1_fe_normalize_var(&check_z);
+    secp256k1_fe_normalize_var(&omitted_z[0]);
+    FUZZ_CHECK(secp256k1_fe_equal(&check_z, &omitted_z[0]));
+
+    /* Build the odd multiples independently, without the precomputation table. */
+    expected = *input;
+    secp256k1_gej_double_var(&step, input, NULL);
+    for (i = 0; i < N; i++) {
+        secp256k1_gej actual;
+        secp256k1_gej actual_copy;
+        secp256k1_gej expected_copy;
+        secp256k1_ge expected_affine;
+        secp256k1_ge actual_affine;
+        unsigned char expected_bytes[64];
+        unsigned char actual_bytes[64];
+
+        actual.infinity = pre[i].infinity;
+        actual.x = pre[i].x;
+        actual.y = pre[i].y;
+        actual.z = omitted_z[i];
+        FUZZ_CHECK(!actual.infinity);
+
+        actual_copy = actual;
+        secp256k1_ge_set_gej_var(&actual_affine, &actual_copy);
+        expected_copy = expected;
+        secp256k1_ge_set_gej_var(&expected_affine, &expected_copy);
+        secp256k1_ge_to_bytes_ext(actual_bytes, &actual_affine);
+        secp256k1_ge_to_bytes_ext(expected_bytes, &expected_affine);
+        FUZZ_CHECK(memcmp(actual_bytes, expected_bytes, sizeof(actual_bytes)) == 0);
+
+        if (i + 1 < N) {
+            secp256k1_gej_add_var(&expected, &expected, &step, NULL);
+        }
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 97);
@@ -179,6 +241,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, &expected));
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, &generic));
     FUZZ_CHECK(secp256k1_gej_eq_var(&generic, &expected));
+    secp256k1_fuzz_ecmult_const_check_odd_multiples_table(&basej);
     secp256k1_fuzz_ecmult_const_check_xonly(&base, &expected, &scalar, input, size);
     secp256k1_fuzz_ecmult_const_check_nonnormalized_fraction(&base, &expected, &scalar);
 
