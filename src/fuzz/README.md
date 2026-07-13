@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
-- `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
@@ -770,6 +770,20 @@ documented in its commit message.
   abort. The fraction predicate is already used by ElligatorSwift and
   deterministic tests, so this catches a regression in its rational-coordinate
   arithmetic without claiming a current-master vulnerability.
+  The group target now supplements Jacobian result checks with a canonical
+  affine-coordinate comparison built from `ge_set_gej_var` and canonical
+  64-byte serialization, while retaining `gej_eq_var` as a consistency check.
+  This prevents a group-addition-based equality helper from being the sole
+  oracle for group operations. The `independent-equality-barrier` corpus also
+  compares a finite generator point with its negation, so an equality helper
+  that always returns true fails immediately. Clean master passes the focused
+  corpus and all seven tracked group inputs on default, forced-int64, MSan,
+  and MSan-int64 builds. Replacing `secp256k1_gej_eq_var`'s result with `1`
+  made the new negative check abort; omitting only that new check made the
+  same mutation pass. Default and forced-int64 isolated
+  `-workers=2 -jobs=2 -max_total_time=15` campaigns also exited 0 without
+  diagnostics. This is informational oracle hardening, not a current-master
+  production finding, and does not change any severity rating.
   The API target also pins an independent ECDSA signing equation with a fixed
   nonce: private key, message, and nonce are all one, so `r = x(G)` and
   `s = r + 1`. Clean master passes; changing the production signing addition
