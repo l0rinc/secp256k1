@@ -455,6 +455,18 @@ documented in its commit message.
   non-NULL array pointer. Clean master returns success; requiring at least one
   element in the production sort routine makes the focused seed abort. This is
   informational API-boundary coverage, not a current-master production bug.
+  The `null-pubkey-comparator` seed also exercises the documented NULL ordering
+  fallback through an unannotated function pointer, so UBSan observes the
+  deliberate runtime API-boundary input instead of the header nonnull
+  attribute. Clean master passes; changing `secp256k1_ec_pubkey_cmp`'s invalid
+  fallback memset from zero to `0xFF` makes the focused seed report a libFuzzer
+  deadly signal. Invalid opaque objects were already covered by the fuzzer and
+  NULL operands by the unit suite, but this closes the corresponding fuzzer
+  boundary. This is informational oracle hardening, not a current-master
+  production defect.
+  A bounded `-workers=2 -jobs=2 -max_total_time=30` replay of the updated API
+  corpus executed 543 and 550 inputs in its two jobs; both jobs exited 0, with
+  no sanitizer diagnostics or crash artifacts.
   The EllSwift target also replays a full-width BIP324 decode vector from the
   independently generated module test set and checks the serialized X coordinate
   and parity. Clean master passes; replacing the decode input's `t` half with
