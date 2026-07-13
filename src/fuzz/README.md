@@ -165,6 +165,16 @@ ran with `-workers=2 -jobs=2 -max_total_time=20`, completing 134,983 generated
 executions with the same clean result. This cross-backend evidence does not
 replace the clean-master mutation proofs or change any severity rating.
 
+Current-branch oracle replay (2026-07-13, after `c7cabce`): the default
+ASan/UBSan libFuzzer binaries replayed all 14 isolated copies of the tracked
+corpora with `-workers=2 -jobs=2 -max_total_time=60` per target. Every target
+manager and worker completed with exit code 0. No sanitizer diagnostic,
+assertion failure, timeout, OOM, crash artifact, or nonzero worker result was
+observed, including the new `api_roundtrip/null-pubkey-sort` seed. LibFuzzer
+was allowed to expand only the temporary copies; the tracked source corpora
+were unchanged. This is fresh negative evidence for the current oracle set,
+not a production finding or a replacement for master-relative mutation proof.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
