@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, and byte-level maximum-residue references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -1119,6 +1119,22 @@ documented in its commit message.
   internal-contract hardening, not a clean-master production finding; the
   master-relative severity ledger is unchanged. Bounded two-worker libFuzzer
   runs also exited 0, completing 508 default and 326 forced-int64 executions.
+  The group target now also constructs the same generator with the largest
+  affine representations permitted by the internal contract: `x + 3p` and
+  `y + 2p`, giving nonnormalized magnitudes 4 and 3. It compares storage
+  bytes against the canonical generator, reloads the storage object, and
+  compares both canonical and extended byte encodings. A temporary
+  `VERIFY`-only mutation flipped `r->x.n[0]` in `secp256k1_ge_to_storage` only
+  for this magnitude-4/magnitude-3 state. The focused
+  `ge-storage-nonnormalized` seed emitted a libFuzzer deadly-signal failure on
+  default and forced-int64 ASan/UBSan builds, while disabling only the new
+  oracle call left all nine prior group seeds green on both backends. The
+  mutation was restored before the clean replay, which passed all ten group
+  seeds on both backends. Bounded two-worker/two-job campaigns against copied
+  corpora also exited 0 after 988 default and 615 forced-int64 executions with
+  no sanitizer diagnostics or artifacts. This is informational internal-
+  contract hardening, not a clean-master production finding; the
+  master-relative severity ledger is unchanged.
   It also compares the fractional X-coordinate curve predicate against an
   independently computed quotient and curve equation, with the generator as a
   deterministic on-curve case. Clean master passes this informational helper

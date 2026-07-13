@@ -411,6 +411,46 @@ static void secp256k1_fuzz_group_check_affine_representations(const secp256k1_ge
     FUZZ_CHECK(secp256k1_ge_eq_var(&lambda_thrice, &affine));
 }
 
+static void secp256k1_fuzz_group_check_nonnormalized_storage(void) {
+    secp256k1_ge canonical = secp256k1_ge_const_g;
+    secp256k1_ge nonnormalized = canonical;
+    secp256k1_ge recovered;
+    secp256k1_ge_storage expected_storage;
+    secp256k1_ge_storage actual_storage;
+    secp256k1_fe zero3;
+    secp256k1_fe zero2;
+    unsigned char expected_bytes[64];
+    unsigned char actual_bytes[64];
+
+    /* A valid affine point may carry field elements that are equivalent to
+     * the canonical coordinates but have not been normalized yet. Storage
+     * conversion is the boundary that must make this representation stable. */
+    secp256k1_fe_set_int(&zero3, 0);
+    secp256k1_fe_negate(&zero3, &zero3, 0);
+    secp256k1_fe_mul_int_unchecked(&zero3, 3);
+    secp256k1_fe_set_int(&zero2, 0);
+    secp256k1_fe_negate(&zero2, &zero2, 0);
+    secp256k1_fe_mul_int_unchecked(&zero2, 2);
+    secp256k1_fe_add(&nonnormalized.x, &zero3);
+    secp256k1_fe_add(&nonnormalized.y, &zero2);
+#ifdef VERIFY
+    FUZZ_CHECK(nonnormalized.x.magnitude == 4);
+    FUZZ_CHECK(nonnormalized.x.normalized == 0);
+    FUZZ_CHECK(nonnormalized.y.magnitude == 3);
+    FUZZ_CHECK(nonnormalized.y.normalized == 0);
+#endif
+
+    secp256k1_ge_to_storage(&expected_storage, &canonical);
+    secp256k1_ge_to_storage(&actual_storage, &nonnormalized);
+    FUZZ_CHECK(memcmp(&actual_storage, &expected_storage, sizeof(actual_storage)) == 0);
+    secp256k1_ge_from_storage(&recovered, &actual_storage);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&recovered, &canonical));
+
+    secp256k1_ge_to_bytes(expected_bytes, &canonical);
+    secp256k1_ge_to_bytes(actual_bytes, &nonnormalized);
+    FUZZ_CHECK(memcmp(actual_bytes, expected_bytes, sizeof(actual_bytes)) == 0);
+}
+
 static void secp256k1_fuzz_group_check_xo(const secp256k1_ge *point) {
     secp256k1_ge even;
     secp256k1_ge odd;
@@ -715,6 +755,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_group_check_storage_cmov(&affine_a, &affine_b);
     }
     secp256k1_fuzz_group_check_affine_representations(&a);
+    secp256k1_fuzz_group_check_nonnormalized_storage();
     secp256k1_fuzz_group_check_ge_zinv(input, size);
     if (!secp256k1_gej_is_infinity(&a)) {
         secp256k1_ge affine_a;
