@@ -367,6 +367,14 @@ documented in its commit message.
   valid key, the reverse comparison is above, and two invalid keys compare
   equal. Clean master already has this behavior; changing the comparator's
   invalid-key fallback makes the focused seed abort.
+  The `null-xonly-comparator` seed also exercises the documented NULL ordering
+  fallback through an unannotated function pointer, so UBSan does not reject
+  the deliberate runtime API-boundary input at the call site. Clean master
+  passes; changing the comparator's invalid fallback memset from zero to
+  `0xFF` makes the seed report a libFuzzer deadly signal. The existing x-only
+  fuzzer and unit suite covered invalid opaque objects but not NULL operands.
+  This is informational oracle hardening, not a current-master production
+  defect; the production implementation is restored unchanged.
   The MuSig target also calls `secp256k1_musig_pubkey_agg` with both optional
   output pointers set to `NULL`. Clean master accepts the valid input and
   returns success; requiring either the x-only aggregate or cache output makes

@@ -25,6 +25,12 @@ typedef int (*secp256k1_fuzz_keypair_xonly_tweak_add_fn)(
     const unsigned char *tweak32
 );
 
+typedef int (*secp256k1_fuzz_xonly_pubkey_cmp_fn)(
+    const secp256k1_context *ctx,
+    const secp256k1_xonly_pubkey *pk0,
+    const secp256k1_xonly_pubkey *pk1
+);
+
 static void secp256k1_fuzz_xonly_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_xonly_illegal_data *illegal_data = (secp256k1_fuzz_xonly_illegal_data *)data;
 
@@ -39,6 +45,13 @@ static const unsigned char *secp256k1_fuzz_xonly_null_tweak32(const unsigned cha
 
     null_tweak32 = NULL;
     return null_tweak32;
+}
+
+static const secp256k1_xonly_pubkey *secp256k1_fuzz_xonly_null_pubkey(const secp256k1_xonly_pubkey *pubkey) {
+    const secp256k1_xonly_pubkey * volatile null_pubkey = pubkey;
+
+    null_pubkey = NULL;
+    return null_pubkey;
 }
 
 static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const unsigned char *input32) {
@@ -261,6 +274,26 @@ static void secp256k1_fuzz_check_invalid_xonly_cmp(secp256k1_context *ctx, const
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
+
+static void secp256k1_fuzz_check_null_xonly_cmp(secp256k1_context *ctx, const secp256k1_xonly_pubkey *valid_xonly) {
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    const secp256k1_xonly_pubkey *null_pubkey = secp256k1_fuzz_xonly_null_pubkey(valid_xonly);
+    secp256k1_fuzz_xonly_pubkey_cmp_fn cmp = secp256k1_xonly_pubkey_cmp;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+
+    /* The comparator's all-zero fallback must make NULL sort below valid keys. */
+    FUZZ_CHECK(cmp(ctx, null_pubkey, valid_xonly) < 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(cmp(ctx, valid_xonly, null_pubkey) > 0);
+    FUZZ_CHECK(illegal_data.calls == 2);
+    FUZZ_CHECK(cmp(ctx, null_pubkey, null_pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == 4);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -321,6 +354,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &keypair_parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);
     secp256k1_fuzz_check_invalid_xonly_cmp(ctx, &xonly);
+    secp256k1_fuzz_check_null_xonly_cmp(ctx, &xonly);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_no_parity) == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_from_pubkey, &pubkey_parity, &pubkey) == 1);
     FUZZ_CHECK(keypair_parity == pubkey_parity);
