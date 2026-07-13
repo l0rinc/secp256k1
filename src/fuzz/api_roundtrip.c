@@ -1166,6 +1166,65 @@ static void secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(const secp
     FUZZ_CHECK(memcmp(&zero_sum_reordered, zero_pubkey, sizeof(zero_sum_reordered)) == 0);
 }
 
+/* Exercise the arbitrary-length combine loop with an independent scalar sum.
+ * The existing three- and four-term checks do not reach the seventh input, so
+ * a stale loop bound or a skipped tail term could remain invisible. The
+ * length gate keeps the pre-existing short corpus a useful differential
+ * control while allowing normal mutations of the dedicated long seed. */
+static void secp256k1_fuzz_check_pubkey_combine_long(const secp256k1_context *ctx, size_t size, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const secp256k1_pubkey *other_pubkey, const unsigned char *other_seckey) {
+    const size_t n_pubkeys = 7;
+    const secp256k1_pubkey *inputs[7];
+    const secp256k1_pubkey *reordered_inputs[7];
+    secp256k1_pubkey fixed_pubkeys[5];
+    secp256k1_pubkey combined;
+    secp256k1_pubkey reordered;
+    secp256k1_pubkey expected;
+    unsigned char expected_seckey[32] = { 0 };
+    unsigned char fixed_seckey[32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    size_t i;
+    int expected_ret;
+    int combine_ret;
+
+    if (size < 128) {
+        return;
+    }
+
+    inputs[0] = pubkey;
+    inputs[1] = other_pubkey;
+    secp256k1_fuzz_scalar32_add_mod_order(expected_seckey, expected_seckey, seckey);
+    secp256k1_fuzz_scalar32_add_mod_order(expected_seckey, expected_seckey, other_seckey);
+    for (i = 0; i < sizeof(fixed_pubkeys) / sizeof(fixed_pubkeys[0]); i++) {
+        memset(fixed_seckey, 0, sizeof(fixed_seckey));
+        fixed_seckey[31] = (unsigned char)(i + 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[i], fixed_seckey) == 1);
+        inputs[i + 2] = &fixed_pubkeys[i];
+        secp256k1_fuzz_scalar32_add_mod_order(expected_seckey, expected_seckey, fixed_seckey);
+    }
+
+    expected_ret = memcmp(expected_seckey, secp256k1_fuzz_scalar_zero, sizeof(expected_seckey)) != 0;
+    memset(&combined, 0xA5, sizeof(combined));
+    combine_ret = secp256k1_ec_pubkey_combine(ctx, &combined, inputs, n_pubkeys);
+    FUZZ_CHECK(combine_ret == expected_ret);
+    if (expected_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected, expected_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &expected) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+    }
+
+    for (i = 0; i < n_pubkeys; i++) {
+        reordered_inputs[i] = inputs[n_pubkeys - 1 - i];
+    }
+    memset(&reordered, 0x5A, sizeof(reordered));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &reordered, reordered_inputs, n_pubkeys) == combine_ret);
+    if (combine_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &reordered) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&reordered, zero_pubkey, sizeof(reordered)) == 0);
+    }
+}
+
 /* Verify an arbitrary low-S ECDSA signature without using the internal
  * verifier's inverse-and-multiscalar path. For a candidate R reconstructed
  * from r (or r+n), the ECDSA equation is sR = zG + rQ. */
@@ -1948,6 +2007,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_combine(ctx, &pubkey, &pubkey_neg_from_seckey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_three(ctx, &pubkey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(ctx, &pubkey, &pubkey_neg_from_seckey, &combine_pubkey, &combine_pubkey_neg);
+    secp256k1_fuzz_check_pubkey_combine_long(ctx, size, &pubkey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
