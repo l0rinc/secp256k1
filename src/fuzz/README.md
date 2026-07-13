@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -872,6 +872,19 @@ documented in its commit message.
   informational oracle hardening, not a new clean-master finding; the existing
   10x26 magnitude-32 normalization issue remains rated Medium/latent as
   recorded above.
+  The field target now also exercises `fe_mul`, `fe_sqr`, `fe_inv`, and
+  `fe_sqrt` with valid magnitude-8 representations of one and two (`1 + 7p`
+  and `2 + 7p`). These operations accept nonnormalized inputs by contract,
+  but the previous arithmetic checks normalized every operand before calling
+  them. A temporary `VERIFY`-only mutation incremented `r->n[0]` after
+  `secp256k1_fe_impl_sqr` only when the raw input was nonnormalized, magnitude
+  8, and exactly `1 + 7p`; the focused seed aborted on both default and
+  forced-int64 ASan/UBSan builds. Disabling only this helper left that seed and
+  the four preexisting field seeds green on both builds. Clean production code
+  then passed all five fixed seeds, while two-worker/two-job 15-second
+  campaigns completed with 6,229 and 6,219 executions. This is informational
+  internal-contract hardening, not a clean-master production finding; the
+  master-relative severity ledger is unchanged.
   The Schnorr target also checks that custom nonce callbacks receive the
   normalized secret key and matching x-only public key. A mutation that passes
   the secret-key buffer in place of the x-only key still produces signatures

@@ -313,6 +313,60 @@ static void secp256k1_fuzz_fe_check_comparisons(const unsigned char *input, size
     FUZZ_CHECK(!secp256k1_fe_equal(&canonical, &b));
 }
 
+static void secp256k1_fuzz_fe_check_nonnormalized_arithmetic(void) {
+    secp256k1_fe one;
+    secp256k1_fe two;
+    secp256k1_fe zero7;
+    secp256k1_fe raised_one;
+    secp256k1_fe raised_two;
+    secp256k1_fe expected_product;
+    secp256k1_fe actual_product;
+    secp256k1_fe expected_square;
+    secp256k1_fe actual_square;
+    secp256k1_fe expected_inverse;
+    secp256k1_fe actual_inverse;
+    secp256k1_fe root;
+    secp256k1_fe root_squared;
+
+    secp256k1_fe_set_int(&one, 1);
+    secp256k1_fe_set_int(&two, 2);
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised_one = one;
+    raised_two = two;
+    secp256k1_fe_add(&raised_one, &zero7);
+    secp256k1_fe_add(&raised_two, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_one.magnitude == 8);
+    FUZZ_CHECK(raised_one.normalized == 0);
+    FUZZ_CHECK(raised_two.magnitude == 8);
+    FUZZ_CHECK(raised_two.normalized == 0);
+#endif
+
+    secp256k1_fe_mul(&expected_product, &one, &two);
+    secp256k1_fe_normalize_var(&expected_product);
+    secp256k1_fe_mul(&actual_product, &raised_one, &raised_two);
+    secp256k1_fe_normalize_var(&actual_product);
+    secp256k1_fuzz_fe_check_normalized(&actual_product, &expected_product);
+
+    secp256k1_fe_sqr(&expected_square, &one);
+    secp256k1_fe_normalize_var(&expected_square);
+    secp256k1_fe_sqr(&actual_square, &raised_one);
+    secp256k1_fe_normalize_var(&actual_square);
+    secp256k1_fuzz_fe_check_normalized(&actual_square, &expected_square);
+
+    secp256k1_fe_inv(&expected_inverse, &one);
+    secp256k1_fe_inv(&actual_inverse, &raised_one);
+    secp256k1_fuzz_fe_check_normalized(&actual_inverse, &expected_inverse);
+
+    FUZZ_CHECK(secp256k1_fe_is_square_var(&raised_one) == 1);
+    FUZZ_CHECK(secp256k1_fe_sqrt(&root, &raised_one) == 1);
+    secp256k1_fe_sqr(&root_squared, &root);
+    secp256k1_fe_normalize_var(&root_squared);
+    secp256k1_fuzz_fe_check_normalized(&root_squared, &one);
+}
+
 static void secp256k1_fuzz_fe_check_cmov(const secp256k1_fe *a, const secp256k1_fe *b) {
     secp256k1_fe selected;
     secp256k1_fe expected;
@@ -527,6 +581,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_comparisons(input, size);
+    secp256k1_fuzz_fe_check_nonnormalized_arithmetic();
 #if defined(SECP256K1_WIDEMUL_INT64)
     secp256k1_fuzz_fe_check_shifted_zero();
 #endif
