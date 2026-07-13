@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
-- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, and counter-nonce optional-input equivalence
@@ -362,6 +362,15 @@ documented in its commit message.
   initialized zero optional parity result. This is an informational local-state
   oracle: clean master already rejects the object, while skipping the
   `secp256k1_keypair_load` result check makes the focused seed abort.
+  The `partial-keypair-projection` seed then zeroes the secret half and public
+  half independently. Raw `keypair_sec` and `keypair_pub` must preserve their
+  own halves, while `keypair_xonly_pub` must accept the valid public half and
+  reject the invalid one. Clean master passes; changing the public extractor to
+  copy the secret half makes the focused seed abort. This is informational
+  invalid-state coverage, not a current-master production defect.
+  A bounded `-workers=2 -jobs=2 -max_total_time=30` replay of the updated
+  x-only corpus executed 1,334 and 1,361 inputs in its two jobs; both jobs
+  exited 0, with no sanitizer diagnostics or crash artifacts.
   It also checks that `secp256k1_xonly_pubkey_cmp` maps an invalid opaque
   x-only key to the documented all-zero ordering sentinel: invalid is below a
   valid key, the reverse comparison is above, and two invalid keys compare
