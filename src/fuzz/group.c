@@ -445,6 +445,35 @@ static void secp256k1_fuzz_group_check_batch_conversion_finite(const secp256k1_g
     }
 }
 
+static void secp256k1_fuzz_group_check_batch_conversion_boundaries(const secp256k1_gej *a, const secp256k1_gej *b) {
+    secp256k1_gej points[3];
+    secp256k1_ge affine[3];
+    size_t i;
+
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(a));
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(b));
+    points[0] = *a;
+    secp256k1_gej_set_infinity(&points[1]);
+    points[2] = *b;
+    memset(affine, 0xA5, sizeof(affine));
+    secp256k1_ge_set_all_gej_var(affine, points, 3);
+    for (i = 0; i < 3; i++) {
+        if (secp256k1_gej_is_infinity(&points[i])) {
+            FUZZ_CHECK(secp256k1_ge_is_infinity(&affine[i]));
+        } else {
+            secp256k1_ge expected;
+            secp256k1_gej point = points[i];
+            secp256k1_ge_set_gej_var(&expected, &point);
+            FUZZ_CHECK(secp256k1_ge_eq_var(&affine[i], &expected));
+        }
+    }
+
+    /* Both batch helpers promise a no-op for an empty range, including NULL
+     * array pointers. This is an internal boundary used by test/bench code. */
+    secp256k1_ge_set_all_gej(NULL, NULL, 0);
+    secp256k1_ge_set_all_gej_var(NULL, NULL, 0);
+}
+
 static int secp256k1_fuzz_group_x_on_curve_reference(const secp256k1_fe *x) {
     secp256k1_fe x2;
     secp256k1_fe x3;
@@ -574,6 +603,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_gej_double(&finite_batch[2], &finite_batch[1]);
         secp256k1_fuzz_group_check_batch_conversion(finite_batch, 3);
         secp256k1_fuzz_group_check_batch_conversion_finite(finite_batch, 3);
+        secp256k1_fuzz_group_check_batch_conversion_boundaries(&finite_batch[0], &finite_batch[2]);
         secp256k1_fuzz_group_check_zinv_in_place(&finite, &finite_affine);
     }
     secp256k1_fuzz_group_check_rescale_alias(&finite);

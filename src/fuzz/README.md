@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: full-stream HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
-- `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
@@ -174,6 +174,14 @@ observed, including the new `api_roundtrip/null-pubkey-sort` seed. LibFuzzer
 was allowed to expand only the temporary copies; the tracked source corpora
 were unchanged. This is fresh negative evidence for the current oracle set,
 not a production finding or a replacement for master-relative mutation proof.
+
+Focused group-boundary replay (2026-07-13, after the mixed-infinity oracle):
+the default ASan/UBSan `fuzz_group` binary ran two independent managers with
+`-workers=2 -jobs=2 -max_total_time=30` over an isolated copy of all six group
+seeds. Both managers exited 0 after 1,359 executions, reaching high-water
+coverage of 2,365 edges. No sanitizer diagnostic, assertion failure, timeout,
+OOM, crash artifact, or nonzero worker result was observed. The temporary
+corpus was discarded; tracked seeds were unchanged.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
@@ -483,6 +491,15 @@ documented in its commit message.
   prefix-product initialization makes the focused seed abort. Infinity points
   remain in the variable-time-only path because the constant-time helper's
   caller contract requires finite inputs.
+  The same target now independently converts a fixed `[finite, infinity,
+  finite]` batch point-by-point and checks the variable-time helper's explicit
+  infinity placement, while also calling both batch helpers with `(NULL,
+  NULL, 0)`. Clean master passes; changing the infinity branch to leave a
+  destination marked finite makes `batch-conversion-boundaries` abort on the
+  per-point comparison. This is informational oracle hardening for an
+  internal indexing/state-transition contract, not a current-master
+  production finding; the deterministic unit suite already covers the empty
+  range, but the fuzzer previously did not combine it with a mixed batch.
   It also compares the fractional X-coordinate curve predicate against an
   independently computed quotient and curve equation, with the generator as a
   deterministic on-curve case. Clean master passes this informational helper
