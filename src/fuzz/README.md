@@ -8,7 +8,7 @@ Targets:
 
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
-- `fuzz_hash`: full-stream HMAC/RFC6979 chunking consistency and finalized-state cleanup
+- `fuzz_hash`: raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
@@ -227,6 +227,17 @@ with no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact.
 The temporary mutated corpora and worker logs were kept outside the tracked
 corpus.
 
+Focused independent-HMAC replay (2026-07-13): the hash corpus started with
+six tracked inputs totaling 288 bytes, including
+`hmac-independent-reference`. Default and forced-int64 ASan/UBSan replayed all
+six inputs once with seven total libFuzzer executions and final coverage of
+314 edges. Both matching MSan replays executed all six inputs without a
+diagnostic. Isolated default managers then ran for 30 seconds with
+`-workers=2 -jobs=2`, executing 60,960 and 60,782 inputs; forced-int64 managers
+executed 60,680 and 60,757 inputs. All four managers reached 317 edges and
+returned zero without a sanitizer diagnostic, assertion failure, timeout, OOM,
+or artifact. Mutated corpora and worker logs remained outside the repository.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
@@ -302,16 +313,21 @@ documented in its commit message.
   (`5cfe7f7`). This is a lifetime/cleanup finding rather than a demonstrated
   disclosure; severity must not be raised to critical without a memory-read
   primitive.
-- **Informational oracle hardening:** `fuzz_hash` now compares the complete
-  96-byte RFC6979 one-shot stream against an independently sequenced reference
-  generation. The previous independent reference used only chunked calls, so
-  an output-length-specific one-shot regression could survive it; a one-shot
-  call is deliberately not compared with a later retry call because RFC6979
-  changes state between generate calls. Clean master passes; shortening only
-  the production one-shot path makes the focused `rfc6979-one-shot-output`
-  seed abort. This is oracle hardening, not a current-master production
-  finding. The attempted one-shot-versus-chunked relation was classified as a
-  stale/overbroad oracle and reverted before commit.
+- **Informational oracle hardening:** `fuzz_hash` compares arbitrary HMAC
+  outputs against a raw-SHA256 reference that independently performs key
+  shortening, ipad/opad construction, message sequencing, and finalization.
+  The RFC6979 reference uses that same independent HMAC model for its complete
+  96-byte stream. The earlier reference used the production HMAC wrapper, so a
+  keyed-pad or HMAC-finalization defect could pass both sides; the existing
+  fixed vectors and chunk-equivalence checks did not cover every derived state.
+  Clean master passes. A temporary production mutation that flips one output
+  bit only when the inner HMAC state has 113 bytes makes the dedicated
+  `hmac-independent-reference` seed abort with the new comparison enabled;
+  disabling that comparison leaves the prior hash checks green under the same
+  mutation. The production mutation was restored. This is oracle hardening,
+  not a current-master production finding, and does not change any severity
+  rating. The prior one-shot-versus-later-retry relation remains intentionally
+  absent because RFC6979 changes state between generate calls.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting
