@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, and add-int references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -1507,6 +1507,21 @@ documented in its commit message.
   informational/Low internal arithmetic-oracle hardening, not a clean-master
   production bug; no public or cryptographic impact was demonstrated and the
   master-relative severity ledger is unchanged.
+  The field target now models square roots with a standalone 8x32-bit
+  exponentiation by `(p + 1) / 4` and independently squares the returned
+  root with the byte-level reducer. It compares the success decision for a
+  derived residue, its valid maximum-magnitude representation, and zero,
+  while accepting either mathematical root sign. The dedicated
+  `sqrt-byte-reference` seed and the complete 12-input field corpus pass on
+  default and forced-`int64` ASan/UBSan builds; isolated two-worker/two-job
+  campaigns exited 0 without sanitizer diagnostics. For the control proof,
+  a temporary production mutation made `fe_sqrt(0)` report failure. The
+  focused seed aborted with exit 134 on both backends; bypassing only the new
+  byte-level helper let the identical mutation pass the legacy field checks
+  on both backends. The mutation and temporary bypass were restored before
+  clean replay. This is informational internal-contract oracle hardening, not
+  a current-master production finding; the master-relative severity ledger is
+  unchanged.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not

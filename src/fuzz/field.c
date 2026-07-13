@@ -532,6 +532,117 @@ static void secp256k1_fuzz_ref_field_inverse(unsigned char out32[32], const unsi
     secp256k1_fuzz_ref_u32_to_be(out32, result);
 }
 
+/* Compute the exponentiation candidate independently. For this field p == 3
+ * (mod 4), so a^((p + 1) / 4) is a square root exactly when a is a quadratic
+ * residue. The reference accepts either root sign from production. */
+static int secp256k1_fuzz_ref_field_sqrt(const unsigned char input32[32]) {
+    uint32_t modulus[8];
+    uint32_t base[8];
+    uint32_t result[8];
+    uint32_t squared[8];
+    uint32_t input[8];
+    unsigned char exponent[32];
+    unsigned int carry = 1;
+    size_t bit;
+    size_t i;
+
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(base, input32);
+    secp256k1_fuzz_ref_u32_from_be(input, input32);
+    memcpy(exponent, secp256k1_fuzz_field_prime, sizeof(exponent));
+    for (i = sizeof(exponent); i-- > 0 && carry != 0;) {
+        unsigned int value = (unsigned int)exponent[i] + carry;
+        exponent[i] = (unsigned char)value;
+        carry = value >> 8;
+    }
+    FUZZ_CHECK(carry == 0);
+    carry = 0;
+    for (i = 0; i < sizeof(exponent); i++) {
+        unsigned int value = (carry << 8) | exponent[i];
+        exponent[i] = (unsigned char)(value >> 2);
+        carry = value & 3u;
+    }
+    FUZZ_CHECK(carry == 0);
+
+    memset(result, 0, sizeof(result));
+    result[0] = 1;
+    for (bit = 0; bit < 256; bit++) {
+        uint32_t squared_result[8];
+        secp256k1_fuzz_ref_u32_mul_mod(squared_result, result, result, modulus);
+        memcpy(result, squared_result, sizeof(result));
+        if ((exponent[bit / 8] & (unsigned char)(0x80u >> (bit % 8))) != 0) {
+            uint32_t multiplied[8];
+            secp256k1_fuzz_ref_u32_mul_mod(multiplied, result, base, modulus);
+            memcpy(result, multiplied, sizeof(result));
+        }
+    }
+    secp256k1_fuzz_ref_u32_mul_mod(squared, result, result, modulus);
+    return secp256k1_memcmp_var(squared, input, sizeof(squared)) == 0;
+}
+
+static int secp256k1_fuzz_ref_field_square_matches(const unsigned char root32[32], const unsigned char input32[32]) {
+    uint32_t modulus[8];
+    uint32_t root[8];
+    uint32_t input[8];
+    uint32_t squared[8];
+
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(root, root32);
+    secp256k1_fuzz_ref_u32_from_be(input, input32);
+    secp256k1_fuzz_ref_u32_mul_mod(squared, root, root, modulus);
+    return secp256k1_memcmp_var(squared, input, sizeof(squared)) == 0;
+}
+
+static void secp256k1_fuzz_fe_check_sqrt_reference(const unsigned char *input, size_t size) {
+    unsigned char value32[32];
+    unsigned char actual_root32[32];
+    secp256k1_fe value;
+    secp256k1_fe raised;
+    secp256k1_fe zero7;
+    secp256k1_fe root;
+    int expected_ret;
+    int actual_ret;
+
+    secp256k1_fuzz_derive(value32, sizeof(value32), input, size, 235);
+    secp256k1_fe_set_b32_mod(&value, value32);
+    secp256k1_fe_normalize_var(&value);
+    secp256k1_fe_get_b32(value32, &value);
+    expected_ret = secp256k1_fuzz_ref_field_sqrt(value32);
+    actual_ret = secp256k1_fe_sqrt(&root, &value);
+    FUZZ_CHECK(actual_ret == expected_ret);
+    if (actual_ret) {
+        secp256k1_fe_normalize_var(&root);
+        secp256k1_fe_get_b32(actual_root32, &root);
+        FUZZ_CHECK(secp256k1_fuzz_ref_field_square_matches(actual_root32, value32));
+    }
+
+    /* The same residue must produce the same success decision when supplied in
+     * the largest representation accepted by fe_sqrt. */
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised = value;
+    secp256k1_fe_add(&raised, &zero7);
+    actual_ret = secp256k1_fe_sqrt(&root, &raised);
+    FUZZ_CHECK(actual_ret == expected_ret);
+    if (actual_ret) {
+        secp256k1_fe_normalize_var(&root);
+        secp256k1_fe_get_b32(actual_root32, &root);
+        FUZZ_CHECK(secp256k1_fuzz_ref_field_square_matches(actual_root32, value32));
+    }
+
+    /* Include the zero residue explicitly: zero has a defined square root. */
+    secp256k1_fe_set_int(&value, 0);
+    memset(value32, 0, sizeof(value32));
+    expected_ret = secp256k1_fuzz_ref_field_sqrt(value32);
+    actual_ret = secp256k1_fe_sqrt(&root, &value);
+    FUZZ_CHECK(actual_ret == expected_ret);
+    FUZZ_CHECK(actual_ret == 1);
+    secp256k1_fe_normalize_var(&root);
+    secp256k1_fe_get_b32(actual_root32, &root);
+    FUZZ_CHECK(secp256k1_fuzz_ref_field_square_matches(actual_root32, value32));
+}
+
 static void secp256k1_fuzz_fe_check_inverse_reference(const unsigned char *input, size_t size) {
     unsigned char value32[32];
     unsigned char expected32[32];
@@ -1005,6 +1116,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_raised_zero(input, size);
     secp256k1_fuzz_fe_check_max_magnitude_inverse(input, size);
     secp256k1_fuzz_fe_check_inverse_reference(input, size);
+    secp256k1_fuzz_fe_check_sqrt_reference(input, size);
     secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_negation(input, size);
