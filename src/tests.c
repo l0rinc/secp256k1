@@ -3512,6 +3512,36 @@ static void run_fe_normalize_max_magnitude(void) {
         CHECK(secp256k1_fe_is_zero(&z));
     }
 
+#if defined(SECP256K1_WIDEMUL_INT64)
+    /* Two uint32 carry wraps can make a nonzero magnitude-32 value look like
+     * zero to the old 10x26 zero predicates. The limbs encode 63*p plus the
+     * independent residue 2^58 + 2^32. */
+    {
+        static const unsigned char expected32[32] = {
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0x04, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00
+        };
+        secp256k1_fe false_zero;
+        unsigned char actual32[32];
+
+        secp256k1_fe_set_int(&false_zero, 0);
+        false_zero.n[0] = 0xFFFF0F91UL;
+        false_zero.n[1] = 0xFFFFF040UL;
+        false_zero.n[9] = 0x0FC00000UL;
+#ifdef VERIFY
+        false_zero.magnitude = 32;
+        false_zero.normalized = 0;
+#endif
+        CHECK(secp256k1_fe_normalizes_to_zero(&false_zero) == 0);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&false_zero) == 0);
+        secp256k1_fe_normalize_var(&false_zero);
+        secp256k1_fe_get_b32(actual32, &false_zero);
+        CHECK(secp256k1_memcmp_var(actual32, expected32, sizeof(actual32)) == 0);
+    }
+#endif
+
     /* Random values raised to magnitude 32 (value preserved by adding a
      * magnitude-31 zero) must normalize to the same residue as at magnitude 1. */
     secp256k1_fe_set_int(&raise31, 0);
