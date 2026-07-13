@@ -39,6 +39,40 @@ static void secp256k1_fuzz_fe_check_normalize_paths(const secp256k1_fe *input, c
     FUZZ_CHECK(secp256k1_fe_normalizes_to_zero_var(input) == expected_zero);
 }
 
+/* get_bounds(m) represents 2*m times the all-ones field value. Therefore a
+ * sum whose magnitudes total 32 has the exact value 64 * (2^256 - 1). Since
+ * p = 2^256 - 2^32 - 977, its canonical residue is 64 * (2^32 + 976).
+ * Keep this reference byte-level so a shared normalization mistake cannot
+ * make both the input and a production-derived reference agree. */
+static void secp256k1_fuzz_fe_check_magnitude32_reference(const secp256k1_fe *input) {
+    unsigned char expected32[32] = { 0 };
+    unsigned char actual32[32];
+    secp256k1_fe normalized;
+    uint64_t expected_value = UINT64_C(64) * ((UINT64_C(1) << 32) + UINT64_C(976));
+    size_t i;
+
+    for (i = 0; i < sizeof(expected_value); i++) {
+        expected32[sizeof(expected32) - 1 - i] = (unsigned char)expected_value;
+        expected_value >>= 8;
+    }
+
+    normalized = *input;
+    secp256k1_fe_normalize(&normalized);
+    secp256k1_fe_get_b32(actual32, &normalized);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    normalized = *input;
+    secp256k1_fe_normalize_var(&normalized);
+    secp256k1_fe_get_b32(actual32, &normalized);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    normalized = *input;
+    secp256k1_fe_normalize_weak(&normalized);
+    secp256k1_fe_normalize_var(&normalized);
+    secp256k1_fe_get_b32(actual32, &normalized);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
+
 static void secp256k1_fuzz_fe_check_set_b32_mod(const unsigned char *input32);
 
 static void secp256k1_fuzz_fe_check_bounds_sum(int left_magnitude, int right_magnitude) {
@@ -58,6 +92,7 @@ static void secp256k1_fuzz_fe_check_bounds_sum(int left_magnitude, int right_mag
 #ifdef VERIFY
     FUZZ_CHECK(input.magnitude == 32);
 #endif
+    secp256k1_fuzz_fe_check_magnitude32_reference(&input);
 
     secp256k1_fe_normalize_var(&left);
     secp256k1_fe_normalize_var(&right);

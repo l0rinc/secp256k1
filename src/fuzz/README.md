@@ -10,7 +10,7 @@ Targets:
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: full-stream HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
-- `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
+- `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -203,6 +203,16 @@ a sanitizer diagnostic, assertion failure, timeout, OOM, crash artifact, or
 nonzero worker result. A separate MSan replay executed four representative
 inputs, including variable-length and empty messages, with no diagnostic. The
 temporary corpus and artifacts were kept outside the repository.
+
+Focused field maximum-residue replay (2026-07-13): the copied field corpus
+started with 4 tracked inputs. Default ASan/UBSan managers with
+`-workers=2 -jobs=2 -max_total_time=30` executed 16,520 and 16,429 inputs,
+reaching 1,338 and 1,338 inline-coverage edges. The restored forced-int64
+10x26 managers executed 10,004 and 9,979 inputs, reaching 2,624 and 2,624
+edges. All four inputs also passed an explicit int64 MSan replay. Every job
+returned exit code 0 without a sanitizer diagnostic, assertion failure,
+timeout, OOM, crash artifact, or nonzero worker result; mutated corpora and
+artifacts stayed outside the repository.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
@@ -420,6 +430,18 @@ documented in its commit message.
   The strict decoder is already used by public-key, Schnorr, recovery, and
   ECDSA paths, so this is a direct backend-boundary check rather than a current
   production finding.
+  The field target now computes the exact canonical residue of the
+  `get_bounds` magnitude-32 sum independently as bytes:
+  `64 * (2^256 - 1) mod p = 64 * (2^32 + 976)`. This avoids deriving the
+  expected value by normalizing the same production representation. With a
+  temporary one-limb mutation changing
+  `secp256k1_fe_impl_get_bounds` from `... * 2 * m` to `... * 2 * m - 1`,
+  the older production-derived relational checks still passed the
+  `magnitude32-normalize` corpus input, while the new byte reference aborted.
+  The mutation was restored before the fixed-tree replay. This is
+  informational oracle hardening, not a new clean-master finding; the existing
+  10x26 magnitude-32 normalization issue remains rated Medium/latent as
+  recorded above.
   The Schnorr target also checks that custom nonce callbacks receive the
   normalized secret key and matching x-only public key. A mutation that passes
   the secret-key buffer in place of the x-only key still produces signatures
