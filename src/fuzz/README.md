@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -549,6 +549,23 @@ documented in its commit message.
   `privkey-der-export-failure` corpus seed prove the failure for both encoding
   modes and preserve the boundary between the cleared 279 bytes and the rest
   of the caller's buffer.
+- **Informational oracle hardening:** `fuzz_api_roundtrip` now independently
+  parses the SEC1 private-key DER emitted by the contrib exporter. It checks
+  the exact length forms, version, private-key octets, explicit curve OID and
+  parameters, generator, order, cofactor, and compressed/uncompressed embedded
+  public key. The previous export/import round trip was weaker because
+  `ec_privkey_import_der` stops after the version and private-key octet string;
+  exporter corruption in the parameter block could therefore be accepted by
+  both sides. Clean master passes all 25 tracked API inputs on default,
+  forced-int64, MSan, and MSan-int64. Changing the explicit-parameter OID in
+  both exporter templates from `2A 86 48 CE 3D 01 01` to
+  `2A 86 48 CE 3D 01 02` made `privkey-der-structure` abort with
+  `-handle_abrt=0` and exit 134; disabling only the new parser let the same
+  mutation exit 0. The production mutation and oracle bypass were restored.
+  Default and forced-int64 isolated `-workers=2 -jobs=2 -max_total_time=15`
+  campaigns exited 0 without diagnostics or artifacts. This is informational
+  serialization-oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
 - **Low to Medium:** secret-derived stack/helper temporaries left live after use
   (`a3e30b3`, `a6f0b14`, `f94fec5`, `a884a2d`). These are code-path-proven
   lifetime reductions for scalar, field, Jacobian, EllSwift, and tweak state;
