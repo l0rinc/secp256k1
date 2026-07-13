@@ -5,6 +5,7 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "sha256_reference.h"
 #include "../hash_impl.h"
 #include "../field_impl.h"
 #include "../int128_impl.h"
@@ -67,15 +68,15 @@ static void secp256k1_fuzz_musig_reduce_scalar(unsigned char out[32], const unsi
     }
 }
 
+static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen);
+
 static void secp256k1_fuzz_musig_check_noncecoef_reference(const secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *msg32, const secp256k1_musig_session *session) {
     static const unsigned char noncecoef_tag[] = "MuSig/noncecoef";
-    secp256k1_hash_ctx hash_ctx;
-    secp256k1_sha256 sha;
     secp256k1_pubkey aggregate_pubkey;
     unsigned char aggnonce66[66];
     unsigned char aggregate_serialized[65];
     unsigned char aggregate_x32[32];
-    unsigned char taghash[32];
+    unsigned char noncecoef_input[66 + 32 + 32];
     unsigned char noncecoef_hash[32];
     unsigned char expected_noncecoef[32];
     size_t aggregate_serialized_len = sizeof(aggregate_serialized);
@@ -86,40 +87,36 @@ static void secp256k1_fuzz_musig_check_noncecoef_reference(const secp256k1_conte
     FUZZ_CHECK(aggregate_serialized_len == sizeof(aggregate_serialized));
     memcpy(aggregate_x32, aggregate_serialized + 1, sizeof(aggregate_x32));
 
-    /* Recompute TaggedHash with the generic SHA256 interface so the expected
-     * coefficient does not share MuSig's fixed-midstate implementation. */
-    secp256k1_hash_ctx_init(&hash_ctx);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, noncecoef_tag, sizeof(noncecoef_tag) - 1);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, aggnonce66, sizeof(aggnonce66));
-    secp256k1_sha256_write(&hash_ctx, &sha, aggregate_x32, sizeof(aggregate_x32));
-    secp256k1_sha256_write(&hash_ctx, &sha, msg32, 32);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, noncecoef_hash);
-    secp256k1_sha256_clear(&sha);
+    memcpy(noncecoef_input, aggnonce66, sizeof(aggnonce66));
+    memcpy(noncecoef_input + sizeof(aggnonce66), aggregate_x32, sizeof(aggregate_x32));
+    memcpy(noncecoef_input + sizeof(aggnonce66) + sizeof(aggregate_x32), msg32, 32);
+    secp256k1_fuzz_musig_tagged_hash_reference(noncecoef_hash, noncecoef_tag, sizeof(noncecoef_tag) - 1, noncecoef_input, sizeof(noncecoef_input));
 
     secp256k1_fuzz_musig_reduce_scalar(expected_noncecoef, noncecoef_hash);
     FUZZ_CHECK(memcmp(expected_noncecoef, session->data + 37, sizeof(expected_noncecoef)) == 0);
 }
 
 static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen) {
-    secp256k1_hash_ctx hash_ctx;
-    secp256k1_sha256 sha;
     unsigned char taghash[32];
+    unsigned char *transcript;
+    size_t transcript_len = 2 * sizeof(taghash);
 
-    secp256k1_hash_ctx_init(&hash_ctx);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, tag, taglen);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, msg, msglen);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, out32);
-    secp256k1_sha256_clear(&sha);
+    FUZZ_CHECK(msg != NULL || msglen == 0);
+    FUZZ_CHECK(msglen <= SIZE_MAX - transcript_len);
+    transcript_len += msglen;
+    transcript = (unsigned char *)malloc(transcript_len);
+    FUZZ_CHECK(transcript != NULL);
+
+    secp256k1_fuzz_sha256_standalone(taghash, tag, taglen);
+    memcpy(transcript, taghash, sizeof(taghash));
+    memcpy(transcript + sizeof(taghash), taghash, sizeof(taghash));
+    if (msglen != 0) {
+        memcpy(transcript + 2 * sizeof(taghash), msg, msglen);
+    }
+    secp256k1_fuzz_sha256_standalone(out32, transcript, transcript_len);
+    memset(taghash, 0, sizeof(taghash));
+    memset(transcript, 0, transcript_len);
+    free(transcript);
 }
 
 /* Recompute one KeyAgg coefficient from the public key list instead of reading
