@@ -15,7 +15,7 @@ Targets:
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
-- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference and coordinate passthrough hashers
+- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
@@ -167,6 +167,27 @@ ASan/UBSan order-7 binary, each ran two iterations across every reduced-order
 key combination and reported exit code 0 with `no problems found`. This is
 reduced-model and cross-backend evidence only; it does not change any
 master-relative severity rating.
+
+Focused ECDH invalid-scalar callback replay (2026-07-13): the ECDH corpus now
+contains 5 tracked inputs totaling 189 bytes, including
+`invalid-scalar-callback-point`. The implementation deliberately replaces a
+zero or overflowing scalar with one before invoking a custom hash callback;
+the new oracle records the callback's `x32` and `y32` and compares them with
+the serialized input point for zero, `n`, and `n+1`. The previous harness
+checked only that the callback ran and that built-in failure output was zero,
+so it would not detect the callback receiving the infinity state after a
+fallback regression. Clean focused replay passed on default, forced-int64,
+and MSan builds. The complete fixed MSan replay passed all 5 seeds plus the
+empty input. Default and forced-int64 isolated
+`-workers=2 -jobs=2 -max_total_time=15` campaigns ran 2 jobs each and exited
+0; the jobs executed 226/225 and 131/132 inputs and reached 2,154 and 4,090
+edges respectively. For the independence proof, the production
+`secp256k1_scalar_cmov(&s, &secp256k1_scalar_one, overflow)` fallback was
+temporarily disabled. The focused seed aborted with exit 134 on default,
+forced-int64, and MSan; disabling only the new callback-point helper made the
+identical mutation pass with exit 0. All temporary changes were restored.
+This is informational oracle hardening, not a current-master production
+finding, and does not change any severity rating.
 
 MemorySanitizer corpus campaign (2026-07-13): a clang build with
 `-fsanitize=memory -fsanitize-memory-track-origins=2` was linked and runtime
@@ -512,6 +533,17 @@ documented in its commit message.
   targets exited 0 without diagnostics or artifacts. This is informational
   oracle hardening, not a current-master production finding, and does not
   change any severity rating.
+- **Informational oracle hardening:** `fuzz_ecdh` now checks the coordinates
+  delivered to custom hash callbacks when the scalar is invalid. Clean master
+  deliberately substitutes one for zero, `n`, and overflowing `n+1` scalars
+  before invoking the callback; the prior fuzzer checked only callback count
+  and built-in output clearing. The focused
+  `invalid-scalar-callback-point` seed passes on default, forced-int64, and
+  MSan. Disabling the production scalar fallback makes the new coordinate
+  assertion abort, while disabling only the new helper leaves the identical
+  mutation green on all three builds. This closes an ECDH postcondition gap,
+  not a current-master production vulnerability, and does not change any
+  severity rating.
 - **Informational oracle hardening:** `fuzz_musig` independently recomputes
   each signer's KeyAgg coefficient and BIP340 challenge, then checks the
   partial-signature point equation through public point operations with final

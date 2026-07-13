@@ -66,6 +66,8 @@ static int fuzz_ecdh_hash_fail(unsigned char *output, const unsigned char *x32, 
 typedef struct {
     const void *self;
     unsigned char mask32[32];
+    unsigned char x32[32];
+    unsigned char y32[32];
     int calls;
 } secp256k1_fuzz_ecdh_hash_data;
 
@@ -90,11 +92,46 @@ static int fuzz_ecdh_hash_with_data(unsigned char *output, const unsigned char *
     FUZZ_CHECK(hash_data != NULL);
     FUZZ_CHECK(hash_data->self == hash_data);
     hash_data->calls++;
+    memcpy(hash_data->x32, x32, 32);
+    memcpy(hash_data->y32, y32, 32);
     for (i = 0; i < 32; i++) {
         output[i] = (unsigned char)(x32[i] ^ hash_data->mask32[i]);
         output[32 + i] = (unsigned char)(y32[i] ^ hash_data->mask32[31 - i]);
     }
     return 1;
+}
+
+static void secp256k1_fuzz_check_ecdh_callback_point(const secp256k1_context *ctx, const secp256k1_pubkey *point, const secp256k1_fuzz_ecdh_hash_data *hash_data) {
+    unsigned char uncompressed[65];
+    size_t uncompressed_len = sizeof(uncompressed);
+
+    FUZZ_CHECK(hash_data->calls == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, uncompressed, &uncompressed_len, point, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(uncompressed_len == sizeof(uncompressed));
+    FUZZ_CHECK(memcmp(hash_data->x32, uncompressed + 1, 32) == 0);
+    FUZZ_CHECK(memcmp(hash_data->y32, uncompressed + 33, 32) == 0);
+}
+
+static void secp256k1_fuzz_check_ecdh_invalid_scalar_callback_point(const secp256k1_context *ctx, const secp256k1_pubkey *point, const unsigned char *mask32) {
+    unsigned char order_plus_one[32];
+    unsigned char custom_output[64];
+    const unsigned char *invalid_scalars[3];
+    secp256k1_fuzz_ecdh_hash_data hash_data;
+    size_t i;
+
+    memcpy(order_plus_one, secp256k1_fuzz_scalar_order, sizeof(order_plus_one));
+    order_plus_one[31]++;
+    invalid_scalars[0] = secp256k1_fuzz_scalar_zero;
+    invalid_scalars[1] = secp256k1_fuzz_scalar_order;
+    invalid_scalars[2] = order_plus_one;
+    hash_data.self = &hash_data;
+    memcpy(hash_data.mask32, mask32, sizeof(hash_data.mask32));
+    for (i = 0; i < sizeof(invalid_scalars) / sizeof(invalid_scalars[0]); i++) {
+        hash_data.calls = 0;
+        memset(custom_output, 0xA5, sizeof(custom_output));
+        FUZZ_CHECK(secp256k1_ecdh(ctx, custom_output, point, invalid_scalars[i], fuzz_ecdh_hash_with_data, &hash_data) == 0);
+        secp256k1_fuzz_check_ecdh_callback_point(ctx, point, &hash_data);
+    }
 }
 
 static void secp256k1_fuzz_check_ecdh_invalid_pubkey(secp256k1_context *ctx, const unsigned char *valid_seckey32, const unsigned char *mask32) {
@@ -197,6 +234,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
     secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
     secp256k1_fuzz_check_ecdh_order_plus_one(ctx, &pubkey_b, hash_data.mask32);
+    secp256k1_fuzz_check_ecdh_invalid_scalar_callback_point(ctx, &pubkey_b, hash_data.mask32);
 
     secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdh_sha256_compression);
