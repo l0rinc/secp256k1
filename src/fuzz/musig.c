@@ -124,7 +124,7 @@ static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], 
 static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_context *ctx, unsigned char coefficient32[32], const secp256k1_pubkey * const* pubkeys, size_t n_pubkeys, size_t target_index) {
     static const unsigned char keyagg_list_tag[] = "KeyAgg list";
     static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
-    unsigned char serialized[7 * 33];
+    unsigned char serialized[8 * 33];
     unsigned char pks_hash[32];
     unsigned char coefficient_input[65];
     unsigned char coefficient_hash[32];
@@ -133,7 +133,7 @@ static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_co
     size_t i;
 
     FUZZ_CHECK(n_pubkeys > 0);
-    FUZZ_CHECK(n_pubkeys <= 7);
+    FUZZ_CHECK(n_pubkeys <= 8);
     FUZZ_CHECK(target_index < n_pubkeys);
     for (i = 0; i < n_pubkeys; i++) {
         serialized_len = 33;
@@ -687,6 +687,61 @@ static void secp256k1_fuzz_check_musig_four_keyagg_reference(const secp256k1_con
     FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &actual_full, &expected_full) == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
+    FUZZ_CHECK(memcmp(cache.data + 132, keyagg_hash, sizeof(keyagg_hash)) == 0);
+}
+
+/* Exercise the first key-count boundary beyond the stateful seven-signer
+ * fixtures. Keep the transcript and weighted point sum independent of the
+ * MuSig aggregation callback so a skipped eighth term cannot agree with a
+ * shorter production-derived check. */
+static void secp256k1_fuzz_check_musig_eight_keyagg_reference(const secp256k1_context *ctx) {
+    static const unsigned char keyagg_list_tag[] = "KeyAgg list";
+    static const size_t n_pubkeys = 8;
+    unsigned char seckeys[8][32] = { 0 };
+    secp256k1_pubkey pubkeys[8];
+    secp256k1_pubkey scaled[8];
+    secp256k1_pubkey expected_full;
+    secp256k1_pubkey actual_full;
+    secp256k1_xonly_pubkey expected_xonly;
+    secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_xonly_pubkey actual_xonly_no_cache;
+    secp256k1_musig_keyagg_cache cache;
+    const secp256k1_pubkey *pubkey_ptrs[8];
+    const secp256k1_pubkey *terms[8];
+    unsigned char serialized[8 * 33];
+    unsigned char keyagg_hash[32];
+    unsigned char coefficient[32];
+    size_t serialized_len;
+    size_t i;
+
+    for (i = 0; i < n_pubkeys; i++) {
+        seckeys[i][31] = (unsigned char)(i + 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[i], seckeys[i]) == 1);
+        pubkey_ptrs[i] = &pubkeys[i];
+        serialized_len = 33;
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized + 33 * i, &serialized_len, &pubkeys[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+    }
+
+    secp256k1_fuzz_musig_tagged_hash_reference(keyagg_hash, keyagg_list_tag, sizeof(keyagg_list_tag) - 1, serialized, sizeof(serialized));
+    for (i = 0; i < n_pubkeys; i++) {
+        secp256k1_fuzz_musig_keyagg_coefficient_reference(ctx, coefficient, pubkey_ptrs, n_pubkeys, i);
+        FUZZ_CHECK(memcmp(coefficient, secp256k1_fuzz_scalar_zero, sizeof(coefficient)) != 0);
+        scaled[i] = pubkeys[i];
+        if (memcmp(coefficient, secp256k1_fuzz_scalar_one, sizeof(coefficient)) != 0) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &scaled[i], coefficient) == 1);
+        }
+        terms[i] = &scaled[i];
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected_full, terms, n_pubkeys) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &expected_xonly, NULL, &expected_full) == 1);
+
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly, &cache, pubkey_ptrs, n_pubkeys) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly_no_cache, NULL, pubkey_ptrs, n_pubkeys) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &actual_full, &expected_full) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly_no_cache, &expected_xonly) == 0);
     FUZZ_CHECK(memcmp(cache.data + 132, keyagg_hash, sizeof(keyagg_hash)) == 0);
 }
 
@@ -2354,6 +2409,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_single_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_three_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_four_keyagg_reference(ctx);
+    if (secp256k1_fuzz_byte(input, size, 157) == (unsigned char)'8') {
+        secp256k1_fuzz_check_musig_eight_keyagg_reference(ctx);
+    }
     secp256k1_fuzz_check_musig_tweaked_signing(ctx);
     secp256k1_fuzz_check_musig_xonly_tweaked_signing(ctx);
     secp256k1_fuzz_scalar32(tweak, input, size, 173);
