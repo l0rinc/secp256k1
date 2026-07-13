@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -541,6 +541,21 @@ documented in its commit message.
   inputs but makes the new seed abort on all four builds. The mutation was
   restored before the clean replay. This is oracle hardening, not a
   current-master production finding, and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_musig` now computes its auxiliary,
+  nonce, nonce-coefficient, KeyAgg list/coefficient, and BIP340 challenge
+  transcripts with the standalone SHA-256 model. The previous MuSig
+  expected-value helper used production SHA initialization, write, and
+  finalization, so a defect in those paths could make both a generated value
+  and its expected value agree. The new `sha256-independent-tagged` seed and
+  all 31 pre-existing MuSig inputs pass on clean master. For the proof
+  mutation, `secp256k1_sha256_finalize` was temporarily changed to flip
+  `out32[0]` after digest serialization when post-padding `hash->bytes` was
+  192 or 256. The pre-change target at `82011b3` passed all 31 existing inputs
+  under that mutation on default, forced-int64, MSan, and MSan-int64 builds;
+  the new focused seed aborted on all four builds. The mutation was restored
+  before the clean replay. This is an oracle-hardening change only; it does
+  not change any severity rating or claim a current-master production
+  vulnerability.
 - **Informational oracle hardening:** `fuzz_recovery` independently checks the
   recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`
   and `recid`, including the overflow branch, for both signer-generated and
