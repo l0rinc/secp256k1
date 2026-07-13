@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, two-, three-, and four-term public-key combine with intermediate-infinity transitions, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, and four-term public-key combine with intermediate-infinity transitions, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -972,6 +972,28 @@ documented in its commit message.
   coordinate. The mutation was restored before clean replay. This is
   informational oracle hardening; no current-master production vulnerability is
   claimed.
+  The API target now also checks the complete SEC1 public-key wire boundary against
+  a shared standalone byte-level model. For compressed inputs it independently
+  checks the field bound and `x^3 + 7` square-root condition; for uncompressed and
+  hybrid inputs it checks both field coordinates, `y^2 = x^3 + 7`, and hybrid-Y
+  parity. A successful parse must also serialize back to the same compressed bytes
+  or the same 64 coordinate bytes, rather than merely round-tripping the resulting
+  opaque object. The model is shared with the x-only target through
+  `pubkey_reference.h`, so the two fuzzers do not carry subtly different byte
+  arithmetic. A fixed uncompressed `7G` vector forces the full-coordinate path on
+  every API input. Clean master passes all 27 tracked API inputs and all 8 x-only
+  inputs on the default ASan/UBSan build. For the control proof,
+  `secp256k1_eckey_pubkey_parse` was temporarily changed to reject only that exact
+  7G uncompressed encoding. With the new checks enabled, the existing
+  `api_roundtrip/valid-ish-scalar` input aborts with `-handle_abrt=0` and exit 134;
+  disabling only the new parser and wire-preservation checks lets the same input
+  exit 0. The production mutation was restored before clean replay. This is
+  informational oracle hardening, not a current-master production finding, and
+  does not change any severity rating. The final fixed replay also passed on
+  forced-int64 ASan/UBSan and MSan builds; default and forced-int64
+  `-workers=2 -jobs=2 -max_total_time=30` runs for both changed targets exited 0
+  after 360-362 executions per target, with no sanitizer diagnostics or crash
+  artifacts.
   The MuSig target also calls `secp256k1_musig_pubkey_agg` with both optional
   output pointers set to `NULL`. Clean master accepts the valid input and
   returns success; requiring either the x-only aggregate or cache output makes
