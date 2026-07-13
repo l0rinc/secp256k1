@@ -899,6 +899,15 @@ documented in its commit message.
   `context_no_precomp` symbol is a data alias, not an independent function, and
   is checked against `context_static` by the static-context unit tests. No
   missing public-operation oracle was identified.
+  The matching `modinv32_var` and `modinv64_var` loops were also audited for
+  assertion-side effects. Their `int i` counter is declared only under
+  `VERIFY`, incremented only inside `VERIFY_CHECK(++i < limit)`, and never
+  participates in termination or any arithmetic state; release builds stop
+  only when `g == 0`. The release `noverify_tests` and `VERIFY` `tests` suites
+  both passed their 16-iteration runs on the clean branch. This is deliberate
+  debug-only progress accounting, not a release/VERIFY state divergence or a
+  current-master production finding, so no duplicate inversion oracle was
+  added for it.
   The scalar target now exercises a deterministic matrix of valid
   `secp256k1_scalar_get_bits_var` ranges and valid, non-crossing
   `secp256k1_scalar_get_bits_limb32` ranges at every 32-bit and 64-bit
