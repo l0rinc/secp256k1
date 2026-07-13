@@ -146,6 +146,15 @@ tests with `-i=1` and the same fixed seed passed in 145.194 seconds. This
 limitation is recorded so future MSan runs do not misclassify the deliberate
 poison check as a new production finding.
 
+The same MSan build then ran generated-input campaigns with
+`-workers=2 -jobs=2`. `fuzz_api_roundtrip`, `fuzz_ecmult_multi`, `fuzz_ellswift`,
+and `fuzz_musig` ran for 30 seconds per manager; the other ten targets ran for
+15 seconds per manager. Across all 14 targets the managers completed 330,620
+executions, with no MSan diagnostic, assertion, crash artifact, or nonzero
+worker result. This is useful negative evidence against sanitizer-visible
+undefined-state propagation, but it is not a proof that arbitrary future
+mutations are safe and does not change any master-relative severity.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
