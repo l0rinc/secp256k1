@@ -418,6 +418,188 @@ static void secp256k1_fuzz_fe_check_set_b32_mod(const unsigned char *input32) {
     FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
 }
 
+/* A small standalone 8x32-bit modular arithmetic model. It deliberately does
+ * not call field or modular-inverse helpers from the library under test. */
+static void secp256k1_fuzz_ref_u32_from_be(uint32_t out[8], const unsigned char in[32]) {
+    size_t i;
+
+    for (i = 0; i < 8; i++) {
+        size_t offset = 32 - 4 * (i + 1);
+        out[i] = ((uint32_t)in[offset] << 24)
+               | ((uint32_t)in[offset + 1] << 16)
+               | ((uint32_t)in[offset + 2] << 8)
+               | (uint32_t)in[offset + 3];
+    }
+}
+
+static void secp256k1_fuzz_ref_u32_to_be(unsigned char out[32], const uint32_t in[8]) {
+    size_t i;
+
+    for (i = 0; i < 8; i++) {
+        size_t offset = 32 - 4 * (i + 1);
+        out[offset] = (unsigned char)(in[i] >> 24);
+        out[offset + 1] = (unsigned char)(in[i] >> 16);
+        out[offset + 2] = (unsigned char)(in[i] >> 8);
+        out[offset + 3] = (unsigned char)in[i];
+    }
+}
+
+static int secp256k1_fuzz_ref_u32_ge_modulus(const uint32_t a[8], const uint32_t modulus[8]) {
+    size_t i;
+
+    for (i = 8; i-- > 0;) {
+        if (a[i] != modulus[i]) {
+            return a[i] > modulus[i];
+        }
+    }
+    return 1;
+}
+
+static void secp256k1_fuzz_ref_u32_mul_mod(uint32_t out[8], const uint32_t a[8], const uint32_t b[8], const uint32_t modulus[8]) {
+    uint32_t product[16] = { 0 };
+    uint32_t remainder[9] = { 0 };
+    size_t i;
+    size_t j;
+
+    /* Schoolbook multiplication uses only 32x32 -> 64-bit products. */
+    for (i = 0; i < 8; i++) {
+        uint64_t carry = 0;
+        for (j = 0; j < 8; j++) {
+            uint64_t value = (uint64_t)product[i + j]
+                           + (uint64_t)a[i] * b[j]
+                           + carry;
+            product[i + j] = (uint32_t)value;
+            carry = value >> 32;
+        }
+        for (j = i + 8; carry != 0; j++) {
+            uint64_t value = (uint64_t)product[j] + carry;
+            product[j] = (uint32_t)value;
+            carry = value >> 32;
+        }
+    }
+
+    /* Reduce the 512-bit product with restoring binary long division. */
+    for (i = 512; i-- > 0;) {
+        uint32_t carry = (product[i / 32] >> (i % 32)) & 1u;
+        int ge_modulus;
+
+        for (j = 0; j < 9; j++) {
+            uint32_t next_carry = remainder[j] >> 31;
+            remainder[j] = (remainder[j] << 1) | carry;
+            carry = next_carry;
+        }
+
+        ge_modulus = remainder[8] != 0 || secp256k1_fuzz_ref_u32_ge_modulus(remainder, modulus);
+        if (ge_modulus) {
+            uint32_t borrow = 0;
+            for (j = 0; j < 8; j++) {
+                uint64_t subtrahend = (uint64_t)modulus[j] + borrow;
+                uint32_t minuend = remainder[j];
+                remainder[j] = (uint32_t)((uint64_t)minuend - subtrahend);
+                borrow = (uint32_t)((uint64_t)minuend < subtrahend);
+            }
+            remainder[8] -= borrow;
+        }
+    }
+    memcpy(out, remainder, sizeof(uint32_t) * 8);
+}
+
+static void secp256k1_fuzz_ref_field_inverse(unsigned char out32[32], const unsigned char input32[32]) {
+    uint32_t modulus[8];
+    uint32_t base[8];
+    uint32_t result[8];
+    unsigned char exponent[32];
+    size_t bit;
+
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(base, input32);
+    memcpy(exponent, secp256k1_fuzz_field_prime, sizeof(exponent));
+    exponent[31] -= 2;
+    memset(result, 0, sizeof(result));
+    result[0] = 1;
+
+    /* Fermat's little theorem: x^(-1) = x^(p-2) in this prime field. */
+    for (bit = 0; bit < 256; bit++) {
+        uint32_t squared[8];
+        secp256k1_fuzz_ref_u32_mul_mod(squared, result, result, modulus);
+        memcpy(result, squared, sizeof(result));
+        if ((exponent[bit / 8] & (unsigned char)(0x80u >> (bit % 8))) != 0) {
+            uint32_t multiplied[8];
+            secp256k1_fuzz_ref_u32_mul_mod(multiplied, result, base, modulus);
+            memcpy(result, multiplied, sizeof(result));
+        }
+    }
+    secp256k1_fuzz_ref_u32_to_be(out32, result);
+}
+
+static void secp256k1_fuzz_fe_check_inverse_reference(const unsigned char *input, size_t size) {
+    unsigned char value32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    secp256k1_fe value;
+    secp256k1_fe raised;
+    secp256k1_fe zero31;
+    secp256k1_fe inverse;
+    secp256k1_fe inverse_var;
+
+    secp256k1_fuzz_derive(value32, sizeof(value32), input, size, 233);
+    secp256k1_fuzz_fe_check_set_b32_mod(value32);
+    secp256k1_fe_set_b32_mod(&value, value32);
+    secp256k1_fe_normalize_var(&value);
+    secp256k1_fe_get_b32(actual32, &value);
+    secp256k1_fuzz_ref_field_inverse(expected32, actual32);
+
+    secp256k1_fe_inv(&inverse, &value);
+    secp256k1_fe_normalize_var(&inverse);
+    secp256k1_fe_get_b32(actual32, &inverse);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    secp256k1_fe_inv_var(&inverse_var, &value);
+    secp256k1_fe_normalize_var(&inverse_var);
+    secp256k1_fe_get_b32(actual32, &inverse_var);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* Preserve the residue while raising the representation to the maximum
+     * accepted magnitude, so the reference covers that contract as well. */
+    secp256k1_fe_set_int(&zero31, 0);
+    secp256k1_fe_negate(&zero31, &zero31, 0);
+    secp256k1_fe_mul_int_unchecked(&zero31, 31);
+    raised = value;
+    secp256k1_fe_add(&raised, &zero31);
+    secp256k1_fe_inv(&inverse, &raised);
+    secp256k1_fe_normalize_var(&inverse);
+    secp256k1_fe_get_b32(actual32, &inverse);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+    secp256k1_fe_inv_var(&inverse_var, &raised);
+    secp256k1_fe_normalize_var(&inverse_var);
+    secp256k1_fe_get_b32(actual32, &inverse_var);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* Zero is the one residue whose inverse is defined as zero by this API. */
+    memset(value32, 0, sizeof(value32));
+    secp256k1_fe_set_int(&value, 0);
+    secp256k1_fuzz_ref_field_inverse(expected32, value32);
+    secp256k1_fe_inv(&inverse, &value);
+    secp256k1_fe_normalize_var(&inverse);
+    secp256k1_fe_get_b32(actual32, &inverse);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+    secp256k1_fe_inv_var(&inverse_var, &value);
+    secp256k1_fe_normalize_var(&inverse_var);
+    secp256k1_fe_get_b32(actual32, &inverse_var);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    raised = value;
+    secp256k1_fe_add(&raised, &zero31);
+    secp256k1_fe_inv(&inverse, &raised);
+    secp256k1_fe_normalize_var(&inverse);
+    secp256k1_fe_get_b32(actual32, &inverse);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+    secp256k1_fe_inv_var(&inverse_var, &raised);
+    secp256k1_fe_normalize_var(&inverse_var);
+    secp256k1_fe_get_b32(actual32, &inverse_var);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
+
 static void secp256k1_fuzz_fe_half_reference(unsigned char *out32, const unsigned char *in32) {
     unsigned char sum[33] = { 0 };
     unsigned int carry = 0;
@@ -822,6 +1004,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_fe_check_raised_zero(input, size);
     secp256k1_fuzz_fe_check_max_magnitude_inverse(input, size);
+    secp256k1_fuzz_fe_check_inverse_reference(input, size);
     secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_negation(input, size);

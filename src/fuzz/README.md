@@ -1479,6 +1479,26 @@ documented in its commit message.
   clean-master production bug; no public or cryptographic impact was
   demonstrated and the master-relative severity ledger is unchanged.
 
+  The field target now computes inversion with a standalone 8x32-bit model:
+  schoolbook multiplication, restoring binary reduction modulo p, and
+  Fermat exponentiation by p - 2. It compares both `secp256k1_fe_inv` and
+  `secp256k1_fe_inv_var` for canonical values, maximum-magnitude
+  nonnormalized representations, and the defined zero residue. The
+  dedicated `inverse-byte-reference` seed and all 11 copied field inputs pass
+  on clean default and forced-`int64` ASan/UBSan builds. A temporary
+  production mutation XORed the low limb by 2 for every nonzero result from
+  both inverse wrappers. With the independent reference enabled, the focused
+  seed aborted with exit 134 on both backends. With that reference and the
+  pre-existing production-derived `x * inverse == 1` assertion both disabled,
+  the same mutation passed; restoring only the reference made it abort. This
+  demonstrates that the new oracle does not depend on inverse-path agreement
+  or on the production multiplication implementation. The mutation was
+  restored before clean replay, and bounded `-workers=2 -jobs=2` campaigns
+  exited 0 without sanitizer diagnostics or failure artifacts. This is
+  informational/Low internal arithmetic-oracle hardening, not a clean-master
+  production bug; no public or cryptographic impact was demonstrated and the
+  master-relative severity ledger is unchanged.
+
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
 claim the later behavior was tested merely because a follow-up fix lets the
