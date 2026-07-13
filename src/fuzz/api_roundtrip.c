@@ -975,6 +975,95 @@ static void secp256k1_fuzz_scalar32_reduce(unsigned char *out32, const unsigned 
     FUZZ_CHECK(borrow == 0);
 }
 
+/* Verify an arbitrary low-S ECDSA signature without using the internal
+ * verifier's inverse-and-multiscalar path. For a candidate R reconstructed
+ * from r (or r+n), the ECDSA equation is sR = zG + rQ. */
+static int secp256k1_fuzz_ecdsa_check_r_candidate(const secp256k1_context *ctx, const unsigned char *x32, const unsigned char *s32, const secp256k1_pubkey *expected) {
+    unsigned char compressed[33];
+    secp256k1_pubkey r_point;
+    secp256k1_pubkey s_r_point;
+    int parity;
+
+    memcpy(compressed + 1, x32, 32);
+    for (parity = 0; parity <= 1; parity++) {
+        compressed[0] = (unsigned char)(SECP256K1_TAG_PUBKEY_EVEN + parity);
+        if (secp256k1_ec_pubkey_parse(ctx, &r_point, compressed, sizeof(compressed))) {
+            s_r_point = r_point;
+            if (secp256k1_ec_pubkey_tweak_mul(ctx, &s_r_point, s32)
+                && secp256k1_ec_pubkey_cmp(ctx, &s_r_point, expected) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int secp256k1_fuzz_ecdsa_verify_reference(const secp256k1_context *ctx, const secp256k1_ecdsa_signature *sig, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    unsigned char compact[64];
+    unsigned char msg_mod[32];
+    unsigned char half_order[32];
+    unsigned char r_plus_order[32];
+    secp256k1_pubkey r_pubkey;
+    secp256k1_pubkey z_generator;
+    secp256k1_pubkey expected;
+    const secp256k1_pubkey *terms[2];
+    unsigned int carry = 0;
+    size_t n_terms = 0;
+    int i;
+
+    if (!secp256k1_ecdsa_signature_serialize_compact(ctx, compact, sig)) {
+        return 0;
+    }
+    if (memcmp(compact, secp256k1_fuzz_scalar_zero, 32) == 0
+        || memcmp(compact + 32, secp256k1_fuzz_scalar_zero, 32) == 0) {
+        return 0;
+    }
+
+    /* Match the public verifier's low-S policy without calling normalize. */
+    for (i = 0; i < 32; i++) {
+        unsigned int value = secp256k1_fuzz_scalar_order[i];
+        half_order[i] = (unsigned char)((value >> 1) | carry);
+        carry = (value & 1u) != 0 ? 0x80u : 0u;
+    }
+    if (memcmp(compact + 32, half_order, sizeof(half_order)) > 0) {
+        return 0;
+    }
+
+    secp256k1_fuzz_scalar32_reduce(msg_mod, msg32);
+    r_pubkey = *pubkey;
+    if (!secp256k1_ec_pubkey_tweak_mul(ctx, &r_pubkey, compact)) {
+        return 0;
+    }
+    terms[n_terms++] = &r_pubkey;
+    if (memcmp(msg_mod, secp256k1_fuzz_scalar_zero, sizeof(msg_mod)) != 0) {
+        if (!secp256k1_ec_pubkey_create(ctx, &z_generator, msg_mod)) {
+            return 0;
+        }
+        terms[n_terms++] = &z_generator;
+    }
+    if (!secp256k1_ec_pubkey_combine(ctx, &expected, terms, n_terms)) {
+        return 0;
+    }
+
+    if (secp256k1_fuzz_ecdsa_check_r_candidate(ctx, compact, compact + 32, &expected)) {
+        return 1;
+    }
+
+    memcpy(r_plus_order, compact, sizeof(r_plus_order));
+    carry = 0;
+    for (i = 31; i >= 0; i--) {
+        unsigned int value = (unsigned int)r_plus_order[i]
+                           + secp256k1_fuzz_scalar_order[i] + carry;
+        r_plus_order[i] = (unsigned char)value;
+        carry = value >> 8;
+    }
+    if (carry == 0
+        && secp256k1_fuzz_ecdsa_check_r_candidate(ctx, r_plus_order, compact + 32, &expected)) {
+        return 1;
+    }
+    return 0;
+}
+
 static void secp256k1_fuzz_check_ecdsa_variable_nonce_equation(const secp256k1_context *ctx, const unsigned char *msg32, const unsigned char *seckey32, const unsigned char *nonce32) {
     secp256k1_fuzz_ecdsa_equation_nonce_data nonce_data;
     secp256k1_ecdsa_signature sig;
@@ -1092,6 +1181,8 @@ static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context
     if (parse_ret) {
         FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
         FUZZ_CHECK(memcmp(compact, input64, sizeof(compact)) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_ecdsa_verify_reference(ctx, &parsed_sig, msg32, pubkey)
+                   == secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey));
         secp256k1_fuzz_check_signature_roundtrip(ctx, &parsed_sig);
     } else {
         FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
@@ -1164,6 +1255,8 @@ static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_conte
         FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
     }
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_verify_reference(ctx, &parsed_sig, msg32, pubkey)
+               == secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey));
     if (parsed_der && !secp256k1_fuzz_scalar32_is_zero(compact) && !secp256k1_fuzz_scalar32_is_zero(compact + 32)) {
         FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, roundtrip_der, &roundtrip_der_len, &parsed_sig) == 1);
         FUZZ_CHECK(roundtrip_der_len == inputlen);
@@ -1181,6 +1274,8 @@ static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_conte
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &reparsed_lax_sig, lax_compact) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, reparsed_lax_compact, &reparsed_lax_sig) == 1);
     FUZZ_CHECK(memcmp(lax_compact, reparsed_lax_compact, sizeof(lax_compact)) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_verify_reference(ctx, &lax_sig, msg32, pubkey)
+               == secp256k1_ecdsa_verify(ctx, &lax_sig, msg32, pubkey));
     if (!parsed_lax) {
         FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &lax_sig, msg32, pubkey) == 0);
     }
@@ -1219,6 +1314,8 @@ static void secp256k1_fuzz_check_signature_parse_der_boundary(const secp256k1_co
     secp256k1_fuzz_der_expected_scalar(expected_s, s32);
     FUZZ_CHECK(memcmp(compact, expected_r, sizeof(expected_r)) == 0);
     FUZZ_CHECK(memcmp(compact + 32, expected_s, sizeof(expected_s)) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_verify_reference(ctx, &parsed_sig, msg32, pubkey)
+               == secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey));
 
     expected_verifiable = !secp256k1_fuzz_scalar32_is_zero(expected_r) && !secp256k1_fuzz_scalar32_is_zero(expected_s);
     if (expected_verifiable) {
