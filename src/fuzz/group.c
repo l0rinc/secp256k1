@@ -557,6 +557,75 @@ static void secp256k1_fuzz_group_check_batch_conversion_boundaries(const secp256
     secp256k1_ge_set_all_gej_var(NULL, NULL, 0);
 }
 
+static void secp256k1_fuzz_group_check_ge_zinv(const unsigned char *input, size_t size) {
+    secp256k1_gej projective;
+    secp256k1_gej projective_copy;
+    secp256k1_ge projective_ge;
+    secp256k1_ge actual;
+    secp256k1_ge expected;
+    secp256k1_fe scale;
+    secp256k1_fe inverse_scale;
+    secp256k1_fe zero7;
+    secp256k1_fe raised_inverse;
+    secp256k1_fe raised_one;
+    unsigned char actual_bytes[64];
+    unsigned char expected_bytes[64];
+
+    /* Build a valid projective generator representation and recover its
+     * affine point through the inverse-Z helper. Keep the inverse-Z input
+     * nonnormalized as well: the helper accepts a valid field element, not a
+     * particular limb representation. */
+    secp256k1_fuzz_derive(actual_bytes, sizeof(actual_bytes), input, size, 211);
+    secp256k1_fe_set_b32_mod(&scale, actual_bytes);
+    secp256k1_fe_normalize_var(&scale);
+    if (secp256k1_fe_is_zero(&scale)) {
+        secp256k1_fe_set_int(&scale, 1);
+    }
+    secp256k1_gej_set_ge(&projective, &secp256k1_ge_const_g);
+    secp256k1_gej_rescale(&projective, &scale);
+    projective_ge.infinity = projective.infinity;
+    projective_ge.x = projective.x;
+    projective_ge.y = projective.y;
+    inverse_scale = projective.z;
+    secp256k1_fe_inv_var(&inverse_scale, &inverse_scale);
+
+    projective_copy = projective;
+    secp256k1_ge_set_gej_var(&expected, &projective_copy);
+    secp256k1_ge_set_ge_zinv(&actual, &projective_ge, &inverse_scale);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&actual, &expected));
+    secp256k1_ge_to_bytes(actual_bytes, &actual);
+    secp256k1_ge_to_bytes(expected_bytes, &expected);
+    FUZZ_CHECK(memcmp(actual_bytes, expected_bytes, sizeof(actual_bytes)) == 0);
+
+    /* A fixed generator case makes the maximum valid inverse-Z magnitude
+     * deterministic and independently exercises the gej-zinv conversion. */
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised_inverse = inverse_scale;
+    secp256k1_fe_add(&raised_inverse, &zero7);
+    raised_one = secp256k1_fe_one;
+    secp256k1_fe_add(&raised_one, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_inverse.magnitude == 8);
+    FUZZ_CHECK(raised_inverse.normalized == 0);
+    FUZZ_CHECK(raised_one.magnitude == 8);
+    FUZZ_CHECK(raised_one.normalized == 0);
+#endif
+
+    projective_copy = projective;
+    secp256k1_ge_set_gej_zinv(&expected, &projective_copy, &raised_inverse);
+    secp256k1_ge_set_ge_zinv(&actual, &projective_ge, &raised_inverse);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&actual, &expected));
+
+    secp256k1_gej_set_ge(&projective_copy, &secp256k1_ge_const_g);
+    projective_ge = secp256k1_ge_const_g;
+    secp256k1_ge_set_gej_zinv(&expected, &projective_copy, &raised_one);
+    secp256k1_ge_set_ge_zinv(&actual, &projective_ge, &raised_one);
+    FUZZ_CHECK(secp256k1_ge_eq_var(&actual, &expected));
+    FUZZ_CHECK(secp256k1_ge_eq_var(&actual, &secp256k1_ge_const_g));
+}
+
 static int secp256k1_fuzz_group_x_on_curve_reference(const secp256k1_fe *x) {
     secp256k1_fe x2;
     secp256k1_fe x3;
@@ -646,6 +715,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_group_check_storage_cmov(&affine_a, &affine_b);
     }
     secp256k1_fuzz_group_check_affine_representations(&a);
+    secp256k1_fuzz_group_check_ge_zinv(input, size);
     if (!secp256k1_gej_is_infinity(&a)) {
         secp256k1_ge affine_a;
         secp256k1_gej copy = a;
