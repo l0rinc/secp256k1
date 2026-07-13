@@ -9,7 +9,8 @@ Targets:
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
-- `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
+- `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
+  boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
@@ -610,6 +611,22 @@ documented in its commit message.
   not a current-master production finding; master already has a focused unit
   test, but its recent caller migration makes the fuzzer barrier useful for
   unusual scalar and base-state combinations.
+  The scalar target now exercises a deterministic matrix of valid
+  `secp256k1_scalar_get_bits_var` ranges and valid, non-crossing
+  `secp256k1_scalar_get_bits_limb32` ranges at every 32-bit and 64-bit
+  implementation boundary. The independent byte reference includes crossings
+  that `get_bits_var` must accept but `get_bits_limb32` must reject, such as
+  offset 24/count 25. Clean master passes the dedicated
+  `scalar/get-bits-boundaries` seed on the default and forced-int64 field
+  backends, and matching MSan replays pass as well. Routing only that
+  offset/count pair through `get_bits_limb32` makes the new matrix abort at
+  the production precondition; disabling only the new matrix lets the same
+  mutation pass, proving that the older random-range checks do not provide the
+  same deterministic barrier. Isolated `-workers=2 -jobs=2 -max_total_time=15`
+  replays completed with exit code 0: default workers executed 851 and 854
+  inputs at 1,727 edges, while forced-int64 workers executed 300 and 305 at
+  3,488 edges. This is informational oracle hardening for the master scalar
+  contract, not a current-master production finding.
   The context target also forces a multi-block custom SHA callback batch
   (`sha256-multiblock`): master passes the independent digest check, while a
   one-block production mutation aborts before it can hide a batching error.
