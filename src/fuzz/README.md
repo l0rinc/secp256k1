@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -1009,6 +1009,22 @@ documented in its commit message.
   `-workers=2 -jobs=2 -max_total_time=15` campaigns also exited 0 without
   diagnostics. This is informational oracle hardening, not a current-master
   production finding, and does not change any severity rating.
+  The same group target now feeds `secp256k1_gej_rescale` a magnitude-8
+  nonnormalized field element whose value is exactly one, then compares it
+  with the normalized scale path. The internal contract requires only
+  a nonzero scale within the field precondition; the prior fuzzer supplied
+  normalized scales and therefore did not exercise this representation. The
+  existing group-equality oracle is affine, so it intentionally treats any
+  nonzero projective rescale as equal; the new check compares normalized x/y/z
+  coordinates as the rescale postcondition.
+  Clean master passes the focused `rescale-nonnormalized-scale` seed and the
+  complete group corpus on default and forced-int64 ASan/UBSan builds. A
+  temporary production mutation increments `s_in.n[0]` only for a
+  nonnormalized magnitude-8 scale that normalizes to one; the focused seed
+  aborts, while disabling only this helper leaves that seed and all seven
+  prior group seeds green. This is informational internal-contract hardening,
+  not a clean-master production finding, and does not change any severity
+  rating.
   The API target also pins an independent ECDSA signing equation with a fixed
   nonce: private key, message, and nonce are all one, so `r = x(G)` and
   `s = r + 1`. Clean master passes; changing the production signing addition
