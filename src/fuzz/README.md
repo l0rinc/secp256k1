@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, one-, two-, three-, and four-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through four-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, one- through seven-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through seven-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1251,6 +1251,27 @@ documented in its commit message.
   `secp256k1_musig_sum_pubnonces` was temporarily changed to skip only index 3
   when `n_pubnonces == 4`. The pre-extension target at `024a28b` remained green
   on all 34 pre-existing corpus files, while the new four-signer seed aborted
+  with exit 134. A debugger backtrace placed the failure in the independent
+  `secp256k1_fuzz_check_musig_final_sig_equation`, before the production
+  Schnorr verifier. The mutation was restored before clean verification. This
+  is informational oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
+
+  The stateful MuSig signing path now extends that transcript and all
+  independent partial- and final-signature checks from four to seven
+  participants, matching the largest seven-key lists in the production MuSig
+  vectors. The public APIs accept arbitrary list lengths, but the previous
+  fuzzer stopped at four, so normal corpus runs never entered the seventh
+  nonce or partial-signature aggregation transition. The dedicated
+  `seven-signer-sign-roundtrip` seed is seven bytes (`AAAZAA` plus its newline);
+  at selector offset 157, byte `Z` deterministically selects `n_pubkeys == 7`.
+  Clean default and forced-`int64` ASan/UBSan replays passed all 36 MuSig
+  corpus files, including both signer-count seeds; default and forced-int64
+  two-worker/two-job campaigns returned zero, with each job executing all 36
+  files plus the empty input. For the differential proof,
+  `secp256k1_musig_sum_pubnonces` was temporarily changed to skip only index 6
+  when `n_pubnonces == 7`. The pre-seven target at `042e1b2` remained green on
+  all 35 pre-existing corpus files, while the new seven-signer seed aborted
   with exit 134. A debugger backtrace placed the failure in the independent
   `secp256k1_fuzz_check_musig_final_sig_equation`, before the production
   Schnorr verifier. The mutation was restored before clean verification. This
