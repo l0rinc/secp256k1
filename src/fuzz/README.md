@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, one-, two-, three-, and four-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, one-, two-, three-, and four-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through four-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1228,7 +1228,7 @@ documented in its commit message.
   the first-distinct-key coefficient rule, every remaining coefficient, and the
   four-term weighted public-point sum through public APIs. The earlier reference
   stopped at three keys, while the public aggregation API accepts arbitrary list
-  lengths and the signing harness is intentionally capped at three signers. The
+  lengths and the signing harness was capped at three signers. The
   dedicated `four-keyagg-reference` seed exercises callback index three. Clean
   default and forced-`int64` ASan/UBSan replays passed all 34 corpus files plus
   the new seed, and two-worker/two-job campaigns exited zero in both builds. For
@@ -1237,6 +1237,25 @@ documented in its commit message.
   existing corpus files, while the new seed aborted with `-handle_abrt=0` and
   exit 134. This is informational oracle hardening, not a current-master
   production finding, and does not change any severity rating.
+
+  The stateful MuSig signing path now extends the independent coefficient,
+  partial-signature, session, nonce-aggregation, and final-signature checks from
+  three to four participants. The previous fuzzer selected only one through
+  three public keys, so normal fuzzing and the existing corpus never entered a
+  four-element nonce or partial-signature aggregation loop. The dedicated
+  `four-signer-sign-roundtrip` seed is five bytes (`AACA` plus its newline) and
+  deterministically selects `n_pubkeys == 4`. Clean default and forced-`int64`
+  ASan/UBSan replays passed all 35 MuSig corpus files, including the new seed;
+  two-worker/two-job campaigns returned zero on both backends, with each job
+  executing all 35 files plus the empty input. For the differential proof,
+  `secp256k1_musig_sum_pubnonces` was temporarily changed to skip only index 3
+  when `n_pubnonces == 4`. The pre-extension target at `024a28b` remained green
+  on all 34 pre-existing corpus files, while the new four-signer seed aborted
+  with exit 134. A debugger backtrace placed the failure in the independent
+  `secp256k1_fuzz_check_musig_final_sig_equation`, before the production
+  Schnorr verifier. The mutation was restored before clean verification. This
+  is informational oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
