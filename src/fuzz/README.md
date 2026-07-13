@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: full-stream HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
@@ -213,6 +213,19 @@ edges. All four inputs also passed an explicit int64 MSan replay. Every job
 returned exit code 0 without a sanitizer diagnostic, assertion failure,
 timeout, OOM, crash artifact, or nonzero worker result; mutated corpora and
 artifacts stayed outside the repository.
+
+Focused variable-nonce ECDSA replay (2026-07-13): the `api_roundtrip` corpus
+started with 23 tracked inputs totaling 893 bytes, including
+`ecdsa-variable-nonce-equation`. The default ASan/UBSan and forced-int64
+10x26 binaries replayed the corpus once with 24 total libFuzzer executions
+and final coverage of 3,135 and 5,300 edges respectively. Both matching MSan
+replays executed all 23 tracked inputs without a diagnostic. Isolated default
+ASan/UBSan managers then ran for 30 seconds with `-workers=2 -jobs=2`,
+executing 523 and 522 inputs and reaching 3,141 edges; forced-int64 managers
+executed 315 and 312 inputs and reached 5,308 edges. Every job returned zero
+with no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact.
+The temporary mutated corpora and worker logs were kept outside the tracked
+corpus.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
@@ -557,6 +570,18 @@ documented in its commit message.
   hardening rather than a current-master finding: the previous default/custom
   nonce comparison delegated both paths to RFC6979 and could not independently
   pin the signing equation.
+  It now also captures an input-derived valid scalar nonce and checks a
+  variable-state equation without calling `secp256k1_ecdsa_verify`: byte
+  arithmetic independently reduces the message and serialized nonce-point
+  X coordinate, checks `r = x(kG) mod n`, and checks `s*k = z + r*d` or its
+  negation for low-S normalization using the public scalar-tweak API. Clean
+  master passes the dedicated `ecdsa-variable-nonce-equation` seed. A
+  temporary production mutation that adds one to the signing numerator only
+  when `secp256k1_scalar_get_bits_limb32(nonce, 0, 32) == 0xDFAD8E28u` makes
+  that seed abort; compiling out the new check leaves the previous API checks
+  green under the identical mutation. The production file was restored before
+  replay. This proves an oracle gap, not a current-master production finding,
+  and does not change any severity rating.
   It also forces a valid scalar nonce to produce an invalid ECDSA equation
   (`s == 0`) and verifies that signing rejects that attempt, requests the next
   nonce, and returns a verified signature. Clean master passes; forcing
