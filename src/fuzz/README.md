@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -527,6 +527,20 @@ documented in its commit message.
   the all-`0xFF` case abort in the new reference; disabling the new comparison
   makes the same isolated mutation pass. This closes a verifier-oracle gap, not
   a current-master production vulnerability.
+- **Informational oracle hardening:** `fuzz_schnorrsig` computes the BIP340
+  auxiliary-key, nonce, custom-tag, and arbitrary-signature challenge
+  transcripts with the standalone SHA-256 model. The previous expected-value
+  helper used the production SHA initialization, write, and finalization path,
+  so a SHA defect could make both the production operation and its expected
+  value agree. Clean master passes all 11 tracked Schnorr inputs, including
+  `sha256-independent-tagged`, on default, forced-int64, MSan, and
+  MSan-int64 builds. Default and forced-int64 two-worker campaigns also pass
+  with `-workers=2 -jobs=2 -max_total_time=15`. A temporary production
+  finalization mutation, `if (hash->bytes == 192 || hash->bytes == 256)
+  out32[0] ^= 1`, leaves the old production-derived control green on all 11
+  inputs but makes the new seed abort on all four builds. The mutation was
+  restored before the clean replay. This is oracle hardening, not a
+  current-master production finding, and does not change any severity rating.
 - **Informational oracle hardening:** `fuzz_recovery` independently checks the
   recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`
   and `recid`, including the overflow branch, for both signer-generated and

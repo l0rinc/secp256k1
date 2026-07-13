@@ -5,6 +5,7 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "sha256_reference.h"
 #include "../hash_impl.h"
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
@@ -150,28 +151,39 @@ static int secp256k1_fuzz_schnorrsig_nonce_fixed(unsigned char *nonce32, const u
 }
 
 static void secp256k1_fuzz_schnorrsig_tagged_hash_reference(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *part1, size_t part1_len, const unsigned char *part2, size_t part2_len, const unsigned char *part3, size_t part3_len) {
-    secp256k1_hash_ctx hash_ctx;
-    secp256k1_sha256 sha;
     unsigned char taghash[32];
+    unsigned char *transcript;
+    size_t transcript_len = 2 * sizeof(taghash);
+    size_t offset;
 
-    secp256k1_hash_ctx_init(&hash_ctx);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, tag, taglen);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
+    FUZZ_CHECK(part1_len <= SIZE_MAX - transcript_len);
+    transcript_len += part1_len;
+    FUZZ_CHECK(part2_len <= SIZE_MAX - transcript_len);
+    transcript_len += part2_len;
+    FUZZ_CHECK(part3_len <= SIZE_MAX - transcript_len);
+    transcript_len += part3_len;
+    transcript = (unsigned char *)malloc(transcript_len);
+    FUZZ_CHECK(transcript != NULL);
+
+    secp256k1_fuzz_sha256_standalone(taghash, tag, taglen);
+    memcpy(transcript, taghash, sizeof(taghash));
+    memcpy(transcript + sizeof(taghash), taghash, sizeof(taghash));
+    offset = 2 * sizeof(taghash);
     if (part1_len != 0) {
-        secp256k1_sha256_write(&hash_ctx, &sha, part1, part1_len);
+        memcpy(transcript + offset, part1, part1_len);
+        offset += part1_len;
     }
     if (part2_len != 0) {
-        secp256k1_sha256_write(&hash_ctx, &sha, part2, part2_len);
+        memcpy(transcript + offset, part2, part2_len);
+        offset += part2_len;
     }
     if (part3_len != 0) {
-        secp256k1_sha256_write(&hash_ctx, &sha, part3, part3_len);
+        memcpy(transcript + offset, part3, part3_len);
     }
-    secp256k1_sha256_finalize(&hash_ctx, &sha, out32);
-    secp256k1_sha256_clear(&sha);
+    secp256k1_fuzz_sha256_standalone(out32, transcript, transcript_len);
+    memset(taghash, 0, sizeof(taghash));
+    memset(transcript, 0, transcript_len);
+    free(transcript);
 }
 
 static void secp256k1_fuzz_check_schnorrsig_nonce_reference(const unsigned char *msg, size_t msglen, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *aux32) {
