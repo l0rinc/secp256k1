@@ -242,6 +242,33 @@ static uint32_t secp256k1_fuzz_scalar_bits_reference(const unsigned char *input3
     return ret;
 }
 
+/* Exercise the boundaries shared by scalar_get_bits_var and scalar_get_bits_limb32.
+ * The latter may not cross a 32-bit limb, while the former must handle those
+ * crossings, including crossings that stay within a 64-bit implementation limb. */
+static void secp256k1_fuzz_scalar_check_bits_boundaries(const secp256k1_scalar *a, const unsigned char *a32) {
+    static const unsigned int offsets_in_limb[] = { 0, 1, 7, 8, 15, 16, 23, 24, 25, 31 };
+    static const unsigned int counts[] = { 1, 2, 3, 7, 8, 9, 16, 17, 24, 25, 31, 32 };
+    size_t i;
+    size_t j;
+    unsigned int limb;
+
+    for (limb = 0; limb < 8; limb++) {
+        for (i = 0; i < sizeof(offsets_in_limb) / sizeof(offsets_in_limb[0]); i++) {
+            unsigned int offset = limb * 32u + offsets_in_limb[i];
+            for (j = 0; j < sizeof(counts) / sizeof(counts[0]); j++) {
+                unsigned int count = counts[j];
+                if (offset + count <= 256u) {
+                    uint32_t expected = secp256k1_fuzz_scalar_bits_reference(a32, offset, count);
+                    FUZZ_CHECK(secp256k1_scalar_get_bits_var(a, offset, count) == expected);
+                    if (offsets_in_limb[i] + count <= 32u) {
+                        FUZZ_CHECK(secp256k1_scalar_get_bits_limb32(a, offset, count) == expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static int secp256k1_fuzz_scalar_all_zero(void *ptr, size_t len) {
     const unsigned char *bytes = (const unsigned char *)ptr;
     size_t i;
@@ -726,6 +753,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(a32, sizeof(a32), input, size, 31);
     secp256k1_fuzz_derive(b32, sizeof(b32), input, size, 37);
     secp256k1_fuzz_scalar_check_pair(a32, b32, input, size, 41);
+    secp256k1_scalar_set_b32(&wnaf_boundary, a32, NULL);
+    secp256k1_fuzz_scalar_check_bits_boundaries(&wnaf_boundary, a32);
     secp256k1_scalar_set_int(&wnaf_boundary, 0);
     secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary);
     secp256k1_scalar_set_int(&wnaf_boundary, 0x7fffffffU);
