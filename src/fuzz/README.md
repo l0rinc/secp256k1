@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, and four-term public-key combine with intermediate-infinity transitions, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and seven-term public-key combine with intermediate-infinity transitions, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -755,6 +755,23 @@ documented in its commit message.
   two-job 15-second campaigns exited 0 without sanitizer diagnostics or
   artifacts. The mutation and bypass were restored before clean replay. This
   is informational oracle hardening, not a clean-master production finding,
+  and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_api_roundtrip` now exercises the
+  seven-input `secp256k1_ec_pubkey_combine` loop with two fuzz-derived public
+  keys followed by generator multiples 1 through 5. It independently sums
+  the seven canonical scalars with byte arithmetic modulo the group order,
+  compares the result with generator multiplication, and repeats the call in
+  reverse order. The `long-pubkey-combine` seed is 136 bytes; the helper is
+  gated at 128 bytes so all 27 pre-existing API inputs remain a differential
+  control. Clean default and forced-int64 ASan/UBSan replays pass the focused
+  seed and the complete 28-input corpus; the forced-int64 MSan focused replay
+  also passes. Default and forced-int64 two-worker/two-job 20-second campaigns
+  exit 0 without sanitizer diagnostics or artifacts. For the differential
+  proof, `secp256k1_ec_pubkey_combine` was temporarily changed to skip only
+  index 6 when `n == 7`. The 27 pre-existing inputs remained green, while the
+  new seed aborted with exit 134 in the independent scalar model. The
+  production mutation was restored before the clean replays. This is
+  informational oracle hardening, not a current-master production finding,
   and does not change any severity rating.
 - **Low to Medium:** secret-derived stack/helper temporaries left live after use
   (`a3e30b3`, `a6f0b14`, `f94fec5`, `a884a2d`). These are code-path-proven
