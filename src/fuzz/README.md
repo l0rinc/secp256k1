@@ -108,27 +108,34 @@ negative evidence for the current oracles and do not change any
 master-relative severity rating.
 
 Focused recoverable ECDSA point-equation replay (2026-07-13): the recovery
-corpus now has 5 tracked inputs totaling 291 bytes, including
-`recovery-point-equation` and `arbitrary-recovery-equation`. The latter is a
-111-byte printable input whose first 64 bytes form an accepted `(r,s)` pair
-and whose byte 109 selects `recid == 0`, so the arbitrary parse/recover branch
-reaches the oracle deterministically. The independent model reconstructs the
-candidate `R` from serialized `r` and `recid` (including the `r + n` branch),
-reduces the message scalar with byte arithmetic, and checks `rQ = sR - zG`
-using public point operations rather than `secp256k1_ecdsa_verify` or the
-recovery implementation's internal multiscalar path. It now covers both
-signer-generated and arbitrary parsed recoverable signatures. Default and
-forced-int64 ASan/UBSan fixed replays each executed all 5 inputs plus the
-empty input, reaching 2,635 and 4,780 edges; matching MSan replays completed
-without a diagnostic. Focused `-workers=2 -jobs=2 -max_total_time=30` runs
-completed two jobs per backend with exit code 0, reaching 2,655 edges on
-default and 4,793 on forced-int64. For the strongest isolation proof, a
-temporary production mutation skipped `secp256k1_scalar_negate(&u1, &u1);`
-only for the seed's `recid == 0` and top-16-bit `r == 0x564e` condition. With
+corpus now has 6 tracked inputs totaling 402 bytes, including
+`recovery-point-equation`, `arbitrary-recovery-equation`, and
+`arbitrary-recovery-failure-cleanup`. The two arbitrary seeds are 111-byte
+printable inputs sharing an accepted first 64-byte `(r,s)` pair: byte 109 is
+`d` (`recid == 0`) for successful recovery and `f` (`recid == 2`) for a
+recoverable-point failure. The independent model reconstructs the candidate
+`R` from serialized `r` and `recid` (including the `r + n` branch), reduces the
+message scalar with byte arithmetic, and checks `rQ = sR - zG` using public
+point operations rather than `secp256k1_ecdsa_verify` or the recovery
+implementation's internal multiscalar path. It now covers both signer-
+generated and arbitrary parsed recoverable signatures, and asserts that a
+failed arbitrary recovery clears its public-key output. Default and
+forced-int64 ASan/UBSan fixed replays each executed all 6 inputs plus the
+empty input, reaching 2,636 and 4,781 edges; matching MSan replays completed
+without a diagnostic. Focused `-workers=2 -jobs=2 -max_total_time=20` runs
+completed two jobs per backend with exit code 0: default jobs executed 354
+and 356 inputs at 2,655 edges, while forced-int64 jobs executed 208 and 213
+at 4,793 edges. For the strongest equation isolation proof, a temporary
+production mutation skipped `secp256k1_scalar_negate(&u1, &u1);` only for the
+successful seed's `recid == 0` and top-16-bit `r == 0x564e` condition. With
 the delegated `ecdsa_verify` check disabled, the new equation aborted with
 exit 134 on both backends; disabling the new equation as well let the same
-mutation pass with exit 0. All temporary changes were restored before the
-clean replays. This is informational oracle hardening, not a current-master
+mutation pass with exit 0. For the failure-state proof, a temporary mutation
+omitted `memset(pubkey, 0, sizeof(*pubkey))` only for the failing seed's
+`recid == 2` and the same `r` prefix. The new clear-output assertion aborted
+with exit 134 on both backends; disabling that assertion let the mutation
+pass with exit 0. All temporary changes were restored before the clean
+replays. This is informational oracle hardening, not a current-master
 production finding, and does not change any severity rating.
 
 Cross-backend campaign (2026-07-13): a separate ASan/UBSan libFuzzer build
@@ -479,14 +486,15 @@ documented in its commit message.
 - **Informational oracle hardening:** `fuzz_recovery` independently checks the
   recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`
   and `recid`, including the overflow branch, for both signer-generated and
-  arbitrary parsed signatures. The previous arbitrary-input path compared
+  arbitrary parsed signatures. It also asserts that failed arbitrary recovery
+  clears the output public key. The previous arbitrary-input path compared
   only with `secp256k1_ecdsa_verify`, which shares the production-derived
-  recovered key and does not independently model the recovery equation. The
-  clean current branch passes `arbitrary-recovery-equation` and the complete
-  five-input recovery corpus on both field backends and under MSan. A
-  seed-specific temporary `u1`-negation mutation, with the delegated check
-  isolated, aborts in the new oracle on both backends; disabling the new
-  comparison makes the same mutation pass. All temporary changes were
+  recovered key, and did not check failure cleanup. The clean current branch
+  passes the two arbitrary seeds and the complete six-input recovery corpus
+  on both field backends and under MSan. Seed-specific temporary mutations of
+  the `u1` negation and failure `memset`, with the delegated checks isolated,
+  abort in the new assertions on both backends; disabling the corresponding
+  new assertion makes each mutation pass. All temporary changes were
   restored before replay. This is oracle hardening, not a current-master
   production finding, and does not change any severity rating.
 - **Medium:** malformed long-form lengths in
