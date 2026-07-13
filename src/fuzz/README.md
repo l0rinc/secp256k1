@@ -19,7 +19,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, and mixed-infinity effective-nonce modeling
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and an independent partial-signature point equation
 
 Standalone corpus replay:
 
@@ -238,6 +238,27 @@ executed 60,680 and 60,757 inputs. All four managers reached 317 edges and
 returned zero without a sanitizer diagnostic, assertion failure, timeout, OOM,
 or artifact. Mutated corpora and worker logs remained outside the repository.
 
+Focused MuSig partial-signature equation replay (2026-07-13): the MuSig corpus
+started with 30 tracked inputs totaling 1,381 bytes, including
+`partial-sig-equation`. The independent oracle recomputes each signer's
+KeyAgg coefficient from the public key list, recomputes the BIP340 challenge
+with generic SHA256 in the `r || aggregate_x || message` order, applies final
+nonce and aggregate-cache parity, and checks `s_i*G = R1 + b*R2 + e*mu_i*P_i`
+through public point operations without calling
+`secp256k1_musig_partial_sig_verify`. Default and forced-int64 ASan/UBSan
+fixed replays completed all 30 inputs; the corresponding MSan replays also
+completed without a diagnostic. Isolated default ASan/UBSan managers with
+`-workers=2 -jobs=2 -max_total_time=30` executed 43 and 45 inputs and reached
+3,465 edges; forced-int64 managers executed 31 and 31 inputs and reached
+5,606 edges. All four managers returned zero without a sanitizer diagnostic,
+assertion failure, timeout, OOM, crash artifact, or nonzero worker result.
+For mutation proof, temporarily negating `k[0]` immediately before the
+production nonce-term addition changed `s = e*mu*d + R` into `s = e*mu*d - R`;
+the focused seed aborted in this independent oracle on both backends. The
+production mutation was restored before the clean replays. This is oracle
+hardening, not a clean-master production finding, and does not change any
+severity rating.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
@@ -328,6 +349,19 @@ documented in its commit message.
   not a current-master production finding, and does not change any severity
   rating. The prior one-shot-versus-later-retry relation remains intentionally
   absent because RFC6979 changes state between generate calls.
+- **Informational oracle hardening:** `fuzz_musig` independently recomputes
+  each signer's KeyAgg coefficient and BIP340 challenge, then checks the
+  partial-signature point equation through public point operations with final
+  nonce and aggregate-cache parity. The prior target called
+  `secp256k1_musig_partial_sig_verify`, which is a useful API check but shares
+  internal coefficient/session state and does not independently recompute the
+  challenge transcript. The clean current branch, whose partial-signing
+  equation is unchanged from `origin/master`, passes the new
+  `partial-sig-equation` seed on both field backends and under MSan. A
+  temporary production mutation that negates `k[0]` immediately before the
+  nonce-term addition makes the seed abort in the new oracle on both backends;
+  the mutation was restored before replay. This is oracle hardening, not a
+  current-master production finding, and does not change any severity rating.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting
