@@ -702,6 +702,87 @@ static void secp256k1_fuzz_check_pubkey_sort(const secp256k1_context *ctx, const
     }
 }
 
+static int secp256k1_fuzz_pubkey_serialized_cmp(const secp256k1_context *ctx, const secp256k1_pubkey *a, const secp256k1_pubkey *b) {
+    unsigned char serialized_a[33];
+    unsigned char serialized_b[33];
+    size_t serialized_a_len = sizeof(serialized_a);
+    size_t serialized_b_len = sizeof(serialized_b);
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized_a, &serialized_a_len, a, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized_b, &serialized_b_len, b, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_a_len == sizeof(serialized_a));
+    FUZZ_CHECK(serialized_b_len == sizeof(serialized_b));
+    return memcmp(serialized_a, serialized_b, sizeof(serialized_a));
+}
+
+/* Check the first sort length beyond the ordinary four-key fixture with an
+ * ordering reference that does not call the production comparator. */
+static void secp256k1_fuzz_check_pubkey_sort_long(const secp256k1_context *ctx, size_t size) {
+    static const unsigned char input_order[8] = { 8, 7, 6, 5, 4, 3, 2, 1 };
+    const size_t n_pubkeys = 8;
+    secp256k1_pubkey pubkeys[8];
+    const secp256k1_pubkey *input_pubkeys[8];
+    const secp256k1_pubkey *expected_pubkeys[8];
+    const secp256k1_pubkey *resorted_pubkeys[8];
+    unsigned char seckey[32] = { 0 };
+    const secp256k1_pubkey *tmp;
+    size_t i;
+    size_t j;
+    int last_is_max;
+
+    if (size < 128) {
+        return;
+    }
+
+    for (i = 0; i < n_pubkeys; i++) {
+        seckey[31] = input_order[i];
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[i], seckey) == 1);
+        input_pubkeys[i] = &pubkeys[i];
+    }
+
+    /* Make the omitted tail observably out of order even if the fixed
+     * serialization ordering changes in a future implementation. */
+    last_is_max = 1;
+    for (i = 0; i + 1 < n_pubkeys; i++) {
+        if (secp256k1_fuzz_pubkey_serialized_cmp(ctx, input_pubkeys[7], input_pubkeys[i]) < 0) {
+            last_is_max = 0;
+            break;
+        }
+    }
+    if (last_is_max) {
+        tmp = input_pubkeys[6];
+        input_pubkeys[6] = input_pubkeys[7];
+        input_pubkeys[7] = tmp;
+    }
+
+    for (i = 0; i < n_pubkeys; i++) {
+        expected_pubkeys[i] = input_pubkeys[i];
+    }
+    for (i = 1; i < n_pubkeys; i++) {
+        tmp = expected_pubkeys[i];
+        j = i;
+        while (j > 0 && secp256k1_fuzz_pubkey_serialized_cmp(ctx, expected_pubkeys[j - 1], tmp) > 0) {
+            expected_pubkeys[j] = expected_pubkeys[j - 1];
+            j--;
+        }
+        expected_pubkeys[j] = tmp;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, input_pubkeys, n_pubkeys) == 1);
+    for (i = 0; i < n_pubkeys; i++) {
+        FUZZ_CHECK(input_pubkeys[i] == expected_pubkeys[i]);
+        if (i > 0) {
+            FUZZ_CHECK(secp256k1_fuzz_pubkey_serialized_cmp(ctx, input_pubkeys[i - 1], input_pubkeys[i]) <= 0);
+        }
+        resorted_pubkeys[i] = input_pubkeys[i];
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, resorted_pubkeys, n_pubkeys) == 1);
+    for (i = 0; i < n_pubkeys; i++) {
+        FUZZ_CHECK(resorted_pubkeys[i] == expected_pubkeys[i]);
+    }
+}
+
 static void secp256k1_fuzz_check_empty_pubkey_sort(const secp256k1_context *ctx) {
     const secp256k1_pubkey *empty[1] = { NULL };
 
@@ -2013,6 +2094,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
     secp256k1_fuzz_check_empty_pubkey_sort(ctx);
     secp256k1_fuzz_check_null_pubkey_sort(ctx);
+    secp256k1_fuzz_check_pubkey_sort_long(ctx, size);
 
     sort_pubkeys[0] = pubkey;
     sort_pubkeys[1] = pubkey_neg_from_seckey;
