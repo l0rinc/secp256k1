@@ -1167,15 +1167,15 @@ static void secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(const secp
 }
 
 /* Exercise the arbitrary-length combine loop with an independent scalar sum.
- * The existing three- and four-term checks do not reach the seventh input, so
+ * The existing three- and four-term checks do not reach the eighth input, so
  * a stale loop bound or a skipped tail term could remain invisible. The
  * length gate keeps the pre-existing short corpus a useful differential
  * control while allowing normal mutations of the dedicated long seed. */
 static void secp256k1_fuzz_check_pubkey_combine_long(const secp256k1_context *ctx, size_t size, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const secp256k1_pubkey *other_pubkey, const unsigned char *other_seckey) {
-    const size_t n_pubkeys = 7;
-    const secp256k1_pubkey *inputs[7];
-    const secp256k1_pubkey *reordered_inputs[7];
-    secp256k1_pubkey fixed_pubkeys[5];
+    const size_t n_pubkeys = 8;
+    const secp256k1_pubkey *inputs[8];
+    const secp256k1_pubkey *reordered_inputs[8];
+    secp256k1_pubkey fixed_pubkeys[6];
     secp256k1_pubkey combined;
     secp256k1_pubkey reordered;
     secp256k1_pubkey expected;
