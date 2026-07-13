@@ -171,6 +171,72 @@ static void secp256k1_fuzz_check_sha256_midstate(const secp256k1_hash_ctx *hash_
     FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&optimized, sizeof(optimized)));
 }
 
+static void secp256k1_fuzz_check_sha256_arbitrary_midstate(const secp256k1_hash_ctx *hash_ctx, const unsigned char *input, size_t size) {
+    static const uint32_t initial_state[8] = {
+        0x6a09e667ul, 0xbb67ae85ul, 0x3c6ef372ul, 0xa54ff53aul,
+        0x510e527ful, 0x9b05688cul, 0x1f83d9abul, 0x5be0cd19ul
+    };
+    unsigned char prefix[192];
+    unsigned char suffix[129];
+    unsigned char combined[321];
+    unsigned char expected[32];
+    unsigned char production_out[32];
+    unsigned char chunked_out[32];
+    uint32_t reference_state[8];
+    uint32_t chunked_state[8];
+    secp256k1_sha256 production;
+    secp256k1_sha256 chunked;
+    size_t prefix_len;
+    size_t suffix_len;
+    size_t split;
+    size_t i;
+
+    /* The existing midstate check covers exactly 64 bytes. Keep this model on
+     * different, multi-block prefix lengths so a regression in a later
+     * midstate caller cannot be hidden by that fixed case. */
+    prefix_len = 128 + 64 * (secp256k1_fuzz_byte(input, size, 23) & 1u);
+    suffix_len = secp256k1_fuzz_byte(input, size, 29) % (sizeof(suffix) + 1);
+    split = suffix_len / 2;
+    secp256k1_fuzz_derive(prefix, sizeof(prefix), input, size, 31);
+    secp256k1_fuzz_derive(suffix, sizeof(suffix), input, size, 37);
+
+    memcpy(reference_state, initial_state, sizeof(reference_state));
+    for (i = 0; i < prefix_len; i += 64) {
+        secp256k1_fuzz_sha256_standalone_compress(reference_state, prefix + i);
+    }
+    memcpy(chunked_state, reference_state, sizeof(chunked_state));
+
+    memcpy(combined, prefix, prefix_len);
+    if (suffix_len != 0) {
+        memcpy(combined + prefix_len, suffix, suffix_len);
+    }
+    secp256k1_fuzz_sha256_standalone(expected, combined, prefix_len + suffix_len);
+
+    secp256k1_sha256_initialize_midstate(&production, prefix_len, reference_state);
+    secp256k1_sha256_write(hash_ctx, &production, suffix, suffix_len);
+    secp256k1_sha256_finalize(hash_ctx, &production, production_out);
+    FUZZ_CHECK(memcmp(production_out, expected, sizeof(expected)) == 0);
+
+    secp256k1_sha256_initialize_midstate(&chunked, prefix_len, chunked_state);
+    secp256k1_sha256_write(hash_ctx, &chunked, suffix, split);
+    secp256k1_sha256_write(hash_ctx, &chunked, suffix + split, suffix_len - split);
+    secp256k1_sha256_finalize(hash_ctx, &chunked, chunked_out);
+    FUZZ_CHECK(memcmp(chunked_out, expected, sizeof(expected)) == 0);
+
+    secp256k1_sha256_clear(&production);
+    secp256k1_sha256_clear(&chunked);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&production, sizeof(production)));
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&chunked, sizeof(chunked)));
+    secp256k1_memclear_explicit(reference_state, sizeof(reference_state));
+    secp256k1_memclear_explicit(chunked_state, sizeof(chunked_state));
+    secp256k1_memclear_explicit(combined, sizeof(combined));
+    secp256k1_memclear_explicit(expected, sizeof(expected));
+    secp256k1_memclear_explicit(production_out, sizeof(production_out));
+    secp256k1_memclear_explicit(chunked_out, sizeof(chunked_out));
+    secp256k1_memclear_explicit(prefix, sizeof(prefix));
+    secp256k1_memclear_explicit(suffix, sizeof(suffix));
+}
+
 static void secp256k1_fuzz_check_hmac_key_boundaries(const secp256k1_hash_ctx *hash_ctx) {
     static const size_t key_lengths[] = { 63, 64, 65, 127, 128, 129 };
     static const unsigned char expected[][32] = {
@@ -405,6 +471,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_sha256_vectors(&hash_ctx);
     secp256k1_fuzz_check_sha256_reference(&hash_ctx, msg, msglen);
     secp256k1_fuzz_check_sha256_midstate(&hash_ctx);
+    secp256k1_fuzz_check_sha256_arbitrary_midstate(&hash_ctx, input, size);
     secp256k1_fuzz_check_hmac_key_boundaries(&hash_ctx);
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, key, keylen, msg, msglen, split);
     secp256k1_fuzz_check_hmac_sha256(&hash_ctx, long_key, sizeof(long_key), msg, msglen, split);
