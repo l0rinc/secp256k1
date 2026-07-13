@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
-- `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
@@ -790,6 +790,21 @@ documented in its commit message.
   fuzzer and unit suite covered invalid opaque objects but not NULL operands.
   This is informational oracle hardening, not a current-master production
   defect; the production implementation is restored unchanged.
+  The x-only parser now also compares both the x-only and compressed public-key
+  parser results against a standalone byte-level curve-membership model. The
+  model rejects x >= p, computes x^3 + 7 with modular double-and-add arithmetic,
+  and verifies the (p+1)/4 square-root equation without using production field
+  limbs or the production square-root addition chain. The master-derived
+  parent at `36556b8` passes all eight tracked x-only inputs on default, forced-int64,
+  MSan, and MSan-int64 builds. For the control proof, `secp256k1_ge_set_xo_var`
+  was temporarily changed to reject only the valid X coordinate of `2G`
+  (`C6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5`). The
+  pre-change target passed all seven pre-existing corpus inputs under that
+  mutation on all four builds, while the new `independent-parse-reference` seed
+  aborted on all four because the standalone model still accepted the valid
+  coordinate. The mutation was restored before clean replay. This is
+  informational oracle hardening; no current-master production vulnerability is
+  claimed.
   The MuSig target also calls `secp256k1_musig_pubkey_agg` with both optional
   output pointers set to `NULL`. Clean master accepts the valid input and
   returns success; requiring either the x-only aggregate or cache output makes
