@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference and coordinate passthrough hashers
-- `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
@@ -971,6 +971,18 @@ documented in its commit message.
   production finding. The inverse helper is now compiled as an internal fuzz target
   so the assertion observes the same implementation and verification contracts as
   the field/group fuzzers.
+  The EllSwift target now also compares canonical `(u,t) = (1,1)` with three
+  noncanonical encodings that add the field prime to `u`, `t`, or both, through
+  both `ellswift_decode` and x-only XDH. This pins the documented modulo-p
+  interpretation without pinning unstable encoder output bytes. The clean
+  master-derived parent at `e4b782c` passes all nine tracked EllSwift inputs on
+  default, forced-int64, MSan, and MSan-int64 builds. For the control proof,
+  `secp256k1_ellswift_decode` was temporarily changed to return failure when
+  the first 32 bytes were exactly `p+1`; the pre-change target remained green
+  on all eight pre-existing corpus inputs under that mutation on all four
+  builds, while the new `modulo-alias-encoding` seed aborted on all four.
+  The mutation was restored before clean replay. This is informational oracle
+  hardening; no current-master production vulnerability is claimed.
   The MuSig target now feeds `musig_nonce_process` three aggregate encodings
   that the extended parser deliberately accepts: `[infinity, P]`,
   `[P, infinity]`, and `[infinity, infinity]`. It independently recomputes the
