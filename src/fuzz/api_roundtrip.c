@@ -60,6 +60,12 @@ typedef struct {
     unsigned int calls;
 } secp256k1_fuzz_api_illegal_data;
 
+typedef struct {
+    const void *self;
+    const unsigned char *nonce32;
+    unsigned int calls;
+} secp256k1_fuzz_ecdsa_equation_nonce_data;
+
 typedef int (*secp256k1_fuzz_ecdsa_serialize_der_fn)(const secp256k1_context *ctx, unsigned char *output, size_t *outputlen, const secp256k1_ecdsa_signature *sig);
 typedef int (*secp256k1_fuzz_ecdsa_normalize_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sigout, const secp256k1_ecdsa_signature *sigin);
 typedef int (*secp256k1_fuzz_ec_seckey_tweak_fn)(const secp256k1_context *ctx, unsigned char *seckey, const unsigned char *tweak32);
@@ -138,6 +144,21 @@ static int secp256k1_fuzz_ecdsa_nonce_fixed_one(unsigned char *nonce32, const un
     FUZZ_CHECK(attempt == 0);
     memset(nonce32, 0, 32);
     nonce32[31] = 1;
+    return 1;
+}
+
+static int secp256k1_fuzz_ecdsa_nonce_equation(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
+    secp256k1_fuzz_ecdsa_equation_nonce_data *nonce_data = (secp256k1_fuzz_ecdsa_equation_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(nonce_data->nonce32 != NULL);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(algo16 == NULL);
+    FUZZ_CHECK(attempt == 0);
+    nonce_data->calls++;
+    memcpy(nonce32, nonce_data->nonce32, 32);
     return 1;
 }
 
@@ -937,6 +958,70 @@ static int secp256k1_fuzz_scalar32_in_order(const unsigned char *input32) {
     return memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
 }
 
+static void secp256k1_fuzz_scalar32_reduce(unsigned char *out32, const unsigned char *input32) {
+    int i;
+    unsigned int borrow = 0;
+
+    memcpy(out32, input32, 32);
+    if (secp256k1_fuzz_scalar32_in_order(input32)) {
+        return;
+    }
+    for (i = 31; i >= 0; i--) {
+        unsigned int subtrahend = (unsigned int)secp256k1_fuzz_scalar_order[i] + borrow;
+        unsigned int value = out32[i];
+        out32[i] = (unsigned char)(value - subtrahend);
+        borrow = value < subtrahend;
+    }
+    FUZZ_CHECK(borrow == 0);
+}
+
+static void secp256k1_fuzz_check_ecdsa_variable_nonce_equation(const secp256k1_context *ctx, const unsigned char *msg32, const unsigned char *seckey32, const unsigned char *nonce32) {
+    secp256k1_fuzz_ecdsa_equation_nonce_data nonce_data;
+    secp256k1_ecdsa_signature sig;
+    secp256k1_pubkey nonce_pubkey;
+    unsigned char sig64[64];
+    unsigned char nonce_ser[65];
+    unsigned char expected_r[32];
+    unsigned char msg_mod[32];
+    unsigned char left[32];
+    unsigned char right[32];
+    unsigned char negated_right[32];
+    size_t nonce_ser_len = sizeof(nonce_ser);
+
+    nonce_data.self = &nonce_data;
+    nonce_data.nonce32 = nonce32;
+    nonce_data.calls = 0;
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey32, secp256k1_fuzz_ecdsa_nonce_equation, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig64, &sig) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_scalar32_in_order(sig64));
+    FUZZ_CHECK(secp256k1_fuzz_scalar32_in_order(sig64 + 32));
+    FUZZ_CHECK(memcmp(sig64, secp256k1_fuzz_scalar_zero, 32) != 0);
+    FUZZ_CHECK(memcmp(sig64 + 32, secp256k1_fuzz_scalar_zero, 32) != 0);
+
+    /* Pin r to the nonce point independently of the ECDSA signing helper. */
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &nonce_pubkey, nonce32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, nonce_ser, &nonce_ser_len, &nonce_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(nonce_ser_len == sizeof(nonce_ser));
+    secp256k1_fuzz_scalar32_reduce(expected_r, nonce_ser + 1);
+    FUZZ_CHECK(memcmp(sig64, expected_r, sizeof(expected_r)) == 0);
+
+    /* The raw message is reduced modulo n by the signer. Reproduce that
+     * reduction with byte arithmetic, then check the scalar signing equation
+     * using the public tweak API rather than ecdsa_verify. */
+    secp256k1_fuzz_scalar32_reduce(msg_mod, msg32);
+    memcpy(left, sig64 + 32, sizeof(left));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, left, nonce32) == 1);
+    memcpy(right, seckey32, sizeof(right));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, right, sig64) == 1);
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, right, msg_mod) == 1);
+    if (memcmp(left, right, sizeof(left)) != 0) {
+        memcpy(negated_right, right, sizeof(negated_right));
+        FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, negated_right) == 1);
+        FUZZ_CHECK(memcmp(left, negated_right, sizeof(left)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_ecdsa_r_plus_order(const secp256k1_context *ctx) {
     secp256k1_ecdsa_signature sig;
     secp256k1_pubkey r_point;
@@ -1357,6 +1442,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char sort_seckey[32];
     unsigned char tweak32[32];
     unsigned char nonce_extra32[32];
+    unsigned char equation_nonce32[32];
     unsigned char zero_compact[64] = { 0 };
     unsigned char sig64[64];
     unsigned char sig_extra64[64];
@@ -1388,6 +1474,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_privkey_der(ctx, seckey, input, size);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 17);
     secp256k1_fuzz_derive(nonce_extra32, sizeof(nonce_extra32), input, size, 43);
+    secp256k1_fuzz_valid_seckey32(ctx, equation_nonce32, input, size, 53);
     secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(msg32, seckey, nonce_extra32);
     nonce_data.self = &nonce_data;
     nonce_data.extra32 = nonce_extra32;
@@ -1511,6 +1598,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(ctx, msg32, seckey);
     secp256k1_fuzz_check_ecdsa_message_reduction(ctx, seckey, &pubkey);
     secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(ctx);
+    secp256k1_fuzz_check_ecdsa_variable_nonce_equation(ctx, msg32, seckey, equation_nonce32);
     secp256k1_fuzz_check_ecdsa_retry_after_zero_s(ctx);
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, zero_compact) == 1);
