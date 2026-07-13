@@ -227,6 +227,25 @@ static void secp256k1_fuzz_group_check_addition(const secp256k1_gej *a, const se
     }
 }
 
+static void secp256k1_fuzz_group_check_lambda_degenerate_addition(const secp256k1_gej *point) {
+    secp256k1_ge affine;
+    secp256k1_ge lambda_negated;
+    secp256k1_gej lambda_negated_j;
+    secp256k1_gej expected;
+    secp256k1_gej copy = *point;
+
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(point));
+    secp256k1_ge_set_gej_var(&affine, &copy);
+    lambda_negated = affine;
+    secp256k1_ge_mul_lambda(&lambda_negated, &lambda_negated);
+    secp256k1_ge_neg(&lambda_negated, &lambda_negated);
+    FUZZ_CHECK(!secp256k1_ge_eq_var(&affine, &lambda_negated));
+
+    secp256k1_gej_set_ge(&lambda_negated_j, &lambda_negated);
+    secp256k1_gej_add_var(&expected, point, &lambda_negated_j, NULL);
+    secp256k1_fuzz_group_check_addition(point, &lambda_negated_j, &expected);
+}
+
 static void secp256k1_fuzz_group_check_double(const secp256k1_gej *point, const secp256k1_gej *expected) {
     secp256k1_gej constant_time;
     secp256k1_gej variable_time;
@@ -787,6 +806,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_gej_not_equal(&finite);
     secp256k1_fuzz_group_check_gej_cmov(&infinity, &finite);
     secp256k1_fuzz_group_check_gej_cmov(&finite, &infinity);
+    secp256k1_fuzz_group_check_lambda_degenerate_addition(&finite);
     {
         secp256k1_gej finite_batch[3];
         secp256k1_ge finite_affine;

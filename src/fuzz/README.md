@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, and byte-level maximum-residue references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -1152,6 +1152,25 @@ documented in its commit message.
   hardening, not a clean-master production bug; no public or cryptographic
   impact was demonstrated and the master-relative severity ledger is
   unchanged.
+  The group target now constructs the exceptional `gej_add_ge` relation by
+  adding a point to the negated lambda endomorphism image. This forces
+  `y1 == -y2` while keeping `x1 != x2`, so the unified formula must use its
+  alternate slope instead of taking the ordinary infinity path. An independent
+  variable-time Jacobian addition supplies the expected point, while the
+  existing addition helper checks the affine/Jacobian variants, canonical
+  equality, and Z-ratio contract. The dedicated
+  `lambda-degenerate-addition` seed and all 11 copied group inputs pass on
+  clean default and forced-`int64` ASan/UBSan builds. For mutation isolation,
+  a temporary `VERIFY`-only production mutation overwrote `rr_alt` with
+  `rr` whenever `degenerate` was set in `secp256k1_gej_add_ge`; all 10
+  pre-existing inputs plus the new seed stayed green with only the new helper
+  disabled, while the enabled helper aborted on the focused seed on both
+  backends. The mutation was restored before clean replay, and bounded
+  `-workers=2 -jobs=2` campaigns exited 0 without sanitizer diagnostics.
+  This is informational/Low internal arithmetic-oracle hardening, not a
+  clean-master production bug; related lambda pairs were already covered by
+  deterministic tests, no public or cryptographic impact was demonstrated,
+  and the master-relative severity ledger is unchanged.
   It also compares the fractional X-coordinate curve predicate against an
   independently computed quotient and curve equation, with the generator as a
   deterministic on-curve case. Clean master passes this informational helper
