@@ -6,6 +6,7 @@
 
 #include "fuzz.h"
 #include "../hash_impl.h"
+#include "sha256_reference.h"
 
 #ifdef ENABLE_MODULE_ECDH
 static size_t secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
@@ -16,18 +17,16 @@ static void secp256k1_fuzz_ecdh_sha256_compression(uint32_t *state, const unsign
 }
 
 static void secp256k1_fuzz_check_ecdh_default_hash(const secp256k1_context *ctx, const secp256k1_pubkey *shared_pubkey, const unsigned char *output32) {
-    secp256k1_hash_ctx hash_ctx;
-    secp256k1_sha256 sha;
+    unsigned char uncompressed[65];
     unsigned char compressed[33];
     unsigned char expected[32];
-    size_t compressed_len = sizeof(compressed);
+    size_t uncompressed_len = sizeof(uncompressed);
 
-    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, shared_pubkey, SECP256K1_EC_COMPRESSED) == 1);
-    FUZZ_CHECK(compressed_len == sizeof(compressed));
-    secp256k1_hash_ctx_init(&hash_ctx);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, compressed, sizeof(compressed));
-    secp256k1_sha256_finalize(&hash_ctx, &sha, expected);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, uncompressed, &uncompressed_len, shared_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(uncompressed_len == sizeof(uncompressed));
+    compressed[0] = (unsigned char)(SECP256K1_TAG_PUBKEY_EVEN | (uncompressed[64] & 1u));
+    memcpy(compressed + 1, uncompressed + 1, 32);
+    secp256k1_fuzz_sha256_standalone(expected, compressed, sizeof(compressed));
     FUZZ_CHECK(memcmp(output32, expected, sizeof(expected)) == 0);
 }
 
