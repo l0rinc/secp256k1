@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, and byte-level maximum-residue references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and an independent byte-level negation reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -1396,6 +1396,24 @@ documented in its commit message.
   Schnorr verifier. The mutation was restored before clean verification. This
   is informational oracle hardening, not a current-master production finding,
   and does not change any severity rating.
+
+  The field target now derives a canonical residue, computes `p - x` with a
+  standalone byte-level borrow chain (special-casing zero), and compares that
+  reference with `secp256k1_fe_negate` from both canonical and magnitude-8
+  representations. The latter is built by adding seven copies of the field
+  modulus, so the fuzzer checks both the value and the documented `m + 1`
+  output budget rather than merely reusing production normalization. The
+  dedicated `negation-byte-reference` seed and all eight copied field inputs
+  pass on clean default and forced-`int64` ASan/UBSan builds. For isolation,
+  a temporary `VERIFY`-only mutation flipped one low limb whenever
+  `secp256k1_fe_negate` was called with `m == 8`; the old corpus plus the new
+  seed stayed green with this helper disabled, while the enabled helper
+  aborted on the focused seed on both backends. The mutation was restored
+  before clean replay, and bounded `-workers=2 -jobs=2` campaigns exited 0
+  without sanitizer diagnostics. This is informational/Low internal
+  arithmetic-contract oracle hardening, not a clean-master production bug;
+  no public or cryptographic impact was demonstrated and the master-relative
+  severity ledger is unchanged.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
