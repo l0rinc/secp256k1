@@ -594,6 +594,67 @@ static void secp256k1_fuzz_check_musig_aggnonce_parse(const secp256k1_context *c
     }
 }
 
+static void secp256k1_fuzz_check_musig_effective_nonce(const secp256k1_context *ctx, const unsigned char *aggnonce66, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
+    unsigned char expected33[33];
+    unsigned char b32[32];
+    unsigned char zero33[33] = { 0 };
+    secp256k1_musig_aggnonce aggnonce;
+    secp256k1_musig_session session;
+    secp256k1_pubkey point[2];
+    secp256k1_pubkey scaled;
+    secp256k1_pubkey expected;
+    secp256k1_pubkey generator;
+    const secp256k1_pubkey *points[2];
+    int point_infinity[2];
+    int effective_infinity;
+    size_t expected_len = sizeof(expected33);
+    size_t i;
+
+    FUZZ_CHECK(secp256k1_musig_aggnonce_parse(ctx, &aggnonce, aggnonce66) == 1);
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, keyagg_cache) == 1);
+    secp256k1_fuzz_musig_check_noncecoef_reference(ctx, &aggnonce, keyagg_cache, msg32, &session);
+    memcpy(b32, session.data + 37, sizeof(b32));
+
+    for (i = 0; i < 2; i++) {
+        point_infinity[i] = memcmp(aggnonce66 + 33 * i, zero33, sizeof(zero33)) == 0;
+        if (!point_infinity[i]) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &point[i], aggnonce66 + 33 * i, 33) == 1);
+        }
+    }
+
+    /* Independently model nonce_pts[0] + b*nonce_pts[1] through the public
+     * point operations. The aggregate nonce format permits either component
+     * to be infinity, so exercise each branch instead of only the all-infinity
+     * fallback. */
+    effective_infinity = 0;
+    if (point_infinity[1] || memcmp(b32, secp256k1_fuzz_scalar_zero, sizeof(b32)) == 0) {
+        if (point_infinity[0]) {
+            effective_infinity = 1;
+        } else {
+            expected = point[0];
+        }
+    } else {
+        scaled = point[1];
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &scaled, b32) == 1);
+        if (point_infinity[0]) {
+            expected = scaled;
+        } else {
+            points[0] = &point[0];
+            points[1] = &scaled;
+            effective_infinity = !secp256k1_ec_pubkey_combine(ctx, &expected, points, 2);
+        }
+    }
+
+    if (effective_infinity) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+        expected = generator;
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected33, &expected_len, &expected, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(expected_len == sizeof(expected33));
+    FUZZ_CHECK(session.data[4] == (unsigned char)(expected33[0] == 0x03));
+    FUZZ_CHECK(memcmp(session.data + 5, expected33 + 1, 32) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_partial_sig_serialize_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_partial_sig *valid_sig) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     unsigned char serialized[32];
@@ -1912,6 +1973,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char fixed_pubnonce66[66];
     unsigned char invalid_aggnonce66[66];
     unsigned char mixed_aggnonce66[66];
+    unsigned char reversed_mixed_aggnonce66[66];
     unsigned char mixed_pubnonce66[66];
     unsigned char sig32[32];
     unsigned char ones32[32];
@@ -1980,6 +2042,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(aggnonce_part_len == 33);
     memcpy(mixed_aggnonce66, zero66, sizeof(mixed_aggnonce66));
     memcpy(mixed_aggnonce66 + 33, valid_aggnonce66 + 33, 33);
+    memcpy(reversed_mixed_aggnonce66, zero66, sizeof(reversed_mixed_aggnonce66));
+    memcpy(reversed_mixed_aggnonce66, valid_aggnonce66, 33);
     memcpy(invalid_aggnonce66, valid_aggnonce66, sizeof(invalid_aggnonce66));
     invalid_aggnonce66[0] = 0x05;
     memcpy(mixed_pubnonce66, valid_aggnonce66, 33);
@@ -2098,6 +2162,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, invalid_aggnonce66);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, mixed_aggnonce66);
     secp256k1_fuzz_check_musig_aggnonce_parse(ctx, nonce66);
+    secp256k1_fuzz_check_musig_effective_nonce(ctx, mixed_aggnonce66, tweak, &cache);
+    secp256k1_fuzz_check_musig_effective_nonce(ctx, reversed_mixed_aggnonce66, tweak, &cache);
+    secp256k1_fuzz_check_musig_effective_nonce(ctx, zero66, tweak, &cache);
     secp256k1_fuzz_derive(sig32, sizeof(sig32), input, size, 193);
     secp256k1_fuzz_check_musig_partial_sig_parse(ctx, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_musig_partial_sig_parse(ctx, secp256k1_fuzz_scalar_order_minus_one);

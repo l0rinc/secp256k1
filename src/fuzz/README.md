@@ -19,7 +19,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, and counter-nonce optional-input equivalence
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, and mixed-infinity effective-nonce modeling
 
 Standalone corpus replay:
 
@@ -182,6 +182,17 @@ seeds. Both managers exited 0 after 1,359 executions, reaching high-water
 coverage of 2,365 edges. No sanitizer diagnostic, assertion failure, timeout,
 OOM, crash artifact, or nonzero worker result was observed. The temporary
 corpus was discarded; tracked seeds were unchanged.
+
+Focused MuSig mixed-infinity replay (2026-07-13): the copied MuSig corpus
+started with its 29 tracked inputs. The restored ASan/UBSan `fuzz_musig` target
+then ran two 30-second managers with `-workers=2 -jobs=2`; the jobs executed 57
+and 58 inputs and reached high-water coverage of 3,424 and 3,425 edges. Both
+returned exit code 0 without a sanitizer diagnostic, assertion failure,
+timeout, OOM, crash artifact, or nonzero worker result. A separate MSan replay
+ran `aggregate-no-outputs`, `infinity-nonce-final-verification`, and
+`noncecoef-reference` once each with the new mixed-state checks; it also
+completed without a diagnostic. LibFuzzer mutations were kept in `/tmp` and
+the tracked corpus was unchanged.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
@@ -571,6 +582,21 @@ documented in its commit message.
   production finding. The inverse helper is now compiled as an internal fuzz target
   so the assertion observes the same implementation and verification contracts as
   the field/group fuzzers.
+  The MuSig target now feeds `musig_nonce_process` three aggregate encodings
+  that the extended parser deliberately accepts: `[infinity, P]`,
+  `[P, infinity]`, and `[infinity, infinity]`. It independently recomputes the
+  nonce coefficient and the effective point `R1 + b*R2` through public point
+  operations, including the production fallback to the generator for
+  infinity. The previous fuzzer only parsed and round-tripped these encodings;
+  the deterministic suite checked the all-infinity acceptance but did not
+  compare the mixed effective-nonce state. The `secp256k1_effective_nonce`
+  implementation under test is unchanged from `origin/master`. A temporary
+  mutation that adds `R2` instead of the identity when `R1` is infinity makes
+  the `aggregate-no-outputs` replay abort on the generated `[infinity, P]`
+  case; ordinary generated nonces do not enter that branch. The production
+  file was restored and rebuilt. This is informational oracle hardening, not
+  a current-master production finding; other branch hardening is not being
+  presented as clean-master evidence.
   The target also compares each EllSwift encoding with a second encoding made from
   the same key and bitwise-complemented caller randomizer, requiring different
   encodings that both decode to the original key. Clean master passes; removing
