@@ -80,12 +80,32 @@ replayed the repository corpora for `fuzz_api_roundtrip`, `fuzz_ecmult_multi`,
 `-workers=4 -jobs=4 -max_total_time=300`. Each target therefore ran four
 independent workers for
 roughly five minutes; the workers executed 10,341, 2,551, 317,703, and 1,122
-inputs respectively. High-water coverage was 3,123, 2,624, 1,342, and 3,415
+inputs respectively. High-water coverage was 3,125, 2,624, 1,342, and 3,415
 edges in the same order. Every worker emitted its normal `Done` and final
 statistics record. No ASan/UBSan diagnostic, assertion failure, timeout, OOM,
 crash artifact, or nonzero worker result was observed. This is additional
 negative evidence for the current oracles, not a claim that the tested branch
 or a later fork patch proves clean-master behavior safe.
+
+The same ASan/UBSan campaign was run from the original repository corpora for
+the remaining targets with `-workers=4 -jobs=4 -max_total_time=300` per target
+and four independent workers per target. The 2026-07-13 module batches
+completed as follows:
+
+- `fuzz_context`, `fuzz_ecdh`, `fuzz_ellswift`, and `fuzz_xonly_tweak` ran
+  23,741, 9,315, 4,586, and 25,897 inputs respectively, with high-water
+  coverage of 2,618, 2,213, 2,448, and 2,274 edges.
+- `fuzz_hash`, `fuzz_scalar`, `fuzz_group`, and `fuzz_ecmult_const` ran
+  1,090,494, 32,867, 26,993, and 14,790 inputs respectively, with high-water
+  coverage of 302, 1,722, 2,357, and 2,143 edges.
+- `fuzz_recovery` and `fuzz_schnorrsig` ran 37,997 and 13,218 inputs, with
+  high-water coverage of 2,628 and 2,773 edges.
+
+Every worker emitted its normal `Done` and final-statistics record. No
+ASan/UBSan diagnostic, assertion failure, timeout, OOM, crash artifact, or
+nonzero worker result was observed across these batches. These runs add
+negative evidence for the current oracles and do not change any
+master-relative severity rating.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
