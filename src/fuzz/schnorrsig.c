@@ -452,6 +452,60 @@ static void secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(const secp256k1
     secp256k1_memclear_explicit(seckey, sizeof(seckey));
 }
 
+/* Check a generated signature against BIP340's public point equation without
+ * calling the library verifier. This catches shared challenge/signing changes
+ * that would otherwise make signing and verification agree on the same error. */
+static void secp256k1_fuzz_check_schnorrsig_signature_equation(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const unsigned char *xonly32) {
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    unsigned char challenge32[32];
+    unsigned char reduced_challenge32[32];
+    unsigned char r33[33];
+    unsigned char pk33[33];
+    secp256k1_pubkey r_pubkey;
+    secp256k1_pubkey pk_pubkey;
+    secp256k1_pubkey s_pubkey = { 0 };
+    secp256k1_pubkey e_pubkey = { 0 };
+    secp256k1_pubkey negated_e_pubkey = { 0 };
+    secp256k1_pubkey expected_pubkey;
+    const secp256k1_pubkey *terms[2];
+    int have_s;
+    int have_e;
+
+    secp256k1_fuzz_schnorrsig_tagged_hash_reference(challenge32, challenge_tag, sizeof(challenge_tag) - 1, sig64, 32, xonly32, 32, msg, msglen);
+    secp256k1_fuzz_schnorrsig_reduce_scalar(reduced_challenge32, challenge32);
+
+    r33[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(r33 + 1, sig64, 32);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &r_pubkey, r33, sizeof(r33)) == 1);
+    pk33[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(pk33 + 1, xonly32, 32);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &pk_pubkey, pk33, sizeof(pk33)) == 1);
+
+    have_s = memcmp(sig64 + 32, secp256k1_fuzz_scalar_zero, 32) != 0;
+    have_e = memcmp(reduced_challenge32, secp256k1_fuzz_scalar_zero, 32) != 0;
+    if (have_s) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &s_pubkey, sig64 + 32) == 1);
+    }
+    if (have_e) {
+        e_pubkey = pk_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &e_pubkey, reduced_challenge32) == 1);
+        negated_e_pubkey = e_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &negated_e_pubkey) == 1);
+    }
+
+    if (have_s && have_e) {
+        terms[0] = &s_pubkey;
+        terms[1] = &negated_e_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected_pubkey, terms, 2) == 1);
+    } else if (have_s) {
+        expected_pubkey = s_pubkey;
+    } else {
+        FUZZ_CHECK(have_e);
+        expected_pubkey = negated_e_pubkey;
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &expected_pubkey, &r_pubkey) == 0);
+}
+
 /* BIP340 rejects a signature when its reconstructed nonce has odd Y, even if
  * the scalar equation is otherwise valid. The normal signer always negates an
  * odd nonce, so construct the pre-normalization case directly. */
@@ -776,6 +830,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
+    secp256k1_fuzz_check_schnorrsig_signature_equation(ctx, sig64, msg32, sizeof(msg32), xonly32);
     secp256k1_fuzz_check_schnorrsig_rx_overflow(ctx, sig64, msg32, sizeof(msg32), &xonly);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, msg32, sizeof(msg32), &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 1);
@@ -826,6 +881,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     extraparams.ndata = aux32;
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_custom, input, msglen, &keypair, &extraparams) == 1);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, msglen, &xonly) == 1);
+    secp256k1_fuzz_check_schnorrsig_signature_equation(ctx, sig64_custom, input, msglen, xonly32);
     secp256k1_fuzz_check_schnorrsig_rx_overflow(ctx, sig64_custom, input, msglen, &xonly);
     secp256k1_fuzz_check_schnorrsig_nonce_overflow(ctx, input, msglen, &keypair, &xonly);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_explicit_bip340, input, msglen, &keypair, &explicit_bip340_extraparams) == 1);

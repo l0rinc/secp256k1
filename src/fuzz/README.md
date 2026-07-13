@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips and valid-nonce retry when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, and `sign32`/`sign_custom` equivalence
+- `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, and mixed-infinity effective-nonce modeling
 
 Standalone corpus replay:
@@ -193,6 +193,16 @@ ran `aggregate-no-outputs`, `infinity-nonce-final-verification`, and
 `noncecoef-reference` once each with the new mixed-state checks; it also
 completed without a diagnostic. LibFuzzer mutations were kept in `/tmp` and
 the tracked corpus was unchanged.
+
+Focused Schnorr equation replay (2026-07-13): the copied Schnorr corpus
+started with 9 tracked inputs. The restored ASan/UBSan `fuzz_schnorrsig` target
+replayed all 9 inputs once, then ran two 30-second managers with
+`-workers=2 -jobs=2`; the jobs executed 320 and 324 inputs and reached
+high-water coverage of 2,773 and 2,774 edges. Both returned exit code 0 without
+a sanitizer diagnostic, assertion failure, timeout, OOM, crash artifact, or
+nonzero worker result. A separate MSan replay executed four representative
+inputs, including variable-length and empty messages, with no diagnostic. The
+temporary corpus and artifacts were kept outside the repository.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
@@ -597,6 +607,17 @@ documented in its commit message.
   file was restored and rebuilt. This is informational oracle hardening, not
   a current-master production finding; other branch hardening is not being
   presented as clean-master evidence.
+  The Schnorr target also independently checks every generated signature's
+  BIP340 point equation through public point operations: it parses the even-Y
+  nonce point, derives the challenge with the generic tagged-hash reference,
+  computes `sG - eP`, and compares the result with the serialized nonce. It
+  runs for both the fixed 32-byte path and a variable-length message. Existing
+  checks called the library verifier, whose challenge helper is shared with the
+  signer; a temporary mutation that dropped the final byte only for non-32-byte
+  challenges therefore let signer and verifier agree while the
+  `sign32-custom` seed aborted on the independent equation. The production
+  helper was restored and rebuilt. This is informational oracle hardening, not
+  a current-master production finding.
   The target also compares each EllSwift encoding with a second encoding made from
   the same key and bitwise-complemented caller randomizer, requiring different
   encodings that both decode to the original key. Clean master passes; removing
