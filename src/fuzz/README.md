@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
-- `fuzz_recovery`: recoverable ECDSA round trips, an independent recovery point equation, and valid-nonce retry when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
 
@@ -108,21 +108,28 @@ negative evidence for the current oracles and do not change any
 master-relative severity rating.
 
 Focused recoverable ECDSA point-equation replay (2026-07-13): the recovery
-corpus has 4 tracked inputs totaling 180 bytes, including
-`recovery-point-equation`. The independent oracle reconstructs the candidate
-`R` from serialized `r` and `recid` (including the `r + n` branch), reduces the
-message scalar with byte arithmetic, and checks `rQ = sR - zG` using public
-point operations rather than `secp256k1_ecdsa_verify` or the recovery
-implementation's internal multiscalar path. Default and forced-int64
-ASan/UBSan fixed replays each executed all 4 inputs; matching MSan replays did
-the same without a diagnostic. Clean coverage was 2,630 edges on default and
-4,775 on forced-int64. A temporary production mutation removing
-`secp256k1_scalar_negate(&u1, &u1);` from
-`src/modules/recovery/main_impl.h` made the focused seed exit 77 in the new
-oracle on both backends; `addr2line` resolved the abort to
-`secp256k1_fuzz_check_recovery_equation`. The production line was restored
-before the clean replays. This is informational oracle hardening, not a
-current-master production finding, and does not change any severity rating.
+corpus now has 5 tracked inputs totaling 291 bytes, including
+`recovery-point-equation` and `arbitrary-recovery-equation`. The latter is a
+111-byte printable input whose first 64 bytes form an accepted `(r,s)` pair
+and whose byte 109 selects `recid == 0`, so the arbitrary parse/recover branch
+reaches the oracle deterministically. The independent model reconstructs the
+candidate `R` from serialized `r` and `recid` (including the `r + n` branch),
+reduces the message scalar with byte arithmetic, and checks `rQ = sR - zG`
+using public point operations rather than `secp256k1_ecdsa_verify` or the
+recovery implementation's internal multiscalar path. It now covers both
+signer-generated and arbitrary parsed recoverable signatures. Default and
+forced-int64 ASan/UBSan fixed replays each executed all 5 inputs plus the
+empty input, reaching 2,635 and 4,780 edges; matching MSan replays completed
+without a diagnostic. Focused `-workers=2 -jobs=2 -max_total_time=30` runs
+completed two jobs per backend with exit code 0, reaching 2,655 edges on
+default and 4,793 on forced-int64. For the strongest isolation proof, a
+temporary production mutation skipped `secp256k1_scalar_negate(&u1, &u1);`
+only for the seed's `recid == 0` and top-16-bit `r == 0x564e` condition. With
+the delegated `ecdsa_verify` check disabled, the new equation aborted with
+exit 134 on both backends; disabling the new equation as well let the same
+mutation pass with exit 0. All temporary changes were restored before the
+clean replays. This is informational oracle hardening, not a current-master
+production finding, and does not change any severity rating.
 
 Cross-backend campaign (2026-07-13): a separate ASan/UBSan libFuzzer build
 used `-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`, selecting the 10x26
@@ -471,15 +478,17 @@ documented in its commit message.
   a current-master production vulnerability.
 - **Informational oracle hardening:** `fuzz_recovery` independently checks the
   recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`
-  and `recid`, including the overflow branch. The previous target compared
-  recovery output with a signer-generated public key and delegated signature
-  validity to `secp256k1_ecdsa_verify`; neither independently modeled the
-  recovery equation. The clean current branch passes the new
-  `recovery-point-equation` seed on both field backends and under MSan. Removing
-  the production `secp256k1_scalar_negate(&u1, &u1);` step makes the seed abort
-  in the new oracle on both backends; the line was restored before replay. This
-  is oracle hardening, not a current-master production finding, and does not
-  change any severity rating.
+  and `recid`, including the overflow branch, for both signer-generated and
+  arbitrary parsed signatures. The previous arbitrary-input path compared
+  only with `secp256k1_ecdsa_verify`, which shares the production-derived
+  recovered key and does not independently model the recovery equation. The
+  clean current branch passes `arbitrary-recovery-equation` and the complete
+  five-input recovery corpus on both field backends and under MSan. A
+  seed-specific temporary `u1`-negation mutation, with the delegated check
+  isolated, aborts in the new oracle on both backends; disabling the new
+  comparison makes the same mutation pass. All temporary changes were
+  restored before replay. This is oracle hardening, not a current-master
+  production finding, and does not change any severity rating.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting

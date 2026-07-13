@@ -620,6 +620,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
             secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig);
             if (secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32)) {
                 FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &recovered_pubkey) == 1);
+                secp256k1_fuzz_check_recovery_equation(ctx, &reparsed_sig, msg32, &recovered_pubkey);
             }
         }
     }
