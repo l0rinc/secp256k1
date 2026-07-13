@@ -249,6 +249,35 @@ static void secp256k1_fuzz_fe_mul_int_reference(unsigned char *out32, const unsi
     memcpy(out32, value32, sizeof(value32));
 }
 
+static void secp256k1_fuzz_fe_add_int_reference(unsigned char *out32, const unsigned char *in32, unsigned int addend) {
+    unsigned int carry = addend;
+    size_t i;
+
+    memcpy(out32, in32, 32);
+    for (i = 32; i-- > 0;) {
+        unsigned int value = (unsigned int)out32[i] + carry;
+        out32[i] = (unsigned char)value;
+        carry = value >> 8;
+    }
+    if (carry != 0 || memcmp(out32, secp256k1_fuzz_field_prime, 32) >= 0) {
+        int borrow = 0;
+
+        for (i = 32; i-- > 0;) {
+            int value = (int)out32[i] - secp256k1_fuzz_field_prime[i] - borrow;
+            if (value < 0) {
+                value += 256;
+                borrow = 1;
+            } else {
+                borrow = 0;
+            }
+            out32[i] = (unsigned char)value;
+        }
+        if (carry == 0) {
+            FUZZ_CHECK(borrow == 0);
+        }
+    }
+}
+
 static void secp256k1_fuzz_fe_check_negation(const unsigned char *input, size_t size) {
     unsigned char value32[32];
     unsigned char expected32[32];
@@ -310,6 +339,28 @@ static void secp256k1_fuzz_fe_check_mul_int(const unsigned char *input, size_t s
     secp256k1_fe_mul_int(&value, 5);
 #ifdef VERIFY
     FUZZ_CHECK(value.magnitude == 5);
+    FUZZ_CHECK(value.normalized == 0);
+#endif
+    secp256k1_fe_normalize_var(&value);
+    secp256k1_fe_get_b32(actual32, &value);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
+
+static void secp256k1_fuzz_fe_check_add_int(const unsigned char *input, size_t size) {
+    unsigned char value32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    secp256k1_fe value;
+
+    secp256k1_fuzz_derive(value32, sizeof(value32), input, size, 231);
+    secp256k1_fe_set_b32_mod(&value, value32);
+    secp256k1_fe_normalize_var(&value);
+    secp256k1_fe_get_b32(value32, &value);
+    secp256k1_fuzz_fe_add_int_reference(expected32, value32, 7);
+
+    secp256k1_fe_add_int(&value, 7);
+#ifdef VERIFY
+    FUZZ_CHECK(value.magnitude == 2);
     FUZZ_CHECK(value.normalized == 0);
 #endif
     secp256k1_fe_normalize_var(&value);
@@ -775,6 +826,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_negation(input, size);
     secp256k1_fuzz_fe_check_mul_int(input, size);
+    secp256k1_fuzz_fe_check_add_int(input, size);
     secp256k1_fuzz_fe_check_comparisons(input, size);
     secp256k1_fuzz_fe_check_nonnormalized_arithmetic();
 #if defined(SECP256K1_WIDEMUL_INT64)

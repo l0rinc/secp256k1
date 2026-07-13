@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation and small-multiplier references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, and add-int references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -1422,6 +1422,19 @@ documented in its commit message.
   `small-multiplier-byte-reference` seed and all nine copied field inputs pass
   on clean default and forced-`int64` ASan/UBSan builds. A temporary
   `VERIFY`-only mutation flipped one low limb for multiplier 5 on a magnitude-1
+  input; the old corpus plus the new seed stayed green with this helper
+  disabled, while the enabled helper aborted on the focused seed on both
+  backends. The mutation was restored before clean replay, and bounded
+  `-workers=2 -jobs=2` campaigns exited 0 without sanitizer diagnostics. This
+  is informational/Low internal arithmetic-contract oracle hardening, not a
+  clean-master production bug; no public or cryptographic impact was
+  demonstrated and the master-relative severity ledger is unchanged.
+  The field target also computes the curve constant addition `x + 7` with a
+  standalone byte-level carry and reduction model, then checks
+  `secp256k1_fe_add_int` and its magnitude-2 nonnormalized output. The
+  dedicated `add-int-byte-reference` seed and all 10 copied field inputs pass
+  on clean default and forced-`int64` ASan/UBSan builds. A temporary
+  `VERIFY`-only mutation flipped one low limb for addend 7 on a magnitude-1
   input; the old corpus plus the new seed stayed green with this helper
   disabled, while the enabled helper aborted on the focused seed on both
   backends. The mutation was restored before clean replay, and bounded
