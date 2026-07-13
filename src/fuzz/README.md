@@ -850,6 +850,17 @@ documented in its commit message.
   while the restored clean-master helper replays successfully. No duplicate
   helper-only assertion is needed; this is coverage evidence, not a new
   production finding.
+  The three internal `ecmult_table_get_*` selectors are covered by separate
+  independent paths as well. Temporarily negating only the positive lookup in
+  `secp256k1_ecmult_table_get_ge` makes the existing `fuzz_ecmult_const`
+  corpus abort; the same mutation in `secp256k1_ecmult_table_get_ge_lambda`
+  aborts on `odd-multiples-table`, and the corresponding
+  `secp256k1_ecmult_table_get_ge_storage` mutation aborts on
+  `ecmult_multi/repeated-strauss-batches`. Restored clean default ASan/UBSan
+  replays of the five `ecmult_const` and eleven `ecmult_multi` inputs pass in
+  isolated directories. These are shared-helper mutation controls, so adding
+  a duplicate selector-only oracle would not improve the current discovery
+  surface; no clean-master production finding is claimed.
   It also compares the direct affine generator helper
   `secp256k1_ecmult_gen_ge` against the independently converted Jacobian result.
   Clean master passes; replacing its affine conversion with an infinity output
