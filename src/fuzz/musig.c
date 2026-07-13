@@ -159,10 +159,10 @@ static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_co
     }
 }
 
-/* Check a generated partial signature against the public MuSig equation. This
- * deliberately avoids secp256k1_musig_partial_sig_verify: using the same
- * verifier as the signer would let a shared equation change pass unnoticed. */
-static void secp256k1_fuzz_check_musig_partial_sig_equation(const secp256k1_context *ctx, const secp256k1_musig_partial_sig *partial_sig, const secp256k1_musig_pubnonce *pubnonce, const secp256k1_pubkey *pubkey, const secp256k1_pubkey * const* pubkeys, size_t n_pubkeys, size_t signer_index, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_musig_session *session, const unsigned char *msg32) {
+/* Check a partial signature against the public MuSig equation. This deliberately
+ * avoids secp256k1_musig_partial_sig_verify: using the same verifier as the
+ * signer would let a shared equation change pass unnoticed. */
+static int secp256k1_fuzz_musig_partial_sig_equation(const secp256k1_context *ctx, const secp256k1_musig_partial_sig *partial_sig, const secp256k1_musig_pubnonce *pubnonce, const secp256k1_pubkey *pubkey, const secp256k1_pubkey * const* pubkeys, size_t n_pubkeys, size_t signer_index, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_musig_session *session, const unsigned char *msg32) {
     static const unsigned char challenge_tag[] = "BIP0340/challenge";
     unsigned char partial_sig32[32];
     unsigned char pubnonce66[66];
@@ -250,11 +250,41 @@ static void secp256k1_fuzz_check_musig_partial_sig_equation(const secp256k1_cont
     }
 
     if (memcmp(partial_sig32, zero32, sizeof(partial_sig32)) == 0) {
-        FUZZ_CHECK(rhs_infinity);
-    } else {
-        FUZZ_CHECK(!rhs_infinity);
-        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &response_point, partial_sig32) == 1);
-        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &response_point, &expected_point) == 0);
+        return rhs_infinity;
+    }
+    if (rhs_infinity) {
+        return 0;
+    }
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &response_point, partial_sig32) == 1);
+    return secp256k1_ec_pubkey_cmp(ctx, &response_point, &expected_point) == 0;
+}
+
+/* Verify parseable but externally supplied partial signatures without
+ * delegating the expected result to the production verifier. */
+static void secp256k1_fuzz_check_musig_arbitrary_partial_sig(const secp256k1_context *ctx, const unsigned char *input, size_t size, const secp256k1_musig_pubnonce *pubnonce, const secp256k1_pubkey *pubkey, const secp256k1_pubkey * const* pubkeys, size_t n_pubkeys, size_t signer_index, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_musig_session *session, const unsigned char *msg32) {
+    unsigned char arbitrary32[32];
+    unsigned char samples[4][32];
+    const unsigned char *sample_ptrs[4];
+    secp256k1_musig_partial_sig partial_sig;
+    size_t i;
+
+    memcpy(samples[0], secp256k1_fuzz_scalar_zero, sizeof(samples[0]));
+    memcpy(samples[1], secp256k1_fuzz_scalar_one, sizeof(samples[1]));
+    memcpy(samples[2], secp256k1_fuzz_scalar_order_minus_one, sizeof(samples[2]));
+    secp256k1_fuzz_derive(arbitrary32, sizeof(arbitrary32), input, size, 617);
+    secp256k1_fuzz_musig_reduce_scalar(samples[3], arbitrary32);
+    for (i = 0; i < sizeof(sample_ptrs) / sizeof(sample_ptrs[0]); i++) {
+        sample_ptrs[i] = samples[i];
+    }
+
+    for (i = 0; i < sizeof(sample_ptrs) / sizeof(sample_ptrs[0]); i++) {
+        int expected;
+        int actual;
+
+        FUZZ_CHECK(secp256k1_musig_partial_sig_parse(ctx, &partial_sig, sample_ptrs[i]) == 1);
+        expected = secp256k1_fuzz_musig_partial_sig_equation(ctx, &partial_sig, pubnonce, pubkey, pubkeys, n_pubkeys, signer_index, keyagg_cache, session, msg32);
+        actual = secp256k1_musig_partial_sig_verify(ctx, &partial_sig, pubnonce, pubkey, keyagg_cache, session);
+        FUZZ_CHECK(actual == expected);
     }
 }
 
@@ -607,7 +637,7 @@ static void secp256k1_fuzz_check_musig_tweaked_sign_case(const secp256k1_context
     secp256k1_fuzz_musig_check_noncecoef_reference(ctx, &aggnonce, cache, msg32, &session);
     for (i = 0; i < 2; i++) {
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], cache, &session) == 1);
-        secp256k1_fuzz_check_musig_partial_sig_equation(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], pubkey_ptrs, 2, i, cache, &session, msg32);
+        FUZZ_CHECK(secp256k1_fuzz_musig_partial_sig_equation(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], pubkey_ptrs, 2, i, cache, &session, msg32) == 1);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], cache, &session) == 1);
     }
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 2) == 1);
@@ -1498,7 +1528,7 @@ static void secp256k1_fuzz_check_musig_partial_sign_nonce_parity(secp256k1_conte
         FUZZ_CHECK(session.data[4] <= 1);
         parity_seen[session.data[4]] = 1;
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &secnonce, &keypair, &keyagg_cache, &session) == 1);
-        secp256k1_fuzz_check_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, &pubkey, pubkey_ptrs, 1, 0, &keyagg_cache, &session, msg32);
+        FUZZ_CHECK(secp256k1_fuzz_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, &pubkey, pubkey_ptrs, 1, 0, &keyagg_cache, &session, msg32) == 1);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig, &pubnonce, &pubkey, &keyagg_cache, &session) == 1);
         FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 1) == 1);
         secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, &agg_pk, msg32);
@@ -1533,7 +1563,7 @@ static void secp256k1_fuzz_check_musig_zero_counter_sign(secp256k1_context *ctx,
     {
         const secp256k1_pubkey *pubkey_ptrs[1];
         pubkey_ptrs[0] = pubkey;
-        secp256k1_fuzz_check_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, pubkey, pubkey_ptrs, 1, 0, keyagg_cache, &session, msg32);
+        FUZZ_CHECK(secp256k1_fuzz_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, pubkey, pubkey_ptrs, 1, 0, keyagg_cache, &session, msg32) == 1);
     }
     FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig, &pubnonce, pubkey, keyagg_cache, &session) == 1);
 
@@ -1589,7 +1619,7 @@ static void secp256k1_fuzz_check_musig_infinity_nonce_process(secp256k1_context 
     {
         const secp256k1_pubkey *pubkey_ptrs[1];
         pubkey_ptrs[0] = pubkey;
-        secp256k1_fuzz_check_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, pubkey, pubkey_ptrs, 1, 0, keyagg_cache, &session, msg32);
+        FUZZ_CHECK(secp256k1_fuzz_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, pubkey, pubkey_ptrs, 1, 0, keyagg_cache, &session, msg32) == 1);
     }
     FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig, &pubnonce, pubkey, keyagg_cache, &session) == 1);
 
@@ -1845,7 +1875,8 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     for (i = 0; i < n_signers; i++) {
         FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig[i], &secnonce[i], &keypairs[i], &keyagg_cache, &session) == 1);
         FUZZ_CHECK(memcmp(secnonce[i].data, zero132, sizeof(secnonce[i].data)) == 0);
-        secp256k1_fuzz_check_musig_partial_sig_equation(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], pubkey_ptrs, n_signers, i, &keyagg_cache, &session, msg32);
+        FUZZ_CHECK(secp256k1_fuzz_musig_partial_sig_equation(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], pubkey_ptrs, n_signers, i, &keyagg_cache, &session, msg32) == 1);
+        secp256k1_fuzz_check_musig_arbitrary_partial_sig(ctx, input, size, &pubnonce[i], &pubkeys[i], pubkey_ptrs, n_signers, i, &keyagg_cache, &session, msg32);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], &keyagg_cache, &session) == 1);
         /* A session and cache from different key aggregations must not be
          * interchangeable, even when both opaque objects are valid. */
