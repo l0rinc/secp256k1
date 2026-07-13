@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, one-, two-, three-, and four-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1223,6 +1223,20 @@ documented in its commit message.
   never checked that these entropy inputs affected the result. This is
   informational oracle hardening: no clean-master production defect is claimed,
   and no unstable encoding bytes are pinned.
+
+  The MuSig target now independently computes the four-key `KeyAgg list` hash,
+  the first-distinct-key coefficient rule, every remaining coefficient, and the
+  four-term weighted public-point sum through public APIs. The earlier reference
+  stopped at three keys, while the public aggregation API accepts arbitrary list
+  lengths and the signing harness is intentionally capped at three signers. The
+  dedicated `four-keyagg-reference` seed exercises callback index three. Clean
+  default and forced-`int64` ASan/UBSan replays passed all 34 corpus files plus
+  the new seed, and two-worker/two-job campaigns exited zero in both builds. For
+  the control proof, replacing only the production callback coefficient at
+  `idx == 3` with the identity scalar kept the pre-change target green on all 33
+  existing corpus files, while the new seed aborted with `-handle_abrt=0` and
+  exit 134. This is informational oracle hardening, not a current-master
+  production finding, and does not change any severity rating.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
