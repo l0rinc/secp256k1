@@ -8389,6 +8389,40 @@ static void run_cmov_tests(void) {
     ge_storage_cmov_test();
 }
 
+static void run_checked_size_mul_tests(void) {
+    static const struct {
+        size_t a;
+        size_t b;
+        int overflow;
+    } cases[] = {
+        { 0, SIZE_MAX, 0 },
+        { SIZE_MAX, 0, 0 },
+        { SIZE_MAX, 1, 0 },
+        { SIZE_MAX / 2u, 2, 0 },
+        { SIZE_MAX / 2u + 1u, 2, 1 },
+        { SIZE_MAX, 2, 1 },
+    };
+    const size_t sentinel = SIZE_MAX / 3u;
+    secp256k1_callback callback = { counting_callback_fn, NULL };
+    int32_t calls = 0;
+    size_t i;
+
+    callback.data = &calls;
+    for (i = 0; i < ARRAY_SIZE(cases); i++) {
+        size_t result = sentinel;
+        int32_t calls_before = calls;
+        int ret = checked_size_mul(&callback, &result, cases[i].a, cases[i].b);
+
+        CHECK(ret == !cases[i].overflow);
+        CHECK(calls == calls_before + cases[i].overflow);
+        if (cases[i].overflow) {
+            CHECK(result == sentinel);
+        } else {
+            CHECK(result == cases[i].a * cases[i].b);
+        }
+    }
+}
+
 /* --------------------------------------------------------- */
 /* Test Registry                                             */
 /* --------------------------------------------------------- */
@@ -8494,6 +8528,7 @@ static const struct tf_test_entry tests_utils[] = {
     CASE(secp256k1_is_zero_array_test),
     CASE(secp256k1_byteorder_tests),
     CASE(cmov_tests),
+    CASE(checked_size_mul_tests),
 };
 
 /* Register test modules */
