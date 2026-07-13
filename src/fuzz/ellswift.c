@@ -24,6 +24,7 @@ static const unsigned char secp256k1_fuzz_ellswift_field_p_plus_one[32] = {
 typedef struct {
     const void *self;
     unsigned char mask32[32];
+    unsigned char x32[32];
     unsigned int calls;
 } secp256k1_fuzz_ellswift_hash_data;
 
@@ -69,6 +70,7 @@ static int secp256k1_fuzz_ellswift_hash_masked(unsigned char *output, const unsi
     FUZZ_CHECK(hash_data != NULL);
     FUZZ_CHECK(hash_data->self == hash_data);
     hash_data->calls++;
+    memcpy(hash_data->x32, x32, sizeof(hash_data->x32));
     for (i = 0; i < 32; i++) {
         output[i] = (unsigned char)(x32[i] ^ hash_data->mask32[i] ^ ell_a64[i] ^ ell_b64[63 - i]);
     }
@@ -460,6 +462,43 @@ static void secp256k1_fuzz_check_ellswift_overflow_secret(const secp256k1_contex
     FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, order_plus_one, 1, secp256k1_fuzz_ellswift_hash_x32, NULL) == 0);
 }
 
+static void secp256k1_fuzz_check_ellswift_callback_x(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, int party, const secp256k1_fuzz_ellswift_hash_data *hash_data) {
+    const unsigned char *theirs64 = party ? ell_a64 : ell_b64;
+    secp256k1_pubkey decoded;
+    unsigned char compressed[33];
+    size_t compressed_len = sizeof(compressed);
+
+    FUZZ_CHECK(hash_data->calls == 1);
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded, theirs64) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &compressed_len, &decoded, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(compressed_len == sizeof(compressed));
+    FUZZ_CHECK(memcmp(hash_data->x32, compressed + 1, sizeof(hash_data->x32)) == 0);
+}
+
+static void secp256k1_fuzz_check_ellswift_invalid_secret_callback_x(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64) {
+    unsigned char order_plus_one[32];
+    unsigned char output[32];
+    const unsigned char *invalid_secrets[3];
+    secp256k1_fuzz_ellswift_hash_data hash_data;
+    int party;
+    size_t i;
+
+    memcpy(order_plus_one, secp256k1_fuzz_scalar_order, sizeof(order_plus_one));
+    order_plus_one[31]++;
+    invalid_secrets[0] = secp256k1_fuzz_scalar_zero;
+    invalid_secrets[1] = secp256k1_fuzz_scalar_order;
+    invalid_secrets[2] = order_plus_one;
+    hash_data.self = &hash_data;
+    memset(hash_data.mask32, 0, sizeof(hash_data.mask32));
+    for (party = 0; party <= 1; party++) {
+        for (i = 0; i < sizeof(invalid_secrets) / sizeof(invalid_secrets[0]); i++) {
+            hash_data.calls = 0;
+            FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, invalid_secrets[i], party, secp256k1_fuzz_ellswift_hash_masked, &hash_data) == 0);
+            secp256k1_fuzz_check_ellswift_callback_x(ctx, ell_a64, ell_b64, party, &hash_data);
+        }
+    }
+}
+
 static void secp256k1_fuzz_check_ellswift_ctx_hash(secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, const unsigned char *prefix64) {
     unsigned char output[32];
 
@@ -548,6 +587,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_ellswift_built_in_cleanup(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
     secp256k1_fuzz_check_ellswift_overflow_secret(ctx, ell_a64, ell_b64);
+    secp256k1_fuzz_check_ellswift_invalid_secret_callback_x(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_ctx_hash(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
 
     secp256k1_context_destroy(ctx);
