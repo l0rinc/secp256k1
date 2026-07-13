@@ -13,7 +13,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, and maximum-magnitude consistency
 - `fuzz_group`: Jacobian/affine group-operation agreement, fractional curve-membership, batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, invalid keypair extraction, invalid comparator ordering
@@ -473,9 +473,11 @@ cherry-picked with new proof, and several heads are optimization stacks.
   trigger remains unproven.
 - PR #11 (`d1dca5c`) repeats the checked `pubkey_load` return paths already
   covered by `5ad8052`, `f9f1a6e`, and `7767442`.
-- PR #12 (`e153e26`) is exactly the behavior-preserving 5x52 word-serialization
-  optimization already recorded as `91e4f02`. Its commit intentionally follows
-  the master-based findings and states that it is not security evidence.
+- PR #12 (`944932c`, force-updated from `e153e26` on 2026-07-13) is exactly the
+  behavior-preserving 5x52 word-serialization optimization already recorded as
+  `91e4f02`; the force update did not change its source tree. Its commit
+  intentionally follows the master-based findings and states that it is not
+  security evidence.
 
 No new l0rinc commit was cherry-picked in this refresh: every relevant commit
 is either already represented with stronger current-master proof, already in
