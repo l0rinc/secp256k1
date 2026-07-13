@@ -108,35 +108,39 @@ negative evidence for the current oracles and do not change any
 master-relative severity rating.
 
 Focused recoverable ECDSA point-equation replay (2026-07-13): the recovery
-corpus now has 6 tracked inputs totaling 402 bytes, including
-`recovery-point-equation`, `arbitrary-recovery-equation`, and
-`arbitrary-recovery-failure-cleanup`. The two arbitrary seeds are 111-byte
-printable inputs sharing an accepted first 64-byte `(r,s)` pair: byte 109 is
-`d` (`recid == 0`) for successful recovery and `f` (`recid == 2`) for a
-recoverable-point failure. The independent model reconstructs the candidate
-`R` from serialized `r` and `recid` (including the `r + n` branch), reduces the
-message scalar with byte arithmetic, and checks `rQ = sR - zG` using public
-point operations rather than `secp256k1_ecdsa_verify` or the recovery
-implementation's internal multiscalar path. It now covers both signer-
-generated and arbitrary parsed recoverable signatures, and asserts that a
-failed arbitrary recovery clears its public-key output. Default and
-forced-int64 ASan/UBSan fixed replays each executed all 6 inputs plus the
-empty input, reaching 2,636 and 4,781 edges; matching MSan replays completed
-without a diagnostic. Focused `-workers=2 -jobs=2 -max_total_time=20` runs
-completed two jobs per backend with exit code 0: default jobs executed 354
-and 356 inputs at 2,655 edges, while forced-int64 jobs executed 208 and 213
-at 4,793 edges. For the strongest equation isolation proof, a temporary
-production mutation skipped `secp256k1_scalar_negate(&u1, &u1);` only for the
-successful seed's `recid == 0` and top-16-bit `r == 0x564e` condition. With
-the delegated `ecdsa_verify` check disabled, the new equation aborted with
-exit 134 on both backends; disabling the new equation as well let the same
-mutation pass with exit 0. For the failure-state proof, a temporary mutation
-omitted `memset(pubkey, 0, sizeof(*pubkey))` only for the failing seed's
-`recid == 2` and the same `r` prefix. The new clear-output assertion aborted
-with exit 134 on both backends; disabling that assertion let the mutation
-pass with exit 0. All temporary changes were restored before the clean
-replays. This is informational oracle hardening, not a current-master
-production finding, and does not change any severity rating.
+corpus now has 7 tracked inputs totaling 436 bytes, including
+`recovery-point-equation`, `arbitrary-recovery-equation`,
+`arbitrary-recovery-failure-cleanup`, and `recovery-r-plus-n-equation`. The
+two arbitrary seeds are 111-byte printable inputs sharing an accepted first
+64-byte `(r,s)` pair: byte 109 is `d` (`recid == 0`) for successful recovery
+and `f` (`recid == 2`) for a recoverable-point failure. The fixed `(4,4)`
+vector drives successful `recid` 2/3 recovery through the `r + n` field
+branch. The independent model reconstructs candidate `R` from serialized `r`
+and `recid`, reduces the message scalar with byte arithmetic, and checks
+`rQ = sR - zG` using public point operations rather than
+`secp256k1_ecdsa_verify` or the recovery implementation's internal
+multiscalar path. It now covers signer-generated and arbitrary parsed
+signatures, the successful `r + n` branch, and failed-recovery output
+cleanup. Default and forced-int64 ASan/UBSan fixed replays each executed all
+7 inputs plus the empty input, reaching 2,654 and 4,807 edges; matching MSan
+replays completed without a diagnostic. Focused
+`-workers=2 -jobs=2 -max_total_time=20` runs completed two jobs per backend
+with exit code 0: default jobs executed 298 and 303 inputs at 2,663 edges,
+while forced-int64 jobs executed 180 and 180 at 4,815 edges. The equation
+isolation proof used a temporary production mutation that skipped
+`secp256k1_scalar_negate(&u1, &u1);` only for the arbitrary seed's
+`recid == 0` and top-16-bit `r == 0x564e` condition; with the delegated
+`ecdsa_verify` check disabled, the new equation aborted with exit 134 on both
+backends, while disabling the equation let the same mutation pass with exit
+0. The failure-state proof omitted `memset(pubkey, 0, sizeof(*pubkey))` only
+for the failing seed's `recid == 2` and the same `r` prefix; the new assertion
+aborted with exit 134 on both backends, while disabling it let the mutation
+pass with exit 0. Finally, omitting the `r + n` field addition only for
+`(r,s)=(4,4)` and `recid` 2/3 aborted in the fixed equation on both backends;
+disabling only that helper let the mutation pass. All temporary changes were
+restored before the clean replays. This is informational oracle hardening,
+not a current-master production finding, and does not change any severity
+rating.
 
 Cross-backend campaign (2026-07-13): a separate ASan/UBSan libFuzzer build
 used `-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`, selecting the 10x26
@@ -490,13 +494,14 @@ documented in its commit message.
   clears the output public key. The previous arbitrary-input path compared
   only with `secp256k1_ecdsa_verify`, which shares the production-derived
   recovered key, and did not check failure cleanup. The clean current branch
-  passes the two arbitrary seeds and the complete six-input recovery corpus
-  on both field backends and under MSan. Seed-specific temporary mutations of
-  the `u1` negation and failure `memset`, with the delegated checks isolated,
-  abort in the new assertions on both backends; disabling the corresponding
-  new assertion makes each mutation pass. All temporary changes were
-  restored before replay. This is oracle hardening, not a current-master
-  production finding, and does not change any severity rating.
+  passes the two arbitrary seeds, the `r+n` vector, and the complete
+  seven-input recovery corpus on both field backends and under MSan.
+  Seed-specific temporary mutations of the `u1` negation, failure `memset`,
+  and `r+n` addition, with the delegated checks isolated, abort in the new
+  assertions on both backends; disabling the corresponding new assertion
+  makes each mutation pass. All temporary changes were restored before
+  replay. This is oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting
