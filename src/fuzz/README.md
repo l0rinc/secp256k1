@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, valid-nonce retry, empty sort, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed-nonce equation, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: full-stream HMAC/RFC6979 chunking consistency and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
@@ -504,6 +504,13 @@ documented in its commit message.
   non-NULL array pointer. Clean master returns success; requiring at least one
   element in the production sort routine makes the focused seed abort. This is
   informational API-boundary coverage, not a current-master production bug.
+  The `null-pubkey-sort` seed covers the complementary illegal boundary: a
+  NULL array pointer must be rejected, and must invoke the illegal callback,
+  for both zero and nonzero element counts without dereferencing the array.
+  Clean master returns zero and reports exactly one callback per call; removing
+  the production `ARG_CHECK(pubkeys != NULL)` makes the seed abort immediately.
+  The existing unit test covered a NULL array only with `n_pubkeys == 2`, so
+  this is informational oracle hardening, not a current-master production bug.
   The `null-pubkey-comparator` seed also exercises the documented NULL ordering
   fallback through an unannotated function pointer, so UBSan observes the
   deliberate runtime API-boundary input instead of the header nonnull
