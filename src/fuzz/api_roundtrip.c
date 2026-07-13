@@ -5,6 +5,7 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "pubkey_reference.h"
 #include "../hash_impl.h"
 #include "../../contrib/lax_der_parsing.c"
 #include "../../contrib/lax_der_privatekey_parsing.c"
@@ -16,6 +17,17 @@ static const unsigned char secp256k1_fuzz_field_p_plus_one[32] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
+static const unsigned char secp256k1_fuzz_pubkey_7g_uncompressed[65] = {
+    0x04,
+    0x5C, 0xBD, 0xF0, 0x64, 0x6E, 0x5D, 0xB4, 0xEA,
+    0xA3, 0x98, 0xF3, 0x65, 0xF2, 0xEA, 0x7A, 0x0E,
+    0x3D, 0x41, 0x9B, 0x7E, 0x03, 0x30, 0xE3, 0x9C,
+    0xE9, 0x2B, 0xDD, 0xED, 0xCA, 0xC4, 0xF9, 0xBC,
+    0x6A, 0xEB, 0xCA, 0x40, 0xBA, 0x25, 0x59, 0x60,
+    0xA3, 0x17, 0x8D, 0x6D, 0x86, 0x1A, 0x54, 0xDB,
+    0xA8, 0x13, 0xD0, 0xB8, 0x13, 0xFD, 0xE7, 0xB5,
+    0xA5, 0x08, 0x26, 0x28, 0x08, 0x72, 0x64, 0xDA
 };
 static const unsigned char secp256k1_fuzz_x_one_even_y[32] = {
     0x42, 0x18, 0xF2, 0x0A, 0xE6, 0xC6, 0x46, 0xB3,
@@ -748,16 +760,75 @@ static void secp256k1_fuzz_check_invalid_pubkey_sort(secp256k1_context *ctx, con
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static int secp256k1_fuzz_pubkey_parse_reference(const unsigned char *input, size_t inputlen);
+
 static void secp256k1_fuzz_check_pubkey_parse(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
     secp256k1_pubkey parsed_pubkey;
+    unsigned char serialized[65];
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    size_t serialized_len;
+    int parse_ret;
 
-    memset(&parsed_pubkey, 0xA5, sizeof(parsed_pubkey));
-    if (secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, input, inputlen)) {
+    parse_ret = secp256k1_ec_pubkey_parse(ctx, &parsed_pubkey, input, inputlen);
+    FUZZ_CHECK(parse_ret == secp256k1_fuzz_pubkey_parse_reference(input, inputlen));
+    if (parse_ret) {
+        serialized_len = sizeof(serialized);
+        if (inputlen == 33) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &parsed_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+            FUZZ_CHECK(serialized_len == inputlen);
+            FUZZ_CHECK(memcmp(serialized, input, inputlen) == 0);
+        } else {
+            FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &parsed_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+            FUZZ_CHECK(serialized_len == inputlen);
+            FUZZ_CHECK(memcmp(serialized + 1, input + 1, inputlen - 1) == 0);
+        }
         secp256k1_fuzz_check_pubkey_roundtrip(ctx, &parsed_pubkey);
     } else {
         FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
     }
+}
+
+static int secp256k1_fuzz_pubkey_parse_reference(const unsigned char *input, size_t inputlen) {
+    unsigned char x_squared32[32];
+    unsigned char rhs32[32];
+    unsigned char y_squared32[32];
+    unsigned char root32[32];
+    unsigned char root_squared32[32];
+    unsigned char seven32[32] = { 0 };
+    int hybrid;
+
+    if (inputlen == 33 && (input[0] == SECP256K1_TAG_PUBKEY_EVEN || input[0] == SECP256K1_TAG_PUBKEY_ODD)) {
+        if (memcmp(input + 1, secp256k1_fuzz_pubkey_field_prime, 32) >= 0) {
+            return 0;
+        }
+        secp256k1_fuzz_pubkey_mul_mod(x_squared32, input + 1, input + 1);
+        secp256k1_fuzz_pubkey_mul_mod(rhs32, x_squared32, input + 1);
+        seven32[31] = 7;
+        secp256k1_fuzz_pubkey_add_mod(rhs32, rhs32, seven32);
+        secp256k1_fuzz_pubkey_sqrt_mod(root32, rhs32);
+        secp256k1_fuzz_pubkey_mul_mod(root_squared32, root32, root32);
+        return memcmp(root_squared32, rhs32, sizeof(root_squared32)) == 0;
+    }
+    if (inputlen != 65 ||
+        (input[0] != SECP256K1_TAG_PUBKEY_UNCOMPRESSED &&
+         input[0] != SECP256K1_TAG_PUBKEY_HYBRID_EVEN &&
+         input[0] != SECP256K1_TAG_PUBKEY_HYBRID_ODD)) {
+        return 0;
+    }
+    if (memcmp(input + 1, secp256k1_fuzz_pubkey_field_prime, 32) >= 0 ||
+        memcmp(input + 33, secp256k1_fuzz_pubkey_field_prime, 32) >= 0) {
+        return 0;
+    }
+    secp256k1_fuzz_pubkey_mul_mod(x_squared32, input + 1, input + 1);
+    secp256k1_fuzz_pubkey_mul_mod(rhs32, x_squared32, input + 1);
+    seven32[31] = 7;
+    secp256k1_fuzz_pubkey_add_mod(rhs32, rhs32, seven32);
+    secp256k1_fuzz_pubkey_mul_mod(y_squared32, input + 33, input + 33);
+    if (memcmp(rhs32, y_squared32, sizeof(rhs32)) != 0) {
+        return 0;
+    }
+    hybrid = input[0] == SECP256K1_TAG_PUBKEY_HYBRID_EVEN || input[0] == SECP256K1_TAG_PUBKEY_HYBRID_ODD;
+    return !hybrid || ((input[33 + 31] & 1) == (input[0] == SECP256K1_TAG_PUBKEY_HYBRID_ODD));
 }
 
 static void secp256k1_fuzz_check_pubkey_parse_field_overflow(const secp256k1_context *ctx) {
@@ -1826,6 +1897,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
     secp256k1_fuzz_check_pubkey_parse(ctx, input, size);
+    secp256k1_fuzz_check_pubkey_parse(ctx, secp256k1_fuzz_pubkey_7g_uncompressed, sizeof(secp256k1_fuzz_pubkey_7g_uncompressed));
     secp256k1_fuzz_check_pubkey_parse_field_overflow(ctx);
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_order);
