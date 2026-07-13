@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, an independent recovery point equation, and valid-nonce retry when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
+- `fuzz_schnorrsig`: Schnorr sign/verify, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -220,6 +220,27 @@ a sanitizer diagnostic, assertion failure, timeout, OOM, crash artifact, or
 nonzero worker result. A separate MSan replay executed four representative
 inputs, including variable-length and empty messages, with no diagnostic. The
 temporary corpus and artifacts were kept outside the repository.
+
+Focused arbitrary-signature Schnorr verification replay (2026-07-13): the
+Schnorr corpus now contains 10 tracked inputs totaling 397 bytes, including
+`arbitrary-signature-verification-equation`. Default ASan/UBSan and forced-int64
+replayed all inputs plus the empty input for 11 executions, reaching 2,741 and
+4,776 edges; matching MSan replays reached 570 and 575 edges without a
+diagnostic. Isolated default and forced-int64 managers then ran with
+`-workers=2 -jobs=2 -max_total_time=30`; both jobs on each backend returned
+zero without sanitizer diagnostics, assertion failures, timeouts, OOMs, crash
+artifacts, or nonzero worker results. Temporary corpus mutations and worker
+logs stayed outside the repository.
+
+For mutation proof, the production Schnorr verifier's `s >= n` overflow branch
+was temporarily changed to return success for the all-`0xFF` response scalar,
+and the pre-existing all-`0xFF` negative assertion was bypassed only for
+isolation. The independent point-equation reference aborted the focused seed on
+both backends. A control run with the same production mutation and old
+assertion bypass, but the new reference disabled, passed on both backends. All
+temporary changes were restored before the clean replay. This is informational
+oracle hardening, not a current-master production finding, and does not change
+any severity rating.
 
 Focused field maximum-residue replay (2026-07-13): the copied field corpus
 started with 4 tracked inputs. Default ASan/UBSan managers with
@@ -436,6 +457,18 @@ documented in its commit message.
   disabled in the temporary harness isolation run. The production mutation and
   harness bypass were restored before replay. This is oracle hardening, not a
   current-master production finding, and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_schnorrsig` now verifies generated
+  and deliberately invalid signatures with an independent BIP340 model. It
+  rejects `r >= p` and `s >= n`, independently computes the tagged challenge,
+  reconstructs `R = sG - eP` through public point operations, and requires a
+  finite even-Y point whose X coordinate equals `r`. The prior target checked
+  the independent equation only for signer-produced signatures and delegated
+  invalid-signature outcomes to `secp256k1_schnorrsig_verify`. Clean master
+  passes `arbitrary-signature-verification-equation` on both field backends and
+  under MSan. Changing the verifier's scalar-overflow rejection to success makes
+  the all-`0xFF` case abort in the new reference; disabling the new comparison
+  makes the same isolated mutation pass. This closes a verifier-oracle gap, not
+  a current-master production vulnerability.
 - **Informational oracle hardening:** `fuzz_recovery` independently checks the
   recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`
   and `recid`, including the overflow branch. The previous target compared

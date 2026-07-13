@@ -452,6 +452,93 @@ static void secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(const secp256k1
     secp256k1_memclear_explicit(seckey, sizeof(seckey));
 }
 
+/* Verify an arbitrary BIP340 signature without calling the library verifier.
+ * The public point operations are independent of the verifier's internal
+ * ecmult path; the candidate R must have even Y and x == r. */
+static int secp256k1_fuzz_schnorrsig_verify_reference(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const unsigned char *xonly32) {
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    static const unsigned char field_p[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
+    };
+    unsigned char challenge32[32];
+    unsigned char reduced_challenge32[32];
+    unsigned char r33[33];
+    unsigned char pk33[33];
+    unsigned char expected_serialized[65];
+    secp256k1_pubkey r_pubkey;
+    secp256k1_pubkey pk_pubkey;
+    secp256k1_pubkey s_pubkey = { 0 };
+    secp256k1_pubkey e_pubkey = { 0 };
+    secp256k1_pubkey negated_e_pubkey = { 0 };
+    secp256k1_pubkey expected_pubkey;
+    const secp256k1_pubkey *terms[2];
+    size_t expected_len = sizeof(expected_serialized);
+    int have_s;
+    int have_e;
+
+    if (memcmp(sig64, field_p, 32) >= 0 || memcmp(sig64 + 32, secp256k1_fuzz_scalar_order, 32) >= 0) {
+        return 0;
+    }
+
+    r33[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(r33 + 1, sig64, 32);
+    if (!secp256k1_ec_pubkey_parse(ctx, &r_pubkey, r33, sizeof(r33))) {
+        return 0;
+    }
+    pk33[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(pk33 + 1, xonly32, 32);
+    if (!secp256k1_ec_pubkey_parse(ctx, &pk_pubkey, pk33, sizeof(pk33))) {
+        return 0;
+    }
+
+    secp256k1_fuzz_schnorrsig_tagged_hash_reference(challenge32, challenge_tag, sizeof(challenge_tag) - 1, sig64, 32, xonly32, 32, msg, msglen);
+    secp256k1_fuzz_schnorrsig_reduce_scalar(reduced_challenge32, challenge32);
+    have_s = memcmp(sig64 + 32, secp256k1_fuzz_scalar_zero, 32) != 0;
+    have_e = memcmp(reduced_challenge32, secp256k1_fuzz_scalar_zero, 32) != 0;
+    if (have_s) {
+        if (!secp256k1_ec_pubkey_create(ctx, &s_pubkey, sig64 + 32)) {
+            return 0;
+        }
+    }
+    if (have_e) {
+        e_pubkey = pk_pubkey;
+        if (!secp256k1_ec_pubkey_tweak_mul(ctx, &e_pubkey, reduced_challenge32)) {
+            return 0;
+        }
+        negated_e_pubkey = e_pubkey;
+        if (!secp256k1_ec_pubkey_negate(ctx, &negated_e_pubkey)) {
+            return 0;
+        }
+    }
+    if (have_s && have_e) {
+        terms[0] = &s_pubkey;
+        terms[1] = &negated_e_pubkey;
+        if (!secp256k1_ec_pubkey_combine(ctx, &expected_pubkey, terms, 2)) {
+            return 0;
+        }
+    } else if (have_s) {
+        expected_pubkey = s_pubkey;
+    } else if (have_e) {
+        expected_pubkey = negated_e_pubkey;
+    } else {
+        return 0;
+    }
+    if (!secp256k1_ec_pubkey_serialize(ctx, expected_serialized, &expected_len, &expected_pubkey, SECP256K1_EC_UNCOMPRESSED)) {
+        return 0;
+    }
+    return expected_len == sizeof(expected_serialized)
+        && (expected_serialized[64] & 1u) == 0
+        && memcmp(expected_serialized + 1, sig64, 32) == 0;
+}
+
+static void secp256k1_fuzz_check_schnorrsig_verify_reference(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const unsigned char *xonly32, const secp256k1_xonly_pubkey *xonly) {
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_verify_reference(ctx, sig64, msg, msglen, xonly32)
+               == secp256k1_schnorrsig_verify(ctx, sig64, msg, msglen, xonly));
+}
+
 /* Check a generated signature against BIP340's public point equation without
  * calling the library verifier. This catches shared challenge/signing changes
  * that would otherwise make signing and verification agree on the same error. */
@@ -758,6 +845,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char custom_algo[32];
     unsigned char zero_aux32[32] = { 0 };
     unsigned char xonly32[32];
+    unsigned char other_xonly32[32];
     secp256k1_keypair keypair;
     secp256k1_keypair other_keypair;
     secp256k1_keypair negated_keypair;
@@ -817,6 +905,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_valid_seckey32(ctx, other_seckey, input, size, 149);
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &other_keypair, other_seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &other_xonly, NULL, &other_keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, other_xonly32, &other_xonly) == 1);
     secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_schnorrsig_sha256_compression);
     secp256k1_fuzz_schnorrsig_nonce_sha256_compression_calls = 0;
@@ -829,6 +918,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(memcmp(sig64, sig64_negated, sizeof(sig64)) == 0);
     secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
+    secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64, msg32, sizeof(msg32), xonly32, &xonly);
     FUZZ_CHECK(secp256k1_fuzz_schnorrsig_challenge_sha256_compression_calls != 0);
     secp256k1_fuzz_check_schnorrsig_signature_equation(ctx, sig64, msg32, sizeof(msg32), xonly32);
     secp256k1_fuzz_check_schnorrsig_rx_overflow(ctx, sig64, msg32, sizeof(msg32), &xonly);
@@ -853,21 +943,25 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32) - 1, &xonly) == 0);
     if (secp256k1_xonly_pubkey_cmp(ctx, &xonly, &other_xonly) != 0) {
         FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &other_xonly) == 0);
+        secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64, msg32, sizeof(msg32), other_xonly32, &other_xonly);
     }
 
     memcpy(sig64_bad, sig64, sizeof(sig64_bad));
     memset(sig64_bad + 32, 0xFF, 32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_bad, msg32, sizeof(msg32), &xonly) == 0);
+    secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64_bad, msg32, sizeof(msg32), xonly32, &xonly);
 
     flip_index = (size_t)(secp256k1_fuzz_byte(input, size, 141) & 63u);
     flip_mask = (unsigned char)(secp256k1_fuzz_byte(input, size, 143) | 1u);
     memcpy(sig64_bad, sig64, sizeof(sig64_bad));
     sig64_bad[flip_index] ^= flip_mask;
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_bad, msg32, sizeof(msg32), &xonly) == 0);
+    secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64_bad, msg32, sizeof(msg32), xonly32, &xonly);
 
     memcpy(msg32_bad, msg32, sizeof(msg32_bad));
     msg32_bad[flip_index & 31u] ^= flip_mask;
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32_bad, sizeof(msg32_bad), &xonly) == 0);
+    secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64, msg32_bad, sizeof(msg32_bad), xonly32, &xonly);
 
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_null_aux, msg32, &keypair, NULL) == 1);
     FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64_zero_aux, msg32, &keypair, zero_aux32) == 1);
@@ -881,6 +975,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     extraparams.ndata = aux32;
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_custom, input, msglen, &keypair, &extraparams) == 1);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, msglen, &xonly) == 1);
+    secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64_custom, input, msglen, xonly32, &xonly);
     secp256k1_fuzz_check_schnorrsig_signature_equation(ctx, sig64_custom, input, msglen, xonly32);
     secp256k1_fuzz_check_schnorrsig_rx_overflow(ctx, sig64_custom, input, msglen, &xonly);
     secp256k1_fuzz_check_schnorrsig_nonce_overflow(ctx, input, msglen, &keypair, &xonly);
@@ -893,8 +988,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     wrong_msglen = msglen == 0 ? 1 : msglen - 1;
     FUZZ_CHECK(wrong_msglen != msglen);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, wrong_msglen, &xonly) == 0);
+    secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64_custom, input, wrong_msglen, xonly32, &xonly);
     if (secp256k1_xonly_pubkey_cmp(ctx, &xonly, &other_xonly) != 0) {
         FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, msglen, &other_xonly) == 0);
+        secp256k1_fuzz_check_schnorrsig_verify_reference(ctx, sig64_custom, input, msglen, other_xonly32, &other_xonly);
     }
 
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_custom, msg32, sizeof(msg32), &keypair, &extraparams) == 1);
