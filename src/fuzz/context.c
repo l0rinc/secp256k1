@@ -6,6 +6,7 @@
 
 #include "fuzz.h"
 #include "../hash_impl.h"
+#include "sha256_reference.h"
 #include "secp256k1_preallocated.h"
 
 static size_t secp256k1_fuzz_sha256_compression_calls = 0;
@@ -40,20 +41,22 @@ static void secp256k1_fuzz_invalid_sha256_compression(uint32_t *state, const uns
 }
 
 static void secp256k1_fuzz_tagged_sha256_reference(unsigned char *hash32, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen) {
-    secp256k1_hash_ctx hash_ctx;
-    secp256k1_sha256 sha;
     unsigned char taghash[32];
+    unsigned char *tagged_msg;
 
-    secp256k1_hash_ctx_init(&hash_ctx);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, tag, taglen);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
-
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, msg, msglen);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, hash32);
+    FUZZ_CHECK(msglen <= SIZE_MAX - 2 * sizeof(taghash));
+    tagged_msg = (unsigned char *)malloc(2 * sizeof(taghash) + msglen);
+    FUZZ_CHECK(tagged_msg != NULL);
+    secp256k1_fuzz_sha256_standalone(taghash, tag, taglen);
+    memcpy(tagged_msg, taghash, sizeof(taghash));
+    memcpy(tagged_msg + sizeof(taghash), taghash, sizeof(taghash));
+    if (msglen != 0) {
+        memcpy(tagged_msg + 2 * sizeof(taghash), msg, msglen);
+    }
+    secp256k1_fuzz_sha256_standalone(hash32, tagged_msg, 2 * sizeof(taghash) + msglen);
+    memset(taghash, 0, sizeof(taghash));
+    memset(tagged_msg, 0, 2 * sizeof(taghash) + msglen);
+    free(tagged_msg);
 }
 
 static void secp256k1_fuzz_check_tagged_sha256(const secp256k1_context *ctx, const secp256k1_context *clone, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen) {

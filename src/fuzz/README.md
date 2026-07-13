@@ -7,16 +7,16 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
-- `fuzz_hash`: standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
+- `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
+- `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
-- `fuzz_ecdh`: ECDH symmetry with default and coordinate passthrough hashers
-- `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector, XDH symmetry, built-in hash cleanup
+- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference and coordinate passthrough hashers
+- `fuzz_ellswift`: EllSwift encode/decode, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
@@ -470,6 +470,28 @@ documented in its commit message.
   `-workers=2 -jobs=2 -max_total_time=15` campaigns exited 0 without
   diagnostics or artifacts. This is informational oracle hardening, not a
   current-master production finding, and does not change any severity rating.
+- **Informational oracle hardening:** the standalone SHA-256 model is now
+  shared by `fuzz_hash`, `fuzz_context`, `fuzz_ecdh`, and `fuzz_ellswift`.
+  `fuzz_context` independently constructs
+  `SHA256(tag) || SHA256(tag) || msg`; `fuzz_ecdh` manually builds the
+  compressed shared-point input from an uncompressed public serialization; and
+  `fuzz_ellswift` independently builds the BIP324/prefix transcript. The
+  previous context, ECDH, and EllSwift expected-value paths reused production
+  SHA processing. Clean master passes the new
+  `sha256-independent-tagged`, `default-hash-independent-reference`, and
+  `bip324-independent-reference` seeds, plus the existing corpora, on default,
+  forced-int64, MSan, and MSan-int64.
+  For context and ECDH, a temporary finalization mutation that flips one output
+  bit for post-padding `hash->bytes` values 33, 64, 224, or 256 left the old
+  production-derived checks green but made the new focused seeds abort with
+  exit 134. For EllSwift, the exact mutation limited to `hash->bytes == 256`
+  left the old target green on default and forced-int64 while the new focused
+  seed aborted on all four builds. All mutations and control changes were
+  restored. Default, forced-int64, MSan, and MSan-int64 isolated
+  `-workers=2 -jobs=2 -max_total_time=15` campaigns for all four affected
+  targets exited 0 without diagnostics or artifacts. This is informational
+  oracle hardening, not a current-master production finding, and does not
+  change any severity rating.
 - **Informational oracle hardening:** `fuzz_musig` independently recomputes
   each signer's KeyAgg coefficient and BIP340 challenge, then checks the
   partial-signature point equation through public point operations with final
