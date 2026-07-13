@@ -8,7 +8,7 @@ Targets:
 
 - `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
-- `fuzz_hash`: raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
+- `fuzz_hash`: standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
@@ -453,6 +453,23 @@ documented in its commit message.
   not a current-master production finding, and does not change any severity
   rating. The prior one-shot-versus-later-retry relation remains intentionally
   absent because RFC6979 changes state between generate calls.
+  The same target now includes a standalone SHA-256 compression, schedule, and
+  padding model. It compares production one-shot and split writes against that
+  model at lengths 0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 191, and 192,
+  using a nonzero deterministic message pattern as well as the input-derived
+  message. The seven tracked hash inputs total 317 bytes, including
+  `sha256-independent-reference`; fixed replays pass on default, forced-int64,
+  MSan, and MSan-int64. A temporary mutation changed the direct compression
+  count from `n_blocks` to `n_blocks - 1` only for `len == 192`. The new
+  reference aborted the dedicated seed with `-handle_abrt=0` and exit 134,
+  while disabling only the new reference let the identical mutation exit 0.
+  Existing fixed vectors stop at 65 bytes, and the prior HMAC/RFC6979
+  references use the production SHA-256 write path, so they did not provide
+  this independent long-block barrier. The production mutation and oracle
+  bypass were restored. Default and forced-int64 isolated
+  `-workers=2 -jobs=2 -max_total_time=15` campaigns exited 0 without
+  diagnostics or artifacts. This is informational oracle hardening, not a
+  current-master production finding, and does not change any severity rating.
 - **Informational oracle hardening:** `fuzz_musig` independently recomputes
   each signer's KeyAgg coefficient and BIP340 challenge, then checks the
   partial-signature point equation through public point operations with final
