@@ -125,6 +125,13 @@ master-relative mutation proof or change any severity rating. The matching
 forced-int64 `tests` executable also completed its full 16-iteration
 deterministic suite with exit code 0 in 407.898 seconds.
 
+The upstream exhaustive ECDH module model was also replayed on 2026-07-13.
+Default ASan/UBSan order-13 and order-7 binaries, plus the forced-int64/10x26
+ASan/UBSan order-7 binary, each ran two iterations across every reduced-order
+key combination and reported exit code 0 with `no problems found`. This is
+reduced-model and cross-backend evidence only; it does not change any
+master-relative severity rating.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
