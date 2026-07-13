@@ -874,6 +874,31 @@ documented in its commit message.
   not a current-master production finding; master already has a focused unit
   test, but its recent caller migration makes the fuzzer barrier useful for
   unusual scalar and base-state combinations.
+  The static generator-context audit found that `ecmult_gen_context_build`,
+  `ecmult_gen_blind`, and both `ecmult_gen_ge{j}` entry points are reached by
+  context creation/randomization and the `ecmult_const`/group generator
+  comparisons. Clean default and forced-int64 ASan/UBSan replays passed all
+  five existing `ecmult_const` inputs, and the clean default context replay
+  passed all six context inputs. As a mutation control, negating only
+  `ctx->ge_offset` immediately after `secp256k1_ecmult_gen_blind` computes the
+  randomized point made the existing `generator-affine-agreement` seed abort
+  with libFuzzer exit 77 on both backends; the mutation was restored before the
+  clean replay. This revalidates the existing direct generator oracle from
+  `74170c1`; no duplicate fuzzer call was added. It is informational helper
+  coverage, not a clean-master production finding. `ecmult_gen_context_clear` is intentionally not checked
+  by reading the cleared bytes: `memclear_explicit` documents the post-clear
+  contents as unspecified and VERIFY/MSan deliberately marks them undefined.
+  `ecmult_compute_table` and `ecmult_gen_compute_table` are precomputation
+  generators used while producing static tables, not input-dependent runtime
+  state machines, so they remain covered by build/test generation rather than
+  a duplicate fuzzer hook.
+  The public API inventory on the same date found a call site in a fuzz target
+  for every callable `SECP256K1_API` function except `secp256k1_selftest`.
+  Selftest is a fixed SHA sanity check with no fuzz-input-dependent state, and
+  context creation already invokes it; it remains unit-covered. The deprecated
+  `context_no_precomp` symbol is a data alias, not an independent function, and
+  is checked against `context_static` by the static-context unit tests. No
+  missing public-operation oracle was identified.
   The scalar target now exercises a deterministic matrix of valid
   `secp256k1_scalar_get_bits_var` ranges and valid, non-crossing
   `secp256k1_scalar_get_bits_limb32` ranges at every 32-bit and 64-bit
