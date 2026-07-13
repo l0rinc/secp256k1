@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, and byte-level maximum-residue references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -1105,6 +1105,20 @@ documented in its commit message.
   internal indexing/state-transition contract, not a current-master
   production finding; the deterministic unit suite already covers the empty
   range, but the fuzzer previously did not combine it with a mixed batch.
+  The group target now constructs a projective generator representation and
+  checks `secp256k1_ge_set_ge_zinv` against both the variable-time Jacobian
+  conversion and the independent canonical generator. It also adds multiples
+  of `p` to the inverse-Z value, exercising the valid nonnormalized magnitude-8
+  representation. A temporary `VERIFY`-only mutation flipped one output limb
+  in `secp256k1_ge_set_ge_zinv` only when the input was the generator and the
+  inverse-Z magnitude was 8. The focused `ge-zinv-nonnormalized` seed aborted
+  with status 134 on default and forced-int64 ASan/UBSan builds. Disabling only
+  this new call left all 12 pre-existing group and `ecmult_const` seeds plus
+  the focused seed green on both builds. The mutation was restored before the
+  clean replay, which passed all nine group seeds. This is informational
+  internal-contract hardening, not a clean-master production finding; the
+  master-relative severity ledger is unchanged. Bounded two-worker libFuzzer
+  runs also exited 0, completing 508 default and 326 forced-int64 executions.
   It also compares the fractional X-coordinate curve predicate against an
   independently computed quotient and curve equation, with the generator as a
   deterministic on-curve case. Clean master passes this informational helper
