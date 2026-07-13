@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, zero-predicate false-positive barriers, and byte-level maximum-residue references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, and byte-level maximum-residue references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -953,6 +953,20 @@ documented in its commit message.
   campaigns completed with 6,229 and 6,219 executions. This is informational
   internal-contract hardening, not a clean-master production finding; the
   master-relative severity ledger is unchanged.
+  The field target now compares `fe_inv` and `fe_inv_var` for one canonical
+  residue and the same residue represented at valid magnitude 32. The
+  `maximum-magnitude-inverse` seed passes clean master on default and
+  forced-int64 ASan/UBSan builds, and all seven field seeds replay cleanly on
+  each backend. For mutation proof, a temporary `VERIFY`-only edit flipped
+  `r->n[0]` after `secp256k1_fe_impl_inv` only when `x->magnitude == 32`, in
+  both `src/field_10x26_impl.h` and `src/field_5x52_impl.h`. The focused seed
+  aborted with status 134 on both builds; disabling only this new call left
+  all six pre-existing field seeds green on both. The mutations were restored
+  before the clean replay. This is informational internal-contract hardening,
+  not a clean-master production finding; the master-relative severity ledger
+  is unchanged. Existing field coverage exercised canonical and magnitude-8
+  inversion, while maximum-magnitude tests covered normalization and zero
+  predicates, so neither provided this representation-invariance check.
   The Schnorr target also checks that custom nonce callbacks receive the
   normalized secret key and matching x-only public key. A mutation that passes
   the secret-key buffer in place of the x-only key still produces signatures

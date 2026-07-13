@@ -126,6 +126,43 @@ static void secp256k1_fuzz_fe_check_raised_zero(const unsigned char *input, size
     secp256k1_fuzz_fe_check_normalize_paths(&value, &expected);
 }
 
+static void secp256k1_fuzz_fe_check_max_magnitude_inverse(const unsigned char *input, size_t size) {
+    unsigned char value32[32];
+    secp256k1_fe canonical;
+    secp256k1_fe raised;
+    secp256k1_fe zero31;
+    secp256k1_fe expected;
+    secp256k1_fe actual;
+    secp256k1_fe expected_var;
+    secp256k1_fe actual_var;
+
+    /* fe_inv and fe_inv_var accept every valid magnitude. Compare the same
+     * residue in canonical and maximum-valid representations so a backend
+     * cannot accidentally depend on the representation's carry budget. */
+    secp256k1_fuzz_derive(value32, sizeof(value32), input, size, 193);
+    secp256k1_fe_set_b32_mod(&canonical, value32);
+    secp256k1_fe_normalize_var(&canonical);
+
+    secp256k1_fe_set_int(&zero31, 0);
+    secp256k1_fe_negate(&zero31, &zero31, 0);
+    secp256k1_fe_mul_int_unchecked(&zero31, 31);
+    raised = canonical;
+    secp256k1_fe_add(&raised, &zero31);
+#ifdef VERIFY
+    FUZZ_CHECK(raised.magnitude == 32);
+    FUZZ_CHECK(raised.normalized == 0);
+#endif
+
+    secp256k1_fe_inv(&expected, &canonical);
+    secp256k1_fe_inv(&actual, &raised);
+    FUZZ_CHECK(secp256k1_fuzz_fe_identical(&actual, &expected));
+
+    secp256k1_fe_inv_var(&expected_var, &canonical);
+    secp256k1_fe_inv_var(&actual_var, &raised);
+    FUZZ_CHECK(secp256k1_fuzz_fe_identical(&actual_var, &expected_var));
+    FUZZ_CHECK(secp256k1_fuzz_fe_identical(&expected, &expected_var));
+}
+
 static void secp256k1_fuzz_fe_check_add_int_boundary(void) {
     secp256k1_fe actual;
     secp256k1_fe expected;
@@ -605,6 +642,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_fe_check_bounds_sum(left_magnitude, right_magnitude);
     }
     secp256k1_fuzz_fe_check_raised_zero(input, size);
+    secp256k1_fuzz_fe_check_max_magnitude_inverse(input, size);
     secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_comparisons(input, size);
