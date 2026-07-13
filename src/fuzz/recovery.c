@@ -502,6 +502,28 @@ static void secp256k1_fuzz_check_recovery_recid_overflow_boundary(const secp256k
         FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
     }
 }
+
+static void secp256k1_fuzz_check_recovery_r_plus_order_equation(const secp256k1_context *ctx) {
+    static const unsigned char msg32[32] = {
+        'T', 'h', 'i', 's', ' ', 'i', 's', ' ',
+        'a', ' ', 'v', 'e', 'r', 'y', ' ', 's',
+        'e', 'c', 'r', 'e', 't', ' ', 'm', 'e',
+        's', 's', 'a', 'g', 'e', '.', '.', '.'
+    };
+    unsigned char compact[64] = { 0 };
+    secp256k1_ecdsa_recoverable_signature sig;
+    secp256k1_pubkey recovered_pubkey;
+    int recid;
+
+    /* (r,s) = (4,4) is a deterministic vector whose recid 2/3 paths use r+n. */
+    compact[31] = 4;
+    compact[63] = 4;
+    for (recid = 2; recid < 4; recid++) {
+        FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &sig, compact, recid) == 1);
+        FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &sig, msg32) == 1);
+        secp256k1_fuzz_check_recovery_equation(ctx, &sig, msg32, &recovered_pubkey);
+    }
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -569,6 +591,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_recovery_illegal_failure_cleanup(ctx, &reparsed_sig, compact, msg32, seckey);
     secp256k1_fuzz_check_recoverable_high_s(ctx, &reparsed_sig, msg32, &pubkey);
     secp256k1_fuzz_check_recovery_recid_overflow_boundary(ctx, msg32);
+    secp256k1_fuzz_check_recovery_r_plus_order_equation(ctx);
 
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_order);
