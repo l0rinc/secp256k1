@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -337,6 +337,26 @@ production mutation was restored before the clean replays. This is oracle
 hardening, not a clean-master production finding, and does not change any
 severity rating.
 
+Focused arbitrary MuSig partial-signature verification replay (2026-07-13):
+the complete MuSig corpus contains 33 tracked inputs, including
+`arbitrary-partial-signature-equation`. For every signer/session combination,
+the target parses zero, one, order-minus-one, and an input-derived reduced
+scalar as externally supplied partial signatures. It compares
+`secp256k1_musig_partial_sig_verify` with the independent public point equation
+and therefore checks both valid and invalid parseable signatures without
+delegating the expected result to the production verifier. Default and
+forced-int64 ASan/UBSan isolated managers used
+`-workers=2 -jobs=2 -max_total_time=15`; each job executed the 33 tracked
+seeds plus the empty input and exited 0, reaching 3,464 and 5,606 edges.
+Matching fixed-input MSan and MSan-int64 replays also completed all 33 tracked
+seeds plus the empty input without diagnostics. For mutation proof,
+`secp256k1_musig_partial_sig_verify` was temporarily changed to return success
+after loading a zero scalar. The focused seed aborted with exit 134 on both
+ASan/UBSan backends; disabling only the new arbitrary-signature comparison
+made the identical mutation pass with exit 0. All temporary changes were
+restored before the clean replay. This is informational oracle hardening, not
+a current-master production finding, and does not change any severity rating.
+
 Focused MuSig final-signature equation replay (2026-07-13): the complete MuSig
 corpus contained 31 tracked inputs totaling 1,424 bytes, including
 `final-signature-equation` and `tweaked-signing-parity`. The independent oracle
@@ -505,6 +525,17 @@ documented in its commit message.
   nonce-term addition makes the seed abort in the new oracle on both backends;
   the mutation was restored before replay. This is oracle hardening, not a
   current-master production finding, and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_musig` now evaluates arbitrary
+  parseable partial-signature scalars, including zero and order boundaries,
+  with an independent public point equation and compares that result with
+  `secp256k1_musig_partial_sig_verify`. The previous target checked the
+  independent equation only for signer-produced partial signatures, while
+  parseable arbitrary values were merely round-tripped. The focused seed
+  passes on clean master across default, forced-int64, MSan, and MSan-int64.
+  A temporary zero-scalar acceptance mutation in the production verifier
+  aborts the new comparison on both ASan/UBSan backends; disabling only the new
+  comparison leaves the same mutation green. This closes a verifier-oracle
+  gap, not a current-master production vulnerability.
 - **Informational oracle hardening:** `fuzz_musig` independently reconstructs
   the even-Y final BIP340 nonce and aggregate key, recomputes the challenge,
   and checks `s*G = R + e*P` through public point operations instead of relying
