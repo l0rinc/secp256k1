@@ -975,6 +975,83 @@ static void secp256k1_fuzz_scalar32_reduce(unsigned char *out32, const unsigned 
     FUZZ_CHECK(borrow == 0);
 }
 
+/* Add two canonical scalars with byte arithmetic, independent of the scalar
+ * implementation. The 33-byte accumulator is enough for one addition; the
+ * loop also makes the reduction rule explicit at the order boundary. */
+static void secp256k1_fuzz_scalar32_add_mod_order(unsigned char *out32, const unsigned char *a32, const unsigned char *b32) {
+    unsigned char sum[33] = { 0 };
+    unsigned int carry = 0;
+    int i;
+
+    for (i = 31; i >= 0; i--) {
+        unsigned int value = (unsigned int)a32[i] + b32[i] + carry;
+        sum[i + 1] = (unsigned char)value;
+        carry = value >> 8;
+    }
+    sum[0] = (unsigned char)carry;
+
+    while (sum[0] != 0 || memcmp(sum + 1, secp256k1_fuzz_scalar_order, 32) >= 0) {
+        unsigned int borrow = 0;
+
+        for (i = 31; i >= 0; i--) {
+            unsigned int value = sum[i + 1];
+            unsigned int subtrahend = (unsigned int)secp256k1_fuzz_scalar_order[i] + borrow;
+            sum[i + 1] = (unsigned char)(value - subtrahend);
+            borrow = value < subtrahend;
+        }
+        FUZZ_CHECK(sum[0] >= borrow);
+        sum[0] = (unsigned char)(sum[0] - borrow);
+    }
+    FUZZ_CHECK(sum[0] == 0);
+    memcpy(out32, sum + 1, 32);
+}
+
+/* Check a three-term public-key sum against independently computed scalar
+ * addition. The existing two-term check exercises the public tweak wrapper;
+ * this relation reaches the multi-input combine loop and a different
+ * cancellation boundary while deriving the expected point through generator
+ * multiplication. */
+static void secp256k1_fuzz_check_pubkey_combine_three(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey, const secp256k1_pubkey *other_pubkey, const unsigned char *other_seckey) {
+    const secp256k1_pubkey *inputs[3];
+    const secp256k1_pubkey *reordered_inputs[3];
+    secp256k1_pubkey generator;
+    secp256k1_pubkey combined;
+    secp256k1_pubkey reordered;
+    secp256k1_pubkey expected;
+    unsigned char pair_sum[32];
+    unsigned char expected_seckey[32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    int expected_ret;
+    int combine_ret;
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+    inputs[0] = pubkey;
+    inputs[1] = other_pubkey;
+    inputs[2] = &generator;
+    combine_ret = secp256k1_ec_pubkey_combine(ctx, &combined, inputs, 3);
+
+    secp256k1_fuzz_scalar32_add_mod_order(pair_sum, seckey, other_seckey);
+    secp256k1_fuzz_scalar32_add_mod_order(expected_seckey, pair_sum, secp256k1_fuzz_scalar_one);
+    expected_ret = memcmp(expected_seckey, secp256k1_fuzz_scalar_zero, 32) != 0;
+    FUZZ_CHECK(combine_ret == expected_ret);
+    if (expected_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected, expected_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &expected) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+    }
+
+    reordered_inputs[0] = &generator;
+    reordered_inputs[1] = other_pubkey;
+    reordered_inputs[2] = pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &reordered, reordered_inputs, 3) == combine_ret);
+    if (combine_ret) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &reordered) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&reordered, zero_pubkey, sizeof(reordered)) == 0);
+    }
+}
+
 /* Verify an arbitrary low-S ECDSA signature without using the internal
  * verifier's inverse-and-multiscalar path. For a candidate R reconstructed
  * from r (or r+n), the ECDSA equation is sR = zG + rQ. */
@@ -1751,6 +1828,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_valid_seckey32(ctx, combine_seckey, input, size, 19);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &combine_pubkey, combine_seckey) == 1);
     secp256k1_fuzz_check_pubkey_combine(ctx, &pubkey, &pubkey_neg_from_seckey, seckey, &combine_pubkey, combine_seckey);
+    secp256k1_fuzz_check_pubkey_combine_three(ctx, &pubkey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);

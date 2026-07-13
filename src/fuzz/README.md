@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, two- and three-term public-key combine, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -616,6 +616,20 @@ documented in its commit message.
   Default and forced-int64 isolated `-workers=2 -jobs=2 -max_total_time=15`
   campaigns exited 0 without diagnostics or artifacts. This is informational
   serialization-oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_api_roundtrip` now independently
+  checks a three-term `secp256k1_ec_pubkey_combine`. It adds the two
+  fuzz-derived canonical secret scalars and one generator scalar with byte
+  arithmetic modulo the group order, compares the returned point and zero-sum
+  failure state with `secp256k1_ec_pubkey_create`, and repeats the combine in a
+  different order. The focused `three-term-pubkey-combine` seed and all 26 API
+  seeds pass on default and forced-int64 ASan/UBSan builds. A temporary
+  production mutation that added `G` after a three-input combine whose final
+  input was `G` made the focused seed abort with exit 134 on both backends;
+  disabling only the new call made both controls exit 0. Default and
+  forced-int64 two-worker 15-second campaigns also exited 0 without
+  diagnostics or artifacts. The mutation was removed before clean replay.
+  This is an informational oracle gap, not a clean-master production finding,
   and does not change any severity rating.
 - **Low to Medium:** secret-derived stack/helper temporaries left live after use
   (`a3e30b3`, `a6f0b14`, `f94fec5`, `a884a2d`). These are code-path-proven
