@@ -236,6 +236,12 @@ documented in its commit message.
   (`ee7f44c`) likewise require an infeasible hash relation on normal master.
   Their reduced-order/exhaustive mutations prove the contracts without claiming
   a practical remote vulnerability.
+- **Test-only / informational:** the MuSig exhaustive regression now uses
+  `EXHAUSTIVE_TEST_ORDER` identical keys, so the weighted aggregate is infinity
+  for every supported reduced model, not only order 13. It also uses the exact
+  zero-nonce counters 5, 2, and 70 for orders 7, 13, and 199 respectively.
+  This corrects an order-13-only test assumption; it does not change the
+  master-relative severity or production behavior of the existing hardening.
 - **Informational oracle gaps:** EllSwift decode/XDH postconditions (`792f43f`),
   empty public-key aggregation (`c5c0afe`), ECDSA verification's invalid-
   opaque-key API boundary (`ef25d27`), and the public-key serializer's wrong
