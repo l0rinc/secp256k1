@@ -14,6 +14,13 @@ static size_t secp256k1_fuzz_ellswift_sha256_compression_calls = 0;
 static int secp256k1_fuzz_ellswift_force_zero_u = 0;
 static int secp256k1_fuzz_ellswift_zero_u_forced = 0;
 
+static const unsigned char secp256k1_fuzz_ellswift_field_p_plus_one[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
+
 typedef struct {
     const void *self;
     unsigned char mask32[32];
@@ -209,6 +216,42 @@ static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_c
     FUZZ_CHECK(compressed_len == sizeof(compressed));
     FUZZ_CHECK(memcmp(compressed, expected_compressed, sizeof(compressed)) == 0);
     secp256k1_fuzz_check_ellswift_inverse_vector(ctx, ell64, &pubkey);
+}
+
+static void secp256k1_fuzz_check_ellswift_modulo_alias(const secp256k1_context *ctx) {
+    unsigned char canonical[64] = { 0 };
+    unsigned char alias_u[64];
+    unsigned char alias_t[64];
+    unsigned char alias_both[64];
+    unsigned char expected_x[32];
+    unsigned char actual_x[32];
+    const unsigned char *aliases[3];
+    secp256k1_pubkey canonical_pubkey;
+    secp256k1_pubkey alias_pubkey;
+    size_t i;
+
+    /* EllSwift field inputs are reduced modulo p, so p+1 is an alias for 1. */
+    canonical[31] = 1;
+    canonical[63] = 1;
+    memcpy(alias_u, canonical, sizeof(alias_u));
+    memcpy(alias_t, canonical, sizeof(alias_t));
+    memcpy(alias_both, canonical, sizeof(alias_both));
+    memcpy(alias_u, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    memcpy(alias_t + 32, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    memcpy(alias_both, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    memcpy(alias_both + 32, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    aliases[0] = alias_u;
+    aliases[1] = alias_t;
+    aliases[2] = alias_both;
+
+    FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &canonical_pubkey, canonical) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, expected_x, canonical, canonical, secp256k1_fuzz_scalar_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    for (i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++) {
+        FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &alias_pubkey, aliases[i]) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &canonical_pubkey, &alias_pubkey) == 0);
+        FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, actual_x, aliases[i], aliases[i], secp256k1_fuzz_scalar_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+        FUZZ_CHECK(memcmp(actual_x, expected_x, sizeof(actual_x)) == 0);
+    }
 }
 
 static void secp256k1_fuzz_check_ellswift_zero_t_parity(const secp256k1_context *ctx) {
@@ -470,6 +513,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     hash_data.calls = 0;
 
     secp256k1_fuzz_check_ellswift_bip324_decode_vector(ctx);
+    secp256k1_fuzz_check_ellswift_modulo_alias(ctx);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b32) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey_a);
