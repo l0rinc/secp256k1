@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, zero-predicate false-positive barriers, and byte-level maximum-residue references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -500,6 +500,17 @@ documented in its commit message.
   (`5cfe7f7`). This is a lifetime/cleanup finding rather than a demonstrated
   disclosure; severity must not be raised to critical without a memory-read
   primitive.
+- **Medium, latent 10x26 field correctness:** clean master also lets both
+  `secp256k1_fe_normalizes_to_zero` variants lose two 32-bit carry contributions on a valid
+  magnitude-32 representation. The deterministic 10x26 state with limbs
+  `n[0]=0xffff0f91`, `n[1]=0xfffff040`, `n[9]=0x0fc00000` and all other limbs
+  zero represents `63*p + 2^58 + 2^32`, but the old uint32 carry chain reports
+  it as zero. This can poison internal equality, inversion, or exceptional-state
+  decisions if the representation is reached. No public API path naturally
+  producing this exact state has been demonstrated, so the master-branch rating
+  is Medium/latent, with potentially High arithmetic impact if the documented
+  maximum-magnitude state becomes reachable; it is not claimed as a remote key
+  or signature vulnerability.
 - **Informational oracle hardening:** `fuzz_hash` compares arbitrary HMAC
   outputs against a raw-SHA256 reference that independently performs key
   shortening, ipad/opad construction, message sequencing, and finalization.
@@ -918,6 +929,17 @@ documented in its commit message.
   informational oracle hardening, not a new clean-master finding; the existing
   10x26 magnitude-32 normalization issue remains rated Medium/latent as
   recorded above.
+  The same target now pins a valid 10x26 magnitude-32 value whose raw residue
+  is `2^58 + 2^32`, independently checks its canonical bytes, and requires
+  both zero predicates to return false. The clean-master uint32 implementation
+  returns true for both predicates after two carry wraps; reverting only the
+  new zero-test carry patch makes `fe_normalize_max_magnitude` abort at the
+  focused assertion with exit 134. The fixed forced-int64 unit and
+  `zero-predicate-false-positive` corpus seed pass. This is a current-master
+  production correctness finding with Medium/latent severity, distinct from
+  the already-fixed normalize overflow: the earlier fork patch changed only
+  normalize, normalize_var, and normalize_weak, so it did not remove this
+  false-zero behavior.
   The field target now also exercises `fe_mul`, `fe_sqr`, `fe_inv`, and
   `fe_sqrt` with valid magnitude-8 representations of one and two (`1 + 7p`
   and `2 + 7p`). These operations accept nonnormalized inputs by contract,
@@ -1345,7 +1367,13 @@ cherry-picked with new proof, and several heads are optimization stacks.
   deterministic boundary proof in `7ef0714` and the fuzzer oracle in
   `139f6ab`. The commit message records why its impact can become High if
   valid maximum-magnitude internal state is reached; the current public
-  trigger remains unproven.
+  trigger remains unproven. The fork patch did not touch
+  `normalizes_to_zero{,_var}`: clean master separately accepted a valid
+  magnitude-32 nonzero state as zero after two uint32 carry wraps. That is a
+  distinct **Medium/latent** finding, now covered by the
+  `zero-predicate-false-positive` seed and the current branch's uint64 carry
+  repair; it must not be treated as fixed or severity-reduced by PR #10's
+  normalize-only changes.
 - PR #11 (`d1dca5c`) repeats the checked `pubkey_load` return paths already
   covered by `5ad8052`, `f9f1a6e`, and `7767442`.
 - PR #12 (`944932c`, force-updated from `e153e26` on 2026-07-13) is exactly the
