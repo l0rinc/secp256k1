@@ -107,6 +107,24 @@ nonzero worker result was observed across these batches. These runs add
 negative evidence for the current oracles and do not change any
 master-relative severity rating.
 
+Cross-backend campaign (2026-07-13): a separate ASan/UBSan libFuzzer build
+used `-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`, selecting the 10x26
+field implementation on this platform. The original corpora were replayed
+with `-workers=4 -jobs=4 -max_total_time=300` for each target. The arithmetic
+batch ran 191,344 `fuzz_field`, 11,284 `fuzz_scalar`, 15,817 `fuzz_group`, and
+1,445 `fuzz_ecmult_multi` inputs, reaching high-water coverage of 2,628,
+3,482, 4,298, and 4,470 edges. The public/module batch ran 6,052
+`fuzz_api_roundtrip`, 627 `fuzz_musig`, 10,847 `fuzz_recovery`, and 3,751
+`fuzz_schnorrsig` inputs, reaching 5,290, 5,556, 4,760, and 4,840 edges.
+All eight campaign managers returned exit code 0, and all 32 worker logs
+emitted final statistics. No
+ASan/UBSan diagnostic, assertion failure, timeout, OOM, crash artifact, or
+nonzero worker result was observed. The different coverage is useful
+cross-implementation evidence, but this clean run does not replace a
+master-relative mutation proof or change any severity rating. The matching
+forced-int64 `tests` executable also completed its full 16-iteration
+deterministic suite with exit code 0 in 407.898 seconds.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
