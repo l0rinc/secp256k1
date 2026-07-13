@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, two- and three-term public-key combine, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, two-, three-, and four-term public-key combine with intermediate-infinity transitions, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -631,6 +631,21 @@ documented in its commit message.
   diagnostics or artifacts. The mutation was removed before clean replay.
   This is an informational oracle gap, not a clean-master production finding,
   and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_api_roundtrip` now checks that
+  `secp256k1_ec_pubkey_combine` resumes after an intermediate cancellation. It
+  verifies `P + (-P) + Q = Q`, a reordered cancellation path, and two
+  four-term zero-sum paths whose output must be rejected and zeroed. The
+  focused `intermediate-infinity-pubkey-combine` seed and all 27 API inputs
+  pass on default and forced-int64 ASan/UBSan builds. A temporary production
+  mutation that skipped the third term only for `n == 4`, `i == 2`, after the
+  accumulator reached infinity made the focused seed abort with exit 134 on
+  both backends. Disabling only this new helper let all 26 pre-existing API
+  inputs pass on both mutated backends, proving the prior three-term oracle did
+  not cover the four-term transition. Default and forced-int64 two-worker,
+  two-job 15-second campaigns exited 0 without sanitizer diagnostics or
+  artifacts. The mutation and bypass were restored before clean replay. This
+  is informational oracle hardening, not a clean-master production finding,
+  and does not change any severity rating.
 - **Low to Medium:** secret-derived stack/helper temporaries left live after use
   (`a3e30b3`, `a6f0b14`, `f94fec5`, `a884a2d`). These are code-path-proven
   lifetime reductions for scalar, field, Jacobian, EllSwift, and tweak state;
@@ -1042,7 +1057,7 @@ full harness continue.
 
 The l0rinc remote and all pull-request heads were refreshed against the same
 `origin/master` baseline (`ebf594320dc838b9de1abb54d5ba98cef84f4297`) on
-2026-07-12. The exact head mapping below is a replay ledger, not a claim that
+2026-07-13. The exact head mapping below is a replay ledger, not a claim that
 the hashes must be ancestors of this branch: equivalent fixes were often
 cherry-picked with new proof, and several heads are optimization stacks.
 

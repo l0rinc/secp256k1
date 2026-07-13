@@ -1052,6 +1052,49 @@ static void secp256k1_fuzz_check_pubkey_combine_three(const secp256k1_context *c
     }
 }
 
+/* Check that a multi-input combine can resume after its accumulator reaches
+ * infinity. The final zero-sum case alone is insufficient: it can pass even
+ * if the loop mishandles a later point after an intermediate cancellation. */
+static void secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const secp256k1_pubkey *pubkey_neg, const secp256k1_pubkey *other_pubkey, const secp256k1_pubkey *other_pubkey_neg) {
+    const secp256k1_pubkey *resume_inputs[3];
+    const secp256k1_pubkey *resume_reordered_inputs[3];
+    const secp256k1_pubkey *zero_inputs[4];
+    const secp256k1_pubkey *zero_reordered_inputs[4];
+    secp256k1_pubkey resumed;
+    secp256k1_pubkey resumed_reordered;
+    secp256k1_pubkey zero_sum;
+    secp256k1_pubkey zero_sum_reordered;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+
+    resume_inputs[0] = pubkey;
+    resume_inputs[1] = pubkey_neg;
+    resume_inputs[2] = other_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &resumed, resume_inputs, 3) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &resumed, other_pubkey) == 0);
+
+    resume_reordered_inputs[0] = other_pubkey;
+    resume_reordered_inputs[1] = pubkey;
+    resume_reordered_inputs[2] = pubkey_neg;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &resumed_reordered, resume_reordered_inputs, 3) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &resumed_reordered, other_pubkey) == 0);
+
+    zero_inputs[0] = pubkey;
+    zero_inputs[1] = pubkey_neg;
+    zero_inputs[2] = other_pubkey;
+    zero_inputs[3] = other_pubkey_neg;
+    memset(&zero_sum, 0xA5, sizeof(zero_sum));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &zero_sum, zero_inputs, 4) == 0);
+    FUZZ_CHECK(memcmp(&zero_sum, zero_pubkey, sizeof(zero_sum)) == 0);
+
+    zero_reordered_inputs[0] = other_pubkey;
+    zero_reordered_inputs[1] = other_pubkey_neg;
+    zero_reordered_inputs[2] = pubkey;
+    zero_reordered_inputs[3] = pubkey_neg;
+    memset(&zero_sum_reordered, 0x5A, sizeof(zero_sum_reordered));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &zero_sum_reordered, zero_reordered_inputs, 4) == 0);
+    FUZZ_CHECK(memcmp(&zero_sum_reordered, zero_pubkey, sizeof(zero_sum_reordered)) == 0);
+}
+
 /* Verify an arbitrary low-S ECDSA signature without using the internal
  * verifier's inverse-and-multiscalar path. For a candidate R reconstructed
  * from r (or r+n), the ECDSA equation is sR = zG + rQ. */
@@ -1744,6 +1787,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_ecdsa_nonce_data nonce_data;
     secp256k1_pubkey pubkey;
     secp256k1_pubkey combine_pubkey;
+    secp256k1_pubkey combine_pubkey_neg;
     secp256k1_pubkey pubkey_neg;
     secp256k1_pubkey pubkey_neg_from_seckey;
     secp256k1_pubkey sort_pubkeys[4];
@@ -1827,8 +1871,11 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_valid_seckey32(ctx, combine_seckey, input, size, 19);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &combine_pubkey, combine_seckey) == 1);
+    combine_pubkey_neg = combine_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &combine_pubkey_neg) == 1);
     secp256k1_fuzz_check_pubkey_combine(ctx, &pubkey, &pubkey_neg_from_seckey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_three(ctx, &pubkey, seckey, &combine_pubkey, combine_seckey);
+    secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(ctx, &pubkey, &pubkey_neg_from_seckey, &combine_pubkey, &combine_pubkey_neg);
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
