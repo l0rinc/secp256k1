@@ -73,6 +73,20 @@ build-fuzz-libfuzzer/bin/fuzz_api_roundtrip \
   fuzz-work/api_roundtrip
 ```
 
+Extended core oracle campaign (2026-07-13): from the clean-master baseline
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, the ASan/UBSan libFuzzer build
+replayed the repository corpora for `fuzz_api_roundtrip`, `fuzz_ecmult_multi`,
+`fuzz_field`, and `fuzz_musig` with
+`-workers=4 -jobs=4 -max_total_time=300`. Each target therefore ran four
+independent workers for
+roughly five minutes; the workers executed 10,341, 2,551, 317,703, and 1,122
+inputs respectively. High-water coverage was 3,123, 2,624, 1,342, and 3,415
+edges in the same order. Every worker emitted its normal `Done` and final
+statistics record. No ASan/UBSan diagnostic, assertion failure, timeout, OOM,
+crash artifact, or nonzero worker result was observed. This is additional
+negative evidence for the current oracles, not a claim that the tested branch
+or a later fork patch proves clean-master behavior safe.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
