@@ -7,6 +7,7 @@
 #include "../secp256k1.c"
 #include "fuzz.h"
 #include "../hash_impl.h"
+#include "sha256_reference.h"
 
 #ifdef ENABLE_MODULE_ELLSWIFT
 static size_t secp256k1_fuzz_ellswift_sha256_compression_calls = 0;
@@ -82,29 +83,23 @@ static int secp256k1_fuzz_ellswift_hash_fail(unsigned char *output, const unsign
 
 static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
     static const unsigned char bip324_tag[] = "bip324_ellswift_xonly_ecdh";
-    secp256k1_hash_ctx hash_ctx;
-    secp256k1_sha256 sha;
     unsigned char shared_x32[32];
     unsigned char taghash[32];
     unsigned char expected[32];
     unsigned char output[32];
     unsigned char prefix64[64];
+    unsigned char transcript[224];
 
     /* Obtain only X through the custom callback, then independently compute
-     * the BIP324 transcript with the generic SHA256 interface. */
+     * the BIP324 transcript with the standalone SHA256 model. */
     FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
-    secp256k1_hash_ctx_init(&hash_ctx);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, bip324_tag, sizeof(bip324_tag) - 1);
-    secp256k1_sha256_finalize(&hash_ctx, &sha, taghash);
-    secp256k1_sha256_initialize(&sha);
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, taghash, sizeof(taghash));
-    secp256k1_sha256_write(&hash_ctx, &sha, ell_a64, 64);
-    secp256k1_sha256_write(&hash_ctx, &sha, ell_b64, 64);
-    secp256k1_sha256_write(&hash_ctx, &sha, shared_x32, sizeof(shared_x32));
-    secp256k1_sha256_finalize(&hash_ctx, &sha, expected);
-    secp256k1_sha256_clear(&sha);
+    secp256k1_fuzz_sha256_standalone(taghash, bip324_tag, sizeof(bip324_tag) - 1);
+    memcpy(transcript, taghash, sizeof(taghash));
+    memcpy(transcript + sizeof(taghash), taghash, sizeof(taghash));
+    memcpy(transcript + 2 * sizeof(taghash), ell_a64, 64);
+    memcpy(transcript + 2 * sizeof(taghash) + 64, ell_b64, 64);
+    memcpy(transcript + 2 * sizeof(taghash) + 128, shared_x32, sizeof(shared_x32));
+    secp256k1_fuzz_sha256_standalone(expected, transcript, sizeof(transcript));
 
     FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
     FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
@@ -113,6 +108,8 @@ static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_
     memcpy(prefix64 + sizeof(taghash), taghash, sizeof(taghash));
     FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_prefix, prefix64) == 1);
     FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
+    memset(taghash, 0, sizeof(taghash));
+    memset(transcript, 0, sizeof(transcript));
 }
 
 static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_context *ctx, const unsigned char *ell64, const secp256k1_pubkey *pubkey) {
