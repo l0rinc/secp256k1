@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
@@ -188,6 +188,27 @@ forced-int64, and MSan; disabling only the new callback-point helper made the
 identical mutation pass with exit 0. All temporary changes were restored.
 This is informational oracle hardening, not a current-master production
 finding, and does not change any severity rating.
+
+Focused EllSwift invalid-secret callback replay (2026-07-13): the EllSwift
+corpus contains 10 tracked inputs totaling 536 bytes, including
+`invalid-secret-callback-x`. Clean master deliberately substitutes scalar one
+for zero, `n`, and overflowing `n+1` secrets before invoking the custom hash
+callback. The new oracle records the callback X coordinate and compares it
+with the compressed X coordinate of the selected remote EllSwift encoding for
+both `party` values. The prior target checked only return values, output
+cleanup, and callback-derived output, so a wrong non-infinity fallback could
+pass without proving which point was hashed. Clean focused replay passed on
+default, forced-int64, and MSan builds; the complete fixed MSan replay passed
+all 10 corpus inputs with no diagnostic. Isolated default and forced-int64
+`-workers=2 -jobs=2 -max_total_time=15` campaigns exited 0 without artifacts;
+their jobs executed 97/98 and 58/59 inputs and reached 2,508 and 4,572 edges.
+For the independence proof, the production scalar-one fallback was
+temporarily replaced with scalar two only for invalid secrets. The focused
+seed aborted with exit 134 on all three builds; disabling only the new
+callback-X helper made the identical mutation pass with exit 0 on all three.
+All temporary changes were restored. This is informational oracle hardening,
+not a current-master production finding, and does not change any severity
+rating.
 
 MemorySanitizer corpus campaign (2026-07-13): a clang build with
 `-fsanitize=memory -fsanitize-memory-track-origins=2` was linked and runtime
@@ -544,6 +565,18 @@ documented in its commit message.
   mutation green on all three builds. This closes an ECDH postcondition gap,
   not a current-master production vulnerability, and does not change any
   severity rating.
+- **Informational oracle hardening:** `fuzz_ellswift` now checks the X
+  coordinate delivered to custom hash callbacks for invalid zero, `n`, and
+  overflowing `n+1` secrets under both `party` selections. Clean master
+  deliberately uses scalar one for these invalid secrets; the prior fuzzer
+  checked only return values and callback-derived output, so it did not prove
+  that the callback received the selected remote point. Replacing the
+  production scalar-one fallback with scalar two makes the focused seed abort
+  on default, forced-int64, and MSan, while disabling only the new helper
+  keeps the same mutation green on all three builds. The fixed corpus replay
+  and isolated two-worker campaigns pass cleanly. This closes an EllSwift
+  postcondition gap, not a current-master production vulnerability, and does
+  not change any severity rating.
 - **Informational oracle hardening:** `fuzz_musig` independently recomputes
   each signer's KeyAgg coefficient and BIP340 challenge, then checks the
   partial-signature point equation through public point operations with final
