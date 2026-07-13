@@ -155,6 +155,16 @@ worker result. This is useful negative evidence against sanitizer-visible
 undefined-state propagation, but it is not a proof that arbitrary future
 mutations are safe and does not change any master-relative severity.
 
+Cross-backend MemorySanitizer campaign (2026-07-13): the same instrumented
+corpus replay was rebuilt with `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`,
+selecting the 10x26 field backend. All 14 corpora replayed successfully with
+no MSan diagnostic, assertion, crash artifact, or nonzero target result. The
+arithmetic and state-heavy subset (`fuzz_api_roundtrip`, `fuzz_field`,
+`fuzz_group`, `fuzz_ecmult_const`, `fuzz_ecmult_multi`, and `fuzz_musig`) then
+ran with `-workers=2 -jobs=2 -max_total_time=20`, completing 134,983 generated
+executions with the same clean result. This cross-backend evidence does not
+replace the clean-master mutation proofs or change any severity rating.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
