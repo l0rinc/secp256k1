@@ -1476,6 +1476,147 @@ static void secp256k1_fuzz_check_signature_parse_der_negative(const secp256k1_co
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
 }
 
+static int secp256k1_fuzz_der_read_tlv(const unsigned char *data, size_t data_len, size_t *pos, unsigned char tag, size_t value_len, unsigned int length_bytes, const unsigned char **value) {
+    if (length_bytes > 2 || *pos > data_len || data_len - *pos < 2 + length_bytes || data[*pos] != tag) {
+        return 0;
+    }
+    (*pos)++;
+    if (length_bytes == 0) {
+        if (value_len > 0x7F || data[*pos] != (unsigned char)value_len) {
+            return 0;
+        }
+        (*pos)++;
+    } else if (length_bytes == 1) {
+        if (value_len > 0xFF || data[*pos] != 0x81 || data[*pos + 1] != (unsigned char)value_len) {
+            return 0;
+        }
+        *pos += 2;
+    } else {
+        if (value_len > 0xFFFF || data[*pos] != 0x82
+            || data[*pos + 1] != (unsigned char)(value_len >> 8)
+            || data[*pos + 2] != (unsigned char)value_len) {
+            return 0;
+        }
+        *pos += 3;
+    }
+    if (value_len > data_len - *pos) {
+        return 0;
+    }
+    *value = data + *pos;
+    *pos += value_len;
+    return 1;
+}
+
+static int secp256k1_fuzz_check_privkey_der_structure(const secp256k1_context *ctx, const unsigned char *privkey, size_t privkeylen, const unsigned char *seckey32, int compressed) {
+    static const unsigned char curve_oid[7] = { 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x01, 0x01 };
+    static const unsigned char field_prime[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
+    };
+    static const unsigned char generator_compressed[33] = {
+        0x02, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07, 0x02,
+        0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2,
+        0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char generator_uncompressed[65] = {
+        0x04, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07, 0x02,
+        0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2,
+        0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98, 0x48, 0x3A, 0xDA,
+        0x77, 0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4, 0xFB, 0xFC,
+        0x0E, 0x11, 0x08, 0xA8, 0xFD, 0x17, 0xB4, 0x48, 0xA6,
+        0x85, 0x54, 0x19, 0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10,
+        0xD4, 0xB8
+    };
+    const unsigned char *outer;
+    const unsigned char *value;
+    const unsigned char *parameters;
+    const unsigned char *parameter_sequence;
+    const unsigned char *algorithm;
+    const unsigned char *curve;
+    const unsigned char *base;
+    const unsigned char *public_key_container;
+    const unsigned char *public_key_bits;
+    unsigned char expected_pubkey[65];
+    secp256k1_pubkey pubkey;
+    size_t outer_len = compressed ? 0xD3 : 0x113;
+    size_t parameter_len = compressed ? 0x85 : 0xA5;
+    size_t parameter_sequence_len = compressed ? 0x82 : 0xA2;
+    size_t base_len = compressed ? sizeof(generator_compressed) : sizeof(generator_uncompressed);
+    size_t public_key_bits_len = compressed ? 0x22 : 0x42;
+    size_t public_key_container_len = compressed ? 0x24 : 0x44;
+    size_t expected_pubkey_len = base_len;
+    size_t outer_pos = 0;
+    size_t parameter_pos = 0;
+    size_t parameter_sequence_pos = 0;
+    size_t sequence_pos = 0;
+    size_t algorithm_pos = 0;
+    size_t curve_pos = 0;
+    size_t public_key_pos = 0;
+    size_t serialized_len = sizeof(expected_pubkey);
+
+    if (privkeylen != (compressed ? 214 : 279)) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(privkey, privkeylen, &outer_pos, 0x30, outer_len, compressed ? 1 : 2, &outer)
+        || outer_pos != privkeylen) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(outer, outer_len, &sequence_pos, 0x02, 1, 0, &value) || value[0] != 1) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(outer, outer_len, &sequence_pos, 0x04, 32, 0, &value)
+        || memcmp(value, seckey32, 32) != 0) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(outer, outer_len, &sequence_pos, 0xA0, parameter_len, 1, &parameters)
+        || !secp256k1_fuzz_der_read_tlv(parameters, parameter_len, &parameter_pos, 0x30, parameter_sequence_len, 1, &parameter_sequence)
+        || parameter_pos != parameter_len) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(parameter_sequence, parameter_sequence_len, &parameter_sequence_pos, 0x02, 1, 0, &value) || value[0] != 1) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(parameter_sequence, parameter_sequence_len, &parameter_sequence_pos, 0x30, 44, 0, &algorithm)
+        || !secp256k1_fuzz_der_read_tlv(algorithm, 44, &algorithm_pos, 0x06, sizeof(curve_oid), 0, &value)
+        || memcmp(value, curve_oid, sizeof(curve_oid)) != 0
+        || !secp256k1_fuzz_der_read_tlv(algorithm, 44, &algorithm_pos, 0x02, 33, 0, &value)
+        || value[0] != 0 || memcmp(value + 1, field_prime, sizeof(field_prime)) != 0
+        || algorithm_pos != 44) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(parameter_sequence, parameter_sequence_len, &parameter_sequence_pos, 0x30, 6, 0, &curve)
+        || !secp256k1_fuzz_der_read_tlv(curve, 6, &curve_pos, 0x04, 1, 0, &value) || value[0] != 0
+        || !secp256k1_fuzz_der_read_tlv(curve, 6, &curve_pos, 0x04, 1, 0, &value) || value[0] != 7
+        || curve_pos != 6) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(parameter_sequence, parameter_sequence_len, &parameter_sequence_pos, 0x04, base_len, 0, &base)
+        || memcmp(base, compressed ? generator_compressed : generator_uncompressed, base_len) != 0
+        || !secp256k1_fuzz_der_read_tlv(parameter_sequence, parameter_sequence_len, &parameter_sequence_pos, 0x02, 33, 0, &value)
+        || value[0] != 0 || memcmp(value + 1, secp256k1_fuzz_scalar_order, 32) != 0
+        || !secp256k1_fuzz_der_read_tlv(parameter_sequence, parameter_sequence_len, &parameter_sequence_pos, 0x02, 1, 0, &value)
+        || value[0] != 1 || parameter_sequence_pos != parameter_sequence_len) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_der_read_tlv(outer, outer_len, &sequence_pos, 0xA1, public_key_container_len, 0, &public_key_container)
+        || sequence_pos != outer_len
+        || !secp256k1_fuzz_der_read_tlv(public_key_container, public_key_container_len, &public_key_pos, 0x03, public_key_bits_len, 0, &public_key_bits)
+        || public_key_pos != public_key_container_len || public_key_bits[0] != 0) {
+        return 0;
+    }
+    if (!secp256k1_ec_pubkey_create(ctx, &pubkey, seckey32)
+        || !secp256k1_ec_pubkey_serialize(ctx, expected_pubkey, &serialized_len, &pubkey, compressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED)
+        || serialized_len != expected_pubkey_len
+        || memcmp(public_key_bits + 1, expected_pubkey, expected_pubkey_len) != 0) {
+        return 0;
+    }
+    return 1;
+}
+
 static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const unsigned char *seckey32, const unsigned char *input, size_t inputlen) {
     static const unsigned char overflow_len_der[] = { 0x30, 0x82, 0xff, 0xff };
     unsigned char exported[300];
@@ -1492,6 +1633,7 @@ static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const
         exported_len = sizeof(exported);
         FUZZ_CHECK(ec_privkey_export_der(ctx, exported, &exported_len, seckey32, compressed) == 1);
         FUZZ_CHECK(exported_len <= sizeof(exported));
+        FUZZ_CHECK(secp256k1_fuzz_check_privkey_der_structure(ctx, exported, exported_len, seckey32, compressed));
         memset(imported, 0xA5, sizeof(imported));
         FUZZ_CHECK(ec_privkey_import_der(ctx, imported, exported, exported_len) == 1);
         FUZZ_CHECK(memcmp(imported, seckey32, sizeof(imported)) == 0);
