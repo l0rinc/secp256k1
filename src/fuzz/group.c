@@ -55,6 +55,22 @@ static void secp256k1_fuzz_group_check_gej_not_equal(const secp256k1_gej *a) {
     FUZZ_CHECK(!secp256k1_gej_eq_var(a, &negated));
 }
 
+static void secp256k1_fuzz_group_check_gej_coordinates(const secp256k1_gej *a, const secp256k1_gej *b) {
+    secp256k1_gej normalized_a = *a;
+    secp256k1_gej normalized_b = *b;
+
+    FUZZ_CHECK(secp256k1_gej_is_infinity(&normalized_a) == secp256k1_gej_is_infinity(&normalized_b));
+    secp256k1_fe_normalize_var(&normalized_a.x);
+    secp256k1_fe_normalize_var(&normalized_a.y);
+    secp256k1_fe_normalize_var(&normalized_a.z);
+    secp256k1_fe_normalize_var(&normalized_b.x);
+    secp256k1_fe_normalize_var(&normalized_b.y);
+    secp256k1_fe_normalize_var(&normalized_b.z);
+    FUZZ_CHECK(secp256k1_fe_equal(&normalized_a.x, &normalized_b.x));
+    FUZZ_CHECK(secp256k1_fe_equal(&normalized_a.y, &normalized_b.y));
+    FUZZ_CHECK(secp256k1_fe_equal(&normalized_a.z, &normalized_b.z));
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -317,6 +333,37 @@ static void secp256k1_fuzz_group_check_rescale_alias(const secp256k1_gej *point)
     secp256k1_gej_rescale(&expected, &scale);
     secp256k1_gej_rescale(&actual, &actual.x);
     secp256k1_fuzz_group_check_gej_equal(&actual, &expected);
+}
+
+static void secp256k1_fuzz_group_check_rescale_nonnormalized_scale(const secp256k1_gej *point) {
+    secp256k1_fe zero_multiple;
+    secp256k1_fe raised_scale;
+    secp256k1_fe normalized_scale;
+    secp256k1_gej expected;
+    secp256k1_gej actual;
+
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(point));
+
+    /* A nonzero scale may be nonnormalized as long as it remains in the
+     * field-element precondition accepted by fe_sqr. */
+    secp256k1_fe_set_int(&zero_multiple, 0);
+    secp256k1_fe_negate(&zero_multiple, &zero_multiple, 0);
+    secp256k1_fe_mul_int_unchecked(&zero_multiple, 7);
+    secp256k1_fe_set_int(&raised_scale, 1);
+    secp256k1_fe_add(&raised_scale, &zero_multiple);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_scale.magnitude == 8);
+    FUZZ_CHECK(raised_scale.normalized == 0);
+#endif
+    normalized_scale = raised_scale;
+    secp256k1_fe_normalize_var(&normalized_scale);
+
+    expected = *point;
+    actual = *point;
+    secp256k1_gej_rescale(&expected, &normalized_scale);
+    secp256k1_gej_rescale(&actual, &raised_scale);
+    secp256k1_fuzz_group_check_gej_equal(&actual, &expected);
+    secp256k1_fuzz_group_check_gej_coordinates(&actual, &expected);
 }
 
 static void secp256k1_fuzz_group_check_affine_representations(const secp256k1_gej *point) {
@@ -644,6 +691,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_group_check_zinv_in_place(&finite, &finite_affine);
     }
     secp256k1_fuzz_group_check_rescale_alias(&finite);
+    secp256k1_fuzz_group_check_rescale_nonnormalized_scale(&finite);
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &finite, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&finite, &infinity, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &infinity, &infinity, &scale);
