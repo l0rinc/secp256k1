@@ -132,6 +132,20 @@ key combination and reported exit code 0 with `no problems found`. This is
 reduced-model and cross-backend evidence only; it does not change any
 master-relative severity rating.
 
+MemorySanitizer corpus campaign (2026-07-13): a clang build with
+`-fsanitize=memory -fsanitize-memory-track-origins=2` was linked and runtime
+checked with `fuzz_ecmult_multi` before replay. All 14 tracked corpora were
+then replayed once: 115 corpus files resulted in 129 total libFuzzer
+executions, with no MSan diagnostic, assertion, crash artifact, or nonzero
+target result. The unfiltered MSan `tests` binary separately stopped at the
+existing `rfc6979_hmac_sha256_tests` check in `src/tests.c:874`: the test
+deliberately reads an object after `secp256k1_memclear_explicit` has marked it
+undefined under `VERIFY`, so this is the intended use-after-clear detector,
+not a production uninitialized read. Re-running the other 111 registered
+tests with `-i=1` and the same fixed seed passed in 145.194 seconds. This
+limitation is recorded so future MSan runs do not misclassify the deliberate
+poison check as a new production finding.
+
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
 domain construction, sanitizer-only issue, or already-covered behavior.
