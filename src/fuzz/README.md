@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: pubkey, ECDSA compact, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: pubkey, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency
 - `fuzz_hash`: raw-SHA256 HMAC reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar rounded multiply-shift boundaries against an independent product
@@ -243,6 +243,26 @@ executed 315 and 312 inputs and reached 5,308 edges. Every job returned zero
 with no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact.
 The temporary mutated corpora and worker logs were kept outside the tracked
 corpus.
+
+Focused arbitrary-signature ECDSA verification replay (2026-07-13): the
+`api_roundtrip` corpus started with 24 tracked inputs totaling 931 bytes,
+including `ecdsa-arbitrary-verification-equation`. Default ASan/UBSan and
+forced-int64 replayed all inputs plus the empty input for 25 executions, with
+final coverage of 3,159 and 5,324 edges; matching MSan replays also completed
+without a diagnostic. Isolated default and forced-int64 ASan/UBSan managers
+then ran with `-workers=2 -jobs=2 -max_total_time=30`; both jobs on each
+backend returned zero without sanitizer diagnostics, assertion failures,
+timeouts, OOMs, crash artifacts, or nonzero worker results. The temporary
+mutated corpora and worker logs remained outside the repository.
+
+For mutation proof, `secp256k1_ecdsa_sig_verify` was temporarily changed to
+accept every nonzero scalar pair, and the public low-S gate was temporarily
+disabled. The pre-existing high-S-specific fuzzer check was bypassed only to
+isolate this oracle. The focused seed aborted in the independent equation on
+both backends; delegating the new reference back to `secp256k1_ecdsa_verify`
+under the same mutation made the seed pass. All temporary changes were
+restored before the clean replay. This is informational oracle hardening, not
+a current-master production finding, and does not change any severity rating.
 
 Focused independent-HMAC replay (2026-07-13): the hash corpus started with
 six tracked inputs totaling 288 bytes, including
@@ -697,6 +717,17 @@ documented in its commit message.
   green under the identical mutation. The production file was restored before
   replay. This proves an oracle gap, not a current-master production finding,
   and does not change any severity rating.
+  It also verifies arbitrary parsed scalar-valid signatures without delegating
+  to the internal verifier: it independently applies the public point equation
+  `sR = zG + rQ`, reconstructs both parities for `x = r` and the `x = r+n`
+  branch when it fits in 256 bits, and enforces the public low-S policy. Clean
+  master passes `ecdsa-arbitrary-verification-equation`. Temporarily accepting
+  every nonzero pair in `secp256k1_ecdsa_sig_verify` and disabling the public
+  low-S gate makes that seed abort; after the existing high-S-specific check is
+  bypassed, delegating the new reference to the production verifier makes the
+  same mutation pass. This closes the prior gap for externally supplied
+  signatures and is informational oracle hardening, not a current-master
+  production finding.
   It also forces a valid scalar nonce to produce an invalid ECDSA equation
   (`s == 0`) and verifies that signing rejects that attempt, requests the next
   nonce, and returns a verified signature. Clean master passes; forcing
