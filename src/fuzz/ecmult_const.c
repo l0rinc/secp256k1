@@ -95,6 +95,58 @@ static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, co
     FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 0) == 0);
 }
 
+static void secp256k1_fuzz_ecmult_const_check_nonnormalized_fraction(const secp256k1_ge *base, const secp256k1_gej *expected, const secp256k1_scalar *scalar) {
+    secp256k1_fe zero7;
+    secp256k1_fe base_x;
+    secp256k1_fe one;
+    secp256k1_fe numerator;
+    secp256k1_fe denominator;
+    secp256k1_fe result;
+    secp256k1_ge expected_affine;
+    unsigned int mask;
+
+    {
+        secp256k1_gej copy = *expected;
+        secp256k1_ge_set_gej_var(&expected_affine, &copy);
+    }
+    FUZZ_CHECK(!secp256k1_ge_is_infinity(&expected_affine));
+
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    base_x = base->x;
+    secp256k1_fe_normalize_var(&base_x);
+    secp256k1_fe_set_int(&one, 1);
+
+    for (mask = 1; mask <= 3; mask++) {
+        numerator = base_x;
+        denominator = one;
+        if ((mask & 1u) != 0) {
+            secp256k1_fe_add(&numerator, &zero7);
+        }
+        if ((mask & 2u) != 0) {
+            secp256k1_fe_add(&denominator, &zero7);
+        }
+#ifdef VERIFY
+        if ((mask & 1u) != 0) {
+            FUZZ_CHECK(numerator.magnitude == 8);
+            FUZZ_CHECK(numerator.normalized == 0);
+        }
+        if ((mask & 2u) != 0) {
+            FUZZ_CHECK(denominator.magnitude == 8);
+            FUZZ_CHECK(denominator.normalized == 0);
+        }
+#endif
+        FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 0) == 1);
+        secp256k1_fe_normalize_var(&result);
+        FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_affine.x));
+
+        FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 1) == 1);
+        secp256k1_fe_normalize_var(&result);
+        FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_affine.x));
+    }
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 97);
@@ -128,6 +180,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_gej_eq_var(&result, &generic));
     FUZZ_CHECK(secp256k1_gej_eq_var(&generic, &expected));
     secp256k1_fuzz_ecmult_const_check_xonly(&base, &expected, &scalar, input, size);
+    secp256k1_fuzz_ecmult_const_check_nonnormalized_fraction(&base, &expected, &scalar);
 
     secp256k1_ecmult_const(&result, &base, &secp256k1_scalar_zero);
     FUZZ_CHECK(secp256k1_gej_is_infinity(&result));

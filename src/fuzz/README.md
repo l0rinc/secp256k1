@@ -13,7 +13,7 @@ Targets:
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency, and a byte-level maximum-residue reference
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, normalized and nonnormalized rescale scales, rescale aliasing, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, and NULL-generator equivalence
+- `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
@@ -846,6 +846,21 @@ documented in its commit message.
   already returns zero; suppressing the invalid-type branch makes the focused
   seed abort. Ordinary builds intentionally skip this direct call because
   their default callback terminates the process.
+  The constant-time multiplication target now also supplies
+  `secp256k1_ecmult_const_xonly` with three valid representations of the same
+  fraction: a magnitude-8 numerator (`x + 7p`), a magnitude-8 denominator
+  (`1 + 7p`), and both raised together. The prior rational path normalized
+  both operands before calling the helper. A temporary `VERIFY`-only mutation
+  incremented `g.n[0]` after `secp256k1_fe_mul(&g, &g, n)` only when both raw
+  operands were nonnormalized with magnitude 8; the focused seed aborted on
+  both default and forced-int64 ASan/UBSan builds. Disabling only this helper
+  left that seed and the three preexisting `ecmult_const` seeds green on both
+  builds. Clean production code then passed all four fixed seeds, while
+  two-worker/two-job 15-second campaigns completed with 285 and 172
+  executions. The existing `sqr`, `sqrt`, `ecmult_gen_ge`, and
+  `ecmult_const_tests` also passed in a fresh sanitizer build. This is
+  informational internal-contract hardening, not a clean-master production
+  finding; severity is unchanged.
   The field target also pins the largest valid `secp256k1_fe_add_int` input:
   magnitude 31 plus `0x7fff` must normalize identically to a low-magnitude
   reference. The production wrapper now asserts this precondition before the
