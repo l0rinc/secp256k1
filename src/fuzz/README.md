@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, one- through eight-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through seven-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, one- through eight-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1565,8 +1565,9 @@ documented in its commit message.
   public APIs, and compares the weighted point sum with both cached and
   cacheless `secp256k1_musig_pubkey_agg` results. It also checks the cached list
   hash. The dedicated `eight-keyagg-reference` seed is `AAA8AA` plus its
-  newline; byte 157 selects the gated path while the ordinary stateful path
-  remains at one key. Clean default and forced-`int64` ASan/UBSan fixed
+  newline; byte 157 selects the gated path and, for this seed, the eight-signer
+  stateful path, while other selector bytes retain the ordinary one-through-
+  seven range. Clean default and forced-`int64` ASan/UBSan fixed
   replays passed all 37 MuSig corpus files, and bounded two-worker/two-job
   campaigns exited 0 with no sanitizer diagnostics or artifacts. Matching
   default and forced-`int64` MSan fixed replays also passed all 37 files. For
@@ -1576,6 +1577,26 @@ documented in its commit message.
   exited 0 through the legacy path. The mutation and bypass were restored
   before clean replay. This is informational arbitrary-list oracle hardening,
   not a clean-master production finding; no severity rating changes.
+
+  The stateful MuSig signing path now extends its independent nonce,
+  partial-signature, session-state, and final-signature checks from seven to
+  eight participants. The existing `eight-keyagg-reference` seed is seven
+  bytes (`AAA8AA` plus its newline); its ASCII `8` at selector offset 157
+  selects eight signers without changing the one-through-seven mapping for
+  other inputs. Clean default and forced-`int64` ASan/UBSan fixed replays
+  passed the focused seed and all 37 MuSig corpus files; bounded
+  two-worker/two-job campaigns exited 0. Matching default and forced-`int64`
+  MSan fixed replays also passed the focused seed and all 37 files. For the
+  differential proof, a temporary production mutation in
+  `secp256k1_musig_sum_pubnonces` loaded but skipped only nonce index 7 when
+  `n_pubnonces == 8`. The focused seed aborted with exit 134 on both field
+  backends. A debugger backtrace placed the failure in the independent
+  `secp256k1_fuzz_check_musig_final_sig_equation` at `musig.c:356`, before the
+  production Schnorr verifier. With only the new stateful helper bypassed,
+  the identical mutation passed the focused seed and all 37 corpus files on
+  both backends. The mutation and bypass were restored before clean replay.
+  This is informational stateful-list oracle hardening, not a clean-master
+  production finding; no severity rating changes.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
