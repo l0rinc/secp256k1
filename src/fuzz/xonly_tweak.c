@@ -227,6 +227,50 @@ static void secp256k1_fuzz_check_xonly_keypair_consistency(secp256k1_context *ct
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_keypair_projection(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *valid_pubkey, const secp256k1_xonly_pubkey *valid_xonly, int valid_parity, const unsigned char *valid_seckey) {
+    secp256k1_keypair invalid_secret_keypair = *keypair;
+    secp256k1_keypair invalid_public_keypair = *keypair;
+    secp256k1_pubkey extracted_pubkey;
+    secp256k1_xonly_pubkey extracted_xonly;
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    unsigned char extracted_seckey[32];
+    unsigned char zero_pubkey[sizeof(extracted_pubkey)] = { 0 };
+    unsigned char zero_xonly[sizeof(extracted_xonly)] = { 0 };
+    unsigned char zero32[32] = { 0 };
+    int extracted_parity;
+    unsigned int calls;
+
+    /* Raw extractors intentionally expose their respective keypair halves. */
+    memset(invalid_secret_keypair.data, 0, 32);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &extracted_pubkey, &invalid_secret_keypair) == 1);
+    FUZZ_CHECK(memcmp(&extracted_pubkey, valid_pubkey, sizeof(extracted_pubkey)) == 0);
+    FUZZ_CHECK(secp256k1_keypair_sec(ctx, extracted_seckey, &invalid_secret_keypair) == 1);
+    FUZZ_CHECK(memcmp(extracted_seckey, zero32, sizeof(extracted_seckey)) == 0);
+    memset(&extracted_xonly, 0xA5, sizeof(extracted_xonly));
+    extracted_parity = 7;
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &extracted_xonly, &extracted_parity, &invalid_secret_keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &extracted_xonly, valid_xonly) == 0);
+    FUZZ_CHECK(extracted_parity == valid_parity);
+
+    memset(invalid_public_keypair.data + 32, 0, sizeof(invalid_public_keypair.data) - 32);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &extracted_pubkey, &invalid_public_keypair) == 1);
+    FUZZ_CHECK(memcmp(&extracted_pubkey, zero_pubkey, sizeof(extracted_pubkey)) == 0);
+    FUZZ_CHECK(secp256k1_keypair_sec(ctx, extracted_seckey, &invalid_public_keypair) == 1);
+    FUZZ_CHECK(memcmp(extracted_seckey, valid_seckey, sizeof(extracted_seckey)) == 0);
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+    memset(&extracted_xonly, 0xA5, sizeof(extracted_xonly));
+    extracted_parity = 7;
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &extracted_xonly, &extracted_parity, &invalid_public_keypair) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&extracted_xonly, zero_xonly, sizeof(extracted_xonly)) == 0);
+    FUZZ_CHECK(extracted_parity == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_invalid_keypair_xonly_pub(secp256k1_context *ctx) {
     secp256k1_fuzz_xonly_illegal_data illegal_data;
     secp256k1_keypair invalid_keypair;
@@ -353,6 +397,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_xonly_keypair_consistency(ctx, &keypair, &pubkey, tweak);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &keypair_parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);
+    secp256k1_fuzz_check_keypair_projection(ctx, &keypair, &pubkey, &xonly, keypair_parity, seckey);
     secp256k1_fuzz_check_invalid_xonly_cmp(ctx, &xonly);
     secp256k1_fuzz_check_null_xonly_cmp(ctx, &xonly);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_no_parity) == 0);
