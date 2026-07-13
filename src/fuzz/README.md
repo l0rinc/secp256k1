@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -1337,6 +1337,23 @@ documented in its commit message.
   A bounded `-workers=2 -jobs=2 -max_total_time=30` replay of the updated API
   corpus executed 543 and 550 inputs in its two jobs; both jobs exited 0, with
   no sanitizer diagnostics or crash artifacts.
+  The API target now adds a gated eight-key `secp256k1_ec_pubkey_sort`
+  oracle at the first length beyond its four-key stateful fixtures and the
+  deterministic six-key vectors. It derives eight distinct public keys,
+  computes the expected order with independent compressed-serialization byte
+  comparisons, checks exact pointer order and sortedness, and repeats the sort
+  to verify idempotence. The existing 136-byte `long-pubkey-combine` seed
+  crosses the 128-byte gate. Clean default and forced-int64 ASan/UBSan fixed
+  replays passed all 28 API files plus the empty input; bounded two-worker/
+  two-job campaigns exited 0 without sanitizer diagnostics or artifacts.
+  Matching default and forced-int64 MSan fixed replays passed the same corpus.
+  For the differential proof, a temporary production mutation validated all
+  eight pointers but decremented `n_pubkeys` to seven before calling heapsort.
+  The extended seed aborted with exit 134 on both backends; bypassing only the
+  new helper left all 28 files plus the empty input green with the mutation
+  active. The mutation and bypass were restored before clean replay. This is
+  informational oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
   The EllSwift target also replays a full-width BIP324 decode vector from the
   independently generated module test set and checks the serialized X coordinate
   and parity. Clean master passes; replacing the decode input's `t` half with
