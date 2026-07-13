@@ -19,7 +19,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, an independent recovery point equation, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and an independent partial-signature point equation
+- `fuzz_musig`: MuSig key aggregation, optional aggregate outputs, tweak equivalence, x-only-tweak signing, nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -255,8 +255,9 @@ executed 60,680 and 60,757 inputs. All four managers reached 317 edges and
 returned zero without a sanitizer diagnostic, assertion failure, timeout, OOM,
 or artifact. Mutated corpora and worker logs remained outside the repository.
 
-Focused MuSig partial-signature equation replay (2026-07-13): the MuSig corpus
-started with 30 tracked inputs totaling 1,381 bytes, including
+Focused MuSig partial-signature equation replay (2026-07-13): the
+partial-signature-focused subset of the MuSig corpus contained 30 tracked
+inputs totaling 1,381 bytes, including
 `partial-sig-equation`. The independent oracle recomputes each signer's
 KeyAgg coefficient from the public key list, recomputes the BIP340 challenge
 with generic SHA256 in the `r || aggregate_x || message` order, applies final
@@ -275,6 +276,32 @@ the focused seed aborted in this independent oracle on both backends. The
 production mutation was restored before the clean replays. This is oracle
 hardening, not a clean-master production finding, and does not change any
 severity rating.
+
+Focused MuSig final-signature equation replay (2026-07-13): the complete MuSig
+corpus contained 31 tracked inputs totaling 1,424 bytes, including
+`final-signature-equation` and `tweaked-signing-parity`. The independent oracle
+reconstructs the even-Y BIP340 final nonce from the signature X coordinate,
+serializes the even aggregate key, recomputes the tagged challenge with the
+generic SHA256 reference, checks the stored session challenge, and verifies
+`s*G = R + e*P` with public point operations. It deliberately does not call
+`secp256k1_schnorrsig_verify`; the session's recorded nonce parity is handled
+by the signing convention, which negates an odd pre-adjustment nonce before
+the final signature is emitted. Default and forced-int64 ASan/UBSan fixed
+replays completed all 31 inputs with 3,474 and 5,616 edges; matching MSan
+replays completed without diagnostics with 819 and 815 edges. Two-worker,
+two-job, 30-second managers returned zero on both backends: default jobs each
+executed 40 and 41 inputs, and forced-int64 jobs executed 32 inputs each. No
+sanitizer diagnostic, assertion failure, timeout, OOM, crash artifact, or
+nonzero worker result was observed.
+
+For mutation proof, `secp256k1_musig_partial_sig_agg` was temporarily changed
+to flip `sig64[63]` immediately after serializing the aggregate scalar. The
+pre-existing final Schnorr-verifier assertion was temporarily replaced by
+`FUZZ_CHECK(1)` solely to isolate the new oracle. The
+`final-signature-equation` seed aborted in the independent point equation on
+both default and forced-int64 builds. Both temporary changes were restored
+before the clean replay. This is informational oracle hardening, not a
+current-master production finding, and does not change any severity rating.
 
 When a target fails, replay the generated input against this branch and clean
 `master`, then classify the finding as a production bug, stale oracle, invalid
@@ -378,6 +405,16 @@ documented in its commit message.
   temporary production mutation that negates `k[0]` immediately before the
   nonce-term addition makes the seed abort in the new oracle on both backends;
   the mutation was restored before replay. This is oracle hardening, not a
+  current-master production finding, and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_musig` independently reconstructs
+  the even-Y final BIP340 nonce and aggregate key, recomputes the challenge,
+  and checks `s*G = R + e*P` through public point operations instead of relying
+  on `secp256k1_schnorrsig_verify`. The clean current branch passes the
+  `final-signature-equation` seed across both field backends and under MSan.
+  Flipping `sig64[63]` immediately after production partial-signature
+  aggregation makes that seed abort even with the prior verifier assertion
+  disabled in the temporary harness isolation run. The production mutation and
+  harness bypass were restored before replay. This is oracle hardening, not a
   current-master production finding, and does not change any severity rating.
 - **Informational oracle hardening:** `fuzz_recovery` independently checks the
   recoverable ECDSA equation `rQ = sR - zG` after reconstructing `R` from `r`

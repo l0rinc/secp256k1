@@ -261,6 +261,75 @@ static void secp256k1_fuzz_check_musig_partial_sig_equation(const secp256k1_cont
     }
 }
 
+/* Check the final MuSig signature with the BIP340 equation instead of calling
+ * the Schnorr verifier. This catches an aggregation error even when the
+ * signing and verification paths share an implementation detail. */
+static void secp256k1_fuzz_check_musig_final_sig_equation(const secp256k1_context *ctx, const unsigned char *sig64, const secp256k1_musig_session *session, const secp256k1_xonly_pubkey *agg_pk, const unsigned char *msg32) {
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    unsigned char aggregate_x32[32];
+    unsigned char final_nonce_x32[32];
+    unsigned char challenge_input[96];
+    unsigned char challenge_hash[32];
+    unsigned char challenge32[32];
+    unsigned char nonce33[33];
+    unsigned char aggregate33[33];
+    unsigned char zero32[32] = { 0 };
+    secp256k1_pubkey nonce_point;
+    secp256k1_pubkey aggregate_point;
+    secp256k1_pubkey challenge_point;
+    secp256k1_pubkey response_point;
+    secp256k1_pubkey expected_point;
+    const secp256k1_pubkey *terms[2];
+    int challenge_nonzero;
+    int response_nonzero;
+    size_t term_count = 0;
+
+    FUZZ_CHECK(sig64 != NULL);
+    FUZZ_CHECK(session != NULL);
+    FUZZ_CHECK(agg_pk != NULL);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(session->data[4] <= 1);
+    FUZZ_CHECK(memcmp(sig64, session->data + 5, sizeof(final_nonce_x32)) == 0);
+
+    /* nonce_process records the parity of the pre-adjustment effective nonce;
+     * partial_sign negates it when needed, so the final BIP340 R is even. */
+    nonce33[0] = 0x02;
+    memcpy(nonce33 + 1, sig64, sizeof(final_nonce_x32));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &nonce_point, nonce33, sizeof(nonce33)) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, aggregate_x32, agg_pk) == 1);
+    aggregate33[0] = 0x02;
+    memcpy(aggregate33 + 1, aggregate_x32, sizeof(aggregate_x32));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &aggregate_point, aggregate33, sizeof(aggregate33)) == 1);
+
+    memcpy(final_nonce_x32, sig64, sizeof(final_nonce_x32));
+    memcpy(challenge_input, final_nonce_x32, sizeof(final_nonce_x32));
+    memcpy(challenge_input + 32, aggregate_x32, sizeof(aggregate_x32));
+    memcpy(challenge_input + 64, msg32, 32);
+    secp256k1_fuzz_musig_tagged_hash_reference(challenge_hash, challenge_tag, sizeof(challenge_tag) - 1, challenge_input, sizeof(challenge_input));
+    secp256k1_fuzz_musig_reduce_scalar(challenge32, challenge_hash);
+    FUZZ_CHECK(memcmp(challenge32, session->data + 69, sizeof(challenge32)) == 0);
+
+    challenge_nonzero = memcmp(challenge32, zero32, sizeof(challenge32)) != 0;
+    response_nonzero = memcmp(sig64 + 32, zero32, sizeof(zero32)) != 0;
+    if (challenge_nonzero) {
+        challenge_point = aggregate_point;
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &challenge_point, challenge32) == 1);
+        terms[term_count++] = &challenge_point;
+    }
+    terms[term_count++] = &nonce_point;
+
+    if (response_nonzero) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &response_point, sig64 + 32) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected_point, terms, term_count) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &response_point, &expected_point) == 0);
+    } else {
+        /* A zero response represents infinity; the right-hand side must also
+         * be infinity. The public combine API reports that case as failure. */
+        FUZZ_CHECK(challenge_nonzero);
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected_point, terms, term_count) == 0);
+    }
+}
+
 static int secp256k1_fuzz_musig_nonce_reference(const secp256k1_context *ctx, unsigned char expected_k64[64], unsigned char expected_pubnonce66[66], const unsigned char *session_secrand32, const unsigned char *seckey32, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
     static const unsigned char aux_tag[] = "MuSig/aux";
     static const unsigned char nonce_tag[] = "MuSig/nonce";
@@ -545,6 +614,7 @@ static void secp256k1_fuzz_check_musig_tweaked_sign_case(const secp256k1_context
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig[i], &pubnonce[i], &pubkeys[i], cache, &session) == 1);
     }
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 2) == 1);
+    secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, agg_xonly, msg32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), agg_xonly) == 1);
 }
 
@@ -1434,6 +1504,7 @@ static void secp256k1_fuzz_check_musig_partial_sign_nonce_parity(secp256k1_conte
         secp256k1_fuzz_check_musig_partial_sig_equation(ctx, &partial_sig, &pubnonce, &pubkey, pubkey_ptrs, 1, 0, &keyagg_cache, &session, msg32);
         FUZZ_CHECK(secp256k1_musig_partial_sig_verify(ctx, &partial_sig, &pubnonce, &pubkey, &keyagg_cache, &session) == 1);
         FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 1) == 1);
+        secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, &agg_pk, msg32);
         FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &agg_pk) == 1);
     }
     FUZZ_CHECK(parity_seen[0] != 0);
@@ -1471,6 +1542,7 @@ static void secp256k1_fuzz_check_musig_zero_counter_sign(secp256k1_context *ctx,
 
     partial_sig_ptrs[0] = &partial_sig;
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, 1) == 1);
+    secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, agg_pk, msg32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, agg_pk) == 1);
 }
 
@@ -1806,6 +1878,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, n_signers) == 1);
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64_replay, &session_replay, partial_sig_ptrs, n_signers) == 1);
     FUZZ_CHECK(memcmp(sig64, sig64_replay, sizeof(sig64)) == 0);
+    secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, &agg_pk, msg32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, &agg_pk) == 1);
     secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(ctx, &session, partial_sig_ptrs, n_signers);
 }
