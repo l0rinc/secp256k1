@@ -66,6 +66,7 @@ typedef int (*secp256k1_fuzz_ec_seckey_tweak_fn)(const secp256k1_context *ctx, u
 typedef int (*secp256k1_fuzz_ec_pubkey_tweak_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const unsigned char *tweak32);
 typedef int (*secp256k1_fuzz_ec_pubkey_combine_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const secp256k1_pubkey * const *pubkeys, size_t n_pubkeys);
 typedef int (*secp256k1_fuzz_ec_pubkey_cmp_fn)(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey0, const secp256k1_pubkey *pubkey1);
+typedef int (*secp256k1_fuzz_ec_pubkey_sort_fn)(const secp256k1_context *ctx, const secp256k1_pubkey **pubkeys, size_t n_pubkeys);
 
 static void secp256k1_fuzz_api_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_api_illegal_data *illegal_data = (secp256k1_fuzz_api_illegal_data *)data;
@@ -673,6 +674,23 @@ static void secp256k1_fuzz_check_empty_pubkey_sort(const secp256k1_context *ctx)
 
     /* The array pointer is required, but zero elements are a valid no-op. */
     FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, empty, 0) == 1);
+}
+
+static void secp256k1_fuzz_check_null_pubkey_sort(secp256k1_context *ctx) {
+    secp256k1_fuzz_ec_pubkey_sort_fn sort = secp256k1_ec_pubkey_sort;
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    unsigned int calls;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(sort(ctx, NULL, 0) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(sort(ctx, NULL, 1) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_check_invalid_pubkey_sort(secp256k1_context *ctx, const secp256k1_pubkey *valid_pubkey) {
@@ -1411,6 +1429,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
     secp256k1_fuzz_check_empty_pubkey_sort(ctx);
+    secp256k1_fuzz_check_null_pubkey_sort(ctx);
 
     sort_pubkeys[0] = pubkey;
     sort_pubkeys[1] = pubkey_neg_from_seckey;
