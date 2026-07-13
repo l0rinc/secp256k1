@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, one- through seven-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through seven-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, one- through eight-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through seven-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1522,6 +1522,25 @@ documented in its commit message.
   clean replay. This is informational internal-contract oracle hardening, not
   a current-master production finding; the master-relative severity ledger is
   unchanged.
+
+  The MuSig aggregation target now adds a gated eight-key reference at the
+  first list length beyond the stateful seven-signer fixtures. It computes the
+  complete `KeyAgg list` transcript independently, derives every coefficient
+  with the standalone tagged-SHA model, reweights all eight public keys through
+  public APIs, and compares the weighted point sum with both cached and
+  cacheless `secp256k1_musig_pubkey_agg` results. It also checks the cached list
+  hash. The dedicated `eight-keyagg-reference` seed is `AAA8AA` plus its
+  newline; byte 157 selects the gated path while the ordinary stateful path
+  remains at one key. Clean default and forced-`int64` ASan/UBSan fixed
+  replays passed all 37 MuSig corpus files, and bounded two-worker/two-job
+  campaigns exited 0 with no sanitizer diagnostics or artifacts. Matching
+  default and forced-`int64` MSan fixed replays also passed all 37 files. For
+  the proof, a temporary production mutation forced the aggregation callback's
+  coefficient to zero only at index 7. The focused seed aborted with exit 134
+  on both backends; with only the new helper bypassed, the identical mutation
+  exited 0 through the legacy path. The mutation and bypass were restored
+  before clean replay. This is informational arbitrary-list oracle hardening,
+  not a clean-master production finding; no severity rating changes.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
