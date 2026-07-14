@@ -304,27 +304,39 @@ static void secp256k1_fuzz_check_ellswift_zero_u_barrier(secp256k1_context *ctx)
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &decoded, &expected) == 0);
 }
 
-static void secp256k1_fuzz_check_ellswift_raw_consistency(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
+static void secp256k1_fuzz_check_ellswift_raw_consistency(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey_a32, const unsigned char *seckey_b32) {
     secp256k1_pubkey decoded_a;
     secp256k1_pubkey decoded_b;
     secp256k1_pubkey shared_pubkey;
     unsigned char shared_x32[32];
     unsigned char serialized[65];
-    size_t serialized_len = sizeof(serialized);
+    const secp256k1_pubkey *remote_pubkeys[2];
+    const unsigned char *seckeys[2];
+    size_t serialized_len;
+    int party;
 
     /* Decode arbitrary wire encodings, then cross-check the independent
-     * fraction-based XDH path against ordinary public-key multiplication. */
+     * fraction-based XDH path against ordinary public-key multiplication for
+     * both sides of the party selector. A symmetry check alone can agree when
+     * both sides select the same wrong remote encoding. */
     FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded_a, ell_a64) == 1);
     FUZZ_CHECK(secp256k1_ellswift_decode(ctx, &decoded_b, ell_b64) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded_a);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &decoded_b);
 
-    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
-    shared_pubkey = decoded_b;
-    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &shared_pubkey, seckey32) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &shared_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
-    FUZZ_CHECK(serialized_len == sizeof(serialized));
-    FUZZ_CHECK(memcmp(shared_x32, serialized + 1, 32) == 0);
+    remote_pubkeys[0] = &decoded_b;
+    remote_pubkeys[1] = &decoded_a;
+    seckeys[0] = seckey_a32;
+    seckeys[1] = seckey_b32;
+    for (party = 0; party <= 1; party++) {
+        serialized_len = sizeof(serialized);
+        FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckeys[party], party, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+        shared_pubkey = *remote_pubkeys[party];
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &shared_pubkey, seckeys[party]) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &shared_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(serialized));
+        FUZZ_CHECK(memcmp(shared_x32, serialized + 1, 32) == 0);
+    }
 }
 
 static void secp256k1_fuzz_check_ellswift_failure_cleanup(secp256k1_context *ctx, const unsigned char *rnd32, const unsigned char *auxrnd32) {
@@ -570,7 +582,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ellswift_encode(ctx, ell_encoded_a64, &pubkey_a, rnd32) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_encoded_a64, &pubkey_a);
     secp256k1_fuzz_check_ellswift_randomizer_effect(ctx, &pubkey_a, seckey_a32, auxrnd_a32, rnd32, ell_a64, ell_encoded_a64);
-    secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32);
+    secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32, seckey_b32);
     secp256k1_fuzz_check_ellswift_failure_cleanup(ctx, rnd32, auxrnd_a32);
 
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_x32, NULL);
