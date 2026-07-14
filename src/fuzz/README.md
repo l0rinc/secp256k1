@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1182,6 +1182,19 @@ documented in its commit message.
   would be a low-severity retry/availability regression, not a nonce-secret
   compromise; public nonce cleanup remains non-critical because that nonce has
   no cryptographic meaning.
+  The MuSig target now forces the nonce hash callback to return an all-zero
+  digest and exercises the documented zero-derived-scalar failure path. A
+  failed `musig_nonce_gen` must return 0, preserve the caller's
+  `session_secrand32` for a corrected retry, and leave both the secret and
+  public nonce objects fully zeroed. The callback is installed before the
+  forced state is enabled because the context validates custom SHA callbacks
+  with its own self-test. The unmutated production implementation passes the
+  dedicated `nonce-zero-scalar-failure` seed and the full MuSig corpus.
+  Temporarily replacing the production `if (invalid_nonce)` guard with `if (0 &&
+  invalid_nonce)` makes that seed abort at the existing nonzero-scalar
+  invariant with exit 134. This is informational oracle hardening, not a
+  current-master production finding; a failure would be a low-severity nonce
+  failure/availability regression, not a cryptographic compromise.
   It also independently recomputes the one-key KeyAgg transcript. The absence
   of a second distinct key must not turn the sole key's coefficient into the
   identity scalar; the `keyagg-single-coefficient` seed compares the resulting
