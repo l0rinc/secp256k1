@@ -15,6 +15,7 @@
 typedef int (*secp256k1_fuzz_musig_partial_sig_agg_fn)(const secp256k1_context *, unsigned char *, const secp256k1_musig_session *, const secp256k1_musig_partial_sig * const*, size_t);
 typedef int (*secp256k1_fuzz_musig_nonce_process_fn)(const secp256k1_context *, secp256k1_musig_session *, const secp256k1_musig_aggnonce *, const unsigned char *, const secp256k1_musig_keyagg_cache *);
 typedef int (*secp256k1_fuzz_musig_partial_sign_fn)(const secp256k1_context *, secp256k1_musig_partial_sig *, secp256k1_musig_secnonce *, const secp256k1_keypair *, const secp256k1_musig_keyagg_cache *, const secp256k1_musig_session *);
+typedef int (*secp256k1_fuzz_musig_nonce_gen_fn)(const secp256k1_context *, secp256k1_musig_secnonce *, secp256k1_musig_pubnonce *, unsigned char *, const unsigned char *, const secp256k1_pubkey *, const unsigned char *, const secp256k1_musig_keyagg_cache *, const unsigned char *);
 
 static size_t secp256k1_fuzz_musig_sha256_compression_calls = 0;
 static size_t secp256k1_fuzz_musig_keyagglist_sha256_compression_calls = 0;
@@ -2822,6 +2823,27 @@ static void secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(secp256
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_nonce_gen_null_session_random(secp256k1_context *ctx, const unsigned char *seckey, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
+    secp256k1_fuzz_musig_nonce_gen_fn nonce_gen = secp256k1_musig_nonce_gen;
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    unsigned char zero132[132] = { 0 };
+
+    /* session_secrand32 is mandatory. The outputs still need to be invalidated
+     * before that precondition is rejected, because callers may reuse buffers. */
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    memset(&secnonce, 0xA5, sizeof(secnonce));
+    memset(&pubnonce, 0x5A, sizeof(pubnonce));
+    FUZZ_CHECK(nonce_gen(ctx, &secnonce, &pubnonce, NULL, seckey, pubkey, msg32, keyagg_cache, extra_input32) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&secnonce, zero132, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_musig_keypair_consistency(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_pubkey *other_pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
     static const unsigned char scalar_two[32] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -3197,6 +3219,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_nonce_gen_counter_optional_inputs(ctx, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(ctx, input, size, seckey[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
+    if (size == sizeof("MuSig nonce null session random\n") - 1
+        && memcmp(input, "MuSig nonce null session random\n", sizeof("MuSig nonce null session random\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_nonce_gen_null_session_random(ctx, seckey[0], &pubkeys[0], tweak, &cache, tweak);
+    }
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_nonce_scalar_barrier(ctx);
     secp256k1_fuzz_check_musig_partial_sign_nonce_parity(ctx);
