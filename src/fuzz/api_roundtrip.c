@@ -421,6 +421,40 @@ static void secp256k1_fuzz_check_pubkey_combine_invalid(secp256k1_context *ctx, 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_pubkey_combine_null_member(secp256k1_context *ctx, const secp256k1_pubkey *pubkey) {
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    secp256k1_fuzz_ec_pubkey_combine_fn combine = secp256k1_ec_pubkey_combine;
+    const secp256k1_pubkey *inputs[2];
+    const secp256k1_pubkey *null_pubkey = secp256k1_fuzz_runtime_null_pubkey(pubkey);
+    secp256k1_pubkey combined;
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    unsigned int calls;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    /* Rejecting after a valid member must not leave a partial aggregate. */
+    inputs[0] = pubkey;
+    inputs[1] = null_pubkey;
+    memset(&combined, 0xA5, sizeof(combined));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(combine(ctx, &combined, inputs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+
+    /* The first-member NULL case must obey the same output contract. */
+    inputs[0] = null_pubkey;
+    inputs[1] = pubkey;
+    memset(&combined, 0x5A, sizeof(combined));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(combine(ctx, &combined, inputs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&combined, zero_pubkey, sizeof(combined)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_pubkey_combine_empty(secp256k1_context *ctx, const secp256k1_pubkey *pubkey) {
     secp256k1_fuzz_api_illegal_data illegal_data;
     secp256k1_fuzz_ec_pubkey_combine_fn combine = secp256k1_ec_pubkey_combine;
@@ -2237,6 +2271,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(ctx, &pubkey, &pubkey_neg_from_seckey, &combine_pubkey, &combine_pubkey_neg);
     secp256k1_fuzz_check_pubkey_combine_long(ctx, size, &pubkey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
+    secp256k1_fuzz_check_pubkey_combine_null_member(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
     secp256k1_fuzz_check_empty_pubkey_sort(ctx);
