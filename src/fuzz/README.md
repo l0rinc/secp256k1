@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, one- through eight-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -857,10 +857,11 @@ documented in its commit message.
   zero-nonce counters 5, 2, and 70 for orders 7, 13, and 199 respectively.
   This corrects an order-13-only test assumption; it does not change the
   master-relative severity or production behavior of the existing hardening.
-- **Informational oracle gaps:** empty public-key aggregation (`c5c0afe`), ECDSA verification's invalid-
-  opaque-key API boundary (`ef25d27`), and the public-key serializer's wrong
-  flag-type boundary currently pass on master; their mutations prove that the
-  harness would catch a regression, not that master is presently vulnerable.
+- **Previously recorded oracle gaps now covered:** empty public-key aggregation
+  (`c5c0afe`), ECDSA verification's invalid-opaque-key API boundary
+  (`ef25d27`), and the public-key serializer's wrong flag-type boundary
+  (`062f68d`) all have named seeds and mutation proofs. They remain
+  informational master behavior, not production vulnerabilities.
   The existing `fuzz_ecmult_const` target also transitively covers
   `secp256k1_ge_table_set_globalz`: replacing the accumulated `zs` inverse with
   the per-entry `zr[i]` makes the `scalar-derived-xonly-fractions` seed abort,
@@ -1637,6 +1638,23 @@ documented in its commit message.
   informational oracle hardening, not a clean-master production finding; the
   `792f43f` decode/XDH history remains regression context and no severity rating
   changes.
+
+  The MuSig target now checks the zero-length precondition of both
+  `secp256k1_musig_pubkey_agg` and `secp256k1_musig_nonce_agg`. Each operation is
+  called with a one-slot array and `n == 0`, then with a NULL array and `n == 0`;
+  every call must invoke the illegal callback once, return zero, and leave its
+  aggregate output cleared. The dedicated `empty-aggregation` seed is the
+  24-byte ASCII input `empty MuSig aggregation\n`. Clean default and
+  forced-`int64` ASan/UBSan fixed replays passed all 38 MuSig corpus files,
+  including the dedicated empty-aggregation seed. For differential proof, a temporary
+  production mutation replaced each `ARG_CHECK(n > 0)` with an early failure
+  that skipped the illegal callback. The focused seed aborted with exit 134 on
+  both backends for each mutation; disabling only the new helper let the
+  identical mutations pass the same 38-file corpus; the corpus-directory
+  runner reported 39 executions because it also executes its initial empty
+  input. The mutations and bypass were restored before clean
+  replay. This is informational precondition/output-oracle hardening, not a
+  clean-master production finding; no severity rating changes.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
