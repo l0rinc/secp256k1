@@ -2356,3 +2356,43 @@ forced-int64 Clang ASan/UBSan corpus replays. This differential result shows
 no observed behavior or sanitizer regression, but it is still not evidence
 that the optimization belongs in the oracle stack; promoting it would need a
 separate upstream-quality patch, review, and benchmark record.
+
+## 2026-07-14 Optional-Module CMake Matrix
+
+The optional-module matrix found a branch-only fuzz-infrastructure defect
+before runtime replay. With
+`-DSECP256K1_BUILD_FUZZ=ON -DSECP256K1_FUZZ_USE_LIBFUZZER=OFF`, all six
+configurations failed at the `bin/fuzz_hash` link step. The internal CMake
+fuzz rule links only `secp256k1_precomputed` and `secp256k1_asm`, while
+`fuzz/hash.c` included `fuzz.h`; its generic static helpers therefore emitted
+unresolved references to public functions such as context creation, secret-key
+verification, public-key parsing, and ECDSA signature serialization. The
+failure is reproducible in the audit branch before this fix. `hash.c` is an
+audit-branch addition and is absent from the clean `origin/master` baseline,
+so this is **Informational / Low fuzzer-infrastructure**, not a production
+finding and not a change to any master-relative severity.
+
+The minimal repair makes `fuzz/hash.c` include `../secp256k1.c` before
+`fuzz.h`, matching the existing internal `scalar`, `field`, and `group`
+harnesses. This supplies the implementation used by the internal target
+without changing the library or its public behavior. The six matrix options
+were `ECDH=OFF`, `ELLSWIFT=OFF`, `MUSIG=OFF`, `SCHNORRSIG=OFF` with `MUSIG=OFF`,
+`EXTRAKEYS=OFF` with `SCHNORRSIG=OFF` and `MUSIG=OFF`, and `RECOVERY=ON` with
+all modules enabled. Every configuration rebuilt successfully with
+`cmake --build ... --parallel 3`.
+
+The post-fix CTest replay passed all 1,233 tests in the matrix: respectively
+218, 208, 206, 189, 174, and 238 tests for those configurations. This
+included 71 corpus suites and every enabled seed for `api_roundtrip`,
+`context`, `hash`, `scalar`, `field`, `group`, `ecmult_const`,
+`ecmult_multi`, `ecdh`, `ellswift`, `xonly_tweak`, `recovery`, `schnorrsig`,
+and `musig`. No assertion, timeout, crash artifact, or nonzero test result
+occurred. The initial link failure and the complete
+post-fix matrix are the proof that the change restores coverage availability;
+they do not establish or reduce a production vulnerability on clean master.
+
+A separate all-module CMake build with Clang ASan/UBSan, frame pointers, and
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` also linked every target. Its
+13 `secp256k1_fuzz` suites passed with no sanitizer diagnostic, assertion
+failure, timeout, or artifact. This sanitizer replay is an independent check
+of the repaired internal translation unit, not a production-bug claim.
