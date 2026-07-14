@@ -19,6 +19,14 @@ static int secp256k1_fuzz_group_all_zero(void *ptr, size_t len) {
     return 1;
 }
 
+static void secp256k1_fuzz_group_check_ge_clear(void) {
+    secp256k1_ge value = secp256k1_ge_const_g;
+
+    secp256k1_ge_clear(&value);
+    SECP256K1_CHECKMEM_DEFINE(&value, sizeof(value));
+    FUZZ_CHECK(secp256k1_fuzz_group_all_zero(&value, sizeof(value)));
+}
+
 /* Keep result checks independent from gej_eq_var. That helper implements
  * equality by adding points, so using it as the only oracle can mask a
  * regression shared by the addition and equality paths. */
@@ -873,6 +881,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_gej_equal(&rescaled, &a);
     secp256k1_fuzz_group_check_addition(&rescaled, &b, &sum);
 
+    secp256k1_fuzz_group_check_ge_clear();
     secp256k1_gej_clear(&rescaled);
     SECP256K1_CHECKMEM_DEFINE(&rescaled, sizeof(rescaled));
     FUZZ_CHECK(secp256k1_fuzz_group_all_zero(&rescaled, sizeof(rescaled)));
