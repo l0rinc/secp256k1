@@ -81,6 +81,7 @@ typedef struct {
 } secp256k1_fuzz_ecdsa_equation_nonce_data;
 
 typedef int (*secp256k1_fuzz_ecdsa_serialize_der_fn)(const secp256k1_context *ctx, unsigned char *output, size_t *outputlen, const secp256k1_ecdsa_signature *sig);
+typedef int (*secp256k1_fuzz_ecdsa_sign_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *signature, const unsigned char *msghash32, const unsigned char *seckey, secp256k1_nonce_function noncefp, const void *noncedata);
 typedef int (*secp256k1_fuzz_ec_pubkey_parse_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const unsigned char *input, size_t inputlen);
 typedef int (*secp256k1_fuzz_ecdsa_parse_der_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sig, const unsigned char *input, size_t inputlen);
 typedef int (*secp256k1_fuzz_ecdsa_parse_compact_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sig, const unsigned char *input64);
@@ -1074,6 +1075,44 @@ static void secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(const secp256k1_cont
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, valid_seckey32, secp256k1_fuzz_ecdsa_nonce_retry_fail, &nonce_data) == 0);
     FUZZ_CHECK(nonce_data.calls == 3);
     FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
+}
+
+static void secp256k1_fuzz_check_ecdsa_sign_null_input_cleanup(secp256k1_context *ctx, const unsigned char *valid_msg32, const unsigned char *valid_seckey32) {
+    struct {
+        const unsigned char *msg32;
+        const unsigned char *seckey32;
+    } invalid_cases[2];
+    secp256k1_fuzz_ecdsa_sign_fn sign = secp256k1_ecdsa_sign;
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    secp256k1_fuzz_ecdsa_nonce_data nonce_data;
+    secp256k1_ecdsa_signature sig;
+    unsigned char zero_sig[sizeof(sig)] = { 0 };
+    unsigned int calls;
+    size_t i;
+
+    invalid_cases[0].msg32 = NULL;
+    invalid_cases[0].seckey32 = valid_seckey32;
+    invalid_cases[1].msg32 = valid_msg32;
+    invalid_cases[1].seckey32 = NULL;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    nonce_data.self = &nonce_data;
+    nonce_data.extra32 = NULL;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_msg32 = NULL;
+    nonce_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    for (i = 0; i < sizeof(invalid_cases) / sizeof(invalid_cases[0]); i++) {
+        memset(&sig, 0xA5, sizeof(sig));
+        calls = illegal_data.calls;
+        nonce_data.calls = 0;
+        FUZZ_CHECK(sign(ctx, &sig, invalid_cases[i].msg32, invalid_cases[i].seckey32, secp256k1_fuzz_ecdsa_nonce_fail, &nonce_data) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(nonce_data.calls == 0);
+        FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
+    }
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_check_ecdsa_invalid_seckey_nonce_domain(const secp256k1_context *ctx) {
@@ -2286,6 +2325,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_r_plus_order(ctx);
     secp256k1_fuzz_check_seckey_negate_failure(ctx);
     secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(ctx, msg32, seckey);
+    secp256k1_fuzz_check_ecdsa_sign_null_input_cleanup(ctx, msg32, seckey);
     secp256k1_fuzz_check_ecdsa_invalid_seckey_nonce_domain(ctx);
     secp256k1_fuzz_check_ecdsa_message_reduction(ctx, seckey, &pubkey);
     secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(ctx);
