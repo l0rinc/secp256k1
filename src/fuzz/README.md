@@ -2331,3 +2331,28 @@ force-inline or field-CMOV optimization snapshots. `detached20` through
 `detached22` are broader snapshots containing the same optimization and
 behavior-changing stacks already classified above. None adds a distinct
 clean-master finding or a reason to change an existing severity rating.
+
+The 2026-07-14 refetch also exposed three commits that are not useful
+cherry-picks for this branch. `l0rinc/l0rinc/scratch-free-warning`
+(`c0f32d4`) changes only `src/tests.c`: it moves the deliberately malformed
+scratch object from stack storage to an already allocated heap object so a
+GCC warning does not suggest that the error path can free stack memory. This
+is a test-build warning fix, not a production contract or fuzz oracle. The
+MuSig aggregate-nonce test merge (`8363a2d`) compares all 66 serialized bytes
+instead of the first 33, which is deterministic test maintenance already
+covered by the aggregate-nonce and full-signing checks here. Finally,
+`detached4` (`3a5e9f3`) is a 94-line Strauss `no == 1` performance fast path;
+it changes the control-flow implementation without adding a contract. It
+must be benchmarked and differentially replayed as an optimization experiment,
+not cherry-picked into the discovery stack or used to downgrade a master
+finding. These decisions leave the current branch's barriers intact and do
+not alter any clean-master severity rating.
+
+For context, a temporary bounds-preserving port of the `no == 1` fast path
+was applied on top of this branch because the original snapshot conflicted
+with the current `bits_na_*` and generator-bit guards. That port passed
+`tests`, `noverify_tests`, all 14 native Clang corpus replays, and all 14
+forced-int64 Clang ASan/UBSan corpus replays. This differential result shows
+no observed behavior or sanitizer regression, but it is still not evidence
+that the optimization belongs in the oracle stack; promoting it would need a
+separate upstream-quality patch, review, and benchmark record.
