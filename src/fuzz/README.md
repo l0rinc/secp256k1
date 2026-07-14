@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -14,7 +14,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct two-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
@@ -3526,3 +3526,42 @@ backends with exit 0. Isolated campaigns used copied corpora with
 completed 64 executions in 16 seconds. Every manager and worker exited 0 with
 no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. This
 commit changes only the fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-14 Core `ec_pubkey_combine` Repeated-Infinity 16-Term Oracle
+
+`fuzz_api_roundtrip` now has a gated 28-byte ASCII seed,
+`sixteen-term-pubkey-combine`, that feeds the public combine API the fixed
+scalar sequence `[1, n-1, 2, n-2, 3, n-3, 4, n-4, 5, 6, 7, 8, 9, 10, 11,
+12]`, where `n` is the group order. The first eight terms cancel in four
+separate pairs, so the accumulator reaches infinity repeatedly; the final
+eight terms then produce `68G`. The oracle checks every zero-sum prefix,
+checks that `5G` is accepted after the fourth cancellation, compares the
+complete result with an independent byte-level scalar sum and generator
+multiplication, and repeats the complete transcript in reverse order.
+
+This is **Informational / Low public-API oracle hardening**, not a new
+clean-master production finding. At clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, the API loop already handles
+arbitrary input counts, but the existing independent combine coverage stopped
+at eight terms and the explicit cancellation helper stopped at four. This
+transcript covers repeated infinity-to-finite transitions and a long tail
+without changing the master-relative severity of any existing finding. No
+public nonce cleanup or other non-cryptographic state is assigned a critical
+severity here.
+
+For causal proof, a temporary mutation in `src/secp256k1.c` skipped only the
+last accumulator addition when `n == 16`. All 35 pre-existing API corpus files
+remained green on both default 5x52 and forced-int64/10x26 Clang ASan/UBSan
+builds, while the exact new seed aborted with SIGABRT exit 134 under
+`-handle_abrt=0` on both backends. Bypassing only this new helper made the same
+mutated seed pass with exit 0 on both backends. The production mutation and
+helper bypass were restored before final replay, so this is detection-point
+proof rather than a claim that clean master is currently defective.
+
+The restored Clang ASan/UBSan targets replayed all 36 API corpus files with
+exit 0 on both backends. Isolated campaigns used
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5`; the default backend ran
+171 executions in 16 seconds and forced-int64 ran 113 executions in 17
+seconds. Every manager and worker exited 0 with no sanitizer diagnostic,
+assertion failure, timeout, OOM, or artifact. This commit changes only the
+fuzzer, its corpus, and this evidence ledger.
