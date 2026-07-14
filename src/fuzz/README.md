@@ -14,7 +14,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct two-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
@@ -3488,3 +3488,41 @@ backends with exit 0. Isolated `-workers=2 -jobs=2 -max_total_time=15
 all managers and workers exited 0 and produced no sanitizer diagnostic,
 assertion failure, timeout, OOM, or artifact. This commit changes only the
 fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-14 ecmult_multi Distinct Pippenger Batch Oracle
+
+`fuzz_ecmult_multi` now has a gated 34-byte corpus case with 264 distinct
+callback entries, exactly three times `ECMULT_PIPPENGER_THRESHOLD` (88). Each
+entry uses a different generator-derived point and scalar, while the generator
+term is fixed at 17. A scratch space sized for one threshold batch forces the
+production dispatcher through three Pippenger batches. The independent model
+computes every point term with `secp256k1_ecmult_const`, checks the complete
+serialized-coordinate result, requires every callback index exactly once, and
+rejects at both sides of the first batch boundary while requiring an infinity
+failure result.
+
+This is **Informational / Low internal-oracle hardening**, not a new
+clean-master production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already exercises one- and
+two-batch Pippenger behavior, but those large-count references repeat a single
+point and derive one scalar total. The existing distinct direct case stops at
+sixteen entries. This transcript checks that distinct callback state survives
+multiple Pippenger batches; it does not change any prior master-relative
+severity, and no cleanup issue is inferred from this public arithmetic state.
+
+For causal proof, a temporary mutation in `src/ecmult_impl.h` skipped the
+first accumulated batch only when the dispatcher received at least three
+Pippenger-threshold batches. All 15 pre-existing `ecmult_multi` corpus files
+remained green on default 5x52 and forced-int64/10x26. The exact
+`distinct-pippenger-batches` seed aborted with SIGABRT exit 134 on both
+backends. Bypassing only the new helper made the same mutated seed pass with
+exit 0 on both. The mutation and bypass were restored before fixed replay;
+the oracle identifies a missing-batch regression without claiming clean master
+is currently defective.
+
+The restored Clang ASan/UBSan target passed all 16 corpus files on both
+backends with exit 0. Isolated campaigns used copied corpora with
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5`; both jobs on each backend
+completed 64 executions in 16 seconds. Every manager and worker exited 0 with
+no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. This
+commit changes only the fuzzer, its corpus, and this evidence ledger.
