@@ -65,6 +65,7 @@ typedef struct {
     const void *self;
     const unsigned char *extra32;
     const unsigned char *expected_key32;
+    const unsigned char *expected_msg32;
     unsigned int calls;
 } secp256k1_fuzz_ecdsa_nonce_data;
 
@@ -105,6 +106,9 @@ static int secp256k1_fuzz_ecdsa_nonce(unsigned char *nonce32, const unsigned cha
     FUZZ_CHECK(key32 != NULL);
     if (nonce_data->expected_key32 != NULL) {
         FUZZ_CHECK(memcmp(key32, nonce_data->expected_key32, 32) == 0);
+    }
+    if (nonce_data->expected_msg32 != NULL) {
+        FUZZ_CHECK(memcmp(msg32, nonce_data->expected_msg32, 32) == 0);
     }
     FUZZ_CHECK(algo16 == NULL);
     FUZZ_CHECK(attempt == nonce_data->calls);
@@ -1017,6 +1021,8 @@ static void secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(const secp256k1_cont
 
     nonce_data.self = &nonce_data;
     nonce_data.extra32 = msg32;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_msg32 = NULL;
     nonce_data.calls = 0;
     memset(&sig, 0xA5, sizeof(sig));
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, valid_seckey32, secp256k1_fuzz_ecdsa_nonce_fail, &nonce_data) == 0);
@@ -1107,6 +1113,8 @@ static void secp256k1_fuzz_check_ecdsa_retry_after_zero_s(const secp256k1_contex
 
     nonce_data.self = &nonce_data;
     nonce_data.extra32 = NULL;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_msg32 = NULL;
     nonce_data.calls = 0;
     memset(&sig, 0xA5, sizeof(sig));
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, zero_s_message, one32, secp256k1_fuzz_ecdsa_nonce_s_zero_then_two, &nonce_data) == 1);
@@ -2084,6 +2092,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     nonce_data.self = &nonce_data;
     nonce_data.extra32 = nonce_extra32;
     nonce_data.expected_key32 = NULL;
+    nonce_data.expected_msg32 = NULL;
     nonce_data.calls = 0;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey);
@@ -2178,6 +2187,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_fuzz_ecdsa_sha256_compression_calls != 0);
     nonce_data.extra32 = NULL;
     nonce_data.expected_key32 = seckey;
+    nonce_data.expected_msg32 = msg32;
     nonce_data.calls = 0;
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &checked_default_sig, msg32, seckey, secp256k1_fuzz_ecdsa_nonce, &nonce_data) == 1);
     FUZZ_CHECK(nonce_data.calls >= 1);
@@ -2198,6 +2208,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_high_s(ctx, &sig, msg32, &pubkey);
     nonce_data.extra32 = nonce_extra32;
     nonce_data.expected_key32 = seckey;
+    nonce_data.expected_msg32 = msg32;
     nonce_data.calls = 0;
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &parsed_sig, msg32, seckey, NULL, nonce_extra32) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &checked_sig, msg32, seckey, secp256k1_fuzz_ecdsa_nonce, &nonce_data) == 1);

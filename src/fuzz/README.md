@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, nonce callback key-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -375,6 +375,26 @@ This is informational oracle hardening, not a current-master production
 finding; a real failure would be a callback-context or nonce-domain
 regression, not a direct key compromise, so no master-relative severity
 rating changes.
+
+Focused ECDSA nonce-callback message-domain replay (2026-07-14): the restored
+forced-int64 Clang ASan/UBSan target passed all 29 tracked `api_roundtrip`
+inputs, including `ecdsa-variable-nonce-equation`. The custom RFC6979
+passthrough callback now independently checks that the signer passes the exact
+32-byte message hash supplied to `secp256k1_ecdsa_sign`, matching the public
+callback contract; signature equivalence alone does not establish this because
+both nonce paths can receive the same wrong message.
+
+For the differential proof, `secp256k1_ecdsa_sign_inner` was temporarily
+changed to pass one all-zero 32-byte buffer to both the default and custom
+nonce callbacks while retaining the real message for the ECDSA signing
+equation. The focused seed aborted with exit 134. Removing only the new
+message `memcmp` let all 29 API seeds pass under that identical production
+mutation, proving the prior signature-equivalence, retry, verification, and
+independent equation checks did not detect the callback-domain regression. The
+mutation and assertion bypass were restored before replay. This is
+informational oracle hardening, not a current-master production finding; a
+real failure would be callback-context corruption rather than a direct key
+compromise, so no master-relative severity rating changes.
 
 Focused ECDSA retry-failure cleanup replay (2026-07-14): the new
 `ecdsa-retry-failure-cleanup` seed makes the nonce callback return a zero
@@ -1206,6 +1226,10 @@ documented in its commit message.
   corresponding `key32` contract for its RFC6979 passthrough callback. Passing
   the same wrong buffer to both default and custom ECDSA nonce paths leaves
   their signature comparison green, so this check is likewise not redundant.
+  It now checks the corresponding exact `msg32` contract as well: passing the
+  same wrong message to both paths leaves their signatures, verification, and
+  independent signing equation green, so a direct callback assertion is
+  required for that domain too.
   The Schnorr callback now also checks the exact message bytes and length. A
   mutation that passes the normalized secret-key buffer as the 32-byte nonce
   message to both default and custom signing paths leaves their signatures and
