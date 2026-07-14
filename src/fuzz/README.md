@@ -14,7 +14,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
@@ -2566,3 +2566,39 @@ mutation. The production mutation and helper bypass were restored before the
 clean replay. Default and forced-int64 Clang ASan/UBSan replays then cover the
 full group corpus, and bounded two-worker/two-job campaigns cover the focused
 seed without sanitizer diagnostics or retained artifacts.
+
+## 2026-07-14 ecmult_multi Independent Equality Oracle
+
+The multi-scalar target now checks successful results through canonical affine
+coordinates and a 64-byte serialization, while retaining `secp256k1_gej_eq_var`
+as a consistency check. This applies to the no-scratch/scratch comparison,
+Pippenger one- and two-batch paths, Strauss batches, and the empty-input path.
+It also adds a fixed finite-generator-versus-infinity negative barrier so a
+false-positive `gej_eq_var` cannot silently make every positive result look
+correct. The focused `equality-comparator-barrier` seed is the 30-byte ASCII
+input `ecmult multi equality barrier\n`.
+
+This reiterates an **Informational / Low internal-oracle gap**, not a
+clean-master production finding. `secp256k1_gej_eq_var` is implemented with a
+group-addition test; using it as the only result comparator coupled the target
+to the same arithmetic family it was meant to check. Clean master produces
+the expected results, and no public reachability, cryptographic impact, or
+master-relative severity increase is claimed. The existing internal
+multi-scalar result behavior remains unchanged.
+
+The control mutation temporarily changed `secp256k1_gej_eq_var` to return
+true unconditionally. The pre-change target loaded all 12 existing
+`ecmult_multi` corpus files and stayed green under that mutation, showing that
+its old positive-only equality checks and independent arithmetic reference did
+not exercise the comparator's false branch. With the new barrier enabled, the
+30-byte focused seed aborted with exit 134. Bypassing only that new barrier
+made the identical mutation pass, proving that the barrier, rather than an
+unrelated target assertion, detects the regression. The production mutation
+and temporary harness bypass were restored before replay.
+
+The restored default and forced-`int64` Clang ASan/UBSan builds passed all 13
+tracked corpus files. Bounded `-workers=2 -jobs=2 -max_total_time=12`
+campaigns on both backends completed with every manager and worker exiting 0,
+without sanitizer diagnostics, assertion failures, timeouts, OOMs, or crash
+artifacts. This is oracle hardening only and does not alter the master-relative
+production severity ledger.
