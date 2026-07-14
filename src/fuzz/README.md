@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -3708,3 +3708,42 @@ per backend: default workers executed 40 and 39 inputs, while forced-int64
 workers executed 38 and 39. Every manager and worker exited 0 with no ASan,
 UBSan, assertion, timeout, OOM, or crash artifact. This commit changes only
 the fuzzer, its focused corpus input, and this evidence ledger.
+
+## 2026-07-15 Partial Keypair MuSig Counter-Nonce Oracle
+
+`fuzz_musig` now has a gated 38-byte ASCII seed,
+`partial-keypair-nonce-counter-invalid`, that calls
+`secp256k1_musig_nonce_gen_counter` with an all-zero secret half/valid public
+half and with a valid secret half/all-zero public half. Each rejection must
+invoke the illegal-argument callback once and clear both caller-owned secret
+and public nonce outputs before nonce derivation.
+
+This is **Informational / Low API-oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already propagates
+`keypair_load` failure through `nonce_gen_counter` and clears both outputs.
+The existing MuSig target covered invalid keyagg caches and valid-but-mismatched
+keypairs, but not these two partial opaque states in the counter-nonce
+consumer. No nonce disclosure, forgery, or availability impact is claimed;
+public nonce cleanup alone is not Critical, and the master-relative ledger is
+unchanged.
+
+For causal proof, a temporary mutation in
+`src/modules/musig/session_impl.h` forced `nonce_gen_counter` to continue
+after `keypair_load` rejected either all-zero 32-byte half, using the loader's
+dummy state. All 52 pre-existing MuSig corpus inputs stayed green under that
+mutation on both default and forced-int64 builds. The exact new seed aborted
+with exit 134 on both backends; bypassing only the new helper made the
+identical mutated seed exit 0 on both. The production mutation and harness
+bypass were restored before fixed replay, so this is detection-point proof,
+not a claim that clean master is currently defective.
+
+The restored Clang ASan/UBSan target passed all 53 MuSig corpus files on both
+default 5x52 and forced-int64/10x26 backends: 54 runs including the empty
+input, with exit 0 in 64 and 112 seconds respectively. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns executed 54 runs
+per worker on both backends: 2x54 in 64 seconds per default worker and 2x54
+in 111 and 112 seconds for forced-int64 workers. Every manager and worker
+exited 0 with no ASan, UBSan, assertion, timeout, OOM, or crash artifact.
+This commit changes only the fuzzer, its focused corpus input, and this
+evidence ledger.
