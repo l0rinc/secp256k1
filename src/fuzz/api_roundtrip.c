@@ -81,6 +81,9 @@ typedef struct {
 } secp256k1_fuzz_ecdsa_equation_nonce_data;
 
 typedef int (*secp256k1_fuzz_ecdsa_serialize_der_fn)(const secp256k1_context *ctx, unsigned char *output, size_t *outputlen, const secp256k1_ecdsa_signature *sig);
+typedef int (*secp256k1_fuzz_ec_pubkey_parse_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const unsigned char *input, size_t inputlen);
+typedef int (*secp256k1_fuzz_ecdsa_parse_der_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sig, const unsigned char *input, size_t inputlen);
+typedef int (*secp256k1_fuzz_ecdsa_parse_compact_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sig, const unsigned char *input64);
 typedef int (*secp256k1_fuzz_ecdsa_normalize_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sigout, const secp256k1_ecdsa_signature *sigin);
 typedef int (*secp256k1_fuzz_ec_seckey_tweak_fn)(const secp256k1_context *ctx, unsigned char *seckey, const unsigned char *tweak32);
 typedef int (*secp256k1_fuzz_ec_pubkey_tweak_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const unsigned char *tweak32);
@@ -498,6 +501,43 @@ static void secp256k1_fuzz_check_pubkey_serialize_flags(secp256k1_context *ctx, 
     FUZZ_CHECK(illegal_data.calls == calls + 1);
     FUZZ_CHECK(output_len == 0);
     FUZZ_CHECK(memcmp(output, zero_output, sizeof(output)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
+static void secp256k1_fuzz_check_null_parser_inputs(secp256k1_context *ctx) {
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    secp256k1_fuzz_ec_pubkey_parse_fn parse_pubkey = secp256k1_ec_pubkey_parse;
+    secp256k1_fuzz_ecdsa_parse_der_fn parse_der = secp256k1_ecdsa_signature_parse_der;
+    secp256k1_fuzz_ecdsa_parse_compact_fn parse_compact = secp256k1_ecdsa_signature_parse_compact;
+    secp256k1_pubkey pubkey;
+    secp256k1_ecdsa_signature sig;
+    unsigned char zero_pubkey[sizeof(pubkey)] = { 0 };
+    unsigned char zero_sig[sizeof(sig)] = { 0 };
+    unsigned int calls;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    /* The parser output must not retain a previous object when its input is NULL. */
+    memset(&pubkey, 0xA5, sizeof(pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(parse_pubkey(ctx, &pubkey, NULL, 65) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&pubkey, zero_pubkey, sizeof(pubkey)) == 0);
+
+    memset(&sig, 0x5A, sizeof(sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(parse_der(ctx, &sig, NULL, 72) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
+
+    memset(&sig, 0x3C, sizeof(sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(parse_compact(ctx, &sig, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
@@ -2122,6 +2162,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_serialize_short_buffer(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_serialize_flags(ctx, &pubkey);
+    secp256k1_fuzz_check_null_parser_inputs(ctx);
     secp256k1_fuzz_check_null_pubkey_cmp(ctx, &pubkey);
     secp256k1_fuzz_check_null_tweak_cleanup(ctx, &pubkey, seckey, input, size);
 
