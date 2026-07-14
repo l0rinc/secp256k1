@@ -1,0 +1,1 @@
+scalar one A: independent tweak order-boundary arithmetic oracle; add n-1 and multiply n-1 against byte reference output and reconstructed public points. This input intentionally exceeds the legacy API corpus size so the new assertion is isolated from older correlated wrapper checks.
