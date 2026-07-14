@@ -100,10 +100,21 @@ static int secp256k1_fuzz_ellswift_hash_fail(unsigned char *output, const unsign
 
 static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
     static const unsigned char bip324_tag[] = "bip324_ellswift_xonly_ecdh";
+    static const unsigned char ignored_data[64] = {
+        0xA5, 0x5A, 0xC3, 0x3C, 0x96, 0x69, 0xF0, 0x0F,
+        0x1D, 0xD1, 0x2E, 0xE2, 0x47, 0x74, 0x8B, 0xB8,
+        0x13, 0x31, 0x26, 0x62, 0x4D, 0xD4, 0x5B, 0xB5,
+        0x79, 0x97, 0xA1, 0x1A, 0xBE, 0xEB, 0x08, 0x80,
+        0x42, 0x24, 0x18, 0x81, 0xD8, 0x8D, 0x36, 0x63,
+        0x57, 0x75, 0x9C, 0xC9, 0xE7, 0x7E, 0x0B, 0xB0,
+        0xA6, 0x6A, 0xF3, 0x3F, 0x4A, 0xA4, 0x5E, 0xE5,
+        0x90, 0x09, 0xCE, 0xEC, 0x72, 0x27, 0xBD, 0xDB
+    };
     unsigned char shared_x32[32];
     unsigned char taghash[32];
     unsigned char expected[32];
     unsigned char output[32];
+    unsigned char ignored_data_output[32];
     unsigned char prefix64[64];
     unsigned char transcript[224];
 
@@ -120,6 +131,13 @@ static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_
 
     FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
     FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
+
+    /* BIP324 fixes the transcript and explicitly ignores the callback data
+     * pointer. Check both the exported callback and the ctx-aware dispatch. */
+    FUZZ_CHECK(secp256k1_ellswift_xdh_hash_function_bip324(ignored_data_output, shared_x32, ell_a64, ell_b64, (void *)ignored_data) == 1);
+    FUZZ_CHECK(memcmp(ignored_data_output, expected, sizeof(ignored_data_output)) == 0);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, ignored_data_output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, (void *)ignored_data) == 1);
+    FUZZ_CHECK(memcmp(ignored_data_output, expected, sizeof(ignored_data_output)) == 0);
 
     memcpy(prefix64, taghash, sizeof(taghash));
     memcpy(prefix64 + sizeof(taghash), taghash, sizeof(taghash));
