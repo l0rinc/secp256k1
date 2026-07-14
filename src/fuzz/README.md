@@ -2431,3 +2431,40 @@ context corpus files, including the new seed. Two-worker/two-job bounded
 campaigns on both backends completed with every job exiting 0 and no sanitizer
 diagnostic or crash artifact. This is oracle hardening, not a clean-master
 production fix; no severity rating changes.
+
+## 2026-07-14 Core Parser NULL-Input Oracle
+
+The API target now has one focused fail-closed matrix for the core parser
+outputs: `secp256k1_ec_pubkey_parse`,
+`secp256k1_ecdsa_signature_parse_der`, and
+`secp256k1_ecdsa_signature_parse_compact`. Each call passes a NULL input
+through a function pointer, so the fuzzer can install a counting illegal
+callback without the public non-NULL attributes turning the probe into a
+compile-time contract violation. A prefilled output must be zeroed, and each
+invalid call must report exactly one illegal argument.
+
+The `null-parser-inputs` seed is the 19-byte ASCII input
+`NULL parser inputs\n`. This reiterates the existing clean-master fixed-output
+finding for the DER and compact ECDSA parsers: **Low/Medium API-state
+severity**, unchanged. Upstream `origin/master` already clears the public-key
+output before its NULL-input check, so that case is a regression guard. The
+upstream DER and compact parsers reject NULL without clearing a prefilled
+signature; the earlier `c02dc5e` production fix in this audit branch adds that
+cleanup and deterministic assertions. The gap was that the API fuzzer
+exercised malformed buffers but not NULL input pointers for all three core
+parsers. This is stale-output/fail-closed state, not a memory-corruption or
+cryptographic claim.
+
+For differential proof, each production condition was isolated separately: the
+pubkey clear was temporarily guarded by `input != NULL`, while each ECDSA clear
+was removed only on its NULL-input path. With the focused helper bypassed, all
+29 pre-existing API corpus files remained green under each mutation on both
+default and forced-int64 Clang ASan/UBSan builds. Restoring only the helper made
+`null-parser-inputs` abort with exit 134 for each mutation on both backends. The
+mutations and helper bypass were restored before the final clean replay.
+
+The final default and forced-int64 Clang ASan/UBSan replays pass all API corpus
+files, including this seed. Two-worker/two-job bounded libFuzzer campaigns on
+both backends completed with every job exiting 0 and no sanitizer diagnostic or
+crash artifact. This commit adds no production behavior change and does not
+alter any master-relative severity rating.
