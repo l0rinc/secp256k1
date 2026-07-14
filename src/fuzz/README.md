@@ -14,7 +14,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
@@ -829,6 +829,25 @@ documented in its commit message.
   abort. This is internal callback-index and failure-state coverage, not a
   current-master production finding; the existing target already covered
   single-batch Pippenger and multi-batch Strauss behavior.
+- **Informational oracle hardening:** `fuzz_ecmult_multi` now allocates a
+  32-byte `0xA5` prefix before the scratch checkpoint used by its callback-
+  failure path, snapshots it, and verifies that rollback preserves those
+  caller-owned bytes in addition to checking the allocation counter, callback
+  trace, and infinity output. The prior failure oracle checked only the
+  counter, so a rollback could corrupt an earlier allocation while still
+  passing its existing checks. The dedicated
+  `ecmult_multi/scratch-prefix-preservation` seed is 28 bytes. Clean default
+  and forced-int64 ASan/UBSan fixed replays passed all 12 corpus files (490
+  bytes total), and the matching MSan replay passed the same corpus. Isolated
+  default and forced-int64 two-worker/two-job campaigns ran for 10 seconds
+  and exited 0 without sanitizer diagnostics, assertion failures, timeouts,
+  OOMs, or artifacts. For the mutation proof, a temporary change in
+  `secp256k1_scratch_apply_checkpoint` flipped byte 31 whenever the checkpoint
+  was 32: the focused seed aborted with exit 134 when the new sentinel check
+  was enabled, while bypassing only that check left the same mutation green
+  with exit 0. The mutation and bypass were restored before replay. This is
+  an internal failure-state oracle, not a clean-master production finding,
+  and does not change any severity rating.
 - **Sanitizer-only fuzzer fix:** the `ecmult_multi` harness now uses defined
   scalar-zero initialization when constructing zero or overflow fallback cases.
   Before this correction, MemorySanitizer reported an uninitialized read in the
