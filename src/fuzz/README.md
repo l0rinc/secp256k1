@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1958,6 +1958,26 @@ recoverable ECDSA retry failure, and `f3b8034` covered consumed MuSig secret
 nonce reuse. Those commits are part of the current branch (`f3b8034`); their
 mutation proofs and sanitizer replays must not be retroactively attributed to
 the snapshot above.
+
+The MuSig follow-up then added an explicit empty partial-signature aggregation
+oracle. It calls `secp256k1_musig_partial_sig_agg` with a valid session,
+`n_sigs == 0`, and both a valid array pointer and `NULL`; each call must report
+the documented illegal argument, invoke the callback once, and leave the
+64-byte output zeroed. The focused `empty-aggregation` corpus input is the
+24-byte ASCII string `empty MuSig aggregation\n`. The fixed Clang ASan/UBSan
+replay passed all 42 current MuSig inputs, and two independent parallel full
+corpus replays also exited 0. A separate Clang ASan/UBSan libFuzzer build ran
+two managers with `-workers=2 -jobs=2 -max_total_time=15` over isolated copies;
+all four worker jobs exited 0 without sanitizer diagnostics, assertion
+failures, timeouts, or artifacts. A native GCC x86_64-assembly build also
+replayed all 42 inputs successfully. For the causal proof,
+`src/modules/musig/session_impl.h` was temporarily mutated from
+`ARG_CHECK(n_sigs > 0)` to an always-true condition. The focused seed then
+aborted at the new assertion with exit 134; bypassing only the new fuzzer call
+let the same production mutation pass. The production guard and oracle were
+restored before the fixed replay. This is informational API-oracle hardening,
+not a clean-master production finding, and does not change any severity
+rating.
 
 The post-snapshot contract review also recorded three deliberate no-edit
 decisions. `secp256k1_ecmult_const_xonly` has no documented output state on
