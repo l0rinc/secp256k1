@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, independent byte-level tweak arithmetic at the order-minus-one boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -2914,3 +2914,47 @@ the pre-existing `memcmp` bound warning in
 two-worker campaign saw all 34 seeds, completed 167 executions per job, and
 both managers exited 0 without sanitizer diagnostics, assertion failures,
 timeouts, or artifacts. This commit changes no production behavior.
+
+## 2026-07-14 ECDSA Normalization Half-Order Oracle
+
+The core API target now pins the exact low-S boundary with an independent
+byte-level oracle. A length-gated block constructs compact signatures with
+`r = 1`, `s = floor(n/2)`, and `s = floor(n/2) + 1` from constants rather than
+calling production scalar helpers. It checks the public normalization return
+value, the NULL-output query, canonical compact bytes, and in-place
+normalization. The focused
+`ecdsa-normalize-half-order-boundary` seed is 418 bytes and therefore exceeds
+the 285-byte legacy API corpus maximum, keeping this deterministic boundary
+check isolated from generated inputs.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. At `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, the existing high-S check derives
+its high-S signature through production `secp256k1_ec_seckey_negate`, while
+the existing normalization checks compare other production-derived values.
+Those relations can agree if a shared boundary conversion is wrong. The
+fixed half-order seed is an independent assertion of the exact threshold and
+canonical output. The public/unit coverage exercises normalization behavior,
+but did not provide this fixed byte-level half-order boundary oracle. No
+clean-master arithmetic defect, key disclosure, signature forgery, or
+availability issue was found, so no master-relative severity is raised.
+
+For causal proof, a temporary production mutation skipped the scalar
+negation in `secp256k1_ecdsa_signature_normalize` only when the serialized
+input `s` was exactly `floor(n/2) + 1`. With the new helper bypassed, all 34
+pre-existing API corpus inputs remained green. Restoring the helper made the
+focused seed abort with status 134 at the expected canonical output. The
+mutation and bypass were restored before clean replay. This demonstrates the
+legacy-corpus oracle gap without claiming that clean master contains the
+mutated defect.
+
+The clean Clang ASan/UBSan replay passed all 35 API seeds. A disposable
+15-second Clang ASan/UBSan campaign completed 173 executions without a
+diagnostic, assertion, timeout, or artifact. Native GCC x86_64 standalone and
+GCC ASan/UBSan standalone replays each passed all 35 seeds; GCC emitted only
+the pre-existing `memcmp` bound warning in
+`secp256k1_fuzz_scalar32_in_order`. The disposable Clang two-manager,
+two-worker campaign saw all 35 seeds, completed 167 and 171 executions in
+the two jobs, and both managers exited 0 without sanitizer diagnostics,
+assertion failures, timeouts, or artifacts. This commit changes no
+production behavior.
