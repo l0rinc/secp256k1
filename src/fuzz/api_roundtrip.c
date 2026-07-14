@@ -122,6 +122,29 @@ static int secp256k1_fuzz_ecdsa_nonce_fail(unsigned char *nonce32, const unsigne
     return 0;
 }
 
+static int secp256k1_fuzz_ecdsa_nonce_retry_fail(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
+    secp256k1_fuzz_ecdsa_nonce_data *nonce_data = (secp256k1_fuzz_ecdsa_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(key32 != NULL);
+    FUZZ_CHECK(algo16 == NULL);
+    FUZZ_CHECK(attempt == nonce_data->calls);
+    nonce_data->calls++;
+    if (attempt == 0) {
+        memset(nonce32, 0, 32);
+        return 1;
+    }
+    if (attempt == 1) {
+        memcpy(nonce32, secp256k1_fuzz_scalar_order, 32);
+        return 1;
+    }
+    FUZZ_CHECK(attempt == 2);
+    memset(nonce32, 0xA5, 32);
+    return 0;
+}
+
 static int secp256k1_fuzz_ecdsa_nonce_retry(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
     secp256k1_fuzz_ecdsa_nonce_data *nonce_data = (secp256k1_fuzz_ecdsa_nonce_data *)data;
 
@@ -994,6 +1017,12 @@ static void secp256k1_fuzz_check_ecdsa_sign_failure_cleanup(const secp256k1_cont
     memset(&sig, 0xA5, sizeof(sig));
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, valid_seckey32, secp256k1_fuzz_ecdsa_nonce_fail, &nonce_data) == 0);
     FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
+
+    nonce_data.calls = 0;
+    memset(&sig, 0x5A, sizeof(sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, valid_seckey32, secp256k1_fuzz_ecdsa_nonce_retry_fail, &nonce_data) == 0);
+    FUZZ_CHECK(nonce_data.calls == 3);
     FUZZ_CHECK(memcmp(&sig, zero_sig, sizeof(sig)) == 0);
 }
 
