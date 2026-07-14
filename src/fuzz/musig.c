@@ -12,6 +12,7 @@
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
 typedef int (*secp256k1_fuzz_musig_partial_sig_agg_fn)(const secp256k1_context *, unsigned char *, const secp256k1_musig_session *, const secp256k1_musig_partial_sig * const*, size_t);
+typedef int (*secp256k1_fuzz_musig_nonce_process_fn)(const secp256k1_context *, secp256k1_musig_session *, const secp256k1_musig_aggnonce *, const unsigned char *, const secp256k1_musig_keyagg_cache *);
 
 static size_t secp256k1_fuzz_musig_sha256_compression_calls = 0;
 static size_t secp256k1_fuzz_musig_keyagglist_sha256_compression_calls = 0;
@@ -1201,6 +1202,50 @@ static void secp256k1_fuzz_check_musig_nonce_process_cache_failure_cleanup(secp2
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_nonce_process_null_input_cleanup(secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
+    struct {
+        const secp256k1_musig_aggnonce *aggnonce;
+        const unsigned char *msg32;
+        const secp256k1_musig_keyagg_cache *keyagg_cache;
+    } invalid_cases[3];
+    secp256k1_fuzz_musig_nonce_process_fn nonce_process = secp256k1_musig_nonce_process;
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    secp256k1_musig_session valid_session;
+    secp256k1_musig_session session;
+    secp256k1_musig_aggnonce aggnonce_before = *aggnonce;
+    secp256k1_musig_keyagg_cache cache_before = *keyagg_cache;
+    unsigned char zero_session[sizeof(session)] = { 0 };
+    size_t i;
+
+    invalid_cases[0].aggnonce = NULL;
+    invalid_cases[0].msg32 = msg32;
+    invalid_cases[0].keyagg_cache = keyagg_cache;
+    invalid_cases[1].aggnonce = aggnonce;
+    invalid_cases[1].msg32 = NULL;
+    invalid_cases[1].keyagg_cache = keyagg_cache;
+    invalid_cases[2].aggnonce = aggnonce;
+    invalid_cases[2].msg32 = msg32;
+    invalid_cases[2].keyagg_cache = NULL;
+
+    /* Start each invalid call from a real session so this catches stale
+     * transcript reuse, not only a missing write into an already-empty slot. */
+    FUZZ_CHECK(nonce_process(ctx, &valid_session, aggnonce, msg32, keyagg_cache) == 1);
+    FUZZ_CHECK(memcmp(&valid_session, zero_session, sizeof(valid_session)) != 0);
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    for (i = 0; i < sizeof(invalid_cases) / sizeof(invalid_cases[0]); i++) {
+        session = valid_session;
+        FUZZ_CHECK(nonce_process(ctx, &session, invalid_cases[i].aggnonce, invalid_cases[i].msg32, invalid_cases[i].keyagg_cache) == 0);
+        FUZZ_CHECK(illegal_data.calls == i + 1);
+        FUZZ_CHECK(memcmp(&session, zero_session, sizeof(session)) == 0);
+        FUZZ_CHECK(memcmp(aggnonce, &aggnonce_before, sizeof(aggnonce_before)) == 0);
+        FUZZ_CHECK(memcmp(keyagg_cache, &cache_before, sizeof(cache_before)) == 0);
+    }
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_negate_musig_pubnonce_part(const secp256k1_context *ctx, unsigned char *negated66, const unsigned char *nonce66, size_t part) {
     secp256k1_pubkey pubkey;
     size_t serialized_len;
@@ -2201,6 +2246,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, n_signers) == 1);
     secp256k1_fuzz_check_musig_nonce_process_failure_cleanup(ctx, &aggnonce, msg32, &keyagg_cache);
     secp256k1_fuzz_check_musig_nonce_process_cache_failure_cleanup(ctx, &aggnonce, msg32, &keyagg_cache);
+    secp256k1_fuzz_check_musig_nonce_process_null_input_cleanup(ctx, &aggnonce, msg32, &keyagg_cache);
     secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
     secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, &keyagg_cache) == 1);
