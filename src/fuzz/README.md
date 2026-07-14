@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -366,6 +366,29 @@ ten-second forced-int64 ASan/UBSan libFuzzer run executed 97 and 99 inputs,
 reached 4,821 features in both jobs, and returned zero without diagnostics
 or artifacts. This is informational/Low wrapper-state hardening, not a
 current-master production finding; no master-relative severity rating changes.
+
+Focused MuSig consumed-secnonce replay (2026-07-14): the MuSig signing path now
+calls `secp256k1_musig_partial_sign` a second time after a successful partial
+signature has zeroed the secret nonce. The `secnonce-reuse-after-sign` seed
+requires that call to return zero, invoke the illegal callback exactly once,
+clear the partial-signature output, and leave the consumed secnonce zeroed.
+The previous fuzzer checked the zeroized bytes but never exercised this next
+state transition.
+
+For the mutation proof, `secp256k1_musig_secnonce_load` was temporarily changed
+to accept an all-zero secnonce as `k0 = k1 = 1` with public nonce point `G`.
+The focused seed aborted with exit 134. The proof uses a generator keypair on
+the replay call so the synthetic point passes the normal keypair-binding check
+and the mutation reaches the signing state; removing only the new reuse helper
+left the prior MuSig corpus green under the identical mutation. The production
+mutation and harness bypass were restored before replay. Normal GCC and
+forced-int64 Clang ASan/UBSan fixed corpus replays passed. A two-worker,
+two-job, ten-second forced-int64 Clang ASan/UBSan libFuzzer run executed 42
+inputs per job, reached 5,676 features in both jobs, and returned zero without
+diagnostics or artifacts. This is informational/Low state-machine hardening,
+not a current-master production finding. It concerns the cryptographically
+meaningful secret secnonce; it is distinct from non-critical public nonce
+cleanup, so no master-relative severity rating changes.
 
 Focused arbitrary-signature ECDSA verification replay (2026-07-13): the
 `api_roundtrip` corpus started with 24 tracked inputs totaling 931 bytes,
