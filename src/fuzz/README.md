@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -413,6 +413,25 @@ mutation and assertion bypass were restored before replay. This is
 informational oracle hardening, not a current-master production finding; a
 real failure would be callback-context corruption rather than a direct key
 compromise, so no master-relative severity rating changes.
+
+  Focused ECDSA invalid-secret nonce-domain replay: the failure-cleanup path
+  now calls a custom nonce callback with zero and group-order secret keys and
+  requires the callback to receive each exact raw 32-byte key and message
+  before signing returns failure and clears the signature. The existing
+  invalid-secret checks used only the built-in nonce function, so they could
+  not detect a fallback scalar being exposed to a custom callback. For the
+  differential proof, `secp256k1_ecdsa_sign_inner` was temporarily changed to
+  pass the message buffer as `key32` only when the supplied secret was
+  invalid. The dedicated `invalid-seckey-nonce-domain` seed aborted with exit
+  134; removing only this helper let all 30 API seeds pass under the same
+  mutation. The mutation and bypass were restored before replay. This is
+  informational invalid-input callback-oracle hardening, not a current-master
+  production finding; severity is unchanged because the caller supplied an
+  invalid secret and the public operation still fails closed. The restored
+  default and forced-int64 Clang ASan/UBSan replays passed all 30 API seeds;
+  native x86_64 GCC ASan/UBSan CTest passed the 30-seed API test. Two-worker,
+  two-job, 15-second campaigns on both Clang sanitizer configurations exited
+  0, with 33 inputs per job and no diagnostics or artifacts.
 
 Focused ECDSA retry-failure cleanup replay (2026-07-14): the new
 `ecdsa-retry-failure-cleanup` seed makes the nonce callback return a zero
