@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
@@ -1675,6 +1675,29 @@ documented in its commit message.
   bypass were restored before the fixed and MSan replays. This is
   informational API-oracle hardening, not a current-master production finding,
   and does not change any severity rating.
+
+  The field target now combines the two dimensions of the documented
+  `secp256k1_fe_mul` contract that were previously exercised separately: both
+  operands use the largest accepted nonnormalized magnitude (8), while the
+  output aliases the first operand (`r == a`). After normalization, the result
+  is checked against an independent 256-bit schoolbook modular multiplication,
+  not merely against a second production multiplication. The dedicated
+  `field/nonnormalized-mul-alias` seed is the 24-byte ASCII input
+  `nonnormalized mul alias\n`. Clean default and forced-`int64` ASan/UBSan
+  replays passed all 13 tracked field files (509 bytes total), and matching
+  default and forced-`int64` MSan replays also passed all 13 files. The
+  two-worker/two-job ASan/UBSan campaigns exited 0: default workers completed
+  341 and 348 executions, while forced-`int64` workers completed 335 and 334,
+  with no sanitizer diagnostic, assertion, timeout, OOM, or crash artifact.
+  For the differential proof, both backend `secp256k1_fe_impl_mul` functions
+  were temporarily changed under `VERIFY` to flip one output limb only when
+  `r == a` and both input magnitudes were 8. The exact seed then aborted with
+  exit 134 on both ASan/UBSan builds using `-handle_abrt=0`; bypassing only the
+  new alias block left the pre-existing 41-byte
+  `field/nonnormalized-arithmetic` seed green on both backends with the
+  mutation active. All temporary mutations and bypasses were restored before
+  the fixed replays. This is informational internal-oracle hardening, not a
+  current-master production finding, so it does not change any severity rating.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
