@@ -11,6 +11,16 @@ static int secp256k1_fuzz_fe_identical(const secp256k1_fe *a, const secp256k1_fe
     return secp256k1_memcmp_var(a->n, b->n, sizeof(a->n)) == 0;
 }
 
+static void secp256k1_fuzz_fe_check_clear(void) {
+    secp256k1_fe value;
+    unsigned char zero[sizeof(value)] = { 0 };
+
+    secp256k1_fe_set_int(&value, 1);
+    secp256k1_fe_clear(&value);
+    SECP256K1_CHECKMEM_DEFINE(&value, sizeof(value));
+    FUZZ_CHECK(memcmp(&value, zero, sizeof(value)) == 0);
+}
+
 static void secp256k1_fuzz_fe_check_normalized(const secp256k1_fe *actual, const secp256k1_fe *expected) {
 #ifdef VERIFY
     FUZZ_CHECK(actual->normalized == 1);
@@ -1142,6 +1152,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_max_magnitude_inverse(input, size);
     secp256k1_fuzz_fe_check_inverse_reference(input, size);
     secp256k1_fuzz_fe_check_sqrt_reference(input, size);
+    secp256k1_fuzz_fe_check_clear();
     secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);
     secp256k1_fuzz_fe_check_negation(input, size);
