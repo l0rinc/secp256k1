@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -2715,3 +2715,41 @@ ASan/UBSan replay each pass all 46 MuSig corpus inputs. The disposable
 two-manager/two-worker Clang campaign saw all 46 seeds in both jobs, completed
 47 runs per job in 94 and 95 seconds, and both managers exited 0 without
 sanitizer diagnostics, assertion failures, timeouts, or artifacts.
+
+## 2026-07-14 ECDSA `sign` NULL-Input Oracle
+
+The core API target now covers both NULL-input argument exits of
+`secp256k1_ecdsa_sign`: a missing 32-byte message hash and a missing secret
+key. Each call starts with a prefilled signature, installs a counting illegal
+callback, supplies a nonce callback that must not be reached, and requires one
+argument error, a zeroed signature, and no nonce callback invocation. The
+focused `ecdsa-sign-null-input-cleanup` seed is the ASCII input
+`ECDSA sign NULL cleanup\n`.
+
+This is **Informational / Low oracle hardening**, not a new clean-master
+production finding. At `origin/master` `ebf5943`, the API already clears the
+caller-owned signature before rejecting either NULL argument. The existing
+fuzzer covered invalid scalar and nonce-failure cleanup, but not these public
+NULL transitions, so it could miss a regression that leaves stale signing
+output live. The output is meaningful signature state; this does not claim a
+cryptographic nonce erasure issue, disclosure, forgery, or Critical severity.
+This commit changes no production behavior.
+
+For causal proof, a temporary production mutation changed the precondition
+cleanup to run only when the generator context was unavailable, preserving the
+existing invalid-scalar and nonce-failure paths. With the new helper bypassed,
+all 31 pre-existing API corpus inputs remained green. Restoring the helper
+makes the focused seed abort with exit 134 at the first NULL-argument
+transition; the mutation and bypass are restored before the clean replay.
+Existing unit tests cover the argument checks and output clearing, but the old
+fuzzer corpus did not assert the signing output contract at these two
+entry-point exits.
+
+The final forced-int64 Clang ASan/UBSan replay and native GCC x86_64-assembly
+ASan/UBSan replay each pass all 32 API corpus inputs. The disposable
+two-manager/two-worker Clang campaign saw all 32 seeds in both jobs, completed
+105 runs per job in 16 seconds, and both managers exited 0 without sanitizer
+diagnostics, assertion failures, timeouts, or artifacts. The native GCC build
+also reports the pre-existing `-Wstringop-overread` in
+`secp256k1_fuzz_scalar32_in_order` at `api_roundtrip.c:1254`; it is unrelated
+to this helper and did not affect the sanitizer replay.
