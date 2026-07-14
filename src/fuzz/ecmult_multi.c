@@ -375,6 +375,39 @@ static void secp256k1_fuzz_ecmult_multi_reference(secp256k1_gej *expected, const
     }
 }
 
+/* Keep multi-scalar result checks independent from gej_eq_var. That helper
+ * implements equality by adding points, so using it as the only oracle can
+ * mask a regression shared by the arithmetic and equality paths. */
+static int secp256k1_fuzz_ecmult_multi_gej_equal_independent(const secp256k1_gej *a, const secp256k1_gej *b) {
+    secp256k1_ge affine_a;
+    secp256k1_ge affine_b;
+    secp256k1_gej copy_a = *a;
+    secp256k1_gej copy_b = *b;
+    unsigned char bytes_a[64];
+    unsigned char bytes_b[64];
+
+    secp256k1_ge_set_gej_var(&affine_a, &copy_a);
+    secp256k1_ge_set_gej_var(&affine_b, &copy_b);
+    secp256k1_ge_to_bytes_ext(bytes_a, &affine_a);
+    secp256k1_ge_to_bytes_ext(bytes_b, &affine_b);
+    return memcmp(bytes_a, bytes_b, sizeof(bytes_a)) == 0;
+}
+
+static void secp256k1_fuzz_ecmult_multi_check_result(const secp256k1_gej *actual, const secp256k1_gej *expected) {
+    FUZZ_CHECK(secp256k1_fuzz_ecmult_multi_gej_equal_independent(actual, expected));
+    FUZZ_CHECK(secp256k1_gej_eq_var(actual, expected));
+}
+
+static void secp256k1_fuzz_ecmult_multi_check_equality_barrier(void) {
+    secp256k1_gej generator;
+    secp256k1_gej infinity;
+
+    secp256k1_gej_set_ge(&generator, &secp256k1_ge_const_g);
+    secp256k1_gej_set_infinity(&infinity);
+    FUZZ_CHECK(!secp256k1_fuzz_ecmult_multi_gej_equal_independent(&generator, &infinity));
+    FUZZ_CHECK(!secp256k1_gej_eq_var(&generator, &infinity));
+}
+
 static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, size_t scratch_size, const secp256k1_scalar *g_sc, size_t n_points, secp256k1_fuzz_ecmult_multi_data *data) {
     secp256k1_scratch *scratch;
     secp256k1_gej expected;
@@ -398,9 +431,9 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     FUZZ_CHECK(no_scratch_ret == with_scratch_ret);
     if (with_scratch_ret) {
-        FUZZ_CHECK(secp256k1_gej_eq_var(&no_scratch, &expected));
-        FUZZ_CHECK(secp256k1_gej_eq_var(&no_scratch, &with_scratch));
-        FUZZ_CHECK(secp256k1_gej_eq_var(&with_scratch, &expected));
+        secp256k1_fuzz_ecmult_multi_check_result(&no_scratch, &expected);
+        secp256k1_fuzz_ecmult_multi_check_result(&no_scratch, &with_scratch);
+        secp256k1_fuzz_ecmult_multi_check_result(&with_scratch, &expected);
     }
 
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
@@ -451,7 +484,7 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger(const secp256k1_conte
     FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, g_sc, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 1);
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
-    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+    secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     /* Reject at every callback position in the Pippenger batch. */
     data.fail = 1;
@@ -517,7 +550,7 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(const secp256
     FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, g_sc, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 1);
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
-    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+    secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     /* Pin callback offsets at both sides of the batch boundary without
      * repeating the full failure matrix already covered by the one-batch case. */
@@ -581,7 +614,7 @@ static void secp256k1_fuzz_ecmult_multi_repeated_strauss(const secp256k1_context
     FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &secp256k1_scalar_one, secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 1);
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
-    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+    secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     /* Reject from both the first and second Strauss batches. The latter is
      * distinct from the existing single-batch failure oracle. */
@@ -625,7 +658,7 @@ static void secp256k1_fuzz_ecmult_multi_empty(const secp256k1_context *ctx, size
     } else {
         secp256k1_ecmult(&expected, &infinity, &secp256k1_scalar_zero, g_sc);
     }
-    FUZZ_CHECK(secp256k1_gej_eq_var(&actual, &expected));
+    secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
@@ -679,6 +712,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     int overflow;
 
     memset(&data, 0, sizeof(data));
+    secp256k1_fuzz_ecmult_multi_check_equality_barrier();
     n_points = secp256k1_fuzz_byte(input, size, 3) % 9u;
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
