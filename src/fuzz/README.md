@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -3362,4 +3362,46 @@ to completion on each backend; every manager and worker exited 0, with no
 sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. The
 default jobs each completed 51 runs in 59 seconds; forced-`int64` jobs each
 completed 51 runs in 103 seconds. This commit changes only the fuzzer, its
+corpus, and this evidence ledger.
+
+## 2026-07-14 MuSig Sixteen-Signer State-Machine Oracle
+
+`fuzz_musig` now has a gated 29-byte corpus case that builds sixteen distinct
+keypairs from scalar values one through 16 and traverses a valid multi-party
+session. For every signer it independently checks MuSig nonce derivation and
+serialization, then aggregates and processes all sixteen public nonces. It
+independently recomputes every partial-signature equation, compares the
+production partial verifier, checks session replay equivalence, aggregates all
+partial signatures, and verifies the final signature with both the standalone
+BIP340 point equation and the production Schnorr verifier. Ordinary fuzz
+inputs retain the existing one-through-eight stateful path; only this fixed
+case allocates and exercises the sixteen-entry transition.
+
+This is **Informational / Low state-machine oracle hardening**, not a
+clean-master production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` accepts arbitrary positive list
+lengths, but the stateful fuzzer stopped at eight participants. The existing
+16-entry nonce and partial-signature cases deliberately repeat opaque objects
+to stress count loops; they do not prove a valid sixteen-signer nonce,
+partial-signature, and final-signature transcript. Existing findings retain
+their severity relative to unmodified master.
+
+For causal proof, a temporary production mutation in
+`src/modules/musig/session_impl.h` made `secp256k1_musig_partial_sign` use the
+identity scalar instead of the KeyAgg coefficient only for the loaded scalar
+16 signer (including its parity-adjusted negation). All 50 pre-existing MuSig
+corpus files completed 51 executions with exit 0 under that mutation. The
+exact `sixteen-signer-sign-roundtrip` seed aborted with SIGABRT exit 134 at
+the independent per-signer equation. Bypassing only the new helper made the
+identical mutated seed pass with exit 0. The production mutation and bypass
+were restored before fixed replay; no clean-master production bug is claimed.
+
+The restored Clang ASan/UBSan target passed all 51 MuSig corpus files on the
+default 5x52 backend and forced-`int64`/10x26, with 52 fixed executions and
+exit 0 in each replay. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns ran both jobs
+to completion on each backend; every manager and worker exited 0, with no
+sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. The
+default jobs each completed 52 runs in 61 seconds; forced-`int64` jobs each
+completed 52 runs in 107 seconds. This commit changes only the fuzzer, its
 corpus, and this evidence ledger.
