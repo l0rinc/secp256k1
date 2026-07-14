@@ -57,6 +57,8 @@ typedef struct {
     unsigned int calls;
 } secp256k1_fuzz_schnorrsig_illegal_data;
 
+typedef int (*secp256k1_fuzz_schnorrsig_sign_custom_fn)(const secp256k1_context *ctx, unsigned char *sig64, const unsigned char *msg, size_t msglen, const secp256k1_keypair *keypair, secp256k1_schnorrsig_extraparams *extraparams);
+
 static void secp256k1_fuzz_schnorrsig_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_schnorrsig_illegal_data *illegal_data = (secp256k1_fuzz_schnorrsig_illegal_data *)data;
 
@@ -259,6 +261,48 @@ static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64, msg, msglen, keypair, &extraparams) == 0);
     FUZZ_CHECK(nonce_data.calls == 1);
     FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+}
+
+static void secp256k1_fuzz_check_schnorrsig_sign_precondition_cleanup(secp256k1_context *ctx, const unsigned char *valid_msg32, const secp256k1_keypair *valid_keypair, const unsigned char *aux32) {
+    secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
+    secp256k1_fuzz_schnorrsig_nonce_data nonce_data;
+    secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
+    secp256k1_fuzz_schnorrsig_sign_custom_fn sign_custom = secp256k1_schnorrsig_sign_custom;
+    const secp256k1_keypair *null_keypair;
+    unsigned char sig64[64];
+    unsigned char zero64[64] = { 0 };
+    unsigned int calls;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    nonce_data.self = &nonce_data;
+    nonce_data.aux32 = aux32;
+    nonce_data.expected_key32 = NULL;
+    nonce_data.expected_xonly_pk32 = NULL;
+    nonce_data.expected_msg = NULL;
+    nonce_data.expected_msglen = 0;
+    nonce_data.calls = 0;
+    extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce_fail;
+    extraparams.ndata = &nonce_data;
+    null_keypair = NULL;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_schnorrsig_illegal_callback, &illegal_data);
+
+    memset(sig64, 0xA5, sizeof(sig64));
+    calls = illegal_data.calls;
+    nonce_data.calls = 0;
+    FUZZ_CHECK(sign_custom(ctx, sig64, NULL, 1, valid_keypair, &extraparams) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(nonce_data.calls == 0);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+
+    memset(sig64, 0xA5, sizeof(sig64));
+    calls = illegal_data.calls;
+    nonce_data.calls = 0;
+    FUZZ_CHECK(sign_custom(ctx, sig64, valid_msg32, 32, null_keypair, &extraparams) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(nonce_data.calls == 0);
+    FUZZ_CHECK(memcmp(sig64, zero64, sizeof(sig64)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_check_schnorrsig_deprecated_sign(const secp256k1_context *ctx, const secp256k1_keypair *keypair) {
@@ -1013,6 +1057,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(nonce_data.calls == 2);
     FUZZ_CHECK(memcmp(sig64_checked, sig64_custom, sizeof(sig64_checked)) == 0);
     secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(ctx, input, msglen, &keypair, aux32);
+    secp256k1_fuzz_check_schnorrsig_sign_precondition_cleanup(ctx, msg32, &keypair, aux32);
     wrong_msglen = msglen == 0 ? 1 : msglen - 1;
     FUZZ_CHECK(wrong_msglen != msglen);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64_custom, input, wrong_msglen, &xonly) == 0);
