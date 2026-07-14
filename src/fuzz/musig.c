@@ -11,6 +11,7 @@
 #include "../int128_impl.h"
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
+#define SECP256K1_FUZZ_MUSIG_MAX_SIGNERS 16
 typedef int (*secp256k1_fuzz_musig_partial_sig_agg_fn)(const secp256k1_context *, unsigned char *, const secp256k1_musig_session *, const secp256k1_musig_partial_sig * const*, size_t);
 typedef int (*secp256k1_fuzz_musig_nonce_process_fn)(const secp256k1_context *, secp256k1_musig_session *, const secp256k1_musig_aggnonce *, const unsigned char *, const secp256k1_musig_keyagg_cache *);
 typedef int (*secp256k1_fuzz_musig_partial_sign_fn)(const secp256k1_context *, secp256k1_musig_partial_sig *, secp256k1_musig_secnonce *, const secp256k1_keypair *, const secp256k1_musig_keyagg_cache *, const secp256k1_musig_session *);
@@ -156,7 +157,7 @@ static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], 
 static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_context *ctx, unsigned char coefficient32[32], const secp256k1_pubkey * const* pubkeys, size_t n_pubkeys, size_t target_index) {
     static const unsigned char keyagg_list_tag[] = "KeyAgg list";
     static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
-    unsigned char serialized[8 * 33];
+    unsigned char serialized[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS * 33];
     unsigned char pks_hash[32];
     unsigned char coefficient_input[65];
     unsigned char coefficient_hash[32];
@@ -165,7 +166,7 @@ static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_co
     size_t i;
 
     FUZZ_CHECK(n_pubkeys > 0);
-    FUZZ_CHECK(n_pubkeys <= 8);
+    FUZZ_CHECK(n_pubkeys <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
     FUZZ_CHECK(target_index < n_pubkeys);
     for (i = 0; i < n_pubkeys; i++) {
         serialized_len = 33;
@@ -2119,11 +2120,11 @@ static void secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(secp256k1
     unsigned char sig64[64];
     unsigned char zero64[64] = { 0 };
     secp256k1_musig_partial_sig invalid_partial_sig;
-    const secp256k1_musig_partial_sig *invalid_partial_sig_ptrs[8];
+    const secp256k1_musig_partial_sig *invalid_partial_sig_ptrs[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
     size_t i;
 
     FUZZ_CHECK(n_sigs > 0);
-    FUZZ_CHECK(n_sigs <= 8);
+    FUZZ_CHECK(n_sigs <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
 
     for (i = 0; i < n_sigs; i++) {
         invalid_partial_sig_ptrs[i] = partial_sig_ptrs[i];
@@ -2305,7 +2306,7 @@ static void secp256k1_fuzz_check_musig_session_state_barrier(secp256k1_context *
     unsigned int calls;
 
     FUZZ_CHECK(n_sigs > 0);
-    FUZZ_CHECK(n_sigs <= 8);
+    FUZZ_CHECK(n_sigs <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
 
     illegal_data.self = &illegal_data;
     illegal_data.calls = 0;
@@ -2452,14 +2453,14 @@ static void secp256k1_fuzz_check_musig_secnonce_reuse(secp256k1_context *ctx, se
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
-static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, unsigned char seckey[8][32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
+static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char (*seckey)[32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
     static const unsigned char scalar_two[32] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
     };
-    unsigned char session_rand[8][32];
+    unsigned char session_rand[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS][32];
     unsigned char pubnonce_ser[66];
     unsigned char wrong_pubnonce_ser[66];
     unsigned char sig64[64];
@@ -2467,18 +2468,18 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     unsigned char zero132[132] = { 0 };
     unsigned char expected_k64[64];
     unsigned char expected_pubnonce66[66];
-    secp256k1_musig_secnonce secnonce[8];
-    secp256k1_musig_pubnonce pubnonce[8];
+    secp256k1_musig_secnonce secnonce[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    secp256k1_musig_pubnonce pubnonce[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
     secp256k1_musig_pubnonce wrong_pubnonce;
     secp256k1_pubkey wrong_pubkey;
-    const secp256k1_musig_pubnonce *pubnonce_ptrs[8];
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_session session;
     secp256k1_musig_session session_replay;
     secp256k1_musig_session wrong_cache_session;
-    secp256k1_musig_partial_sig partial_sig[8];
-    const secp256k1_musig_partial_sig *partial_sig_ptrs[8];
-    const secp256k1_pubkey *pubkey_ptrs[8];
+    secp256k1_musig_partial_sig partial_sig[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    const secp256k1_musig_partial_sig *partial_sig_ptrs[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    const secp256k1_pubkey *pubkey_ptrs[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
     secp256k1_musig_keyagg_cache keyagg_cache;
     secp256k1_musig_keyagg_cache wrong_cache;
     secp256k1_xonly_pubkey agg_pk;
@@ -2487,6 +2488,8 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     const secp256k1_pubkey *wrong_cache_pubkey_ptrs[1];
     size_t n_signers = n_pubkeys < 2 ? 2 : n_pubkeys;
     size_t i;
+
+    FUZZ_CHECK(n_signers <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
 
     for (i = 0; i < n_signers; i++) {
         pubkey_ptrs[i] = &pubkeys[i];
@@ -2585,6 +2588,31 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
         secp256k1_fuzz_check_musig_aggregation_null_member_cleanup(ctx, &pubnonce[0], &pubnonce[1], &partial_sig[0], &partial_sig[1], &session);
     }
     secp256k1_fuzz_check_musig_partial_sign_null_argument_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
+}
+
+static void secp256k1_fuzz_check_musig_sixteen_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "sixteen MuSig sign roundtrip\n";
+    static const unsigned char msg32[32] = {
+        0x73, 0x69, 0x78, 0x74, 0x65, 0x65, 0x6e, 0x20,
+        0x4d, 0x75, 0x53, 0x69, 0x67, 0x20, 0x73, 0x69,
+        0x67, 0x6e, 0x20, 0x72, 0x6f, 0x75, 0x6e, 0x64,
+        0x74, 0x72, 0x69, 0x70, 0x00, 0x00, 0x00, 0x01
+    };
+    unsigned char seckey[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS][32] = { { 0 } };
+    secp256k1_keypair keypairs[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    secp256k1_pubkey pubkeys[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < SECP256K1_FUZZ_MUSIG_MAX_SIGNERS; i++) {
+        seckey[i][31] = (unsigned char)(i + 1);
+        FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypairs[i], seckey[i]) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[i], seckey[i]) == 1);
+    }
+    secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, SECP256K1_FUZZ_MUSIG_MAX_SIGNERS, msg32);
 }
 
 static void secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *valid_seckey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, const unsigned char *session_rand32) {
@@ -2994,6 +3022,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_musig_eight_keyagg_reference(ctx);
     }
     secp256k1_fuzz_check_musig_sixteen_keyagg_reference(ctx, input, size);
+    secp256k1_fuzz_check_musig_sixteen_sign_roundtrip(ctx, input, size);
     secp256k1_fuzz_check_musig_tweaked_signing(ctx);
     secp256k1_fuzz_check_musig_xonly_tweaked_signing(ctx);
     secp256k1_fuzz_scalar32(tweak, input, size, 173);
