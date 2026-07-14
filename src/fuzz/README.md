@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
@@ -857,8 +857,7 @@ documented in its commit message.
   zero-nonce counters 5, 2, and 70 for orders 7, 13, and 199 respectively.
   This corrects an order-13-only test assumption; it does not change the
   master-relative severity or production behavior of the existing hardening.
-- **Informational oracle gaps:** EllSwift decode/XDH postconditions (`792f43f`),
-  empty public-key aggregation (`c5c0afe`), ECDSA verification's invalid-
+- **Informational oracle gaps:** empty public-key aggregation (`c5c0afe`), ECDSA verification's invalid-
   opaque-key API boundary (`ef25d27`), and the public-key serializer's wrong
   flag-type boundary currently pass on master; their mutations prove that the
   harness would catch a regression, not that master is presently vulnerable.
@@ -1616,6 +1615,28 @@ documented in its commit message.
   both backends. The mutation and bypass were restored before clean replay.
   This is informational stateful-list oracle hardening, not a clean-master
   production finding; no severity rating changes.
+
+  The EllSwift raw XDH oracle now independently checks both `party` values. For
+  `party == 0` it compares the hash input against `seckey_a * decode(ell_b)`;
+  for `party == 1` it compares against `seckey_b * decode(ell_a)`. The prior
+  raw check covered only party 0, while the separate symmetry check could agree
+  when both sides selected the same wrong remote encoding. The dedicated
+  `raw-party-both` seed is the 15-byte ASCII input `raw party both\n`; its
+  derived raw A encoding starts with `0xB6` and its derived B secret is scalar
+  one. Clean default and forced-`int64` ASan/UBSan fixed replays passed all 11
+  EllSwift corpus files plus the empty input (12 executions), and both
+  two-worker/two-job 15-second campaigns exited 0. The default workers each
+  completed 94 executions; the forced-`int64` workers completed 55 and 57.
+  Matching default and forced-`int64` MSan fixed replays also passed all 12
+  executions. For differential proof, a temporary production mutation reloaded
+  `ell_b64` instead of `ell_a64` only for `party == 1`, scalar one, and raw-A
+  first byte `0xB6`; the focused seed aborted with exit 134 on both backends.
+  Disabling only the new party-1 loop let that identical mutation pass the old
+  harness and all 11 corpus files plus the empty input on both backends. The
+  mutation and bypass were restored before the clean replay. This is
+  informational oracle hardening, not a clean-master production finding; the
+  `792f43f` decode/XDH history remains regression context and no severity rating
+  changes.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not
