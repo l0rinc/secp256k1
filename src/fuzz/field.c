@@ -948,6 +948,49 @@ static void secp256k1_fuzz_fe_check_cmov(const secp256k1_fe *a, const secp256k1_
     }
 }
 
+static void secp256k1_fuzz_fe_check_cmov_metadata(void) {
+    secp256k1_fe canonical;
+    secp256k1_fe nonnormalized;
+    secp256k1_fe zero7;
+    secp256k1_fe actual;
+    secp256k1_fe expected;
+    int flag;
+
+    /* Keep the residue fixed while making the representation and metadata
+     * differ. This exercises cmov's state transition independently of its
+     * constant-time limb selection. */
+    secp256k1_fe_set_int(&canonical, 1);
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    nonnormalized = canonical;
+    secp256k1_fe_add(&nonnormalized, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(nonnormalized.magnitude == 8);
+    FUZZ_CHECK(nonnormalized.normalized == 0);
+#endif
+
+    for (flag = 0; flag <= 1; flag++) {
+        actual = canonical;
+        expected = flag ? nonnormalized : canonical;
+        secp256k1_fe_cmov(&actual, &nonnormalized, flag);
+        FUZZ_CHECK(secp256k1_fuzz_fe_identical(&actual, &expected));
+#ifdef VERIFY
+        FUZZ_CHECK(actual.magnitude == 8);
+        FUZZ_CHECK(actual.normalized == 0);
+#endif
+
+        actual = nonnormalized;
+        expected = flag ? canonical : nonnormalized;
+        secp256k1_fe_cmov(&actual, &canonical, flag);
+        FUZZ_CHECK(secp256k1_fuzz_fe_identical(&actual, &expected));
+#ifdef VERIFY
+        FUZZ_CHECK(actual.magnitude == 8);
+        FUZZ_CHECK(actual.normalized == 0);
+#endif
+    }
+}
+
 #if defined(SECP256K1_WIDEMUL_INT64)
 static void secp256k1_fuzz_fe_check_shifted_zero(void) {
     secp256k1_fe shifted_zero;
@@ -1159,6 +1202,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_mul_int(input, size);
     secp256k1_fuzz_fe_check_add_int(input, size);
     secp256k1_fuzz_fe_check_comparisons(input, size);
+    secp256k1_fuzz_fe_check_cmov_metadata();
     secp256k1_fuzz_fe_check_nonnormalized_arithmetic();
 #if defined(SECP256K1_WIDEMUL_INT64)
     secp256k1_fuzz_fe_check_shifted_zero();

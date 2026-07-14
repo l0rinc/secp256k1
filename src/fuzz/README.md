@@ -3067,3 +3067,37 @@ This is **negative verification evidence**, not a clean-master finding. It
 found no low-window arithmetic inconsistency, production bug, or oracle gap,
 and it does not change any master-relative severity. Existing findings remain
 rated against clean `origin/master` before later fixes or fork optimizations.
+
+## 2026-07-14 Field CMOV Metadata Oracle
+
+`fuzz_field` now exercises the documented metadata transition of
+`secp256k1_fe_cmov` with a canonical magnitude-1 representation of one and
+the same residue represented as `1 + 7p` at magnitude 8. Both flag values are
+checked with the nonnormalized operand in the destination and source
+positions. The oracle requires the selected limbs and the nonnormalized
+metadata contract: the output magnitude is 8 and `normalized` is 0 because
+the maximum input magnitude is 8 and both inputs are not normalized.
+
+This is **Informational / Low internal oracle hardening**, not a clean-master
+production finding. At clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, the `secp256k1_fe_cmov`
+implementation already has the documented transition. The previous fuzzer
+only used normalized magnitude-1 operands and therefore could not distinguish
+a wrong metadata update from a correct one. No production fix or severity
+change is claimed.
+
+For causal proof, a temporary production-code mutation changed the update for
+different magnitudes to the exact expression
+`r->magnitude = (a->magnitude > r->magnitude ? a->magnitude : r->magnitude) + 1`.
+The focused `cmov-magnitude-state` seed aborted with status 134 with the new
+helper enabled. Bypassing only the new helper left all 14 pre-existing field
+seeds green under the same mutation, proving that this assertion is the new
+detection point. The mutation and bypass were restored before clean replay.
+
+Clean default 5x52 and forced-int64/10x26 Clang ASan/UBSan replays passed all
+15 tracked field inputs. Default and forced-int64 two-worker/two-job
+15-second campaigns exited 0, completing 353/354 and 351/355 generated runs,
+respectively, with no sanitizer diagnostic, assertion failure, timeout, OOM,
+crash artifact, or nonzero worker result. The default build's 109 runnable
+CTest cases passed; the optional `noverify_tests` binary also passed one
+iteration. This oracle changes no production behavior.
