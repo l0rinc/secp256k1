@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -3320,3 +3320,46 @@ active and symbolization disabled: default jobs completed 14 and 14 runs,
 forced-int64 jobs 8 and 9, and every manager and worker exited 0. No
 sanitizer diagnostic, assertion failure, timeout, OOM, or artifact occurred.
 This commit changes only the fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-14 MuSig Long Key-Aggregation Oracle
+
+`fuzz_musig` now has a gated 27-byte corpus case that constructs 16 distinct
+public keys from scalar values one through 16. It recomputes the complete
+`KeyAgg list` transcript and first-distinct-key rule with the standalone
+tagged-SHA reference, derives every remaining coefficient independently,
+scales the points through public-key tweak operations, and combines them with
+the public point-combination API. The result is compared with the complete
+MuSig cache output, the x-only output, the cacheless output, and the cached
+list hash. This reaches the arbitrary-list callback at index 15 while keeping
+the expected point equation separate from MuSig's `ecmult_multi` path.
+
+This is **Informational / Low public-API oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` accepts arbitrary positive
+`n_pubkeys`, but the existing independent coefficient helper was capped at
+eight keys, the dedicated references stopped at eight, and the stateful
+signing path also stopped at eight. Existing findings retain their severity
+relative to unmodified master; this extension neither downgrades a severe
+master finding nor treats a later fork optimization as evidence that master
+was correct.
+
+For causal proof, a temporary mutation changed only the production
+`ecmult_multi` count in `src/modules/musig/keyagg_impl.h` from `n_pubkeys` to
+`n_pubkeys - (n_pubkeys == 16)`, so the final callback term was omitted only
+for this case while the 16-key transcript remained intact. All 49 pre-existing
+MuSig corpus files completed 50 executions without a failure under the
+mutation. The exact `long-keyagg-reference` seed then aborted with SIGABRT
+exit 134 at the independent full-point comparison. Bypassing only the new
+helper made the identical mutated seed pass with exit 0. Both temporary
+changes were restored before fixed replay; no clean-master production bug is
+claimed.
+
+The restored Clang ASan/UBSan target passed all 50 MuSig corpus files on the
+default 5x52 backend and on forced-`int64`/10x26, with 51 fixed executions and
+exit 0 in each replay. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns ran both jobs
+to completion on each backend; every manager and worker exited 0, with no
+sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. The
+default jobs each completed 51 runs in 59 seconds; forced-`int64` jobs each
+completed 51 runs in 103 seconds. This commit changes only the fuzzer, its
+corpus, and this evidence ledger.
