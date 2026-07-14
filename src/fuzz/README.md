@@ -1741,6 +1741,45 @@ contract with its dedicated seed or a minimal production mutation. Do not
 claim the later behavior was tested merely because a follow-up fix lets the
 full harness continue.
 
+## 2026-07-14 Baseline Campaign
+
+The current branch (`82b91c1`) was replayed against the clean-master baseline
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` after the remaining target inventory
+found no independent contract that justified another oracle. A fresh Clang
+libFuzzer ASan/UBSan build passed every checked-in seed: `api_roundtrip` 28,
+`context` 7, `ecdh` 5, `ecmult_const` 5, `ecmult_multi` 12, `ellswift` 11,
+`field` 13, `group` 12, `hash` 8, `musig` 39, `recovery` 7, `scalar` 4,
+`schnorrsig` 11, and `xonly_tweak` 8. The matching MSan build passed the same
+14 target counts, with no sanitizer diagnostic, assertion, timeout, or crash.
+
+Each target also completed a bounded `-workers=2 -jobs=2` campaign with
+`-max_total_time=15` using disposable copies of the checked-in corpora. The
+worker jobs exited 0 for all 14 targets, including the full 39-input MuSig
+stateful corpus. Logs and generated minimization inputs were kept in private
+temporary directories and are not part of the repository. The default
+x86_64-wide-multiply sanitizer configuration could not compile under the
+installed Clang 22 because the scalar inline assembly exhausted registers;
+the passing sanitizer builds use the project's supported test-only
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` backend. This is a toolchain
+limitation, not a production failure.
+
+A separate GCC 16.1 ASan/UBSan build used the native x86_64 assembly and the
+normal 4x64/5x52 field backend. It replayed the same 14 target corpora (170
+files total) and each target's empty-input path with exit 0 and no sanitizer
+diagnostic. Together, the two builds cover both the native backend and the
+forced-int64 sanitizer configuration; neither produced a new clean-master
+finding.
+
+This campaign produced no new clean-master production finding and does not
+change any severity rating. Existing findings remain classified against clean
+master, independent of later fork fixes or optimization stacks.
+
+As a follow-up branch verification, a normal CMake build with all six optional
+modules, tests, exhaustive tests, and the 14 non-libFuzzer harnesses completed
+successfully. The resulting CTest run passed all 239 tests, including the full
+exhaustive suite and every checked-in fuzz corpus. This confirms the recorded
+sanitizer campaign was not relying on a sanitizer-only build configuration.
+
 ## l0rinc Fork Duplicate Audit
 
 The l0rinc remote and all pull-request heads were refreshed against the same
