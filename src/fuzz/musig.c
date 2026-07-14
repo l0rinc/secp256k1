@@ -1698,6 +1698,55 @@ static void secp256k1_fuzz_check_musig_nonce_gen_counter_optional_inputs(const s
     }
 }
 
+static void secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
+    unsigned char session_secrand[32];
+    unsigned char session_secrand_before[32];
+    unsigned char expected_k64[64];
+    unsigned char expected_pubnonce66[66];
+    unsigned char serialized_pubnonce66[66];
+    unsigned char zero32[32] = { 0 };
+    unsigned char zero132[132] = { 0 };
+    const unsigned char *case_seckey;
+    const unsigned char *case_msg32;
+    const secp256k1_musig_keyagg_cache *case_keyagg_cache;
+    const unsigned char *case_extra_input32;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    unsigned int combination;
+    int expected_ret;
+    int actual_ret;
+
+    /* The public API permits seckey to be omitted while retaining the signer
+     * public key. Cover that transcript branch independently of the counter
+     * wrapper, which necessarily has a keypair and therefore cannot reach it. */
+    for (combination = 0; combination < 16; combination++) {
+        case_seckey = (combination & 1u) != 0 ? seckey : NULL;
+        case_msg32 = (combination & 2u) != 0 ? msg32 : NULL;
+        case_keyagg_cache = (combination & 4u) != 0 ? keyagg_cache : NULL;
+        case_extra_input32 = (combination & 8u) != 0 ? extra_input32 : NULL;
+        secp256k1_fuzz_derive(session_secrand, sizeof(session_secrand), input, size, 401u + combination);
+        if (memcmp(session_secrand, zero32, sizeof(session_secrand)) == 0) {
+            session_secrand[31] = (unsigned char)(combination + 1u);
+        }
+        memcpy(session_secrand_before, session_secrand, sizeof(session_secrand));
+        memset(&secnonce, 0xA5, sizeof(secnonce));
+        memset(&pubnonce, 0x5A, sizeof(pubnonce));
+        expected_ret = secp256k1_fuzz_musig_nonce_reference(ctx, expected_k64, expected_pubnonce66, session_secrand_before, case_seckey, pubkey, case_msg32, case_keyagg_cache, case_extra_input32);
+        actual_ret = secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, session_secrand, case_seckey, pubkey, case_msg32, case_keyagg_cache, case_extra_input32);
+        FUZZ_CHECK(actual_ret == expected_ret);
+        if (expected_ret == 0) {
+            FUZZ_CHECK(memcmp(&secnonce, zero132, sizeof(secnonce)) == 0);
+            FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
+            FUZZ_CHECK(memcmp(session_secrand, session_secrand_before, sizeof(session_secrand)) == 0);
+            continue;
+        }
+        FUZZ_CHECK(memcmp(session_secrand, zero32, sizeof(session_secrand)) == 0);
+        FUZZ_CHECK(memcmp(secnonce.data + 4, expected_k64, sizeof(expected_k64)) == 0);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized_pubnonce66, &pubnonce) == 1);
+        FUZZ_CHECK(memcmp(serialized_pubnonce66, expected_pubnonce66, sizeof(serialized_pubnonce66)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_musig_nonce_scalar_barrier(secp256k1_context *ctx) {
     unsigned char zero32[32] = { 0 };
     unsigned char serialized66[66];
@@ -2641,6 +2690,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_opaque_nonce_barriers(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_optional_inputs(ctx, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
+    secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(ctx, input, size, seckey[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_nonce_scalar_barrier(ctx);

@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -2184,6 +2184,34 @@ including `bip324-ignored-data`; a native GCC ASan/UBSan build passed all 12
 seeds; and a two-manager, two-worker, 10-second Clang campaign exited 0 for
 both jobs without sanitizer diagnostics, assertion failures, or artifacts.
 This does not change any master-relative severity rating.
+
+## 2026-07-14 MuSig Optional Secret-Key Nonce Oracle
+
+The MuSig target now exercises the documented `secp256k1_musig_nonce_gen`
+branch where `seckey == NULL`. The signer public key remains present, while
+the independent nonce transcript is replayed across both secret-key states
+and all eight combinations of optional message, key-aggregation cache, and
+extra-input pointers. Each case uses a separately derived session random
+value and checks the secret nonce bytes, public nonce serialization, and the
+required successful-call clearing of `session_secrand32`.
+
+The focused `nonce-gen-optional-seckey` seed is the 28-byte ASCII input
+`MuSig nonce optional seckey\n`. This is informational cryptographic-domain
+oracle hardening, not a clean-master production finding. For the differential
+proof, the production branch that copies `session_secrand32` when `seckey ==
+NULL` was temporarily changed to `memset(rand, 0, sizeof(rand))`. With the new
+helper enabled, the focused replay aborted with exit 134. With only that
+helper disabled, all 42 pre-existing MuSig seeds remained green under the
+same mutation, proving that the prior corpus did not exercise the omitted-key
+transcript. The mutation and bypass were restored before clean replay.
+
+The restored forced-int64 Clang ASan/UBSan build passed all 43 MuSig seeds in
+949 seconds; the focused native GCC ASan/UBSan replay passed; and a
+two-manager, two-worker Clang campaign over the focused seed and one
+pre-existing seed exited 0 for both jobs without sanitizer diagnostics,
+assertion failures, or artifacts. Master correctly treats a missing secret
+key as a distinct nonce derivation mode, so this does not change any
+master-relative severity rating.
 
 ## l0rinc Fork Duplicate Audit
 
