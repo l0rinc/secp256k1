@@ -2396,3 +2396,38 @@ A separate all-module CMake build with Clang ASan/UBSan, frame pointers, and
 13 `secp256k1_fuzz` suites passed with no sanitizer diagnostic, assertion
 failure, timeout, or artifact. This sanitizer replay is an independent check
 of the repaired internal translation unit, not a production-bug claim.
+
+## 2026-07-14 Tagged SHA-256 NULL-Input Oracle
+
+The context target now exercises the fail-closed output contract for the
+deliberate invalid-input calls to `secp256k1_tagged_sha256`. The public
+declaration marks `tag` and `msg` non-NULL, and the API must reject both
+through the illegal callback. Because the output size is fixed and known, the
+prefilled 32-byte `hash32` must also be zeroed before the argument-check return.
+The check is called through a function pointer so the fuzzer can intentionally
+exercise the non-aborting callback boundary without letting the declaration's
+compiler attribute suppress the invalid call. The dedicated
+`tagged-sha256-null-inputs` seed is the 26-byte ASCII input
+`tagged SHA256 null inputs\n`; it covers `(tag == NULL, msg != NULL)` and
+`(tag != NULL, msg == NULL)`, with zero lengths in both cases.
+
+This reiterates the existing clean-master fail-open output finding fixed by
+`c02dc5e`: **Low/Medium API-state severity**, unchanged. It is not a new
+production vulnerability or memory-corruption claim, and it does not change
+the existing rating. Clean master's unit tests count the illegal callback for
+these NULL cases; the earlier context fuzzer checked impossible lengths but
+did not pass NULL tag/message pointers or assert output invalidation.
+
+For differential proof, the production condition `tag == NULL || msg == NULL`
+was temporarily removed from the pre-`ARG_CHECK` cleanup in
+`secp256k1_tagged_sha256`. With only the new helper bypassed, all nine
+pre-existing context seeds stayed green on both default and forced-int64 Clang
+ASan/UBSan builds. Restoring the helper under the same mutation made the
+focused seed exit 134 with `-handle_abrt=0` on both builds. The production
+mutation and harness bypass were restored before the clean replay.
+
+The restored default and forced-int64 Clang ASan/UBSan builds passed all ten
+context corpus files, including the new seed. Two-worker/two-job bounded
+campaigns on both backends completed with every job exiting 0 and no sanitizer
+diagnostic or crash artifact. This is oracle hardening, not a clean-master
+production fix; no severity rating changes.
