@@ -41,6 +41,8 @@ typedef struct {
     const unsigned char *aux32;
     const unsigned char *expected_key32;
     const unsigned char *expected_xonly_pk32;
+    const unsigned char *expected_msg;
+    size_t expected_msglen;
     int calls;
 } secp256k1_fuzz_schnorrsig_nonce_data;
 
@@ -78,6 +80,10 @@ static int secp256k1_fuzz_schnorrsig_nonce(unsigned char *nonce32, const unsigne
     }
     if (nonce_data->expected_xonly_pk32 != NULL) {
         FUZZ_CHECK(memcmp(xonly_pk32, nonce_data->expected_xonly_pk32, 32) == 0);
+    }
+    if (nonce_data->expected_msg != NULL) {
+        FUZZ_CHECK(msglen == nonce_data->expected_msglen);
+        FUZZ_CHECK(memcmp(msg, nonce_data->expected_msg, msglen) == 0);
     }
     FUZZ_CHECK(algo != NULL);
     FUZZ_CHECK(algolen == sizeof(expected_algo));
@@ -237,6 +243,8 @@ static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1
     nonce_data.aux32 = aux32;
     nonce_data.expected_key32 = NULL;
     nonce_data.expected_xonly_pk32 = NULL;
+    nonce_data.expected_msg = NULL;
+    nonce_data.expected_msglen = 0;
     nonce_data.calls = 0;
     extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce_fail;
     extraparams.ndata = &nonce_data;
@@ -799,6 +807,8 @@ static void secp256k1_fuzz_check_schnorrsig_impossible_msglen(secp256k1_context 
     nonce_data.aux32 = aux32;
     nonce_data.expected_key32 = NULL;
     nonce_data.expected_xonly_pk32 = NULL;
+    nonce_data.expected_msg = NULL;
+    nonce_data.expected_msglen = 0;
     nonce_data.calls = 0;
     extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce;
     extraparams.ndata = &nonce_data;
@@ -889,6 +899,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     nonce_data.aux32 = aux32;
     nonce_data.expected_key32 = NULL;
     nonce_data.expected_xonly_pk32 = NULL;
+    nonce_data.expected_msg = NULL;
+    nonce_data.expected_msglen = 0;
     nonce_data.calls = 0;
     checked_extraparams.noncefp = secp256k1_fuzz_schnorrsig_nonce;
     checked_extraparams.ndata = &nonce_data;
@@ -903,6 +915,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     nonce_data.expected_key32 = normalized_seckey;
     nonce_data.expected_xonly_pk32 = xonly32;
+    nonce_data.expected_msg = msg32;
+    nonce_data.expected_msglen = sizeof(msg32);
     secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, aux32);
     secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, NULL);
     secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(input, msglen, seckey, xonly32, custom_algo, custom_algolen, aux32);
@@ -993,6 +1007,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_schnorrsig_nonce_overflow(ctx, input, msglen, &keypair, &xonly);
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_explicit_bip340, input, msglen, &keypair, &explicit_bip340_extraparams) == 1);
     FUZZ_CHECK(memcmp(sig64_explicit_bip340, sig64_custom, sizeof(sig64_explicit_bip340)) == 0);
+    nonce_data.expected_msg = input;
+    nonce_data.expected_msglen = msglen;
     FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(ctx, sig64_checked, input, msglen, &keypair, &checked_extraparams) == 1);
     FUZZ_CHECK(nonce_data.calls == 2);
     FUZZ_CHECK(memcmp(sig64_checked, sig64_custom, sizeof(sig64_checked)) == 0);
