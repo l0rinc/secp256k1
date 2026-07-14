@@ -3747,3 +3747,41 @@ in 111 and 112 seconds for forced-int64 workers. Every manager and worker
 exited 0 with no ASan, UBSan, assertion, timeout, OOM, or crash artifact.
 This commit changes only the fuzzer, its focused corpus input, and this
 evidence ledger.
+
+## 2026-07-15 MuSig NULL Session-Random Cleanup Oracle
+
+`fuzz_musig` now has a gated 32-byte ASCII seed,
+`nonce-gen-null-session-random`, that calls `secp256k1_musig_nonce_gen` through
+a function pointer with its mandatory `session_secrand32` argument set to
+`NULL`. The seckey, signer pubkey, message, keyagg cache, and extra input are
+otherwise valid. Both caller-owned 132-byte nonce objects are prefilled with
+different nonzero sentinels. The rejected call must invoke the illegal-argument
+callback once and leave both the secret and public nonce objects all zero.
+
+This is **Informational / Low API-oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already initializes the two output
+objects before rejecting the mandatory random-pointer precondition. The secret
+nonce carries cryptographic state, so its invalidation is an important
+fail-closed transition; the public nonce has no cryptographic meaning here, so
+its cleanup alone is not Critical. No nonce disclosure, reuse exploit,
+forgery, or availability impact is claimed, and the master-relative severity
+ledger is unchanged.
+
+For causal proof, the production clear was temporarily narrowed to
+`if (session_secrand32 != NULL)`, leaving every non-NULL failure path intact.
+All 53 pre-existing MuSig corpus files stayed green under that mutation in 54
+runs. The exact new seed aborted with exit 134 at the stale-secret-output
+assertion; bypassing only the new gated helper made the identical mutated seed
+exit 0. The mutation and bypass were restored before fixed replay. This proves
+that the old corpus did not already exercise this mandatory-pointer branch; it
+does not claim that clean master currently contains the defect.
+
+The restored Clang ASan/UBSan target passed all 54 MuSig corpus files plus the
+empty-input path: 55 runs in 67 seconds on the default 5x52 backend and 55
+runs in 116 seconds on the forced-int64/10x26 backend. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns ran both jobs on
+each backend; every job completed 55 runs and exited 0. Log scans found no
+ASan, UBSan, assertion, timeout, OOM, or crash artifact. The production change
+is comment-only; the behavioral oracle, corpus seed, and this evidence ledger
+are the substantive additions.

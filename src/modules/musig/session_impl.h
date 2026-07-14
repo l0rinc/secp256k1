@@ -486,6 +486,8 @@ int secp256k1_musig_nonce_gen(const secp256k1_context* ctx, secp256k1_musig_secn
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(secnonce != NULL);
+    /* Initialize each non-NULL output before checking later mandatory inputs so
+     * a rejected call cannot leave a usable nonce object in caller storage. */
     memset(secnonce, 0, sizeof(*secnonce));
     ARG_CHECK(pubnonce != NULL);
     memset(pubnonce, 0, sizeof(*pubnonce));
