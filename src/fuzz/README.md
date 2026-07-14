@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -302,6 +302,33 @@ assertion bypass, but the new reference disabled, passed on both backends. All
 temporary changes were restored before the clean replay. This is informational
 oracle hardening, not a current-master production finding, and does not change
 any severity rating.
+
+Focused Schnorr nonce-callback message-domain replay (2026-07-14): the
+restored forced-int64 Clang ASan/UBSan target passed all 11 tracked Schnorr
+inputs, including `src/fuzz/corpora/schnorrsig/sign32-custom`. The checked
+custom nonce callback now verifies the exact message bytes and length supplied
+by `secp256k1_schnorrsig_sign_custom`, in addition to its existing key, x-only
+key, and algorithm-domain checks.
+
+For the differential proof, `src/modules/schnorrsig/main_impl.h` was
+temporarily changed so that, when `msglen == 32`, both the default and custom
+nonce paths receive the normalized secret-key buffer as their message while
+the signing challenge continues to use the real message. The focused seed
+aborted with exit 134. Removing only the new message assertion let all 11
+Schnorr seeds pass under the identical production mutation: signature
+equivalence and the independent BIP340 equation remained green because both
+nonce paths saw the same wrong input, while the direct nonce transcript
+reference does not exercise `sign_internal`'s callback argument routing. The
+mutation and assertion bypass were restored before replay.
+
+The fixed corpus passed all 11 seeds, and a restored two-worker/two-job
+ASan/UBSan campaign completed both jobs with 73 executions each, exit code 0,
+and no sanitizer diagnostics, assertion failures, timeouts, OOMs, or artifacts.
+Native GCC CTest passed all 239 tests. A matching MSan build was produced but
+could not start in this environment because MemorySanitizer could not map its
+shadow memory or disable ASLR; no MSan result is claimed. This is informational
+oracle hardening, not a current-master production finding, and does not change
+any master-relative severity rating.
 
 Focused field maximum-residue replay (2026-07-13): the copied field corpus
 started with 4 tracked inputs. Default ASan/UBSan managers with
@@ -1179,6 +1206,10 @@ documented in its commit message.
   corresponding `key32` contract for its RFC6979 passthrough callback. Passing
   the same wrong buffer to both default and custom ECDSA nonce paths leaves
   their signature comparison green, so this check is likewise not redundant.
+  The Schnorr callback now also checks the exact message bytes and length. A
+  mutation that passes the normalized secret-key buffer as the 32-byte nonce
+  message to both default and custom signing paths leaves their signatures and
+  point equation consistent, so the direct callback-domain check is required.
   It also exercises the documented empty-message
   representation boundary: `sign_custom` and `verify` must accept both
   `(NULL, 0)` and a non-NULL zero-length pointer, and both signatures must be
