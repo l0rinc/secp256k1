@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
@@ -3785,3 +3785,40 @@ each backend; every job completed 55 runs and exited 0. Log scans found no
 ASan, UBSan, assertion, timeout, OOM, or crash artifact. The production change
 is comment-only; the behavioral oracle, corpus seed, and this evidence ledger
 are the substantive additions.
+
+## 2026-07-15 Invalid Keypair-Creation Cleanup Oracle
+
+`fuzz_xonly_tweak` now has a gated 31-byte ASCII seed,
+`keypair-create-invalid-cleanup`, that calls
+`secp256k1_keypair_create` with the two invalid secret-key boundaries:
+all-zero and the group order. It pre-fills the 96-byte opaque keypair with
+`0xA5`; each call must return 0 and leave every keypair byte zero.
+
+This is **Informational / Low API-oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already runs the invalid secret
+through dummy generator state and `secp256k1_memczero` clears the saved
+keypair. The existing x-only target exercised keypair creation only with
+valid secrets and tested invalid keypair consumers, but did not observe this
+distinct creation-failure transition. The secret half is cryptographic state,
+so this is stronger than public nonce cleanup; no disclosure, signing
+forgery, or availability impact is claimed, and no master-relative severity
+change is made.
+
+For causal proof, temporarily bypass only the
+`secp256k1_memczero` in `secp256k1_keypair_create` by changing its condition
+from `!ret` to `0`. The 10 pre-existing x-only corpus files each exited 0
+under that mutation on both backends, while the exact new seed aborted with
+status 134 at the full 96-byte zero-state assertion on both. Bypassing only
+the new helper made that same mutated seed exit 0 on both. Both temporary
+changes were restored before fixed replay. This proves an oracle gap, not a
+clean-master defect.
+
+The restored Clang ASan/UBSan target passed all 11 x-only corpus files plus
+the empty-input path on both the default 5x52 and forced-int64/10x26 backends,
+with exit 0 and no sanitizer or assertion diagnostic. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns also exited 0;
+both reported jobs exited 0, with interleaved final-stat summaries of 39, 38,
+and 43 runs on default and 38, 39, and 41 runs on forced-int64. No sanitizer,
+assertion, timeout, OOM, or crash artifact was produced. This commit changes
+only the fuzzer, corpus seed, and evidence ledger.
