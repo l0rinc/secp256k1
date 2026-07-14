@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -2753,3 +2753,43 @@ diagnostics, assertion failures, timeouts, or artifacts. The native GCC build
 also reports the pre-existing `-Wstringop-overread` in
 `secp256k1_fuzz_scalar32_in_order` at `api_roundtrip.c:1254`; it is unrelated
 to this helper and did not affect the sanitizer replay.
+
+## 2026-07-14 Schnorr Signing Precondition Oracle
+
+The Schnorr target now covers the two previously unmodeled public signing
+precondition exits of `secp256k1_schnorrsig_sign_custom`: a nonzero-length
+NULL message and a NULL keypair. Each call starts with a signature filled with
+`0xA5`, installs a counting illegal-argument callback, supplies a custom nonce
+callback that must not be reached, and requires one argument error, a zeroed
+64-byte signature, and no nonce callback invocation. The focused
+`sign-precondition-cleanup` seed is the 27-byte ASCII input
+`odd-nonce-rejection oracle\n`.
+
+This reiterates the existing clean-master stale-output finding fixed on this
+branch by `c02dc5e` (`api: clear fixed outputs on failures`): **Low to Medium
+severity** at `origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297`.
+Before that fix, a caller that ignored the failed argument return could keep
+using a previous Schnorr signature from the output buffer. This is fail-open
+signing state, not proven memory corruption, key disclosure, signature
+forgery, or nonce reuse. The output is cryptographically meaningful, but this
+does not claim that clearing a nonce with no cryptographic meaning is Critical.
+The branch already contains the production fix; this commit changes no
+production behavior. The existing impossible-message-length helper remains
+the oracle for that separate length guard; this helper closes only the NULL
+message and NULL keypair gap.
+
+For causal proof, a temporary production mutation changed the cleanup
+condition from `!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
+|| (msg == NULL && msglen != 0) || msglen >= SECP256K1_SHA256_MAX_SIZE - 128
+|| keypair == NULL` to
+`!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx) || msglen >=
+SECP256K1_SHA256_MAX_SIZE - 128`, preserving the already-covered length
+cleanup. With only the new helper bypassed, all 11 pre-existing Schnorr corpus
+inputs remained green. Restoring the helper made the focused seed abort with
+status 134. The mutation and bypass were restored before the final replay.
+The final forced-int64 Clang ASan/UBSan and native GCC x86_64-assembly
+ASan/UBSan replays each passed all 12 Schnorr corpus inputs. The disposable
+Clang two-manager/two-worker campaign exited 0 for both jobs, completing 63
+and 65 runs in 104 seconds, with no sanitizer diagnostics, assertion
+failures, timeouts, or artifacts. The only build warning was the target's
+pre-existing deprecation warning for the `secp256k1_schnorrsig_sign` alias.
