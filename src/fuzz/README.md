@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, and valid-nonce retry when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, counter-nonce optional-input equivalence, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -1141,6 +1141,24 @@ documented in its commit message.
   harness remains green. This is informational API coverage, not a
   current-master production finding; the deterministic MuSig tests already
   cover the same argument combination.
+  The MuSig cache barrier now independently invalidates the 64-byte
+  `second_pk` storage at offset 68 while leaving the aggregate point valid.
+  `secp256k1_musig_pubkey_get`, ordinary tweak-add, and x-only tweak-add must
+  all reject the cache, clear their public output, and preserve the opaque
+  cache. The earlier barrier corrupted only the aggregate point at offset 4,
+  so it did not prove this separate parser path. The dedicated
+  `keyagg-second-pk-barrier` seed is 25 bytes. Clean default and forced-int64
+  ASan/UBSan fixed replays passed all 39 MuSig corpus files (1,622 bytes
+  total), the matching MSan replay passed the same corpus, and isolated
+  two-worker/two-job campaigns completed with every job exiting 0 and no
+  sanitizer diagnostics or artifacts. For the mutation proof, a temporary
+  change replaced the `second_pk` non-infinity validation condition in
+  `secp256k1_keyagg_cache_load` with `0 && ...`: the focused seed aborted with
+  exit 134 with the new barrier enabled, while compiling out only that new
+  block left the same mutation green with exit 0. The mutation and bypass
+  were restored before replay. This is informational opaque-state oracle
+  hardening, not a clean-master production finding, and does not change the
+  severity ledger.
   The MuSig target also cross-checks `secp256k1_musig_nonce_gen_counter`
   against `secp256k1_musig_nonce_gen` and an independent transcript reference
   across all eight combinations of optional message, key-aggregation cache, and
