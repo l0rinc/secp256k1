@@ -3238,3 +3238,46 @@ campaigns completed 271 and 273 runs on the default backend and 262 and 265
 runs on forced-int64, with every manager and worker exiting 0 and no
 sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. This
 change modifies only the fuzzer and its corpus.
+
+## 2026-07-14 MuSig Long Nonce Aggregation Oracle
+
+`fuzz_musig` now has a gated 29-byte corpus case that parses one valid public
+nonce, passes the same object 16 times to `secp256k1_musig_nonce_agg`, and
+checks each aggregate component against an independently computed `16*P`
+using public-key tweak multiplication. Repeating a public nonce is a loop
+stress case, not a claim that a MuSig signer set may reuse one nonce. Public
+nonces have no cryptographic secrecy requirement here, so this oracle does
+not add or rate nonce clearing as a security issue.
+
+This is **Informational / Low public-API oracle hardening**, not a new
+clean-master production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` accepts arbitrary positive
+`n_pubnonces`, but the existing successful algebra check covered only one and
+two entries; its failure-cleanup helper also deliberately capped its inputs
+at two. The new case exercises the tail of a longer successful aggregation
+without making a protocol-validity claim. Existing findings retain their
+severity relative to unmodified master, including the latent 10x26 field
+predicate defect and the Medium opaque-state findings.
+
+For causal proof, a temporary production mutation changed the aggregation
+loop in `src/modules/musig/session_impl.h` from
+`i < n_pubnonces` to
+`i < n_pubnonces - (n_pubnonces == 16)`, skipping only the final member of
+the new 16-entry case. All 47 pre-existing MuSig corpus inputs stayed green;
+the exact `long MuSig nonce aggregation` seed then aborted with status 134 at
+the new aggregate comparison. Bypassing only the new helper made that seed
+pass under the same mutation. The production mutation and bypass were
+restored before fixed replay. The proof therefore identifies the new oracle
+as the detection point without claiming a clean-master bug.
+
+The fixed Clang ASan/UBSan target passed all 48 MuSig corpus files on both
+default 5x52 and forced-int64/10x26 builds. Symbolizer-enabled exploratory
+campaigns were excluded after GDB showed the ASan main thread spending the
+outer timeout in `__sanitizer::SymbolizerProcess::ReadFromSymbolizer`; the
+exact generated inputs independently replayed in about 1.3 seconds. Final
+isolated campaigns used
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` with ASan/UBSan detection
+and symbolization disabled: default jobs completed 13 and 15 executions,
+and forced-int64 jobs completed 8 and 9. Every job and manager exited 0 with
+no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. This
+commit changes only the fuzzer, its corpus, and this evidence ledger.

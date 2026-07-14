@@ -1164,6 +1164,48 @@ static void secp256k1_fuzz_check_musig_nonce_agg(secp256k1_context *ctx, const u
     secp256k1_fuzz_check_musig_nonce_agg_failure_cleanup(ctx, pubnonce_ptrs, 2);
 }
 
+static void secp256k1_fuzz_check_musig_nonce_agg_long(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *nonce66) {
+    static const unsigned char trigger[] = "long MuSig nonce aggregation\n";
+    static const unsigned char sixteen32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10
+    };
+    enum { N_PUBNONCES = 16 };
+    unsigned char expected66[66];
+    unsigned char actual66[66];
+    secp256k1_musig_pubnonce pubnonce;
+    secp256k1_musig_aggnonce aggnonce;
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[N_PUBNONCES];
+    secp256k1_pubkey component;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* Repeating one valid public nonce is deliberately a loop-stress case,
+     * not a claim that a MuSig signer set may reuse one nonce. Compute each
+     * expected component as 16*P through the public-key tweak API, which is a
+     * separate path from the aggregation loop. */
+    FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &pubnonce, nonce66) == 1);
+    for (i = 0; i < N_PUBNONCES; i++) {
+        pubnonce_ptrs[i] = &pubnonce;
+    }
+    for (i = 0; i < 2; i++) {
+        size_t serialized_len = 33;
+        FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &component, nonce66 + 33 * i, 33) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &component, sixteen32) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected66 + 33 * i, &serialized_len, &component, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+    }
+
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, N_PUBNONCES) == 1);
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, actual66, &aggnonce) == 1);
+    FUZZ_CHECK(memcmp(actual66, expected66, sizeof(actual66)) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_nonce_process_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     unsigned char zero_session[sizeof(secp256k1_musig_session)] = { 0 };
@@ -2948,6 +2990,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_derive(nonce66, sizeof(nonce66), input, size, 181);
     secp256k1_fuzz_check_musig_nonce_agg(ctx, valid_aggnonce66, fixed_pubnonce66);
+    secp256k1_fuzz_check_musig_nonce_agg_long(ctx, input, size, valid_aggnonce66);
     secp256k1_fuzz_check_musig_nonce_agg_inverse(ctx, valid_aggnonce66);
     secp256k1_fuzz_check_musig_pubnonce_parse(ctx, zero66);
     secp256k1_fuzz_check_musig_pubnonce_parse(ctx, valid_aggnonce66);
