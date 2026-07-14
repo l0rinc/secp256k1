@@ -4,8 +4,8 @@
  * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
  ***********************************************************************/
 
+#include "../secp256k1.c"
 #include "fuzz.h"
-#include "../hash_impl.h"
 #include "sha256_reference.h"
 
 static int secp256k1_fuzz_all_zero(const void *ptr, size_t len) {
