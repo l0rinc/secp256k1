@@ -2037,6 +2037,62 @@ static void secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(secp256k1
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_aggregation_null_member_cleanup(secp256k1_context *ctx, const secp256k1_musig_pubnonce *pubnonce_a, const secp256k1_musig_pubnonce *pubnonce_b, const secp256k1_musig_partial_sig *partial_sig_a, const secp256k1_musig_partial_sig *partial_sig_b, const secp256k1_musig_session *session) {
+    int (*nonce_agg)(const secp256k1_context *, secp256k1_musig_aggnonce *, const secp256k1_musig_pubnonce * const*, size_t) = secp256k1_musig_nonce_agg;
+    secp256k1_fuzz_musig_partial_sig_agg_fn partial_sig_agg = secp256k1_musig_partial_sig_agg;
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
+    const secp256k1_musig_partial_sig *partial_sig_ptrs[2];
+    secp256k1_musig_pubnonce pubnonce_a_before = *pubnonce_a;
+    secp256k1_musig_pubnonce pubnonce_b_before = *pubnonce_b;
+    secp256k1_musig_partial_sig partial_sig_a_before = *partial_sig_a;
+    secp256k1_musig_partial_sig partial_sig_b_before = *partial_sig_b;
+    secp256k1_musig_aggnonce aggnonce;
+    unsigned char sig64[64];
+    unsigned char zero_aggnonce[sizeof(aggnonce)] = { 0 };
+    unsigned char zero_sig64[sizeof(sig64)] = { 0 };
+
+    /* The first case reaches a valid member before the NULL pointer; the
+     * second makes the precondition independent of the prefix. */
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+
+    pubnonce_ptrs[0] = pubnonce_a;
+    pubnonce_ptrs[1] = NULL;
+    memset(&aggnonce, 0xA5, sizeof(aggnonce));
+    FUZZ_CHECK(nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == 1);
+    FUZZ_CHECK(memcmp(&aggnonce, zero_aggnonce, sizeof(aggnonce)) == 0);
+
+    pubnonce_ptrs[0] = NULL;
+    pubnonce_ptrs[1] = pubnonce_b;
+    memset(&aggnonce, 0x5A, sizeof(aggnonce));
+    FUZZ_CHECK(nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == 2);
+    FUZZ_CHECK(memcmp(&aggnonce, zero_aggnonce, sizeof(aggnonce)) == 0);
+
+    partial_sig_ptrs[0] = partial_sig_a;
+    partial_sig_ptrs[1] = NULL;
+    memset(sig64, 0x3C, sizeof(sig64));
+    FUZZ_CHECK(partial_sig_agg(ctx, sig64, session, partial_sig_ptrs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == 3);
+    FUZZ_CHECK(memcmp(sig64, zero_sig64, sizeof(sig64)) == 0);
+
+    partial_sig_ptrs[0] = NULL;
+    partial_sig_ptrs[1] = partial_sig_b;
+    memset(sig64, 0x96, sizeof(sig64));
+    FUZZ_CHECK(partial_sig_agg(ctx, sig64, session, partial_sig_ptrs, 2) == 0);
+    FUZZ_CHECK(illegal_data.calls == 4);
+    FUZZ_CHECK(memcmp(sig64, zero_sig64, sizeof(sig64)) == 0);
+
+    FUZZ_CHECK(memcmp(pubnonce_a, &pubnonce_a_before, sizeof(pubnonce_a_before)) == 0);
+    FUZZ_CHECK(memcmp(pubnonce_b, &pubnonce_b_before, sizeof(pubnonce_b_before)) == 0);
+    FUZZ_CHECK(memcmp(partial_sig_a, &partial_sig_a_before, sizeof(partial_sig_a_before)) == 0);
+    FUZZ_CHECK(memcmp(partial_sig_b, &partial_sig_b_before, sizeof(partial_sig_b_before)) == 0);
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_musig_empty_partial_sig_aggregation(secp256k1_context *ctx, const secp256k1_musig_session *session, const secp256k1_musig_partial_sig * const *partial_sig_ptrs) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_fuzz_musig_partial_sig_agg_fn partial_sig_agg = secp256k1_musig_partial_sig_agg;
@@ -2347,6 +2403,9 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, &agg_pk, msg32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, &agg_pk) == 1);
     secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(ctx, &session, partial_sig_ptrs, n_signers);
+    if (size >= 80) {
+        secp256k1_fuzz_check_musig_aggregation_null_member_cleanup(ctx, &pubnonce[0], &pubnonce[1], &partial_sig[0], &partial_sig[1], &session);
+    }
     secp256k1_fuzz_check_musig_partial_sign_null_argument_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
 }
 
