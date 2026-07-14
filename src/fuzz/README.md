@@ -1168,6 +1168,25 @@ documented in its commit message.
   internal indexing/state-transition contract, not a current-master
   production finding; the deterministic unit suite already covers the empty
   range, but the fuzzer previously did not combine it with a mixed batch.
+  The group target now extends both finite batch conversions to four entries
+  and extends the mixed-infinity variable-time case to
+  `[finite, infinity, finite, infinity]`, covering a trailing infinity as
+  well as an interior one. The dedicated `four-entry-batch-conversion` seed
+  brings the group corpus to 12 files. Clean default, forced-`int64`, and
+  matching MSan fixed replays passed the seed and all 12 files plus the empty
+  input; bounded two-worker/two-job campaigns also exited 0. For the first
+  differential proof, a temporary production mutation replaced the
+  constant-time prefix-product initialization with `secp256k1_fe_one` only
+  when `len == 4`; the focused seed aborted with exit 134 on both field
+  backends. Disabling only the two new finite four-entry calls let the same
+  mutation pass all 12 corpus files plus empty on both backends. For the
+  second proof, a temporary variable-time mutation replaced only the trailing
+  infinity output at `len == 4` and `i == 3` with the valid generator point;
+  the focused seed again aborted with exit 134 on both backends, while
+  disabling only the newly extended mixed-infinity helper let the pristine
+  corpus pass. All mutations and bypasses were restored before clean replay.
+  This is informational internal batch-conversion oracle hardening, not a
+  current-master production finding; no severity rating changes.
   The group target now constructs a projective generator representation and
   checks `secp256k1_ge_set_ge_zinv` against both the variable-time Jacobian
   conversion and the independent canonical generator. It also adds multiples
