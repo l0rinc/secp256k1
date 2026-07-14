@@ -15,8 +15,8 @@ Targets:
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
-- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
+- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
@@ -3133,3 +3133,44 @@ mutations were restored before rebuilding and replaying the clean target.
 The clean Clang ASan/UBSan replay passed the focused seed and all 14 ecmult
 corpus files (15 fixed runs), with no diagnostic, assertion failure, timeout,
 or artifact. This oracle changes no production behavior.
+
+## 2026-07-14 Built-In XDH NULL-Input Oracle
+
+The ECDH and EllSwift-XDH harnesses now exercise the public argument checks
+with each NULL input position, both through the exported library-owned hash
+callbacks and through a custom callback. The built-in callbacks have a fixed
+32-byte output contract, so the oracle requires an illegal-callback return of
+0 and an all-zero output even though the failure occurs before hashing. The
+custom callback has no fixed output size or cleanup contract; its sentinel
+must remain unchanged and the callback must not run. The focused seeds are
+`builtin-null-inputs` in both module corpora.
+
+This is **Informational / Low API-oracle hardening**, not a new clean-master
+production finding. The production guards already exist on this audit branch:
+`bb15eb0` recognizes all library-owned ECDH hash callbacks, and `067d4a3`
+adds the analogous EllSwift-XDH guard. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` did not clear fixed output for
+these precondition failures, but the return value is an argument-error signal
+and no key-recovery, cryptographic, or availability impact was demonstrated.
+The severity is therefore below the earlier Medium invalid-state and callback
+NULL-dereference findings. Public nonce cleanup remains non-critical where
+the nonce has no cryptographic meaning; this XDH output is a caller-visible
+shared-secret buffer and is documented separately.
+
+For causal proof, the ECDH mutation removed `known_hashfp` from its
+NULL-input guard. The EllSwift mutation removed only the `ell_a64 == NULL`
+arm, leaving its existing `ell_b64`, secret-key, and prefix-data checks
+intact; removing the entire guard would be caught by the older prefix-data
+oracle and would not be an independent proof. With each narrow mutation and
+the new helper active, the corresponding focused seed aborted at the first
+custom/built-in output distinction. Bypassing only the new helper left every
+pre-existing ECDH and EllSwift seed green under the matching mutation. The
+mutations were restored before the clean replay. This proves that the new
+checks exercise previously uncovered precondition branches and does not claim
+a clean-master production bug beyond the already documented fail-closed output
+gap.
+
+Clean Clang ASan/UBSan focused and complete-corpus replays passed for both
+targets, and isolated two-worker/two-job runs completed without diagnostics,
+assertion failures, timeouts, OOMs, or artifacts. This commit changes no
+production behavior.

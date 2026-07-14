@@ -482,6 +482,74 @@ static void secp256k1_fuzz_check_ellswift_built_in_cleanup(secp256k1_context *ct
     FUZZ_CHECK(memcmp(output, zero32, sizeof(output)) == 0);
 }
 
+static void secp256k1_fuzz_check_ellswift_xdh_null_inputs(secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, const unsigned char *prefix64) {
+    const secp256k1_ellswift_xdh_hash_function known_hashes[] = {
+        secp256k1_ellswift_xdh_hash_function_bip324,
+        secp256k1_ellswift_xdh_hash_function_prefix
+    };
+    int (*xdh_fn)(const secp256k1_context *, unsigned char *, const unsigned char *, const unsigned char *, const unsigned char *, int, secp256k1_ellswift_xdh_hash_function, void *) = secp256k1_ellswift_xdh;
+    secp256k1_fuzz_ellswift_illegal_data illegal_data;
+    unsigned char output32[32];
+    unsigned char custom_output[32];
+    unsigned char custom_expected[32];
+    unsigned char zero32[32] = { 0 };
+    size_t i;
+    unsigned int calls;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_ellswift_illegal_callback, &illegal_data);
+
+    /* Built-in XDH hashers own a fixed 32-byte output and must clear it before
+     * the public argument check returns failure. Prefix data remains valid so
+     * these cases isolate the three pointer preconditions. */
+    for (i = 0; i < sizeof(known_hashes) / sizeof(known_hashes[0]); i++) {
+        void *hash_data = known_hashes[i] == secp256k1_ellswift_xdh_hash_function_prefix ? (void *)prefix64 : NULL;
+
+        memset(output32, 0xA5, sizeof(output32));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(xdh_fn(ctx, output32, NULL, ell_b64, seckey32, 0, known_hashes[i], hash_data) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(output32, zero32, sizeof(output32)) == 0);
+
+        memset(output32, 0x5A, sizeof(output32));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(xdh_fn(ctx, output32, ell_a64, NULL, seckey32, 0, known_hashes[i], hash_data) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(output32, zero32, sizeof(output32)) == 0);
+
+        memset(output32, 0xC3, sizeof(output32));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(xdh_fn(ctx, output32, ell_a64, ell_b64, NULL, 0, known_hashes[i], hash_data) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(output32, zero32, sizeof(output32)) == 0);
+    }
+
+    /* A custom callback has no fixed output or failure-cleanup contract. */
+    memset(custom_expected, 0x96, sizeof(custom_expected));
+    memset(custom_output, 0x96, sizeof(custom_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(xdh_fn(ctx, custom_output, NULL, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(custom_output, custom_expected, sizeof(custom_output)) == 0);
+
+    memset(custom_expected, 0x3C, sizeof(custom_expected));
+    memset(custom_output, 0x3C, sizeof(custom_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(xdh_fn(ctx, custom_output, ell_a64, NULL, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(custom_output, custom_expected, sizeof(custom_output)) == 0);
+
+    memset(custom_expected, 0xF0, sizeof(custom_expected));
+    memset(custom_output, 0xF0, sizeof(custom_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(xdh_fn(ctx, custom_output, ell_a64, ell_b64, NULL, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(custom_output, custom_expected, sizeof(custom_output)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_ellswift_overflow_secret(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64) {
     unsigned char order_minus_one[32];
     unsigned char order_plus_one[32];
@@ -630,6 +698,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(hash_data.calls == 1);
 
     secp256k1_fuzz_check_ellswift_built_in_cleanup(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
+    secp256k1_fuzz_check_ellswift_xdh_null_inputs(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
     secp256k1_fuzz_check_ellswift_overflow_secret(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_invalid_secret_callback_x(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_ctx_hash(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
