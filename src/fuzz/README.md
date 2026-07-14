@@ -3604,3 +3604,38 @@ exit 0 on both backends. Isolated campaigns used
 seconds. Every manager and worker exited 0 with no sanitizer diagnostic,
 assertion failure, timeout, OOM, or artifact. This commit changes only the
 fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-14 Post-Rebase Full-Corpus Multi-Worker Replay
+
+After fetching `origin/master` and rebasing, `codex/fuzz-oracles` remained
+based directly on `ebf594320dc838b9de1abb54d5ba98cef84f4297`; the rebase was a
+no-op because the branch already contained that commit. A fresh GCC
+ASan/UBSan build with every optional module enabled passed all 14 CTest fuzz
+targets and their tracked corpora. A separate Clang ASan/UBSan libFuzzer build
+then replayed copied corpora with two workers and two jobs per target. The
+worker execution counts were:
+
+    api_roundtrip 170/171       context 209/209
+    hash          22020/22064   scalar  845/848
+    field         272/274       group   474/480
+    ecmult_const  275/276       ecmult_multi 68/69
+    ecdh          225/226       ellswift 91/94
+    xonly_tweak   40/42         recovery 227/229
+    schnorrsig    124/128       musig   53/53
+
+Every manager and worker exited 0. No ASan/UBSan diagnostic, assertion
+failure, timeout, OOM, or crash artifact was produced. MuSig's fixed corpus
+required 63 seconds per job because its 52 stateful seeds are expensive; the
+other targets completed in 16-17 seconds. This is negative evidence for the
+current oracle set, not a claim that clean master or future fork patches are
+bug-free.
+
+The same pass audited a tempting alias case for
+`secp256k1_ec_pubkey_combine`: the caller may be able to place `out` at the
+same address as an element of `ins`, but the header specifies separate `Out`
+and `In` roles and does not promise overlap. The implementation clears `out`
+before loading inputs, so treating this as a supported alias would invent a
+contract and create a false positive. No oracle or production change was
+added. This deliberate no-edit prevents the existing combine findings from
+being diluted by an undocumented caller-domain assumption. Public nonce state
+without cryptographic meaning remains non-critical.
