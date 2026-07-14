@@ -174,6 +174,19 @@ static void secp256k1_fuzz_check_context_null_reset_signing(const secp256k1_cont
     FUZZ_CHECK(memcmp(reset_compact, expected_compact, sizeof(reset_compact)) == 0);
 }
 
+#if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
+static void secp256k1_fuzz_check_context_null_reset_schnorr(const secp256k1_context *ctx, const unsigned char *msg32, const unsigned char *seckey, const unsigned char *expected_sig64) {
+    secp256k1_keypair keypair;
+    unsigned char reset_sig64[64];
+
+    /* Schnorr signing has its own x-only parity and response path; prove that
+     * it observes the same documented reset invariant independently. */
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
+    FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, reset_sig64, msg32, &keypair, NULL) == 1);
+    FUZZ_CHECK(memcmp(reset_sig64, expected_sig64, sizeof(reset_sig64)) == 0);
+}
+#endif
+
 static void secp256k1_fuzz_check_context_illegal_callback_clone(secp256k1_context *ctx, size_t prealloc_size) {
     secp256k1_fuzz_context_callback_data cloned_data;
     secp256k1_fuzz_context_callback_data original_data;
@@ -337,6 +350,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char msg32[32];
     unsigned char compact[64];
     unsigned char compact_clone[64];
+#if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
+    unsigned char schnorr_sig64[64];
+#endif
     size_t taglen;
     size_t msglen;
     size_t tag_offset;
@@ -421,12 +437,22 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(clone, compact_clone, &sig_clone) == 1);
     FUZZ_CHECK(memcmp(compact, compact_clone, sizeof(compact)) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
+#if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
+    {
+        secp256k1_keypair keypair;
+        FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
+        FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, schnorr_sig64, msg32, &keypair, NULL) == 1);
+    }
+#endif
     secp256k1_fuzz_check_context_ecdsa_equivalence(ctx, prealloc_ctx, msg32, seckey);
     secp256k1_fuzz_check_context_ecdsa_equivalence(ctx, prealloc_clone, msg32, seckey);
 
     FUZZ_CHECK(secp256k1_context_randomize(ctx, NULL) == 1);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
     secp256k1_fuzz_check_context_null_reset_signing(ctx, msg32, seckey, compact);
+#if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
+    secp256k1_fuzz_check_context_null_reset_schnorr(ctx, msg32, seckey, schnorr_sig64);
+#endif
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_clone, seckey) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_clone) == 0);
 
