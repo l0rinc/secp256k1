@@ -9,6 +9,7 @@
 
 #define SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS 16
 #define SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS (2 * ECMULT_PIPPENGER_THRESHOLD)
+#define SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS (3 * ECMULT_PIPPENGER_THRESHOLD)
 
 typedef struct {
     secp256k1_scalar sc[SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS];
@@ -27,6 +28,15 @@ typedef struct {
     size_t fail_at;
     int fail;
 } secp256k1_fuzz_ecmult_multi_repeat_data;
+
+typedef struct {
+    secp256k1_scalar sc[SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS];
+    secp256k1_ge pt[SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS];
+    uint64_t seen[(SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS + 63) / 64];
+    size_t calls;
+    size_t fail_at;
+    int fail;
+} secp256k1_fuzz_ecmult_multi_distinct_batch_data;
 
 typedef struct {
     const void *self;
@@ -376,6 +386,51 @@ static int secp256k1_fuzz_ecmult_multi_repeat_callback(secp256k1_scalar *sc, sec
     return 1;
 }
 
+static void secp256k1_fuzz_ecmult_multi_distinct_batch_reset_trace(secp256k1_fuzz_ecmult_multi_distinct_batch_data *data) {
+    memset(data->seen, 0, sizeof(data->seen));
+    data->calls = 0;
+}
+
+static void secp256k1_fuzz_ecmult_multi_distinct_batch_check_trace(const secp256k1_fuzz_ecmult_multi_distinct_batch_data *data, size_t n_points) {
+    size_t i;
+
+    FUZZ_CHECK(data->calls == n_points);
+    FUZZ_CHECK(n_points <= SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS);
+    for (i = 0; i < n_points; i++) {
+        FUZZ_CHECK((data->seen[i / 64] & ((uint64_t)1 << (i % 64))) != 0);
+    }
+}
+
+static void secp256k1_fuzz_ecmult_multi_distinct_batch_check_failure_trace(const secp256k1_fuzz_ecmult_multi_distinct_batch_data *data, size_t n_points) {
+    size_t i;
+
+    FUZZ_CHECK(data->fail_at < n_points);
+    FUZZ_CHECK(data->calls == data->fail_at + 1);
+    for (i = 0; i <= data->fail_at; i++) {
+        FUZZ_CHECK((data->seen[i / 64] & ((uint64_t)1 << (i % 64))) != 0);
+    }
+    for (i = data->fail_at + 1; i < n_points; i++) {
+        FUZZ_CHECK((data->seen[i / 64] & ((uint64_t)1 << (i % 64))) == 0);
+    }
+}
+
+static int secp256k1_fuzz_ecmult_multi_distinct_batch_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
+    secp256k1_fuzz_ecmult_multi_distinct_batch_data *data = (secp256k1_fuzz_ecmult_multi_distinct_batch_data *)cbdata;
+    uint64_t bit;
+
+    FUZZ_CHECK(idx < SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS);
+    bit = (uint64_t)1 << (idx % 64);
+    FUZZ_CHECK((data->seen[idx / 64] & bit) == 0);
+    data->seen[idx / 64] |= bit;
+    data->calls++;
+    if (data->fail && idx == data->fail_at) {
+        return 0;
+    }
+    *sc = data->sc[idx];
+    *pt = data->pt[idx];
+    return 1;
+}
+
 static void secp256k1_fuzz_ecmult_multi_make_point(const secp256k1_context *ctx, secp256k1_ge *pt, const unsigned char *input, size_t size, unsigned int salt) {
     secp256k1_scalar sc;
     unsigned char scalar32[32];
@@ -430,6 +485,90 @@ static int secp256k1_fuzz_ecmult_multi_gej_equal_independent(const secp256k1_gej
 static void secp256k1_fuzz_ecmult_multi_check_result(const secp256k1_gej *actual, const secp256k1_gej *expected) {
     FUZZ_CHECK(secp256k1_fuzz_ecmult_multi_gej_equal_independent(actual, expected));
     FUZZ_CHECK(secp256k1_gej_eq_var(actual, expected));
+}
+
+static void secp256k1_fuzz_ecmult_multi_distinct_batch_reference(secp256k1_gej *expected, const secp256k1_scalar *g_sc, const secp256k1_fuzz_ecmult_multi_distinct_batch_data *data) {
+    secp256k1_gej term;
+    size_t i;
+
+    if (g_sc == NULL) {
+        secp256k1_gej_set_infinity(expected);
+    } else {
+        secp256k1_ecmult_const(expected, &secp256k1_ge_const_g, g_sc);
+    }
+    for (i = 0; i < SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS; i++) {
+        secp256k1_ecmult_const(&term, &data->pt[i], &data->sc[i]);
+        secp256k1_gej_add_var(expected, expected, &term, NULL);
+    }
+}
+
+/* Exercise three Pippenger batches with distinct callback state. The existing
+ * large-count fixtures repeat one point, so a batch-boundary bug that drops or
+ * misroutes a distinct tail point could agree with their scalar-only model. */
+static void secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "distinct ecmult pippenger batches\n";
+    const size_t n_points = SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS;
+    const size_t scratch_points = ECMULT_PIPPENGER_THRESHOLD;
+    secp256k1_fuzz_ecmult_multi_distinct_batch_data data;
+    secp256k1_scalar generator_sc;
+    secp256k1_scalar point_sc;
+    secp256k1_scratch *scratch;
+    secp256k1_gej actual;
+    secp256k1_gej expected;
+    size_t n_batches;
+    size_t n_batch_points;
+    size_t max_points;
+    size_t checkpoint;
+    size_t failure_positions[2];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memset(&data, 0, sizeof(data));
+    secp256k1_scalar_set_int(&generator_sc, 17);
+    for (i = 0; i < n_points; i++) {
+        secp256k1_scalar_set_int(&data.sc[i], (unsigned int)(2 * i + 1));
+        secp256k1_scalar_set_int(&point_sc, (unsigned int)(i + 1));
+        secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &data.pt[i], &point_sc);
+    }
+
+    scratch = secp256k1_scratch_create(&ctx->error_callback,
+        secp256k1_pippenger_scratch_size(scratch_points, secp256k1_pippenger_bucket_window(scratch_points))
+        + PIPPENGER_SCRATCH_OBJECTS * ALIGNMENT);
+    FUZZ_CHECK(scratch != NULL);
+    max_points = secp256k1_pippenger_max_points(&ctx->error_callback, scratch);
+    FUZZ_CHECK(max_points >= scratch_points);
+    FUZZ_CHECK(max_points < n_points);
+    FUZZ_CHECK(secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, max_points, n_points) == 1);
+    FUZZ_CHECK(n_batches == 3);
+    FUZZ_CHECK(n_batch_points >= ECMULT_PIPPENGER_THRESHOLD);
+    FUZZ_CHECK(n_batch_points < n_points);
+
+    secp256k1_fuzz_ecmult_multi_distinct_batch_reference(&expected, &generator_sc, &data);
+    checkpoint = scratch->alloc_size;
+    secp256k1_fuzz_ecmult_multi_distinct_batch_reset_trace(&data);
+    FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &generator_sc, secp256k1_fuzz_ecmult_multi_distinct_batch_callback, &data, n_points) == 1);
+    FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    secp256k1_fuzz_ecmult_multi_distinct_batch_check_trace(&data, n_points);
+    secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
+
+    failure_positions[0] = n_batch_points - 1;
+    failure_positions[1] = n_batch_points;
+    data.fail = 1;
+    for (i = 0; i < sizeof(failure_positions) / sizeof(failure_positions[0]); i++) {
+        data.fail_at = failure_positions[i];
+        checkpoint = scratch->alloc_size;
+        secp256k1_fuzz_ecmult_multi_distinct_batch_reset_trace(&data);
+        FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &generator_sc, secp256k1_fuzz_ecmult_multi_distinct_batch_callback, &data, n_points) == 0);
+        secp256k1_fuzz_ecmult_multi_distinct_batch_check_failure_trace(&data, n_points);
+        secp256k1_fuzz_ecmult_multi_check_failure_output(&actual);
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    }
+    data.fail = 0;
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
 static void secp256k1_fuzz_ecmult_multi_check_equality_barrier(void) {
@@ -823,6 +962,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_pippenger_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(ctx, g_sc_ptr, input, size);
+    secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_strauss(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
