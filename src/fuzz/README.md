@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
@@ -2501,3 +2501,42 @@ the forced-int64 campaign used the same two-worker/two-job shape with
 `-max_total_time=10`, completed both jobs with exit 0, and reported zero
 artifact files. Both campaigns used disposable corpus copies outside the
 worktree, so no generated input or crash artifact was retained.
+
+## 2026-07-14 Field Clear Oracle
+
+The field target now exercises the documented internal cleanup primitive
+`secp256k1_fe_clear` directly. It first creates a nonzero field object, clears
+it, marks the result defined for memory-sanitizer-aware checking, and compares
+the complete object representation against an independently zero-initialized
+byte array. The `field-clear` corpus seed is the 12-byte ASCII input
+`field clear\n`; the input does not select a special path, but records the exact
+replay that proves the oracle is active.
+
+This is **Informational / Low internal secret-state hygiene**, not a clean-master
+production vulnerability. Field elements can carry secret intermediate values,
+so the documented cleanup contract is worth preserving, but this check does not
+establish that clean master leaks a cryptographically meaningful value. That is
+also why it is materially different from public nonce cleanup: a nonce with no
+cryptographic meaning does not require a Critical erasure rating.
+
+The proof mutation temporarily changes `secp256k1_fe_clear` into a no-op. With
+the new check bypassed, every pre-existing field corpus file remains green,
+showing that the old field oracles did not observe this cleanup contract.
+Restoring only the check makes `field-clear` abort with exit 134 under the same
+mutation. The production mutation and helper bypass were restored before the
+clean replay. Default and forced-int64 Clang ASan/UBSan replays then ran every
+field seed once, and bounded two-worker/two-job campaigns completed with exit 0
+and no sanitizer diagnostics or retained artifacts.
+
+## 2026-07-14 Refreshed Fork Replay: `fe_equal` Bound
+
+The refreshed l0rinc head `l0rinc/l0rinc/fe-equal-magnitude-bound`
+(`994b350`) was reviewed against this branch. Its production hunk is the same
+`secp256k1_fe_equal` maximum-`b`-magnitude correction already represented by
+`161a39a`; the current field fuzzer also has deterministic magnitude-30 equal
+and unequal checks. Its additional randomized unit-test wrapper is useful
+context but does not add a distinct fuzz oracle, so it was not cherry-picked.
+The commit describes a **Low / VERIFY-only internal precondition** issue, not a
+new public or runtime security finding. This duplicate decision leaves the
+existing master-relative severity and the stronger minimal-mutation proof
+unchanged.
