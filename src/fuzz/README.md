@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
@@ -1303,6 +1303,21 @@ documented in its commit message.
   reject the invalid one. Clean master passes; changing the public extractor to
   copy the secret half makes the focused seed abort. This is informational
   invalid-state coverage, not a current-master production defect.
+  The x-only target also passes a zeroed opaque `secp256k1_pubkey` through
+  `secp256k1_xonly_pubkey_from_pubkey`. The conversion must propagate the
+  existing invalid-object callback, clear its x-only output, and preserve the
+  initialized zero optional parity result. Clean master already has this
+  barrier. Temporarily returning success from the conversion's
+  `secp256k1_pubkey_load` failure branch makes the dedicated
+  `invalid-full-pubkey-xonly` seed abort with exit 134; removing only this new
+  helper lets all nine x-only seeds pass under the same mutation. This is
+  informational invalid-state oracle hardening, not a current-master
+  production finding; the existing invalid opaque-key severity remains
+  unchanged. The restored default and forced-int64 Clang ASan/UBSan builds
+  each passed all nine x-only seeds. Native x86_64 GCC ASan/UBSan CTest passed
+  110/110 selected tests (109 unit tests plus the x-only corpus). Two-worker,
+  two-job, 15-second campaigns on both sanitizer configurations exited 0;
+  each job executed 12 inputs without diagnostics or artifacts.
   A bounded `-workers=2 -jobs=2 -max_total_time=30` replay of the updated
   x-only corpus executed 1,334 and 1,361 inputs in its two jobs; both jobs
   exited 0, with no sanitizer diagnostics or crash artifacts.
