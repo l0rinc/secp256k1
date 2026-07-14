@@ -3101,3 +3101,35 @@ respectively, with no sanitizer diagnostic, assertion failure, timeout, OOM,
 crash artifact, or nonzero worker result. The default build's 109 runnable
 CTest cases passed; the optional `noverify_tests` binary also passed one
 iteration. This oracle changes no production behavior.
+
+## 2026-07-14 Direct ECMULT Allocation-Failure Oracle
+
+`fuzz_ecmult_multi` now calls the internal single-batch Strauss and Pippenger
+implementations directly with a zero-capacity scratch arena. The result is
+prefilled with the finite generator, the scratch checkpoint is recorded, and
+both a NULL generator scalar and a guaranteed valid non-NULL generator scalar
+are tested. Because allocation fails before the callback can run, the oracle
+requires return value 0, zero callback calls, an infinity result, and exact
+scratch rollback. The focused
+`ecmult direct allocation failure` corpus input is 33 bytes.
+
+This is **Informational / Low internal oracle hardening**, not a clean-master
+production finding. The public `secp256k1_ecmult_multi_var` path falls back to
+its simple implementation when the supplied scratch arena cannot support a
+batch, so the previous fuzzer did not reach the direct Strauss/Pippenger
+allocation-failure branches. Clean master already clears the output before
+those internal helpers allocate, and no public API vulnerability, arithmetic
+defect, or availability issue was demonstrated. No production fix or
+master-relative severity change is claimed.
+
+For causal proof, each helper was mutation-tested independently by replacing
+its reset with `if (n_points != 1) secp256k1_gej_set_infinity(r);`. With the
+new oracle enabled, the focused seed exited 134 at the stale-result assertion
+for both Strauss and Pippenger. The 13 pre-existing ecmult corpus inputs stayed
+green under each mutation, and `-handle_abrt=0` made the result a direct
+assertion-abort proof rather than a timeout or sanitizer artifact. Both
+mutations were restored before rebuilding and replaying the clean target.
+
+The clean Clang ASan/UBSan replay passed the focused seed and all 14 ecmult
+corpus files (15 fixed runs), with no diagnostic, assertion failure, timeout,
+or artifact. This oracle changes no production behavior.
