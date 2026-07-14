@@ -1743,6 +1743,47 @@ static void secp256k1_fuzz_check_ecdsa_high_s(const secp256k1_context *ctx, cons
     FUZZ_CHECK(memcmp(normalized_compact, low_compact, sizeof(normalized_compact)) == 0);
 }
 
+/* Pin the exact low-S threshold with byte constants rather than deriving the
+ * expected result through scalar_is_high or scalar_negate. */
+static void secp256k1_fuzz_check_ecdsa_normalize_half_order(const secp256k1_context *ctx) {
+    static const unsigned char half_order[32] = {
+        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D,
+        0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0
+    };
+    unsigned char low_compact[64] = { 0 };
+    unsigned char high_compact[64] = { 0 };
+    unsigned char expected_compact[64] = { 0 };
+    unsigned char serialized[64];
+    secp256k1_ecdsa_signature low_sig;
+    secp256k1_ecdsa_signature high_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+
+    low_compact[31] = 1;
+    memcpy(low_compact + 32, half_order, sizeof(half_order));
+    memcpy(high_compact, low_compact, sizeof(high_compact));
+    high_compact[63]++;
+    expected_compact[31] = 1;
+    memcpy(expected_compact + 32, half_order, sizeof(half_order));
+
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &low_sig, low_compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &low_sig) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &low_sig) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, serialized, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(serialized, low_compact, sizeof(serialized)) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &high_sig, high_compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &high_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &high_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, serialized, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(serialized, expected_compact, sizeof(serialized)) == 0);
+    normalized_sig = high_sig;
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normalized_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, serialized, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(serialized, expected_compact, sizeof(serialized)) == 0);
+}
+
 static void secp256k1_fuzz_check_signature_parse_compact(const secp256k1_context *ctx, const unsigned char *input64, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
     secp256k1_ecdsa_signature parsed_sig;
     unsigned char compact[64];
@@ -2416,6 +2457,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, NULL, &sig) == 0);
     secp256k1_fuzz_check_signature_roundtrip(ctx, &sig);
     secp256k1_fuzz_check_ecdsa_high_s(ctx, &sig, msg32, &pubkey);
+    if (size >= 320) {
+        secp256k1_fuzz_check_ecdsa_normalize_half_order(ctx);
+    }
     nonce_data.extra32 = nonce_extra32;
     nonce_data.expected_key32 = seckey;
     nonce_data.expected_msg32 = msg32;
