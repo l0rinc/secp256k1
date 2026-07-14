@@ -823,6 +823,12 @@ static void secp256k1_fuzz_fe_check_comparisons(const unsigned char *input, size
 }
 
 static void secp256k1_fuzz_fe_check_nonnormalized_arithmetic(void) {
+    unsigned char expected_product32[32];
+    unsigned char actual_product32[32];
+    uint32_t modulus[8];
+    uint32_t one_words[8];
+    uint32_t two_words[8];
+    uint32_t product_words[8];
     secp256k1_fe one;
     secp256k1_fe two;
     secp256k1_fe zero7;
@@ -834,6 +840,7 @@ static void secp256k1_fuzz_fe_check_nonnormalized_arithmetic(void) {
     secp256k1_fe actual_square;
     secp256k1_fe expected_inverse;
     secp256k1_fe actual_inverse;
+    secp256k1_fe alias_product;
     secp256k1_fe root;
     secp256k1_fe root_squared;
 
@@ -858,6 +865,24 @@ static void secp256k1_fuzz_fe_check_nonnormalized_arithmetic(void) {
     secp256k1_fe_mul(&actual_product, &raised_one, &raised_two);
     secp256k1_fe_normalize_var(&actual_product);
     secp256k1_fuzz_fe_check_normalized(&actual_product, &expected_product);
+
+    /* fe_mul permits r == a even at the largest accepted input magnitude.
+     * Compare the aliased result against a byte-level reference rather than
+     * only against another production multiplication. */
+    memset(expected_product32, 0, sizeof(expected_product32));
+    memset(actual_product32, 0, sizeof(actual_product32));
+    expected_product32[31] = 1;
+    actual_product32[31] = 2;
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(one_words, expected_product32);
+    secp256k1_fuzz_ref_u32_from_be(two_words, actual_product32);
+    secp256k1_fuzz_ref_u32_mul_mod(product_words, one_words, two_words, modulus);
+    secp256k1_fuzz_ref_u32_to_be(expected_product32, product_words);
+    alias_product = raised_one;
+    secp256k1_fe_mul(&alias_product, &alias_product, &raised_two);
+    secp256k1_fe_normalize_var(&alias_product);
+    secp256k1_fe_get_b32(actual_product32, &alias_product);
+    FUZZ_CHECK(memcmp(actual_product32, expected_product32, sizeof(actual_product32)) == 0);
 
     secp256k1_fe_sqr(&expected_square, &one);
     secp256k1_fe_normalize_var(&expected_square);
