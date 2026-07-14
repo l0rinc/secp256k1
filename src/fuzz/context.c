@@ -17,6 +17,15 @@ typedef struct {
     unsigned int calls;
 } secp256k1_fuzz_context_callback_data;
 
+typedef int (*secp256k1_fuzz_tagged_sha256_fn)(
+    const secp256k1_context *ctx,
+    unsigned char *hash32,
+    const unsigned char *tag,
+    size_t taglen,
+    const unsigned char *msg,
+    size_t msglen
+);
+
 static void secp256k1_fuzz_context_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_context_callback_data *callback_data = (secp256k1_fuzz_context_callback_data *)data;
 
@@ -141,6 +150,33 @@ static void secp256k1_fuzz_check_tagged_sha256_impossible_lengths(secp256k1_cont
     (void)tag;
     (void)msg;
 #endif
+}
+
+static void secp256k1_fuzz_check_tagged_sha256_null_inputs(secp256k1_context *ctx, const unsigned char *tag, const unsigned char *msg) {
+    secp256k1_fuzz_context_callback_data callback_data;
+    secp256k1_fuzz_tagged_sha256_fn tagged_sha256_fn = secp256k1_tagged_sha256;
+    unsigned char hash32[32];
+    unsigned char zero32[32] = { 0 };
+    const unsigned char *null_input = NULL;
+    unsigned int calls;
+
+    callback_data.self = &callback_data;
+    callback_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_context_illegal_callback, &callback_data);
+
+    memset(hash32, 0xA5, sizeof(hash32));
+    calls = callback_data.calls;
+    FUZZ_CHECK(tagged_sha256_fn(ctx, hash32, null_input, 0, msg, 0) == 0);
+    FUZZ_CHECK(callback_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(hash32, zero32, sizeof(hash32)) == 0);
+
+    memset(hash32, 0x5A, sizeof(hash32));
+    calls = callback_data.calls;
+    FUZZ_CHECK(tagged_sha256_fn(ctx, hash32, tag, 0, null_input, 0) == 0);
+    FUZZ_CHECK(callback_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(hash32, zero32, sizeof(hash32)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
 static void secp256k1_fuzz_check_context_ecdsa_equivalence(const secp256k1_context *ctx, const secp256k1_context *other, const unsigned char *msg32, const unsigned char *seckey) {
@@ -395,6 +431,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
     secp256k1_fuzz_check_tagged_sha256(prealloc_ctx, prealloc_clone, input + tag_offset, taglen, input + msg_offset, msglen);
     secp256k1_fuzz_check_tagged_sha256_impossible_lengths(ctx, input + tag_offset, input + msg_offset);
+    secp256k1_fuzz_check_tagged_sha256_null_inputs(ctx, input, input);
 
     secp256k1_fuzz_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_sha256_compression);
