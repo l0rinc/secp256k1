@@ -1828,9 +1828,10 @@ full harness continue.
 
 ## 2026-07-14 Baseline Campaign
 
-The current branch (`82b91c1`) was replayed against the clean-master baseline
-`ebf594320dc838b9de1abb54d5ba98cef84f4297` after the remaining target inventory
-found no independent contract that justified another oracle. A fresh Clang
+The pre-follow-up audit snapshot (`82b91c1`) was replayed against the
+clean-master baseline `ebf594320dc838b9de1abb54d5ba98cef84f4297` after the
+remaining target inventory found no independent contract that justified
+another oracle. A fresh Clang
 libFuzzer ASan/UBSan build passed every checked-in seed: `api_roundtrip` 28,
 `context` 7, `ecdh` 5, `ecmult_const` 5, `ecmult_multi` 12, `ellswift` 11,
 `field` 13, `group` 12, `hash` 8, `musig` 39, `recovery` 7, `scalar` 4,
@@ -1864,6 +1865,25 @@ modules, tests, exhaustive tests, and the 14 non-libFuzzer harnesses completed
 successfully. The resulting CTest run passed all 239 tests, including the full
 exhaustive suite and every checked-in fuzz corpus. This confirms the recorded
 sanitizer campaign was not relying on a sanitizer-only build configuration.
+
+The audit continued after this snapshot with focused, separately verified
+oracles: `64c0b7f` extended the RFC6979 stream, `1e8b152` covered a
+zero-derived MuSig nonce, `a8ecc01` and `31046b6` covered ordinary and
+recoverable ECDSA retry failure, and `f3b8034` covered consumed MuSig secret
+nonce reuse. Those commits are part of the current branch (`f3b8034`); their
+mutation proofs and sanitizer replays must not be retroactively attributed to
+the snapshot above.
+
+The post-snapshot contract review also recorded three deliberate no-edit
+decisions. `secp256k1_ecmult_const_xonly` has no documented output state on
+failure and returns before writing its result for an invalid x-coordinate, so
+requiring a sentinel value would be an overbroad oracle. A MuSig cache's
+`pks_hash` is transcript state that cannot be validated after an opaque cache
+is supplied without the original participant list; requiring rejection of an
+arbitrary hash would likewise invent a contract. Finally, a separate zeroed
+keypair Schnorr seed would exercise the same `keypair_load` rejection already
+proved by the mismatched-keypair oracle. These cases remain documented audit
+boundaries rather than duplicate corpus entries.
 
 ## l0rinc Fork Duplicate Audit
 
