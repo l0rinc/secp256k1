@@ -889,6 +889,96 @@ static void secp256k1_fuzz_check_pubkey_sort_long(const secp256k1_context *ctx, 
     }
 }
 
+/* Exercise a long sort with equal serialized keys. Equal keys may be
+ * reordered by the implementation, so the oracle checks byte order and the
+ * complete pointer multiset separately. */
+static void secp256k1_fuzz_check_pubkey_sort_sixteen(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    enum { N_PUBKEYS = 16, SERIALIZED_SIZE = 33 };
+    static const unsigned char trigger[] = "sixteen-key-pubkey-sort\n";
+    static const unsigned char scalar_values[N_PUBKEYS] = {
+        8, 1, 8, 2, 7, 3, 7, 4,
+        6, 5, 6, 5, 4, 3, 2, 1
+    };
+    secp256k1_pubkey pubkeys[N_PUBKEYS];
+    const secp256k1_pubkey *input_pubkeys[N_PUBKEYS];
+    const secp256k1_pubkey *original_pubkeys[N_PUBKEYS];
+    const secp256k1_pubkey *resorted_pubkeys[N_PUBKEYS];
+    unsigned char expected_serialized[N_PUBKEYS][SERIALIZED_SIZE];
+    unsigned char actual_serialized[SERIALIZED_SIZE];
+    unsigned char serialized_key[SERIALIZED_SIZE];
+    int matched[N_PUBKEYS] = { 0 };
+    size_t i;
+    size_t j;
+    size_t serialized_len;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < N_PUBKEYS; i++) {
+        unsigned char seckey[32] = { 0 };
+
+        seckey[31] = scalar_values[i];
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[i], seckey) == 1);
+        input_pubkeys[i] = &pubkeys[i];
+        original_pubkeys[i] = input_pubkeys[i];
+        serialized_len = sizeof(expected_serialized[i]);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected_serialized[i], &serialized_len, input_pubkeys[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(expected_serialized[i]));
+    }
+
+    /* Insertion sort is an independent byte-level ordering reference. */
+    for (i = 1; i < N_PUBKEYS; i++) {
+        memcpy(serialized_key, expected_serialized[i], sizeof(serialized_key));
+        j = i;
+        while (j > 0 && memcmp(expected_serialized[j - 1], serialized_key, sizeof(serialized_key)) > 0) {
+            memcpy(expected_serialized[j], expected_serialized[j - 1], sizeof(expected_serialized[j]));
+            j--;
+        }
+        memcpy(expected_serialized[j], serialized_key, sizeof(serialized_key));
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, input_pubkeys, N_PUBKEYS) == 1);
+    for (i = 0; i < N_PUBKEYS; i++) {
+        serialized_len = sizeof(actual_serialized);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, actual_serialized, &serialized_len, input_pubkeys[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(actual_serialized));
+        FUZZ_CHECK(memcmp(actual_serialized, expected_serialized[i], sizeof(actual_serialized)) == 0);
+        for (j = 0; j < N_PUBKEYS; j++) {
+            if (!matched[j] && input_pubkeys[i] == original_pubkeys[j]) {
+                matched[j] = 1;
+                break;
+            }
+        }
+        FUZZ_CHECK(j < N_PUBKEYS);
+    }
+    for (i = 0; i < N_PUBKEYS; i++) {
+        FUZZ_CHECK(matched[i]);
+        resorted_pubkeys[i] = input_pubkeys[i];
+    }
+
+    /* Equal serialized values may choose another stable order, but sorting a
+     * sorted array must preserve both the byte sequence and pointer multiset. */
+    memset(matched, 0, sizeof(matched));
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(ctx, resorted_pubkeys, N_PUBKEYS) == 1);
+    for (i = 0; i < N_PUBKEYS; i++) {
+        serialized_len = sizeof(actual_serialized);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, actual_serialized, &serialized_len, resorted_pubkeys[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(actual_serialized));
+        FUZZ_CHECK(memcmp(actual_serialized, expected_serialized[i], sizeof(actual_serialized)) == 0);
+        for (j = 0; j < N_PUBKEYS; j++) {
+            if (!matched[j] && resorted_pubkeys[i] == original_pubkeys[j]) {
+                matched[j] = 1;
+                break;
+            }
+        }
+        FUZZ_CHECK(j < N_PUBKEYS);
+    }
+    for (i = 0; i < N_PUBKEYS; i++) {
+        FUZZ_CHECK(matched[i]);
+    }
+}
+
 static void secp256k1_fuzz_check_empty_pubkey_sort(const secp256k1_context *ctx) {
     const secp256k1_pubkey *empty[1] = { NULL };
 
@@ -2460,6 +2550,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_empty_pubkey_sort(ctx);
     secp256k1_fuzz_check_null_pubkey_sort(ctx);
     secp256k1_fuzz_check_pubkey_sort_long(ctx, size);
+    secp256k1_fuzz_check_pubkey_sort_sixteen(ctx, input, size);
 
     sort_pubkeys[0] = pubkey;
     sort_pubkeys[1] = pubkey_neg_from_seckey;

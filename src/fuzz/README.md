@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -3562,6 +3562,45 @@ The restored Clang ASan/UBSan targets replayed all 36 API corpus files with
 exit 0 on both backends. Isolated campaigns used
 `-workers=2 -jobs=2 -max_total_time=15 -timeout=5`; the default backend ran
 171 executions in 16 seconds and forced-int64 ran 113 executions in 17
+seconds. Every manager and worker exited 0 with no sanitizer diagnostic,
+assertion failure, timeout, OOM, or artifact. This commit changes only the
+fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-14 Core `ec_pubkey_sort` Duplicate-Pointer 16-Key Oracle
+
+`fuzz_api_roundtrip` now has a gated 24-byte ASCII seed,
+`sixteen-key-pubkey-sort`, that constructs sixteen valid public-key objects
+from scalar values 1 through 8, with each value represented by two separate
+objects in a deliberately interleaved order. An independent insertion sort of
+the 33-byte compressed encodings defines the expected byte sequence. The
+oracle then checks that `secp256k1_ec_pubkey_sort` produces that sequence and
+that every original pointer occurs exactly once. It repeats the checks after a
+second sort without assuming an order among equal serialized keys.
+
+This is **Informational / Low public-API oracle hardening**, not a new
+clean-master production finding. At clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, the sort API already accepts
+arbitrary pointer-array lengths, but the independent fuzzer oracle stopped at
+eight distinct keys and its duplicate-pointer case stopped at four. The unit
+suite has a separate six-key vector, so this transcript adds a longer
+duplicate-heavy fuzzer boundary and preserves the existing master-relative
+severity ledger. No public nonce cleanup or other non-cryptographic state is
+assigned a critical severity here.
+
+For causal proof, a temporary mutation in `src/secp256k1.c` overwrote the
+last pointer with the first whenever `n_pubkeys == 16`, immediately before
+`hsort`. All 36 pre-existing API corpus files remained green on default 5x52
+and forced-int64/10x26 Clang ASan/UBSan builds, while the exact new seed
+aborted with SIGABRT exit 134 under `-handle_abrt=0` on both backends.
+Bypassing only this new helper made the same mutated seed pass with exit 0 on
+both backends. The production mutation and helper bypass were restored before
+final replay, so this is detection-point proof rather than a claim that clean
+master is currently defective.
+
+The restored Clang ASan/UBSan targets replayed all 37 API corpus files with
+exit 0 on both backends. Isolated campaigns used
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5`; the default backend ran
+174 executions in 16 seconds and forced-int64 ran 109 executions in 17
 seconds. Every manager and worker exited 0 with no sanitizer diagnostic,
 assertion failure, timeout, OOM, or artifact. This commit changes only the
 fuzzer, its corpus, and this evidence ledger.
