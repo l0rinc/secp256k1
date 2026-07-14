@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -2540,3 +2540,29 @@ The commit describes a **Low / VERIFY-only internal precondition** issue, not a
 new public or runtime security finding. This duplicate decision leaves the
 existing master-relative severity and the stronger minimal-mutation proof
 unchanged.
+
+## 2026-07-14 Affine Group Cleanup Oracle
+
+The group target now exercises the documented internal cleanup primitive
+`secp256k1_ge_clear` directly. It starts from the nonzero affine generator,
+clears the complete object, marks the result defined for memory-sanitizer-aware
+checking, and checks the full representation with the existing independent
+byte scanner. The focused `ge-clear` corpus seed is the 8-byte ASCII input
+`ge clear\n`; the input does not select a special branch, but records the exact
+replay that proves the oracle is active.
+
+This is **Informational / Low internal secret-state hygiene**, not a clean-master
+production vulnerability. Affine points can be sensitive intermediate state,
+so preserving the cleanup contract is useful, but current master already
+clears the object and this check does not establish a leak. It is also distinct
+from public nonce cleanup: a nonce with no cryptographic meaning is not a
+Critical erasure finding.
+
+The proof mutation temporarily changes `secp256k1_ge_clear` into a no-op. With
+the new helper bypassed, all pre-existing group corpus files remain green,
+showing that the old group target did not observe this affine cleanup path.
+Restoring only the helper makes `ge-clear` abort with exit 134 under the same
+mutation. The production mutation and helper bypass were restored before the
+clean replay. Default and forced-int64 Clang ASan/UBSan replays then cover the
+full group corpus, and bounded two-worker/two-job campaigns cover the focused
+seed without sanitizer diagnostics or retained artifacts.
