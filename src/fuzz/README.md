@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, lambda-degenerate alternate-slope addition, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -1601,6 +1601,31 @@ documented in its commit message.
   prior group seeds green. This is informational internal-contract hardening,
   not a clean-master production finding, and does not change any severity
   rating.
+  The group target now sends a structurally valid storage object for an
+  off-curve point through `secp256k1_ec_pubkey_tweak_mul` with a nonzero
+  tweak. The operation must return zero, report exactly one illegal callback,
+  and leave an opaque public key that `secp256k1_pubkey_load` still rejects.
+  Existing malformed-key barriers covered serialization, combine, tweak-add,
+  and negate, but not this distinct multiply/load failure path. The dedicated
+  `invalid-pubkey-tweak-mul` seed is the ASCII input
+  `invalid opaque pubkey tweak mul\n`. The oracle intentionally does not
+  require the failed output to be byte-zeroed: the public API specifies an
+  unspecified output value on this
+  failure, while it does require the failure and invalid-state barrier.
+  For the differential proof, `secp256k1_ec_pubkey_tweak_mul` was temporarily
+  changed from
+  `!overflow && secp256k1_pubkey_load(ctx, &p, pubkey)` to
+  `secp256k1_pubkey_load(ctx, &p, pubkey) || !overflow`, making an invalid
+  load appear successful. Bypassing only this new block left all 12
+  pre-existing group seeds and the focused seed green under that mutation;
+  restoring the block made the focused seed abort with exit 134. The
+  production mutation and bypass were restored before clean replay. Default
+  and forced-int64 Clang ASan/UBSan replays passed the focused seed and all 12
+  prior group files. Two-worker/two-job 15-second campaigns on both builds
+  completed with all four jobs exiting zero and no sanitizer diagnostics or
+  artifacts. This is informational invalid-state oracle hardening, not a
+  current-master production finding; the existing Medium malformed opaque
+  public-key severity remains unchanged.
   The API target also pins an independent ECDSA signing equation with a fixed
   nonce: private key, message, and nonce are all one, so `r = x(G)` and
   `s = r + 1`. Clean master passes; changing the production signing addition
