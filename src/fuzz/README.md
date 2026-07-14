@@ -3005,3 +3005,37 @@ does not change any severity in the finding ledger and does not claim that
 the existing clean-master findings are absent. Its purpose is to show that
 the current oracle set and all tracked seeds remain stable under isolated
 multi-worker sanitizer execution without polluting the source corpus.
+
+## 2026-07-14 Alternate `int128_struct` Representation Campaign
+
+The full sanitizer build was repeated with CMake's test-only
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int128_struct` setting and
+`SECP256K1_ASM=OFF`. This selects the emulated structure-backed 128-bit
+arithmetic used by the 5x52 field backend, instead of the host compiler's
+native `__int128` implementation. All six optional modules and recovery were
+enabled. Clang 22.1.7 ASan/UBSan built the library, tests, and all 14 fuzz
+targets successfully.
+
+All 224 non-libFuzzer CTest cases passed. The copied corpus contained 198
+files: `api_roundtrip` 35, `context` 10, `ecdh` 5, `ecmult_const` 5,
+`ecmult_multi` 13, `ellswift` 12, `field` 14, `group` 15, `hash` 9,
+`musig` 47, `recovery` 8, `scalar` 4, `schnorrsig` 12, and `xonly_tweak` 9.
+The bounded `-workers=2 -jobs=2 -max_total_time=20` campaign completed with
+status 0 for the other 13 targets and emitted no sanitizer diagnostic,
+assertion failure, or artifact.
+
+MuSig is substantially slower on this emulated backend: one fixed corpus
+input took 2091 ms, so the initial 47-file load alone exceeded the 90-second
+outer campaign limit. This was a harness-duration limitation, not a fuzzer
+timeout or production hang. The MuSig corpus was therefore replayed in two
+isolated deterministic batches with `-runs=1`; all 47 seed statuses were 0,
+with no ASan/UBSan diagnostic, assertion failure, or artifact. The first
+multi-worker attempt's shared libFuzzer worker log names are not used as
+execution-count evidence.
+
+This is **negative verification evidence**, not a new clean-master finding.
+It found no representation-specific inconsistency, production bug, or
+oracle gap and does not change any master-relative severity. Existing
+findings remain rated against clean master before later fixes or fork
+optimizations. Temporary corpus copies, worker logs, and artifact directories
+were removed after the replay.
