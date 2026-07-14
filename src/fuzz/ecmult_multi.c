@@ -7,11 +7,12 @@
 #include "../secp256k1.c"
 #include "fuzz.h"
 
+#define SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS 16
 #define SECP256K1_FUZZ_ECMULT_MULTI_REPEAT_MAX_POINTS (2 * ECMULT_PIPPENGER_THRESHOLD)
 
 typedef struct {
-    secp256k1_scalar sc[8];
-    secp256k1_ge pt[8];
+    secp256k1_scalar sc[SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS];
+    secp256k1_ge pt[SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS];
     int fail;
     size_t fail_at;
     size_t calls;
@@ -261,7 +262,7 @@ static void secp256k1_fuzz_ecmult_multi_reset_trace(secp256k1_fuzz_ecmult_multi_
 }
 
 static unsigned int secp256k1_fuzz_ecmult_multi_seen_mask(size_t n_points) {
-    FUZZ_CHECK(n_points <= 8);
+    FUZZ_CHECK(n_points <= SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS);
     return n_points == 0 ? 0u : ((1u << n_points) - 1u);
 }
 
@@ -318,7 +319,7 @@ static void secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(const se
 
 static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
     secp256k1_fuzz_ecmult_multi_data *data = (secp256k1_fuzz_ecmult_multi_data *)cbdata;
-    FUZZ_CHECK(idx < 8);
+    FUZZ_CHECK(idx < SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS);
     FUZZ_CHECK((data->seen_mask & (1u << idx)) == 0);
     data->seen_mask |= 1u << idx;
     data->calls++;
@@ -735,18 +736,23 @@ static void secp256k1_fuzz_ecmult_multi_fail_callback(const secp256k1_context *c
 }
 
 int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
+    static const unsigned char sixteen_trigger[] = "sixteen direct ecmult batch\n";
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 211);
     secp256k1_fuzz_ecmult_multi_data data;
     secp256k1_scalar g_sc;
     unsigned char scalar32[32];
     const secp256k1_scalar *g_sc_ptr;
     size_t n_points;
+    size_t initialized_points;
     size_t i;
     int overflow;
+    int sixteen_case;
 
     memset(&data, 0, sizeof(data));
     secp256k1_fuzz_ecmult_multi_check_equality_barrier();
-    n_points = secp256k1_fuzz_byte(input, size, 3) % 9u;
+    sixteen_case = size == sizeof(sixteen_trigger) - 1 && memcmp(input, sixteen_trigger, sizeof(sixteen_trigger) - 1) == 0;
+    n_points = sixteen_case ? SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS : secp256k1_fuzz_byte(input, size, 3) % 9u;
+    initialized_points = n_points < 8 ? 8 : n_points;
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
     secp256k1_fuzz_check_scratch_create_boundaries(ctx);
@@ -760,35 +766,46 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     if (overflow) {
         secp256k1_scalar_set_int(&g_sc, 0);
     }
-    g_sc_ptr = (secp256k1_fuzz_byte(input, size, 7) & 1u) ? &g_sc : NULL;
+    if (sixteen_case) {
+        secp256k1_scalar_set_int(&g_sc, 17);
+        g_sc_ptr = &g_sc;
+    } else {
+        g_sc_ptr = (secp256k1_fuzz_byte(input, size, 7) & 1u) ? &g_sc : NULL;
+    }
 
-    for (i = 0; i < 8; i++) {
-        secp256k1_fuzz_scalar32(scalar32, input, size, (unsigned int)(239 + i * 17u));
-        secp256k1_scalar_set_b32(&data.sc[i], scalar32, &overflow);
-        if (overflow) {
-            secp256k1_scalar_set_int(&data.sc[i], 0);
-        }
-        secp256k1_fuzz_ecmult_multi_make_point(ctx, &data.pt[i], input, size, (unsigned int)(359 + i * 19u));
+    for (i = 0; i < initialized_points; i++) {
+        if (sixteen_case) {
+            /* Fixed nonzero scalars make every direct callback entry distinct. */
+            secp256k1_scalar_set_int(&data.sc[i], (unsigned int)(i + 1));
+            secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &data.pt[i], &data.sc[i]);
+        } else {
+            secp256k1_fuzz_scalar32(scalar32, input, size, (unsigned int)(239 + i * 17u));
+            secp256k1_scalar_set_b32(&data.sc[i], scalar32, &overflow);
+            if (overflow) {
+                secp256k1_scalar_set_int(&data.sc[i], 0);
+            }
+            secp256k1_fuzz_ecmult_multi_make_point(ctx, &data.pt[i], input, size, (unsigned int)(359 + i * 19u));
 
-        switch (secp256k1_fuzz_byte(input, size, 11 + i) & 3u) {
-        case 0:
-            if (i > 0) {
-                data.pt[i] = data.pt[i - 1];
+            switch (secp256k1_fuzz_byte(input, size, 11 + i) & 3u) {
+            case 0:
+                if (i > 0) {
+                    data.pt[i] = data.pt[i - 1];
+                }
+                break;
+            case 1:
+                secp256k1_ge_set_infinity(&data.pt[i]);
+                break;
+            case 2:
+                /* This is a logical zero used by later arithmetic, not secret-state cleanup. */
+                secp256k1_scalar_set_int(&data.sc[i], 0);
+                break;
+            default:
+                if (i > 0) {
+                    data.pt[i] = data.pt[i - 1];
+                    secp256k1_scalar_negate(&data.sc[i], &data.sc[i - 1]);
+                }
+                break;
             }
-            break;
-        case 1:
-            secp256k1_ge_set_infinity(&data.pt[i]);
-            break;
-        case 2:
-            /* This is a logical zero used by later arithmetic, not secret-state cleanup. */
-            secp256k1_scalar_set_int(&data.sc[i], 0);
-            break;
-        default:
-            if (i > 0) {
-                data.pt[i] = data.pt[i - 1];
-                secp256k1_scalar_negate(&data.sc[i], &data.sc[i - 1]);
-            }
-            break;
         }
     }
 

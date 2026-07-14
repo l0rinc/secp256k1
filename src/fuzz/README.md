@@ -14,7 +14,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
@@ -3405,3 +3405,46 @@ sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. The
 default jobs each completed 52 runs in 61 seconds; forced-`int64` jobs each
 completed 52 runs in 107 seconds. This commit changes only the fuzzer, its
 corpus, and this evidence ledger.
+
+## 2026-07-14 ecmult_multi Sixteen-Point Direct-Batch Oracle
+
+`fuzz_ecmult_multi` now has a gated 28-byte corpus case that fills sixteen
+independent scalar/point entries and exercises the direct callback path with
+`g_sc = 17`. Its expected result is built from sixteen separate
+`secp256k1_ecmult_const` terms and checked both through canonical serialized
+coordinates and the existing Jacobian equality helper. The callback trace
+requires every index from 0 through 15 exactly once. Existing inputs retain
+the prior 0-8 point distribution; the repeat-only Pippenger and Strauss cases
+remain unchanged and continue to cover larger counts with their deliberate
+repeated-point model.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` accepts larger direct batches, but
+the independent direct callback model and its storage stopped at eight
+entries. The existing large-count tests use one repeated point, so they do
+not prove that a distinct callback value at a later index contributes to the
+batch result. Existing findings retain their severity relative to unmodified
+master; this extension does not treat a later optimization or a passing
+repeat case as evidence that the direct path was fully modeled.
+
+For causal proof, a temporary mutation in `src/ecmult_impl.h` made the direct
+no-scratch implementation skip only the final arithmetic accumulation when
+`n == 16` and the generator scalar was exactly 17. The callback still ran for
+index 15, so the trace oracle passed and the independent point-result oracle
+had to detect the missing term. All 14 pre-existing `ecmult_multi` corpus
+files stayed green under the mutation on both backends. The exact
+`sixteen-direct-batch` seed aborted with SIGABRT exit 134 on both backends;
+bypassing only the new sixteen-point fixture made that same mutated seed pass
+with exit 0 on both. The mutation and bypass were restored before fixed
+replay; no clean-master production bug is claimed.
+
+The restored Clang ASan/UBSan target passed all 15 corpus files on both the
+default 5x52 and forced-int64/10x26 backends, with 16 fixed executions and
+exit 0 in each replay. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns then ran both
+jobs per backend; the default jobs completed 75 and 75 executions in 16
+seconds, while forced-int64 jobs completed 40 and 41 executions in 16 and 17
+seconds. Every manager and worker exited 0 with no sanitizer diagnostic,
+assertion failure, timeout, OOM, or artifact. This commit changes only the
+fuzzer, its corpus, and this evidence ledger.
