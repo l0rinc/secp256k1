@@ -166,6 +166,57 @@ static void secp256k1_fuzz_check_ecdh_invalid_pubkey(secp256k1_context *ctx, con
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_ecdh_null_inputs(secp256k1_context *ctx, const secp256k1_pubkey *point, const unsigned char *scalar) {
+    secp256k1_ecdh_hash_function known_hashes[2];
+    int (*ecdh_fn)(const secp256k1_context *, unsigned char *, const secp256k1_pubkey *, const unsigned char *, secp256k1_ecdh_hash_function, void *) = secp256k1_ecdh;
+    secp256k1_fuzz_ecdh_illegal_data illegal_data;
+    unsigned char output32[32];
+    unsigned char custom_output[64];
+    unsigned char custom_expected[64];
+    unsigned char zero32[32] = { 0 };
+    size_t i;
+    unsigned int calls;
+
+    known_hashes[0] = NULL;
+    known_hashes[1] = secp256k1_ecdh_hash_function_sha256;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_ecdh_illegal_callback, &illegal_data);
+
+    /* Built-in callbacks own a fixed 32-byte output and must clear it before
+     * the public argument check returns failure. */
+    for (i = 0; i < sizeof(known_hashes) / sizeof(known_hashes[0]); i++) {
+        memset(output32, 0xA5, sizeof(output32));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(ecdh_fn(ctx, output32, NULL, scalar, known_hashes[i], NULL) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(output32, zero32, sizeof(output32)) == 0);
+
+        memset(output32, 0x5A, sizeof(output32));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(ecdh_fn(ctx, output32, point, NULL, known_hashes[i], NULL) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(output32, zero32, sizeof(output32)) == 0);
+    }
+
+    /* A custom callback has no fixed output size or failure-cleanup contract. */
+    memset(custom_expected, 0xC3, sizeof(custom_expected));
+    memset(custom_output, 0xC3, sizeof(custom_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(ecdh_fn(ctx, custom_output, NULL, scalar, fuzz_ecdh_hash_passthrough, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(custom_output, custom_expected, sizeof(custom_output)) == 0);
+
+    memset(custom_expected, 0x96, sizeof(custom_expected));
+    memset(custom_output, 0x96, sizeof(custom_output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(ecdh_fn(ctx, custom_output, point, NULL, fuzz_ecdh_hash_passthrough, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(custom_output, custom_expected, sizeof(custom_output)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_ecdh_order_plus_one(const secp256k1_context *ctx, const secp256k1_pubkey *point, const unsigned char *mask32) {
     secp256k1_fuzz_ecdh_hash_data hash_data;
     unsigned char order_plus_one[32];
@@ -235,6 +286,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
     secp256k1_fuzz_check_ecdh_order_plus_one(ctx, &pubkey_b, hash_data.mask32);
     secp256k1_fuzz_check_ecdh_invalid_scalar_callback_point(ctx, &pubkey_b, hash_data.mask32);
+    secp256k1_fuzz_check_ecdh_null_inputs(ctx, &pubkey_b, seckey_a);
 
     secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdh_sha256_compression);
