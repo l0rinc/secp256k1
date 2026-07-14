@@ -1,0 +1,2 @@
+ecdsa normalize boundary: independent half-order and half-order-plus-one checks pin the low-S threshold, canonical output, and in-place normalization without deriving expected values from production scalar negation or normalization.
+This seed intentionally exceeds the legacy API corpus size so the deterministic boundary oracle remains isolated from the existing generated high-S relation and wrapper-derived checks.
