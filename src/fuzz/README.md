@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, nonce callback key-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -325,6 +325,29 @@ executed 315 and 312 inputs and reached 5,308 edges. Every job returned zero
 with no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact.
 The temporary mutated corpora and worker logs were kept outside the tracked
 corpus.
+
+Focused ECDSA nonce-callback key-domain replay (2026-07-14): the restored
+forced-int64 Clang ASan/UBSan target passed all 29 tracked `api_roundtrip`
+inputs, including the existing `ecdsa-variable-nonce-equation` seed. The
+custom RFC6979 passthrough callback now independently checks that the signer
+passes the exact secret-key bytes supplied to `secp256k1_ecdsa_sign`; the
+ordinary signature comparison only proves that two nonce paths agree and can
+therefore miss the same wrong callback context being supplied to both paths.
+
+For the differential proof, `secp256k1_ecdsa_sign_inner` was temporarily
+changed to pass one all-zero 32-byte buffer to both the default and custom
+nonce callbacks while retaining the real signing scalar. The focused seed
+aborted with exit 134. Removing only the new callback `memcmp` let all 29 API
+seeds pass under that identical production mutation, proving the earlier
+signature-equivalence, retry, and independent equation checks did not detect
+the callback-domain regression. The mutation and assertion bypass were
+restored before replay. The fixed corpus passed all 29 seeds, and a restored
+two-worker/two-job ASan/UBSan campaign completed both jobs successfully
+without sanitizer diagnostics, assertion failures, timeouts, OOM, or artifacts.
+This is informational oracle hardening, not a current-master production
+finding; a real failure would be a callback-context or nonce-domain
+regression, not a direct key compromise, so no master-relative severity
+rating changes.
 
 Focused ECDSA retry-failure cleanup replay (2026-07-14): the new
 `ecdsa-retry-failure-cleanup` seed makes the nonce callback return a zero
@@ -1152,7 +1175,11 @@ documented in its commit message.
   normalized secret key and matching x-only public key. A mutation that passes
   the secret-key buffer in place of the x-only key still produces signatures
   accepted by ordinary verification, so this callback-domain contract needs
-  its own oracle (this commit). It also exercises the documented empty-message
+  its own oracle (this commit). The ECDSA target independently checks the
+  corresponding `key32` contract for its RFC6979 passthrough callback. Passing
+  the same wrong buffer to both default and custom ECDSA nonce paths leaves
+  their signature comparison green, so this check is likewise not redundant.
+  It also exercises the documented empty-message
   representation boundary: `sign_custom` and `verify` must accept both
   `(NULL, 0)` and a non-NULL zero-length pointer, and both signatures must be
   identical. Clean master already passes; this is an informational API oracle,
