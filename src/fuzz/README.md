@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -389,6 +389,33 @@ diagnostics or artifacts. This is informational/Low state-machine hardening,
 not a current-master production finding. It concerns the cryptographically
 meaningful secret secnonce; it is distinct from non-critical public nonce
 cleanup, so no master-relative severity rating changes.
+
+Focused MuSig failed-partial-sign cleanup replay (2026-07-14): the existing
+partial-sign failure helper now also requires a valid secret nonce to be
+zeroed when an invalid cache is rejected and when the nonce magic is malformed.
+The `partial-sign-secnonce-failure-cleanup` seed drives this path directly.
+This is a separate transition from successful-sign reuse: an application can
+hit an invalid opaque cache after loading a fresh secret nonce, and the API
+contract still promises that `partial_sign` consumes that nonce.
+
+For the mutation proof, `secp256k1_musig_partial_sign` was temporarily changed
+to skip `secp256k1_memzero_explicit(secnonce, ...)` only when the cache magic
+was deliberately corrupted by this helper. The focused seed aborted with exit
+134; removing only the two new secnonce postconditions left all 42 MuSig seeds
+green under that same targeted mutation. A broader mutation that delayed
+invalidation past every validation barrier was rejected as non-independent
+because the pre-existing invalid-signer oracle also detected it. The source
+mutation was restored before fixed replay. The fixed forced-int64 Clang
+ASan/UBSan build passed all 42 seeds individually, and two workers across two
+jobs each completed 43 executions with 5,676 features and no diagnostic. A
+native GCC build passed the MuSig corpus and the complete 238-test CTest run.
+This is informational/Low state-cleanup hardening, not a current-master
+production finding. A regression would reopen a cryptographically meaningful
+secret-nonce reuse hazard only after a caller ignored an API failure, so it is
+distinct from non-critical public-nonce cleanup; clean master consumes the
+secret nonce before every later validation barrier. The existing unit tests
+already cover the same API promise; this fuzzer check adds independent
+corpus-driven coverage of the opaque-cache failure transition.
 
 Focused arbitrary-signature ECDSA verification replay (2026-07-13): the
 `api_roundtrip` corpus started with 24 tracked inputs totaling 931 bytes,
