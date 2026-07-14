@@ -1485,6 +1485,35 @@ static void secp256k1_fuzz_check_musig_keyagg_cache_curve_barrier(secp256k1_cont
     FUZZ_CHECK(memcmp(&output_pubkey, zero_pubkey, sizeof(output_pubkey)) == 0);
     FUZZ_CHECK(memcmp(&invalid_cache, &cache_before, sizeof(invalid_cache)) == 0);
 
+    /* The second 64-byte group storage starts after the aggregate point. It
+     * has its own curve-validation contract even when the aggregate point is
+     * valid; use x = 1, y = 0 to make that distinction explicit. */
+    invalid_cache = *valid_cache;
+    memset(invalid_cache.data + 68, 0, 64);
+    invalid_cache.data[68] = 1;
+    cache_before = invalid_cache;
+
+    memset(&output_pubkey, 0x96, sizeof(output_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &output_pubkey, &invalid_cache) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&output_pubkey, zero_pubkey, sizeof(output_pubkey)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_cache, &cache_before, sizeof(invalid_cache)) == 0);
+
+    memset(&output_pubkey, 0x69, sizeof(output_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(ctx, &output_pubkey, &invalid_cache, secp256k1_fuzz_scalar_zero) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&output_pubkey, zero_pubkey, sizeof(output_pubkey)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_cache, &cache_before, sizeof(invalid_cache)) == 0);
+
+    memset(&output_pubkey, 0x3C, sizeof(output_pubkey));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_pubkey_xonly_tweak_add(ctx, &output_pubkey, &invalid_cache, secp256k1_fuzz_scalar_zero) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&output_pubkey, zero_pubkey, sizeof(output_pubkey)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_cache, &cache_before, sizeof(invalid_cache)) == 0);
+
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
