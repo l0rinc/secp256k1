@@ -653,6 +653,37 @@ static void secp256k1_fuzz_fe_check_sqrt_reference(const unsigned char *input, s
     FUZZ_CHECK(secp256k1_fuzz_ref_field_square_matches(actual_root32, value32));
 }
 
+static void secp256k1_fuzz_fe_check_is_square_reference(const unsigned char *input, size_t size) {
+    unsigned char value32[32];
+    secp256k1_fe value;
+    secp256k1_fe raised;
+    secp256k1_fe zero7;
+    int expected_ret;
+
+    /* The existing square checks start from a production-generated square.
+     * Use the standalone exponentiation model on an arbitrary residue so a
+     * Jacobi-symbol regression cannot agree with a production-derived oracle. */
+    secp256k1_fuzz_derive(value32, sizeof(value32), input, size, 237);
+    secp256k1_fe_set_b32_mod(&value, value32);
+    secp256k1_fe_normalize_var(&value);
+    secp256k1_fe_get_b32(value32, &value);
+    expected_ret = secp256k1_fuzz_ref_field_sqrt(value32);
+    FUZZ_CHECK(secp256k1_fe_is_square_var(&value) == expected_ret);
+
+    /* Jacobi processing first normalizes its input, but the public internal
+     * contract accepts a nonnormalized representation up to magnitude 8. */
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised = value;
+    secp256k1_fe_add(&raised, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised.magnitude == 8);
+    FUZZ_CHECK(raised.normalized == 0);
+#endif
+    FUZZ_CHECK(secp256k1_fe_is_square_var(&raised) == expected_ret);
+}
+
 static void secp256k1_fuzz_fe_check_inverse_reference(const unsigned char *input, size_t size) {
     unsigned char value32[32];
     unsigned char expected32[32];
@@ -1195,6 +1226,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_max_magnitude_inverse(input, size);
     secp256k1_fuzz_fe_check_inverse_reference(input, size);
     secp256k1_fuzz_fe_check_sqrt_reference(input, size);
+    secp256k1_fuzz_fe_check_is_square_reference(input, size);
     secp256k1_fuzz_fe_check_clear();
     secp256k1_fuzz_fe_check_add_int_boundary();
     secp256k1_fuzz_fe_check_half(input, size);

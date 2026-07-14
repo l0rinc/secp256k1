@@ -3202,3 +3202,39 @@ other independently repaired contracts, it does not claim that those earlier
 clean-master failures could not mask a path; the exact predicate mutation and
 dedicated field assertion remain the causal proof. This experiment changes no
 production behavior.
+
+## 2026-07-14 Field Square-Class Reference Oracle
+
+`fuzz_field` now compares `secp256k1_fe_is_square_var` with the standalone
+8x32 schoolbook/exponentiation model already used for the independent square
+root oracle. The new check starts from an arbitrary canonical residue derived
+with a separate salt, then adds `7p` without changing its value and repeats
+the classification at the accepted nonnormalized magnitude-8 boundary. This
+exercises nonsquares as well as squares; the earlier checks only classified a
+production-generated square and its negation, so a Jacobi-symbol or fallback
+regression could agree with the old oracle.
+
+This is **Informational / Low internal oracle hardening**, not a clean-master
+production finding. The dedicated
+`field/is-square-independent-reference` input derives the canonical nonsquare
+`cfbfd77d5f2a0ef8c0acbb9977427302e8cca2966470583d7ffbdce19a775621`.
+Existing clean-master findings, including the latent 10x26 zero-predicate
+defect, retain their severity relative to the unmodified `origin/master`;
+this oracle does not claim a new arithmetic bug or change those ratings.
+
+For causal proof, a temporary production mutation flipped the result in the
+shared `secp256k1_fe_is_square_var` wrapper only for that residue's default
+5x52 limbs, and placed the flip after the wrapper's internal `VERIFY_CHECK`.
+All 15 pre-existing field inputs remained green under the final mutation. The
+new seed aborted with exit 134 when the canonical-residue assertion was
+enabled, while bypassing only that assertion let the same mutated seed pass;
+the raised `+7p` assertion remained active. This isolates the new independent
+reference from the older square/negation checks. The mutation was restored
+before the clean replay.
+
+Clean Clang ASan/UBSan replays passed all 16 field inputs on default 5x52 and
+forced-int64/10x26 builds. Isolated `-workers=2 -jobs=2 -max_total_time=15`
+campaigns completed 271 and 273 runs on the default backend and 262 and 265
+runs on forced-int64, with every manager and worker exiting 0 and no
+sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. This
+change modifies only the fuzzer and its corpus.
