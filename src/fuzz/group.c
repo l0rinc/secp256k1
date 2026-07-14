@@ -557,11 +557,11 @@ static void secp256k1_fuzz_group_check_storage_cmov(const secp256k1_ge *a, const
 }
 
 static void secp256k1_fuzz_group_check_batch_conversion(const secp256k1_gej *points, size_t len) {
-    secp256k1_ge constant_time[3];
-    secp256k1_ge variable_time[3];
+    secp256k1_ge constant_time[4];
+    secp256k1_ge variable_time[4];
     size_t i;
 
-    FUZZ_CHECK(len <= 3);
+    FUZZ_CHECK(len <= 4);
     secp256k1_ge_set_all_gej(constant_time, points, len);
     secp256k1_ge_set_all_gej_var(variable_time, points, len);
     for (i = 0; i < len; i++) {
@@ -571,11 +571,11 @@ static void secp256k1_fuzz_group_check_batch_conversion(const secp256k1_gej *poi
 }
 
 static void secp256k1_fuzz_group_check_batch_conversion_finite(const secp256k1_gej *points, size_t len) {
-    secp256k1_ge constant_time[3];
-    secp256k1_ge variable_time[3];
+    secp256k1_ge constant_time[4];
+    secp256k1_ge variable_time[4];
     size_t i;
 
-    FUZZ_CHECK(len <= 3);
+    FUZZ_CHECK(len <= 4);
     for (i = 0; i < len; i++) {
         FUZZ_CHECK(!secp256k1_gej_is_infinity(&points[i]));
     }
@@ -588,8 +588,8 @@ static void secp256k1_fuzz_group_check_batch_conversion_finite(const secp256k1_g
 }
 
 static void secp256k1_fuzz_group_check_batch_conversion_boundaries(const secp256k1_gej *a, const secp256k1_gej *b) {
-    secp256k1_gej points[3];
-    secp256k1_ge affine[3];
+    secp256k1_gej points[4];
+    secp256k1_ge affine[4];
     size_t i;
 
     FUZZ_CHECK(!secp256k1_gej_is_infinity(a));
@@ -597,9 +597,10 @@ static void secp256k1_fuzz_group_check_batch_conversion_boundaries(const secp256
     points[0] = *a;
     secp256k1_gej_set_infinity(&points[1]);
     points[2] = *b;
+    secp256k1_gej_set_infinity(&points[3]);
     memset(affine, 0xA5, sizeof(affine));
-    secp256k1_ge_set_all_gej_var(affine, points, 3);
-    for (i = 0; i < 3; i++) {
+    secp256k1_ge_set_all_gej_var(affine, points, 4);
+    for (i = 0; i < 4; i++) {
         if (secp256k1_gej_is_infinity(&points[i])) {
             FUZZ_CHECK(secp256k1_ge_is_infinity(&affine[i]));
         } else {
@@ -808,7 +809,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_gej_cmov(&finite, &infinity);
     secp256k1_fuzz_group_check_lambda_degenerate_addition(&finite);
     {
-        secp256k1_gej finite_batch[3];
+        secp256k1_gej finite_batch[4];
         secp256k1_ge finite_affine;
         secp256k1_gej finite_other = finite;
         secp256k1_gej_double(&finite_other, &finite_other);
@@ -816,9 +817,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         finite_batch[0] = finite;
         finite_batch[1] = finite_other;
         secp256k1_gej_double(&finite_batch[2], &finite_batch[1]);
-        secp256k1_fuzz_group_check_batch_conversion(finite_batch, 3);
-        secp256k1_fuzz_group_check_batch_conversion_finite(finite_batch, 3);
-        secp256k1_fuzz_group_check_batch_conversion_boundaries(&finite_batch[0], &finite_batch[2]);
+        secp256k1_gej_double(&finite_batch[3], &finite_batch[2]);
+        secp256k1_fuzz_group_check_batch_conversion(finite_batch, 4);
+        secp256k1_fuzz_group_check_batch_conversion_finite(finite_batch, 4);
+        secp256k1_fuzz_group_check_batch_conversion_boundaries(&finite_batch[0], &finite_batch[3]);
         secp256k1_fuzz_group_check_zinv_in_place(&finite, &finite_affine);
     }
     secp256k1_fuzz_group_check_rescale_alias(&finite);
