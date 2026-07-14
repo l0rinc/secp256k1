@@ -95,6 +95,7 @@ static void secp256k1_fuzz_group_check_opaque_pubkey_barrier(secp256k1_context *
     const secp256k1_pubkey *inputs[1];
     unsigned char serialized[33];
     unsigned char tweak32[32] = { 0 };
+    unsigned char nonzero_tweak32[32] = { 0 };
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
     size_t serialized_len;
     unsigned int calls;
@@ -105,6 +106,7 @@ static void secp256k1_fuzz_group_check_opaque_pubkey_barrier(secp256k1_context *
     invalid_ge.infinity = 0;
     FUZZ_CHECK(!secp256k1_ge_is_valid_var(&invalid_ge));
     secp256k1_ge_to_bytes(invalid_pubkey.data, &invalid_ge);
+    nonzero_tweak32[31] = 1;
 
     illegal_data.self = &illegal_data;
     illegal_data.calls = 0;
@@ -140,6 +142,14 @@ static void secp256k1_fuzz_group_check_opaque_pubkey_barrier(secp256k1_context *
     FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &mutated_pubkey) == 0);
     FUZZ_CHECK(illegal_data.calls == calls + 1);
     FUZZ_CHECK(memcmp(&mutated_pubkey, zero_pubkey, sizeof(mutated_pubkey)) == 0);
+
+    mutated_pubkey = invalid_pubkey;
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &mutated_pubkey, nonzero_tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_pubkey_load(ctx, &loaded_ge, &mutated_pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
