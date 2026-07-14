@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, and invalid-secret callback-X postconditions
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
@@ -209,6 +209,24 @@ callback-X helper made the identical mutation pass with exit 0 on all three.
 All temporary changes were restored. This is informational oracle hardening,
 not a current-master production finding, and does not change any severity
 rating.
+
+Focused EllSwift custom-hash encoded-party replay (2026-07-14): the EllSwift
+corpus contains 11 tracked inputs totaling 551 bytes, including
+`bip324-independent-reference`. The masked custom callback now checks that
+`secp256k1_ellswift_xdh` forwards the exact 64-byte `ell_a64` and `ell_b64`
+encodings documented by the API, in addition to checking its shared-X and
+output domains. For the differential proof, the arbitrary-callback branch in
+`secp256k1_ellswift_xdh` was temporarily changed to pass `ell_b64` for both
+encoded-party arguments while retaining the correct remote encoding for
+shared-X computation. The focused seed aborted with exit 134. Removing only
+the two new encoded-party `memcmp` checks let all 11 corpus seeds pass under
+the same production mutation, proving that the prior X-coordinate, point,
+symmetry, and output checks did not detect this callback transcript
+regression. The mutation and oracle bypass were restored before replay.
+Default and forced-int64 two-worker/two-job 15-second campaigns exited 0
+without sanitizer diagnostics or artifacts, and the native GCC EllSwift
+corpus test passed. This is informational oracle hardening, not a
+current-master production finding, and does not change any severity rating.
 
 MemorySanitizer corpus campaign (2026-07-13): a clang build with
 `-fsanitize=memory -fsanitize-memory-track-origins=2` was linked and runtime
@@ -1230,6 +1248,11 @@ documented in its commit message.
   same wrong message to both paths leaves their signatures, verification, and
   independent signing equation green, so a direct callback assertion is
   required for that domain too.
+  The EllSwift target independently checks the corresponding exact `ell_a64`
+  and `ell_b64` callback domain. Passing one encoded-party buffer to both
+  custom callback arguments leaves the shared-X, point, symmetry, and output
+  checks green, so this is an independent transcript oracle. It is
+  informational and does not alter the clean-master severity ledger.
   The Schnorr callback now also checks the exact message bytes and length. A
   mutation that passes the normalized secret-key buffer as the 32-byte nonce
   message to both default and custom signing paths leaves their signatures and

@@ -25,6 +25,8 @@ typedef struct {
     const void *self;
     unsigned char mask32[32];
     unsigned char x32[32];
+    const unsigned char *expected_ell_a64;
+    const unsigned char *expected_ell_b64;
     unsigned int calls;
 } secp256k1_fuzz_ellswift_hash_data;
 
@@ -69,6 +71,12 @@ static int secp256k1_fuzz_ellswift_hash_masked(unsigned char *output, const unsi
     FUZZ_CHECK(ell_b64 != NULL);
     FUZZ_CHECK(hash_data != NULL);
     FUZZ_CHECK(hash_data->self == hash_data);
+    if (hash_data->expected_ell_a64 != NULL) {
+        FUZZ_CHECK(memcmp(ell_a64, hash_data->expected_ell_a64, 64) == 0);
+    }
+    if (hash_data->expected_ell_b64 != NULL) {
+        FUZZ_CHECK(memcmp(ell_b64, hash_data->expected_ell_b64, 64) == 0);
+    }
     hash_data->calls++;
     memcpy(hash_data->x32, x32, sizeof(hash_data->x32));
     for (i = 0; i < 32; i++) {
@@ -502,6 +510,8 @@ static void secp256k1_fuzz_check_ellswift_invalid_secret_callback_x(const secp25
     invalid_secrets[2] = order_plus_one;
     hash_data.self = &hash_data;
     memset(hash_data.mask32, 0, sizeof(hash_data.mask32));
+    hash_data.expected_ell_a64 = NULL;
+    hash_data.expected_ell_b64 = NULL;
     for (party = 0; party <= 1; party++) {
         for (i = 0; i < sizeof(invalid_secrets) / sizeof(invalid_secrets[0]); i++) {
             hash_data.calls = 0;
@@ -562,6 +572,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(hash_data.mask32, sizeof(hash_data.mask32), input, size, 211);
     hash_data.self = &hash_data;
     hash_data.calls = 0;
+    hash_data.expected_ell_a64 = NULL;
+    hash_data.expected_ell_b64 = NULL;
 
     secp256k1_fuzz_check_ellswift_bip324_decode_vector(ctx);
     secp256k1_fuzz_check_ellswift_modulo_alias(ctx);
@@ -585,6 +597,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32, seckey_b32);
     secp256k1_fuzz_check_ellswift_failure_cleanup(ctx, rnd32, auxrnd_a32);
 
+    hash_data.expected_ell_a64 = ell_a64;
+    hash_data.expected_ell_b64 = ell_b64;
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_x32, NULL);
     secp256k1_fuzz_check_ellswift_xdh_pair(ctx, ell_a64, ell_b64, seckey_a32, seckey_b32, secp256k1_fuzz_ellswift_hash_masked, &hash_data);
     FUZZ_CHECK(hash_data.calls == 2);
