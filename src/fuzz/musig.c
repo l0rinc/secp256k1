@@ -74,6 +74,32 @@ static void secp256k1_fuzz_musig_reduce_scalar(unsigned char out[32], const unsi
     }
 }
 
+static void secp256k1_fuzz_musig_scalar_add_mod_order(unsigned char out32[32], const unsigned char addend32[32]) {
+    unsigned char sum33[33] = { 0 };
+    unsigned char order33[33] = { 0 };
+    unsigned int carry = 0;
+    size_t i;
+
+    memcpy(order33 + 1, secp256k1_fuzz_scalar_order, sizeof(secp256k1_fuzz_scalar_order));
+    for (i = 32; i-- > 0;) {
+        unsigned int sum = (unsigned int)out32[i] + addend32[i] + carry;
+        sum33[i + 1] = (unsigned char)sum;
+        carry = sum >> 8;
+    }
+    sum33[0] = (unsigned char)carry;
+    if (memcmp(sum33, order33, sizeof(sum33)) >= 0) {
+        unsigned int borrow = 0;
+        for (i = sizeof(sum33); i-- > 0;) {
+            unsigned int minuend = sum33[i];
+            unsigned int subtrahend = (unsigned int)order33[i] + borrow;
+            sum33[i] = (unsigned char)(minuend - subtrahend);
+            borrow = minuend < subtrahend;
+        }
+        FUZZ_CHECK(borrow == 0);
+    }
+    memcpy(out32, sum33 + 1, 32);
+}
+
 static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen);
 
 static void secp256k1_fuzz_musig_check_noncecoef_reference(const secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *msg32, const secp256k1_musig_session *session) {
@@ -2162,6 +2188,37 @@ static void secp256k1_fuzz_check_musig_empty_partial_sig_aggregation(secp256k1_c
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_partial_sig_agg_long(const secp256k1_context *ctx, const unsigned char *input, size_t size, const secp256k1_musig_session *session) {
+    static const unsigned char trigger[] = "long MuSig partial signature aggregation\n";
+    enum { N_SIGS = 16 };
+    secp256k1_musig_partial_sig boundary_sig;
+    const secp256k1_musig_partial_sig *partial_sig_ptrs[N_SIGS];
+    unsigned char partial_sig32[32];
+    unsigned char expected_sig64[64];
+    unsigned char actual_sig64[64];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* The API aggregates scalar encodings and does not verify signer identity
+     * or the partial-signature equation. Repeating this parseable boundary
+     * scalar stresses the count loop and forces modular wraparound, while
+     * the expected result comes from independent byte arithmetic. */
+    FUZZ_CHECK(secp256k1_musig_partial_sig_parse(ctx, &boundary_sig, secp256k1_fuzz_scalar_order_minus_one) == 1);
+    FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, partial_sig32, &boundary_sig) == 1);
+    memcpy(expected_sig64, session->data + 5, 32);
+    memcpy(expected_sig64 + 32, session->data + 101, 32);
+    for (i = 0; i < N_SIGS; i++) {
+        partial_sig_ptrs[i] = &boundary_sig;
+        secp256k1_fuzz_musig_scalar_add_mod_order(expected_sig64 + 32, partial_sig32);
+    }
+
+    FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, actual_sig64, session, partial_sig_ptrs, N_SIGS) == 1);
+    FUZZ_CHECK(memcmp(actual_sig64, expected_sig64, sizeof(actual_sig64)) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_session_state_barrier(secp256k1_context *ctx, const secp256k1_musig_session *valid_session, const secp256k1_musig_partial_sig * const *partial_sig_ptrs, size_t n_sigs) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_musig_session invalid_session;
@@ -2437,6 +2494,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     }
     secp256k1_fuzz_check_musig_session_state_barrier(ctx, &session, partial_sig_ptrs, n_signers);
     secp256k1_fuzz_check_musig_empty_partial_sig_aggregation(ctx, &session, partial_sig_ptrs);
+    secp256k1_fuzz_check_musig_partial_sig_agg_long(ctx, input, size, &session);
     memset(sig64, 0xA5, sizeof(sig64));
     memset(sig64_replay, 0x5A, sizeof(sig64_replay));
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, n_signers) == 1);

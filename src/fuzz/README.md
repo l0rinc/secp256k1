@@ -3281,3 +3281,42 @@ and symbolization disabled: default jobs completed 13 and 15 executions,
 and forced-int64 jobs completed 8 and 9. Every job and manager exited 0 with
 no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact. This
 commit changes only the fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-14 MuSig Long Partial-Signature Aggregation Oracle
+
+`fuzz_musig` now has a gated 41-byte corpus case that parses the canonical
+scalar `order - 1` into a partial-signature object, passes that same object 16
+times to `secp256k1_musig_partial_sig_agg`, and compares the complete 64-byte
+result with an independent 257-bit byte-arithmetic model. The model preserves
+the session's final nonce and computes `s_part + 16*(order - 1)` modulo the
+group order, including the wraparound boundary. Repeated partial signatures
+are an aggregation-loop stress case; the API does not verify signer identity
+or the partial-signature equation in this function, so this is not a claim
+that the repeated objects form a valid MuSig signer set.
+
+This is **Informational / Low public-API oracle hardening**, not a new
+clean-master production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` accepts arbitrary positive
+`n_sigs`, while the existing successful fuzzer path reaches at most eight
+signers and checks its aggregate through the signing equations. It did not
+independently exercise a longer scalar-aggregation tail or a 16-term modular
+wrap. Partial signatures and nonce values here are serialized protocol state,
+not secret buffers; no cleanup severity is claimed.
+
+For causal proof, a temporary production mutation changed only the scalar
+aggregation loop in `src/modules/musig/session_impl.h` from
+`i < n_sigs` to `i < n_sigs - (n_sigs == 16)`, skipping the final term only
+for the new case. All 48 pre-existing MuSig corpus inputs stayed green; the
+exact `long MuSig partial signature aggregation` seed aborted with status 134
+at the independent full-signature comparison. Bypassing only the new helper
+made that seed pass under the same mutation. Both temporary changes were
+restored before fixed replay.
+
+The fixed Clang ASan/UBSan replay passed all 49 MuSig corpus files on default
+5x52 and forced-int64/10x26 builds; the forced-int64 confirmation command
+exited 0 explicitly. Isolated campaigns used
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` with sanitizer detection
+active and symbolization disabled: default jobs completed 14 and 14 runs,
+forced-int64 jobs 8 and 9, and every manager and worker exited 0. No
+sanitizer diagnostic, assertion failure, timeout, OOM, or artifact occurred.
+This commit changes only the fuzzer, its corpus, and this evidence ledger.
