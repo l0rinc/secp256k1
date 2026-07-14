@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid comparator ordering
-- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
@@ -454,6 +454,29 @@ ten-second forced-int64 ASan/UBSan libFuzzer run executed 97 and 99 inputs,
 reached 4,821 features in both jobs, and returned zero without diagnostics
 or artifacts. This is informational/Low wrapper-state hardening, not a
 current-master production finding; no master-relative severity rating changes.
+
+Focused recoverable ECDSA nonce-callback domain replay (2026-07-14): the
+restored forced-int64 Clang ASan/UBSan target passed all eight tracked recovery
+inputs, including `recoverable-valid-nonce-retry`. Every custom recovery nonce
+callback now checks the exact 32-byte message hash and secret-key buffers
+supplied by `secp256k1_ecdsa_sign_recoverable`, in addition to its existing
+retry and callback-argument checks.
+
+For the differential proof, `secp256k1_ecdsa_sign_inner` was temporarily
+changed to pass one all-zero 32-byte buffer to both the default and custom
+nonce callbacks while retaining the real signing scalar and message scalar.
+The focused valid-retry seed aborted with exit 134. Removing only the new
+message/key `memcmp` checks let all eight recovery seeds pass under the same
+production mutation, showing that signature comparison, recovery equations,
+and retry-state checks did not establish the callback domain. The mutation
+and assertion bypass were restored before replay. This is informational oracle
+hardening, not a current-master production finding; a real failure would be
+callback-context corruption rather than a direct key compromise, so the
+master-relative severity ledger is unchanged. The restored portable default
+and forced-int64 Clang ASan/UBSan replays passed all eight seeds. Both
+two-worker/two-job 15-second campaigns exited 0 without sanitizer diagnostics
+or artifacts, and native GCC CTest passed 113/113 selected tests (112 unit
+tests plus the recovery corpus).
 
 Focused MuSig consumed-secnonce replay (2026-07-14): the MuSig signing path now
 calls `secp256k1_musig_partial_sign` a second time after a successful partial
