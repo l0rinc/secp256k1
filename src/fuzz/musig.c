@@ -1983,6 +1983,7 @@ static void secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(secp256k1_co
     secp256k1_musig_secnonce secnonce;
     secp256k1_musig_partial_sig partial_sig;
     unsigned char zero_sig[sizeof(partial_sig)] = { 0 };
+    unsigned char zero_secnonce[sizeof(secnonce)] = { 0 };
 
     invalid_cache.data[0] ^= 1u;
     illegal_data.self = &illegal_data;
@@ -1994,6 +1995,7 @@ static void secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(secp256k1_co
     FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &secnonce, keypair, &invalid_cache, session) == 0);
     FUZZ_CHECK(illegal_data.calls == 1);
     FUZZ_CHECK(memcmp(&partial_sig, zero_sig, sizeof(partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
 
     secnonce = *valid_secnonce;
     secnonce.data[0] ^= 1u;
@@ -2001,6 +2003,7 @@ static void secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(secp256k1_co
     FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &secnonce, keypair, valid_cache, session) == 0);
     FUZZ_CHECK(illegal_data.calls == 2);
     FUZZ_CHECK(memcmp(&partial_sig, zero_sig, sizeof(partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
