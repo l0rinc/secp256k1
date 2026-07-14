@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, independent byte-level tweak arithmetic at the order-minus-one boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -2869,3 +2869,48 @@ also passed all 47 files. The disposable Clang two-worker/two-job campaign
 saw all 47 seeds and completed 48 executions per job; both jobs exited 0
 without sanitizer diagnostics, assertion failures, timeouts, or artifacts.
 This commit changes no production behavior.
+
+## 2026-07-14 Core Tweak Scalar Boundary Oracle
+
+The core API target now independently recomputes scalar addition and
+multiplication modulo the group order with byte arithmetic. A length-gated
+boundary block uses `seckey = 1` and `tweak = order - 1`, checks the exact
+success or failure status and zeroized output contract for both secret-key and
+public-key tweak wrappers, compares the returned secret bytes with the
+reference result, and reconstructs the expected public point from those bytes.
+The double-and-add reference keeps every intermediate scalar canonical and
+does not call the production scalar implementation. The focused
+`independent-tweak-order-boundary` seed is a 285-byte ASCII input whose byte
+11 deliberately selects the scalar-one path; it exceeds the 136-byte legacy
+API corpus maximum so the new assertion is isolated from prior seeds.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. At `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, the existing tweak checks compare
+the secret-key and public-key wrappers and then compare the public result with
+`ec_pubkey_create` from the production-returned secret bytes. Those relations
+can agree if a shared boundary conversion is wrong. The unit coverage checks
+zero, one, overflow, simple wrapping, and two-times behavior, but the fuzzer
+had no independent byte-level product oracle for the exact `1 * (n - 1)`
+state. No clean-master arithmetic error, key disclosure, signature forgery,
+or availability issue was found, so no master-relative severity is raised.
+
+For causal proof, a temporary production mutation rejected only
+`secp256k1_ec_seckey_tweak_mul(seckey = 1, tweak = order - 1)` and zeroized its
+output. With the new block bypassed, all 33 pre-existing API corpus inputs
+passed. Restoring the block made the focused seed abort with status 134 at the
+independent multiplication result; the mutation and bypass were restored
+before clean replay. A broader add-boundary mutation was also tested and
+dropped because an older combine oracle already detected it; the committed
+block therefore records only the multiplication gap that the legacy corpus
+did not cover.
+
+The clean Clang ASan/UBSan replay passed all 34 API seeds. A disposable
+15-second Clang ASan/UBSan campaign completed 168 executions without a
+diagnostic, assertion, timeout, or artifact. Native GCC x86_64 standalone and
+GCC ASan/UBSan standalone replays each passed all 34 seeds; GCC emitted only
+the pre-existing `memcmp` bound warning in
+`secp256k1_fuzz_scalar32_in_order`. The disposable Clang two-manager,
+two-worker campaign saw all 34 seeds, completed 167 executions per job, and
+both managers exited 0 without sanitizer diagnostics, assertion failures,
+timeouts, or artifacts. This commit changes no production behavior.

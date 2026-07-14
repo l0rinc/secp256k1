@@ -1336,6 +1336,74 @@ static void secp256k1_fuzz_scalar32_add_mod_order(unsigned char *out32, const un
     memcpy(out32, sum + 1, 32);
 }
 
+/* Multiply canonical scalars with byte arithmetic, independent of the scalar
+ * implementation. Double-and-add keeps every intermediate value canonical
+ * by routing it through the independent addition routine above. */
+static void secp256k1_fuzz_scalar32_mul_mod_order(unsigned char *out32, const unsigned char *a32, const unsigned char *b32) {
+    unsigned char product[32] = { 0 };
+    unsigned int bit;
+    int i;
+
+    for (i = 0; i < 32; i++) {
+        for (bit = 0x80u; bit != 0; bit >>= 1) {
+            secp256k1_fuzz_scalar32_add_mod_order(product, product, product);
+            if ((b32[i] & bit) != 0) {
+                secp256k1_fuzz_scalar32_add_mod_order(product, product, a32);
+            }
+        }
+    }
+    memcpy(out32, product, 32);
+}
+
+/* Check the order-minus-one boundary against byte arithmetic. The ordinary
+ * tweak checks compare two production paths, so a shared scalar-conversion
+ * regression could make both sides agree on the same wrong result. */
+static void secp256k1_fuzz_check_tweak_order_minus_one(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *seckey) {
+    const unsigned char *tweak32 = secp256k1_fuzz_scalar_order_minus_one;
+    unsigned char expected_seckey[32];
+    unsigned char tweaked_seckey[32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_pubkey tweaked_pubkey;
+    secp256k1_pubkey expected_pubkey;
+    int expected_ret;
+    int seckey_ret;
+    int pubkey_ret;
+
+    secp256k1_fuzz_scalar32_add_mod_order(expected_seckey, seckey, tweak32);
+    expected_ret = memcmp(expected_seckey, secp256k1_fuzz_scalar_zero, 32) != 0;
+    memcpy(tweaked_seckey, seckey, sizeof(tweaked_seckey));
+    tweaked_pubkey = *pubkey;
+    seckey_ret = secp256k1_ec_seckey_tweak_add(ctx, tweaked_seckey, tweak32);
+    pubkey_ret = secp256k1_ec_pubkey_tweak_add(ctx, &tweaked_pubkey, tweak32);
+    FUZZ_CHECK(seckey_ret == expected_ret);
+    FUZZ_CHECK(pubkey_ret == expected_ret);
+    if (expected_ret) {
+        FUZZ_CHECK(memcmp(tweaked_seckey, expected_seckey, sizeof(tweaked_seckey)) == 0);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected_pubkey, expected_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &expected_pubkey) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
+        FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
+    }
+
+    secp256k1_fuzz_scalar32_mul_mod_order(expected_seckey, seckey, tweak32);
+    expected_ret = memcmp(expected_seckey, secp256k1_fuzz_scalar_zero, 32) != 0;
+    memcpy(tweaked_seckey, seckey, sizeof(tweaked_seckey));
+    tweaked_pubkey = *pubkey;
+    seckey_ret = secp256k1_ec_seckey_tweak_mul(ctx, tweaked_seckey, tweak32);
+    pubkey_ret = secp256k1_ec_pubkey_tweak_mul(ctx, &tweaked_pubkey, tweak32);
+    FUZZ_CHECK(seckey_ret == expected_ret);
+    FUZZ_CHECK(pubkey_ret == expected_ret);
+    if (expected_ret) {
+        FUZZ_CHECK(memcmp(tweaked_seckey, expected_seckey, sizeof(tweaked_seckey)) == 0);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected_pubkey, expected_seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &tweaked_pubkey, &expected_pubkey) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
+        FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
+    }
+}
+
 /* Check a three-term public-key sum against independently computed scalar
  * addition. The existing two-term check exercises the public tweak wrapper;
  * this relation reaches the multi-input combine loop and a different
@@ -2248,6 +2316,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_one);
     secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_check_tweak_mul(ctx, &pubkey, seckey, tweak32);
+    if (size >= 160) {
+        secp256k1_fuzz_check_tweak_order_minus_one(ctx, &pubkey, seckey);
+    }
 
     memcpy(seckey_neg, seckey, sizeof(seckey_neg));
     pubkey_neg = pubkey;
