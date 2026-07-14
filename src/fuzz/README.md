@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
+- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -2030,6 +2030,26 @@ documented in its commit message.
   passed all 8 context seeds under both default and forced-int64 Clang
   ASan/UBSan builds; four 15-second campaigns (2 jobs and 2 workers per
   backend) also exited cleanly with no artifacts.
+
+  The same context target also checks the documented `NULL` reset through
+  `secp256k1_schnorrsig_sign32`. It creates a keypair and deterministic
+  BIP340 signature before the reset, then creates a fresh keypair and signs
+  again afterward; the complete 64-byte signature must be unchanged. The
+  dedicated `context/randomize-null-schnorr-signature` seed is the 33-byte
+  ASCII input `randomize null schnorr signature\n`. This is an independent
+  oracle because Schnorr signing has its own x-only parity and response path;
+  the earlier ECDSA check did not execute it. For the differential proof,
+  `secp256k1_schnorrsig_sign_internal` was temporarily changed to flip
+  `sig64[0]` after `secp256k1_memczero` only when
+  `ctx->ecmult_gen_ctx.proj_blind == secp256k1_fe_one`. The focused seed
+  aborted with exit 134; bypassing only the new Schnorr helper left the
+  pre-existing eight-file context corpus green under that mutation. The
+  mutation and bypass were restored before clean replay. Default and
+  forced-int64 Clang ASan/UBSan fixed replays passed the focused seed and all
+  nine context files, and two 15-second campaigns (2 jobs and 2 workers per
+  backend) exited 0 without sanitizer diagnostics or artifacts. This is
+  informational API state-transition hardening, not a current-master
+  production finding, and does not change any severity rating.
 
   The field target now combines the two dimensions of the documented
   `secp256k1_fe_mul` contract that were previously exercised separately: both
