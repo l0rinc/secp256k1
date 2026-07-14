@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
+- `fuzz_context`: context randomize, clone, reset, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -1655,6 +1655,26 @@ documented in its commit message.
   input. The mutations and bypass were restored before clean
   replay. This is informational precondition/output-oracle hardening, not a
   clean-master production finding; no severity rating changes.
+
+  The context target now checks the documented equivalence of all four valid
+  flag combinations: `SECP256K1_CONTEXT_NONE`, the deprecated `VERIFY` and
+  `SIGN` flags, and their combination. For each flag it compares dynamic and
+  preallocated creation, clone-size accounting, randomized public-key creation,
+  and deterministic ECDSA serialization across the original and both clone
+  paths. The dedicated `context/flag-matrix` seed is the 14-byte ASCII input
+  `context flags\n`. Clean default and forced-`int64` ASan/UBSan fixed replays
+  passed all seven context files; matching default and forced-`int64` MSan
+  replays also passed. Isolated default and forced-`int64`
+  `-workers=2 -jobs=2 -max_total_time=15` campaigns exited 0 after 228/231 and
+  141/139 executions respectively, with no sanitizer diagnostics or artifacts.
+  For the differential proof, `secp256k1_context_preallocated_size` was
+  temporarily changed to return `ret - 1` whenever the deprecated `VERIFY`
+  bit was present. The focused seed aborted at the new size-equivalence check
+  on both ASan/UBSan backends; bypassing only the new helper left all seven
+  corpus files green with the production mutation active. The mutation and
+  bypass were restored before the fixed and MSan replays. This is
+  informational API-oracle hardening, not a current-master production finding,
+  and does not change any severity rating.
 
 If a clean-master replay stops at an earlier known failure, isolate the later
 contract with its dedicated seed or a minimal production mutation. Do not

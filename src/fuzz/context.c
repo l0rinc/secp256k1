@@ -205,6 +205,90 @@ static void secp256k1_fuzz_check_context_illegal_callback_clone(secp256k1_contex
     free(callback_prealloc_clone_mem);
 }
 
+static void secp256k1_fuzz_check_context_flag_matrix(const unsigned char *seed32, const unsigned char *msg32, const unsigned char *seckey) {
+    static const unsigned int flags[] = {
+        SECP256K1_CONTEXT_NONE,
+        SECP256K1_CONTEXT_VERIFY,
+        SECP256K1_CONTEXT_SIGN,
+        SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY
+    };
+    unsigned char reference_pubkey[33];
+    unsigned char reference_sig[64];
+    size_t reference_size = secp256k1_context_preallocated_size(SECP256K1_CONTEXT_NONE);
+    size_t i;
+    int have_reference = 0;
+
+    /* Deprecated flags are documented aliases for the fully capable context.
+     * Compare behavior through public serialization instead of inspecting the
+     * implementation's randomized or callback-bearing state. */
+    for (i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
+        secp256k1_context *ctx;
+        secp256k1_context *prealloc_ctx;
+        secp256k1_context *clone;
+        secp256k1_context *prealloc_clone;
+        secp256k1_context *contexts[4];
+        void *prealloc_mem;
+        void *prealloc_clone_mem;
+        size_t prealloc_size;
+        size_t clone_size;
+        size_t j;
+
+        prealloc_size = secp256k1_context_preallocated_size(flags[i]);
+        FUZZ_CHECK(prealloc_size == reference_size);
+        ctx = secp256k1_context_create(flags[i]);
+        FUZZ_CHECK(ctx != NULL);
+        prealloc_mem = malloc(prealloc_size);
+        FUZZ_CHECK(prealloc_mem != NULL);
+        prealloc_ctx = secp256k1_context_preallocated_create(prealloc_mem, flags[i]);
+        FUZZ_CHECK(prealloc_ctx != NULL);
+        FUZZ_CHECK(secp256k1_context_randomize(ctx, seed32) == 1);
+        FUZZ_CHECK(secp256k1_context_randomize(prealloc_ctx, seed32) == 1);
+
+        clone_size = secp256k1_context_preallocated_clone_size(ctx);
+        FUZZ_CHECK(clone_size == reference_size);
+        FUZZ_CHECK(secp256k1_context_preallocated_clone_size(prealloc_ctx) == reference_size);
+        clone = secp256k1_context_clone(ctx);
+        FUZZ_CHECK(clone != NULL);
+        prealloc_clone_mem = malloc(clone_size);
+        FUZZ_CHECK(prealloc_clone_mem != NULL);
+        prealloc_clone = secp256k1_context_preallocated_clone(ctx, prealloc_clone_mem);
+        FUZZ_CHECK(prealloc_clone != NULL);
+
+        contexts[0] = ctx;
+        contexts[1] = prealloc_ctx;
+        contexts[2] = clone;
+        contexts[3] = prealloc_clone;
+        for (j = 0; j < sizeof(contexts) / sizeof(contexts[0]); j++) {
+            secp256k1_pubkey pubkey;
+            unsigned char serialized[33];
+            size_t serialized_len = sizeof(serialized);
+            secp256k1_ecdsa_signature sig;
+            unsigned char compact[64];
+
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(contexts[j], &pubkey, seckey) == 1);
+            FUZZ_CHECK(secp256k1_ec_pubkey_serialize(contexts[j], serialized, &serialized_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+            FUZZ_CHECK(serialized_len == sizeof(serialized));
+            FUZZ_CHECK(secp256k1_ecdsa_sign(contexts[j], &sig, msg32, seckey, NULL, NULL) == 1);
+            FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(contexts[j], compact, &sig) == 1);
+            if (!have_reference) {
+                memcpy(reference_pubkey, serialized, sizeof(reference_pubkey));
+                memcpy(reference_sig, compact, sizeof(reference_sig));
+                have_reference = 1;
+            } else {
+                FUZZ_CHECK(memcmp(serialized, reference_pubkey, sizeof(reference_pubkey)) == 0);
+                FUZZ_CHECK(memcmp(compact, reference_sig, sizeof(reference_sig)) == 0);
+            }
+        }
+
+        secp256k1_context_destroy(clone);
+        secp256k1_context_preallocated_destroy(prealloc_clone);
+        free(prealloc_clone_mem);
+        secp256k1_context_preallocated_destroy(prealloc_ctx);
+        free(prealloc_mem);
+        secp256k1_context_destroy(ctx);
+    }
+}
+
 static void secp256k1_fuzz_check_context_null_prealloc(void) {
 #ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
     secp256k1_context *(*create_fn)(void *, unsigned int) = secp256k1_context_preallocated_create;
@@ -314,6 +398,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_valid_seckey32(ctx, seckey, input, size, 41);
     secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 43);
+    secp256k1_fuzz_check_context_flag_matrix(seed32, msg32, seckey);
 
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(clone, &pubkey_clone, seckey) == 1);
