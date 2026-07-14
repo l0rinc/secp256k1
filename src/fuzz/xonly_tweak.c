@@ -345,6 +345,23 @@ static void secp256k1_fuzz_check_invalid_keypair_xonly_pub(secp256k1_context *ct
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_keypair_create_failure(const secp256k1_context *ctx) {
+    static const unsigned char *invalid_seckeys[] = {
+        secp256k1_fuzz_scalar_zero,
+        secp256k1_fuzz_scalar_order
+    };
+    unsigned char zero_keypair[sizeof(secp256k1_keypair)] = { 0 };
+    secp256k1_keypair keypair;
+    size_t i;
+
+    /* Invalid secrets must not leave the helper's dummy generator state in the output. */
+    for (i = 0; i < sizeof(invalid_seckeys) / sizeof(invalid_seckeys[0]); i++) {
+        memset(&keypair, 0xA5, sizeof(keypair));
+        FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, invalid_seckeys[i]) == 0);
+        FUZZ_CHECK(memcmp(&keypair, zero_keypair, sizeof(keypair)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_invalid_pubkey_xonly_pub(secp256k1_context *ctx) {
     secp256k1_fuzz_xonly_illegal_data illegal_data;
     secp256k1_pubkey invalid_pubkey;
@@ -469,6 +486,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
     secp256k1_fuzz_check_invalid_keypair_xonly_pub(ctx);
     secp256k1_fuzz_check_invalid_pubkey_xonly_pub(ctx);
+    if (size == sizeof("invalid keypair create cleanup\n") - 1
+        && memcmp(input, "invalid keypair create cleanup\n", sizeof("invalid keypair create cleanup\n") - 1) == 0) {
+        secp256k1_fuzz_check_keypair_create_failure(ctx);
+    }
     if (size == sizeof("partial keypair tweak invalid\n") - 1
         && memcmp(input, "partial keypair tweak invalid\n", sizeof("partial keypair tweak invalid\n") - 1) == 0) {
         secp256k1_fuzz_check_keypair_tweak_partial_invalid(ctx, &keypair, tweak);
