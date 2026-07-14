@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -325,6 +325,27 @@ executed 315 and 312 inputs and reached 5,308 edges. Every job returned zero
 with no sanitizer diagnostic, assertion failure, timeout, OOM, or artifact.
 The temporary mutated corpora and worker logs were kept outside the tracked
 corpus.
+
+Focused ECDSA retry-failure cleanup replay (2026-07-14): the new
+`ecdsa-retry-failure-cleanup` seed makes the nonce callback return a zero
+scalar, then the group order, then failure on the third invocation. The
+fuzzer requires `secp256k1_ecdsa_sign` to return zero, make exactly three
+callback calls, and leave the signature object zeroed. Clean master passes
+the complete tracked `api_roundtrip` corpus, including this seed.
+
+For the mutation proof, `secp256k1_ecdsa_sign_inner` was temporarily changed
+to set `ret = 1` only when a callback failure occurred after `count != 0`.
+With the new helper enabled, the focused seed aborted; removing only the new
+helper call let the prior API corpus pass under the identical mutation. This
+proves that the existing first-attempt callback-failure oracle did not cover
+failure after invalid and overflowing nonce retries. The production mutation
+and all harness isolation changes were restored before replay. Normal GCC
+and forced-int64 Clang ASan/UBSan corpus replays passed; a two-worker,
+two-job, ten-second forced-int64 ASan/UBSan libFuzzer run also returned zero
+for both jobs with no diagnostics or artifacts. This is informational oracle
+hardening, not a current-master production finding. A real regression here
+would be a retry/failure-state availability issue, not a cryptographic nonce
+compromise, so it does not change any master-relative severity rating.
 
 Focused arbitrary-signature ECDSA verification replay (2026-07-13): the
 `api_roundtrip` corpus started with 24 tracked inputs totaling 931 bytes,
