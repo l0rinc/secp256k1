@@ -1552,6 +1552,76 @@ static void secp256k1_fuzz_check_pubkey_combine_long(const secp256k1_context *ct
     }
 }
 
+/* Exercise repeated infinity transitions before a nonzero tail. The
+ * independent scalar model makes a skipped or misplaced tail term visible,
+ * while the prefix checks make each cancellation boundary explicit. */
+static void secp256k1_fuzz_check_pubkey_combine_sixteen(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    enum { N_PUBKEYS = 16 };
+    static const unsigned char trigger[] = "sixteen-term-pubkey-combine\n";
+    static const int scalar_values[N_PUBKEYS] = {
+        1, -1, 2, -2, 3, -3, 4, -4,
+        5, 6, 7, 8, 9, 10, 11, 12
+    };
+    const secp256k1_pubkey *inputs[N_PUBKEYS];
+    const secp256k1_pubkey *reordered_inputs[N_PUBKEYS];
+    secp256k1_pubkey fixed_pubkeys[N_PUBKEYS];
+    secp256k1_pubkey resumed;
+    secp256k1_pubkey resumed_expected;
+    secp256k1_pubkey combined;
+    secp256k1_pubkey reordered;
+    secp256k1_pubkey expected;
+    unsigned char seckeys[N_PUBKEYS][32];
+    unsigned char resumed_seckey[32];
+    unsigned char expected_seckey[32] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    size_t i;
+    int combine_ret;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < N_PUBKEYS; i++) {
+        memset(seckeys[i], 0, sizeof(seckeys[i]));
+        if (scalar_values[i] > 0) {
+            seckeys[i][31] = (unsigned char)scalar_values[i];
+        } else {
+            memcpy(seckeys[i], secp256k1_fuzz_scalar_order_minus_one, sizeof(seckeys[i]));
+            seckeys[i][31] = (unsigned char)(seckeys[i][31] - (-scalar_values[i] - 1));
+        }
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[i], seckeys[i]) == 1);
+        inputs[i] = &fixed_pubkeys[i];
+        secp256k1_fuzz_scalar32_add_mod_order(expected_seckey, expected_seckey, seckeys[i]);
+    }
+    for (i = 0; i < N_PUBKEYS; i++) {
+        reordered_inputs[i] = inputs[N_PUBKEYS - 1 - i];
+    }
+
+    /* The four pair prefixes each end at infinity. */
+    for (i = 0; i < 8; i += 2) {
+        memset(&resumed, 0xA5, sizeof(resumed));
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &resumed, inputs, i + 2) == 0);
+        FUZZ_CHECK(memcmp(&resumed, zero_pubkey, sizeof(resumed)) == 0);
+    }
+
+    /* The first tail point must be accepted after the fourth cancellation. */
+    memcpy(resumed_seckey, seckeys[8], sizeof(resumed_seckey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &resumed_expected, resumed_seckey) == 1);
+    memset(&resumed, 0x5A, sizeof(resumed));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &resumed, inputs, 9) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &resumed, &resumed_expected) == 0);
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected, expected_seckey) == 1);
+    memset(&combined, 0xA5, sizeof(combined));
+    combine_ret = secp256k1_ec_pubkey_combine(ctx, &combined, inputs, N_PUBKEYS);
+    FUZZ_CHECK(combine_ret == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &expected) == 0);
+
+    memset(&reordered, 0x5A, sizeof(reordered));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &reordered, reordered_inputs, N_PUBKEYS) == combine_ret);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined, &reordered) == 0);
+}
+
 /* Verify an arbitrary low-S ECDSA signature without using the internal
  * verifier's inverse-and-multiscalar path. For a candidate R reconstructed
  * from r (or r+n), the ECDSA equation is sR = zG + rQ. */
@@ -2382,6 +2452,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_combine_three(ctx, &pubkey, seckey, &combine_pubkey, combine_seckey);
     secp256k1_fuzz_check_pubkey_combine_intermediate_infinity(ctx, &pubkey, &pubkey_neg_from_seckey, &combine_pubkey, &combine_pubkey_neg);
     secp256k1_fuzz_check_pubkey_combine_long(ctx, size, &pubkey, seckey, &combine_pubkey, combine_seckey);
+    secp256k1_fuzz_check_pubkey_combine_sixteen(ctx, input, size);
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_null_member(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
