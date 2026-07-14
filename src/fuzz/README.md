@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -2793,3 +2793,36 @@ Clang two-manager/two-worker campaign exited 0 for both jobs, completing 63
 and 65 runs in 104 seconds, with no sanitizer diagnostics, assertion
 failures, timeouts, or artifacts. The only build warning was the target's
 pre-existing deprecation warning for the `secp256k1_schnorrsig_sign` alias.
+
+## 2026-07-14 Core `ec_pubkey_combine` NULL-Member Oracle
+
+The core API target now covers a non-NULL input array containing a NULL member
+in both positions that matter for state: `[valid, NULL]`, where a valid point
+has already been loaded, and `[NULL, valid]`, where validation fails before any
+point is loaded. Calls go through the existing unannotated function-pointer
+type so the intentional NULL member reaches the library argument callback.
+Each case starts with a different nonzero output pattern, requires one illegal
+argument callback and a failed return, and requires the complete output object
+to be zeroed. The focused `null-combine-member` seed is the 28-byte ASCII input
+`NULL combine member cleanup\n`.
+
+This is **Informational / Low oracle hardening**, not a new clean-master
+production finding. At `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`,
+`secp256k1_ec_pubkey_combine` already clears `pubnonce` before inspecting the
+member array. The unit suite already checks that NULL members are rejected at
+each of three positions, but it does not prefill and verify the result object
+on those callbacks. The older fuzzer checked empty arrays and invalid opaque
+members, but not a NULL member after a valid partial aggregate. No memory
+corruption, key disclosure, forgery, or cryptographic-state vulnerability is
+claimed, and no production change is included.
+
+For causal proof, a temporary production mutation retained the output clear
+unless the first member was NULL or the second member was NULL. The focused
+standalone Clang ASan/UBSan replay then exited 134 at the new postcondition.
+With only the new helper bypassed, all 32 pre-existing API inputs remained
+green under that mutation, showing that the old corpus did not detect this
+contract regression. The mutation and bypass were restored before the clean
+replay. The final Clang ASan/UBSan libFuzzer replay passed all 33 API inputs;
+the native standalone replay and the disposable multi-worker campaign are
+recorded with their exact commands and results in the commit message.
