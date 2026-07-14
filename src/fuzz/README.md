@@ -3039,3 +3039,31 @@ oracle gap and does not change any master-relative severity. Existing
 findings remain rated against clean master before later fixes or fork
 optimizations. Temporary corpus copies, worker logs, and artifact directories
 were removed after the replay.
+
+## 2026-07-14 Low-Window ECMULT Campaign
+
+The complete sanitizer build was repeated with `SECP256K1_ECMULT_WINDOW_SIZE=2`
+and `SECP256K1_ASM=OFF`. This changes the generator precomputation layout and
+the verification multiplication window while retaining all six optional
+modules and recovery. Clang 22.1.7 with ASan and UBSan built the library, all
+tests, and all 14 fuzz targets. The complete 224-test CTest matrix passed.
+
+The 198 tracked corpus files were copied outside the worktree. Each target was
+run from its own disposable directory with
+`-workers=2 -jobs=2 -timeout=10 -max_total_time=15`; the MuSig target required
+59 seconds per worker to load and replay its 47 seeds. Across 28 worker jobs,
+the campaign completed 15,755 executions. Every manager and worker exited 0.
+The per-target worker logs had no ASan, UBSan, assertion, crash, or timeout
+diagnostic, and no artifact file was produced.
+
+The first parallel attempt used distinct artifact prefixes but a shared
+working directory. Its `fuzz-0.log` and `fuzz-1.log` files were therefore
+discarded as execution-count evidence and removed. The successful replay used
+one working directory per target, so worker logs and generated artifacts were
+isolated. A separate `clang -m32` link probe was unavailable because this
+environment has no 32-bit C runtime; no 32-bit result is claimed here.
+
+This is **negative verification evidence**, not a clean-master finding. It
+found no low-window arithmetic inconsistency, production bug, or oracle gap,
+and it does not change any master-relative severity. Existing findings remain
+rated against clean `origin/master` before later fixes or fork optimizations.
