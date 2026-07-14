@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -2640,3 +2640,38 @@ disposable Clang libFuzzer campaign with
 44-input corpus, without sanitizer diagnostics, assertion failures, timeouts,
 or crash artifacts. The existing `ea0fff3` production fix remains the fix for
 the master-relative finding; this commit adds its missing fuzzer proof.
+
+## 2026-07-14 MuSig `nonce_process` NULL-Input Reiteration
+
+The MuSig target now covers all three exported NULL-input failure transitions
+of `secp256k1_musig_nonce_process`: missing aggregate nonce, message, and
+key-aggregation cache. Each call starts with a previously valid session, must
+return zero, invoke the illegal-argument callback exactly once, clear the
+caller-owned session, and leave the non-NULL opaque inputs byte-for-byte
+unchanged. The focused `nonce-process-null-input-cleanup` seed is the
+33-byte ASCII input `MuSig nonce_process NULL cleanup\n`.
+
+This reiterates the same clean-master stale-session finding as `ea0fff3`
+(`musig: clear failed nonce process sessions`): **Low to Medium severity**.
+At `origin/master` `ebf5943`, `nonce_process` did not clear `session` before
+the NULL-input argument checks, so an ignored failure could leave an earlier
+signing transcript live. This is stale signing-state authority, not proven
+memory corruption, key disclosure, or signature forgery. The branch already
+contains the production clear; this commit changes no production behavior.
+As with the prior cache-specific reiteration, cleanup of a nonce without
+cryptographic meaning would not justify a Critical rating; the session is the
+cryptographically meaningful state here.
+
+For causal proof, a temporary production mutation made the session clear run
+only when all three input objects were non-NULL, exactly modeling the old
+master failure ordering while leaving successful and malformed-object paths
+unchanged. With the new helper bypassed, all 44 pre-existing MuSig inputs
+remained green under that mutation. Restoring only the helper made the focused
+seed abort at the first NULL-input transition, while the helper covers all
+three transitions in the clean run, proving that the old corpus did not
+cover these argument-check exits. The mutation and bypass were restored before
+the final clean replay. The final forced-int64 Clang ASan/UBSan and native GCC
+x86_64-assembly ASan/UBSan replays pass all 45 MuSig corpus inputs, and a
+disposable two-manager/two-worker Clang campaign has both managers exit 0
+without sanitizer diagnostics, assertion failures, timeouts, or artifacts. The existing
+`ea0fff3` production fix remains the fix for the master-relative finding.
