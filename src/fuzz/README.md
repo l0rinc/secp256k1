@@ -161,6 +161,29 @@ master-relative mutation proof or change any severity rating. The matching
 forced-int64 `tests` executable also completed its full 16-iteration
 deterministic suite with exit code 0 in 407.898 seconds.
 
+Differential clean-master replay (2026-07-14): a disposable worktree at clean
+`origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297` received only the
+fuzz sources and build wiring from this branch. Two private helper names used
+by the newer harness (`SECP256K1_SHA256_MAX_SIZE` and `checked_size_mul`) were
+defined in that overlay solely to compile the oracle; no production fix from
+this branch was copied into it. The Clang ASan/UBSan standalone build then
+replayed focused inputs against both trees. The fixed tree passed every
+tracked input for all 14 registered targets. Clean master reproduced the
+existing invalid opaque-state, callback-boundary, RFC6979 length, ECDH load,
+and EllSwift zero-`u` stops before the corresponding repaired oracles could
+run. Those multi-oracle stops are corroboration, not new independent bug
+claims; the mutation-backed commit proofs below remain authoritative for
+severity.
+
+The field result was isolated by backend. Clean master passed the two focused
+field seeds under its default 5x52 backend, but the forced-int64/10x26 build
+aborted the dedicated `zero-predicate-false-positive` and magnitude-32
+replays with exit 134. The fixed forced-int64 tree passed all 15 tracked field
+inputs under ASan/UBSan. This preserves the existing **Medium/latent** rating
+for the 10x26 false-zero production defect and keeps it distinct from the
+separate magnitude-32 normalization repair and from the informational field
+oracle hardenings.
+
 The upstream exhaustive ECDH module model was also replayed on 2026-07-13.
 Default ASan/UBSan order-13 and order-7 binaries, plus the forced-int64/10x26
 ASan/UBSan order-7 binary, each ran two iterations across every reduced-order
