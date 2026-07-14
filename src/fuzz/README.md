@@ -2113,6 +2113,30 @@ This campaign produced no new clean-master production finding and does not
 change any severity rating. Existing findings remain classified against clean
 master, independent of later fork fixes or optimization stacks.
 
+## 2026-07-14 Direct Multi-Worker Replay
+
+The current branch was rebuilt with Clang 22.1.7 using CMake's libFuzzer
+runtime, ASan/UBSan, frame pointers, and the supported test-only
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` backend. All 14 fuzz binaries
+linked successfully. Disposable copies of the current 183-file corpus were
+then run from separate working directories with
+`-workers=2 -max_total_time=30`; per-target logs and artifact directories were
+isolated so libFuzzer worker output could not be confused between targets.
+
+The exact checked-in corpus sizes and completed execution counts were:
+`api_roundtrip` 30/342, `context` 9/402, `ecdh` 5/432,
+`ecmult_const` 5/538, `ecmult_multi` 12/148, `ellswift` 12/179,
+`field` 13/671, `group` 13/947, `hash` 9/45224, `musig` 43/44,
+`recovery` 8/450, `scalar` 4/1644, `schnorrsig` 11/238, and
+`xonly_tweak` 9/75. Every target exited 0. No sanitizer diagnostic,
+assertion failure, timeout, crash, or artifact was produced.
+
+This is a clean-master campaign result, not evidence that a fork patch makes
+the baseline safe. It found no independent oracle gap and no production bug,
+so no seed or implementation change was added. The earlier `-jobs` manager
+experiment is not used as proof: its worker logs were shared by libFuzzer;
+the direct-worker replay above is the authoritative result.
+
 As a follow-up branch verification, a normal CMake build with all six optional
 modules, tests, exhaustive tests, and the 14 non-libFuzzer harnesses completed
 successfully. The resulting CTest run passed all 239 tests, including the full
