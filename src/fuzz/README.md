@@ -526,6 +526,14 @@ documented in its commit message.
   not a current-master production finding, and does not change any severity
   rating. The prior one-shot-versus-later-retry relation remains intentionally
   absent because RFC6979 changes state between generate calls.
+  The RFC6979 comparison now extends the one-shot and split streams from 96 to
+  160 bytes, exercising five consecutive HMAC blocks instead of stopping after
+  three. The dedicated `rfc6979-long-stream` seed and the full hash corpus pass
+  on the unmutated implementation. A temporary mutation that flips the first
+  byte emitted after the third block only when the original request exceeds
+  96 bytes makes the new seed abort, while the prior 96-byte checks remain
+  green under the same mutation. This is informational oracle hardening, not
+  a current-master production finding, and does not change any severity rating.
   The same target now includes a standalone SHA-256 compression, schedule, and
   padding model. It compares production one-shot and split writes against that
   model at lengths 0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 191, and 192,

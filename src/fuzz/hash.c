@@ -388,10 +388,10 @@ static void secp256k1_fuzz_check_rfc6979_reference(const secp256k1_hash_ctx *has
     unsigned char reference_v[32];
     unsigned char reference_one_shot_k[32];
     unsigned char reference_one_shot_v[32];
-    unsigned char production_out[96];
-    unsigned char production_one_shot_out[96];
-    unsigned char reference_out[96];
-    unsigned char reference_one_shot_out[96];
+    unsigned char production_out[160];
+    unsigned char production_one_shot_out[160];
+    unsigned char reference_out[160];
+    unsigned char reference_one_shot_out[160];
 
     secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &production, key, keylen);
     secp256k1_rfc6979_hmac_sha256_generate(hash_ctx, &production, production_out, 32);
@@ -426,9 +426,9 @@ static void secp256k1_fuzz_check_rfc6979(const secp256k1_hash_ctx *hash_ctx, con
     secp256k1_rfc6979_hmac_sha256 one_shot;
     secp256k1_rfc6979_hmac_sha256 chunked_a;
     secp256k1_rfc6979_hmac_sha256 chunked_b;
-    unsigned char one_shot_out[96];
-    unsigned char chunked_a_out[96];
-    unsigned char chunked_b_out[96];
+    unsigned char one_shot_out[160];
+    unsigned char chunked_a_out[160];
+    unsigned char chunked_b_out[160];
 
     secp256k1_rfc6979_hmac_sha256_initialize(hash_ctx, &one_shot, key, keylen);
     secp256k1_rfc6979_hmac_sha256_generate(hash_ctx, &one_shot, one_shot_out, sizeof(one_shot_out));
