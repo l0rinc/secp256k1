@@ -2981,3 +2981,27 @@ two-worker campaign saw all 35 seeds, completed 167 and 171 executions in
 the two jobs, and both managers exited 0 without sanitizer diagnostics,
 assertion failures, timeouts, or artifacts. This commit changes no
 production behavior.
+
+## 2026-07-14 Clean Isolated Multi-Worker Corpus Campaign
+
+After the focused oracle replays, all 14 targets were rebuilt from this
+branch at `25f478b0c87c8a6a8a65b31d204d09985328bbb1` with Clang 22.1.7,
+ASan, UBSan, and every optional module enabled. The tracked corpus tree was
+copied outside the worktree so libFuzzer's generated corpus files could not
+silently change the audit branch. Core targets used
+`-workers=2 -jobs=2 -max_total_time=20`; module targets additionally used
+`-timeout=10 -max_total_time=25`.
+
+The initial corpus counts were `api_roundtrip` 35, `context` 10, `hash` 9,
+`scalar` 4, `field` 14, `group` 15, `ecmult_const` 5, `ecmult_multi` 13,
+`ecdh` 5, `ellswift` 12, `xonly_tweak` 9, `recovery` 8, `schnorrsig` 12,
+and `musig` 47. The two workers completed 34,983 executions in aggregate;
+the slowest target, MuSig, spent 69 seconds per worker loading and replaying
+its staged corpus. Every manager and worker exited 0. No ASan or UBSan
+diagnostic, assertion failure, timeout, or crash artifact was produced.
+
+This is a **verification campaign**, not a new master-relative finding. It
+does not change any severity in the finding ledger and does not claim that
+the existing clean-master findings are absent. Its purpose is to show that
+the current oracle set and all tracked seeds remain stable under isolated
+multi-worker sanitizer execution without polluting the source corpus.
