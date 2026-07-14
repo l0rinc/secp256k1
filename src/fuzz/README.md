@@ -3174,3 +3174,31 @@ Clean Clang ASan/UBSan focused and complete-corpus replays passed for both
 targets, and isolated two-worker/two-job runs completed without diagnostics,
 assertion failures, timeouts, OOMs, or artifacts. This commit changes no
 production behavior.
+
+## 2026-07-14 10x26 Zero-Predicate Reachability Audit
+
+The 10x26 `normalizes_to_zero{,_var}` finding was replayed as a paired
+reachability experiment. A forced-int64 Clang ASan/UBSan build of the fixed
+tree replayed all 14 tracked target corpora with `-runs=1`, for 216 executed
+inputs, with no sanitizer diagnostic, assertion failure, timeout, or artifact.
+
+The two predicate implementations were then changed temporarily to the exact
+clean-master uint32 carry chain, leaving every other source line unchanged.
+The 13 non-field targets replayed 200 inputs, including the full 47-input
+MuSig corpus and the public API, ECDH, EllSwift, recovery, Schnorr, and x-only
+targets; every input still exited 0. The dedicated
+`field/zero-predicate-false-positive` input independently aborted with a
+libFuzzer deadly-signal exit under that mutation, while the repaired binary
+passed the same input. The temporary mutation was restored before the fixed
+source check.
+
+This is stronger negative reachability evidence, not a severity reduction:
+the defect is a real clean-master internal field correctness bug, but no
+public or module corpus reached the exact maximum-magnitude state through the
+tested paths. The master-relative rating therefore remains **Medium / latent**,
+with potentially High arithmetic impact only if another valid production path
+can construct that state. Because this screen ran on the audit tree containing
+other independently repaired contracts, it does not claim that those earlier
+clean-master failures could not mask a path; the exact predicate mutation and
+dedicated field assertion remain the causal proof. This experiment changes no
+production behavior.
