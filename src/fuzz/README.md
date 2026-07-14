@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, callback batching/failure barriers, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, and invalid-scalar callback-point postconditions
@@ -2468,3 +2468,36 @@ files, including this seed. Two-worker/two-job bounded libFuzzer campaigns on
 both backends completed with every job exiting 0 and no sanitizer diagnostic or
 crash artifact. This commit adds no production behavior change and does not
 alter any master-relative severity rating.
+
+## 2026-07-14 Jacobian/Affine Equality Negative Oracle
+
+The group target now exercises the false branch of
+`secp256k1_gej_eq_ge_var` with a fixed finite generator. It derives the affine
+generator and its doubled point, verifies through the independent serialized
+coordinate representation that they differ, and requires Jacobian/affine
+equality to reject that pair. It also checks finite-vs-infinity and
+infinity-vs-finite rejection, while retaining the explicit infinity-vs-infinity
+true case. The focused `jacobian-affine-equality-negative` seed is the 34-byte
+ASCII input `Jacobian affine equality negative\n`.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production bug: the unit-test matrix already covers direct negative equality
+pairs, but the group fuzzer's equality calls were overwhelmingly true-only and
+did not carry that independent serialized rejection oracle. The rating is
+therefore relative to the clean master behavior and is not upgraded merely
+because a hypothetical bad equality implementation could affect downstream
+arithmetic.
+
+The proof mutation replaces `secp256k1_gej_eq_ge_var` with an unconditional
+true return. With the new helper bypassed, all pre-existing group corpus files
+remain green, demonstrating that their positive-only equality assertions do
+not detect this false-positive regression. Restoring the helper makes the
+focused seed abort at the first finite-vs-doubled assertion under that same
+mutation. The mutation and bypass were restored before the clean replay. The
+final default and forced-int64 Clang ASan/UBSan replays each ran all 14 group
+seeds once and exited 0 without a sanitizer diagnostic. A default campaign
+with `-workers=2 -jobs=2 -max_total_time=15` completed both jobs with exit 0;
+the forced-int64 campaign used the same two-worker/two-job shape with
+`-max_total_time=10`, completed both jobs with exit 0, and reported zero
+artifact files. Both campaigns used disposable corpus copies outside the
+worktree, so no generated input or crash artifact was retained.

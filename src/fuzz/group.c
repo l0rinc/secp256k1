@@ -192,6 +192,34 @@ static void secp256k1_fuzz_group_check_affine(const secp256k1_gej *point) {
     }
 }
 
+/* The existing equality checks exercise only the true branch. Keep a fixed,
+ * independently distinguishable pair to guard against false positives. */
+static void secp256k1_fuzz_group_check_gej_eq_ge_negative(const secp256k1_gej *point) {
+    secp256k1_ge affine;
+    secp256k1_ge doubled_affine;
+    secp256k1_ge infinity;
+    secp256k1_gej point_copy = *point;
+    secp256k1_gej doubled = *point;
+    secp256k1_gej infinity_j;
+    unsigned char affine_bytes[64];
+    unsigned char doubled_bytes[64];
+
+    FUZZ_CHECK(!secp256k1_gej_is_infinity(point));
+    secp256k1_ge_set_gej_var(&affine, &point_copy);
+    secp256k1_gej_double(&doubled, &doubled);
+    secp256k1_ge_set_gej_var(&doubled_affine, &doubled);
+    secp256k1_ge_to_bytes_ext(affine_bytes, &affine);
+    secp256k1_ge_to_bytes_ext(doubled_bytes, &doubled_affine);
+    FUZZ_CHECK(memcmp(affine_bytes, doubled_bytes, sizeof(affine_bytes)) != 0);
+    FUZZ_CHECK(!secp256k1_gej_eq_ge_var(point, &doubled_affine));
+
+    secp256k1_ge_set_infinity(&infinity);
+    secp256k1_gej_set_infinity(&infinity_j);
+    FUZZ_CHECK(!secp256k1_gej_eq_ge_var(point, &infinity));
+    FUZZ_CHECK(!secp256k1_gej_eq_ge_var(&infinity_j, &affine));
+    FUZZ_CHECK(secp256k1_gej_eq_ge_var(&infinity_j, &infinity));
+}
+
 static void secp256k1_fuzz_group_check_z_ratio(const secp256k1_gej *a, const secp256k1_gej *result, const secp256k1_fe *rzr) {
     secp256k1_fe expected_z = result->z;
     secp256k1_fe actual_z;
@@ -814,6 +842,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_gej_set_infinity(&infinity);
     secp256k1_fuzz_group_make_point(ctx, &finite, &secp256k1_scalar_one);
     secp256k1_fuzz_group_check_independent_generator(&finite, &secp256k1_scalar_one);
+    secp256k1_fuzz_group_check_gej_eq_ge_negative(&finite);
     secp256k1_fuzz_group_check_gej_not_equal(&finite);
     secp256k1_fuzz_group_check_gej_cmov(&infinity, &finite);
     secp256k1_fuzz_group_check_gej_cmov(&finite, &infinity);
