@@ -2158,6 +2158,33 @@ keypair Schnorr seed would exercise the same `keypair_load` rejection already
 proved by the mismatched-keypair oracle. These cases remain documented audit
 boundaries rather than duplicate corpus entries.
 
+## 2026-07-14 EllSwift BIP324 Optional-Data Oracle
+
+The EllSwift target now exercises the explicit `secp256k1_ellswift_xdh_hash_function_bip324`
+contract that its `data` argument is ignored. The new
+`bip324-ignored-data` seed passes a non-NULL 64-byte sentinel through both the
+exported callback and the context-aware `secp256k1_ellswift_xdh` dispatch, and
+compares both results with the independent BIP324 transcript reference. The
+existing BIP324 checks used only `data == NULL`, so a regression in either
+dispatch path could previously survive the reference, symmetry, and raw-X
+checks.
+
+This is informational API-contract oracle hardening, not a clean-master
+production finding. For the differential proof, a temporary mutation after
+BIP324 finalization XORed `output[0]` with the first byte of non-NULL `data`.
+With the new assertions enabled, the focused `bip324-ignored-data` replay
+aborted with exit 134. With only the new assertions disabled, all 11
+pre-existing EllSwift seeds remained green under that identical mutation,
+proving that the old BIP324 reference, symmetry, and raw-X checks did not
+exercise the ignored-data contract. The mutation was restored before the clean
+replay.
+
+The restored forced-int64 Clang ASan/UBSan build passed all 12 seeds,
+including `bip324-ignored-data`; a native GCC ASan/UBSan build passed all 12
+seeds; and a two-manager, two-worker, 10-second Clang campaign exited 0 for
+both jobs without sanitizer diagnostics, assertion failures, or artifacts.
+This does not change any master-relative severity rating.
+
 ## l0rinc Fork Duplicate Audit
 
 The l0rinc remote and all pull-request heads were refreshed against the same
