@@ -293,6 +293,35 @@ static void secp256k1_fuzz_check_keypair_projection(secp256k1_context *ctx, cons
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_keypair_tweak_partial_invalid(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *tweak32) {
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    secp256k1_keypair invalid_secret_keypair = *keypair;
+    secp256k1_keypair invalid_public_keypair = *keypair;
+    unsigned char zero_keypair[sizeof(*keypair)] = { 0 };
+    unsigned int calls;
+
+    /* Raw keypair projections are intentionally permissive, but a mutating
+     * operation must not accept either partial keypair as signing state. */
+    memset(invalid_secret_keypair.data, 0, 32);
+    memset(invalid_public_keypair.data + 32, 0, sizeof(invalid_public_keypair.data) - 32);
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &invalid_secret_keypair, tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&invalid_secret_keypair, zero_keypair, sizeof(invalid_secret_keypair)) == 0);
+
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &invalid_public_keypair, tweak32) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&invalid_public_keypair, zero_keypair, sizeof(invalid_public_keypair)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_invalid_keypair_xonly_pub(secp256k1_context *ctx) {
     secp256k1_fuzz_xonly_illegal_data illegal_data;
     secp256k1_keypair invalid_keypair;
@@ -440,6 +469,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
     secp256k1_fuzz_check_invalid_keypair_xonly_pub(ctx);
     secp256k1_fuzz_check_invalid_pubkey_xonly_pub(ctx);
+    if (size == sizeof("partial keypair tweak invalid\n") - 1
+        && memcmp(input, "partial keypair tweak invalid\n", sizeof("partial keypair tweak invalid\n") - 1) == 0) {
+        secp256k1_fuzz_check_keypair_tweak_partial_invalid(ctx, &keypair, tweak);
+    }
     secp256k1_fuzz_check_xonly_keypair_consistency(ctx, &keypair, &pubkey, tweak);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &keypair_parity, &keypair) == 1);
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);

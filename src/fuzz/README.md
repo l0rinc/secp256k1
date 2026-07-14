@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
@@ -3671,3 +3671,40 @@ completed in about 38 seconds each; the other targets completed in about
 new clean-master finding, and it does not change any existing severity rating.
 The campaign also confirms that public nonce state without cryptographic
 meaning remains non-critical.
+
+## 2026-07-15 Partial Keypair X-Only Tweak Oracle
+
+`fuzz_xonly_tweak` now has a gated 30-byte ASCII seed,
+`partial-keypair-tweak-invalid`, that calls
+`secp256k1_keypair_xonly_tweak_add` twice: once with an all-zero secret half
+and valid public half, and once with a valid secret half and an all-zero
+public half. Raw `keypair_sec` and `keypair_pub` projections intentionally
+remain permissive, but this mutating operation must reject either partial
+opaque state, invoke the illegal-argument callback once, and clear the
+caller-owned keypair output.
+
+This is **Informational / Low API-oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already propagates
+`keypair_load` failure through the tweak operation and clears the keypair.
+The existing target covered raw partial projections and valid-but-mismatched
+keypairs, but did not prove this distinct mutating transition. No public key
+disclosure, signature forgery, or availability impact is claimed, and the
+master-relative severity ledger is unchanged.
+
+For causal proof, a temporary mutation in
+`src/modules/extrakeys/main_impl.h` forced
+`secp256k1_keypair_xonly_tweak_add` to continue after `keypair_load` rejected
+either all-zero 32-byte half, using the loader's dummy state. All nine
+pre-existing x-only corpus inputs stayed green under that mutation. The exact
+new seed aborted with exit 134 at the new callback/output barrier; bypassing
+only that helper made the identical mutated seed exit 0. The production
+mutation and harness bypass were restored before fixed replay.
+
+The restored Clang ASan/UBSan target passed all 10 x-only corpus files on both
+the default 5x52 and forced-int64/10x26 backends. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns ran both jobs
+per backend: default workers executed 40 and 39 inputs, while forced-int64
+workers executed 38 and 39. Every manager and worker exited 0 with no ASan,
+UBSan, assertion, timeout, OOM, or crash artifact. This commit changes only
+the fuzzer, its focused corpus input, and this evidence ledger.
