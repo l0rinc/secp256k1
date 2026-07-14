@@ -163,6 +163,17 @@ static void secp256k1_fuzz_check_context_ecdsa_equivalence(const secp256k1_conte
     FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
 }
 
+static void secp256k1_fuzz_check_context_null_reset_signing(const secp256k1_context *ctx, const unsigned char *msg32, const unsigned char *seckey, const unsigned char *expected_compact) {
+    secp256k1_ecdsa_signature reset_sig;
+    unsigned char reset_compact[64];
+
+    /* A NULL seed resets generator blinding to the initial state without
+     * changing deterministic public API results. */
+    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &reset_sig, msg32, seckey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, reset_compact, &reset_sig) == 1);
+    FUZZ_CHECK(memcmp(reset_compact, expected_compact, sizeof(reset_compact)) == 0);
+}
+
 static void secp256k1_fuzz_check_context_illegal_callback_clone(secp256k1_context *ctx, size_t prealloc_size) {
     secp256k1_fuzz_context_callback_data cloned_data;
     secp256k1_fuzz_context_callback_data original_data;
@@ -415,6 +426,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_context_randomize(ctx, NULL) == 1);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
+    secp256k1_fuzz_check_context_null_reset_signing(ctx, msg32, seckey, compact);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_clone, seckey) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &pubkey_clone) == 0);
 

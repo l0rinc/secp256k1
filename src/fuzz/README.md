@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, and eight-term public-key combine with intermediate-infinity transitions, four- and eight-key public-key sorting, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
+- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -2011,6 +2011,25 @@ documented in its commit message.
   bypass were restored before the fixed and MSan replays. This is
   informational API-oracle hardening, not a current-master production finding,
   and does not change any severity rating.
+
+  The context target now checks the documented `secp256k1_context_randomize(ctx,
+  NULL)` reset through deterministic ECDSA signing as well as public-key
+  creation. After a randomized context is reset, the same message and secret
+  key must serialize to the same signature produced before the reset. The
+  dedicated `context/randomize-null-signature` seed is the 25-byte ASCII input
+  `randomize null signature\n`. The earlier reset check compared only public
+  keys, so a signing-only state regression could have passed every existing
+  context oracle. For the differential proof, a temporary production
+  mutation flipped one serialized signature byte only after the context's
+  generator blinding had been reset to its initial state. The focused seed
+  aborted with exit 134 at the new post-reset comparison; disabling only this
+  helper left the pre-existing context corpus green under the mutation. The
+  mutation and bypass were restored before clean replay. This is
+  informational API state-transition hardening, not a current-master
+  production finding, and does not change any severity rating. Clean replay
+  passed all 8 context seeds under both default and forced-int64 Clang
+  ASan/UBSan builds; four 15-second campaigns (2 jobs and 2 workers per
+  backend) also exited cleanly with no artifacts.
 
   The field target now combines the two dimensions of the documented
   `secp256k1_fe_mul` contract that were previously exercised separately: both
