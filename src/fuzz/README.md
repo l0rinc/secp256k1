@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, partial keypair projections, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through eight-key independent coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through eight-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -2826,3 +2826,46 @@ contract regression. The mutation and bypass were restored before the clean
 replay. The final Clang ASan/UBSan libFuzzer replay passed all 33 API inputs;
 the native standalone replay and the disposable multi-worker campaign are
 recorded with their exact commands and results in the commit message.
+
+## 2026-07-14 MuSig Aggregation NULL-Member Oracle
+
+The MuSig target now exercises both pointer-array positions for a NULL member
+in `secp256k1_musig_nonce_agg` and `secp256k1_musig_partial_sig_agg`: a valid
+object followed by NULL, and NULL followed by a valid object. Each call starts
+with a distinct nonzero output pattern, requires one illegal-argument callback
+and failure, requires the complete aggregate output to be zeroed, and checks
+that every valid opaque input remains unchanged. The first layout is the
+important prefix transition: the API has already encountered a valid member
+before it rejects the array. The focused
+`null-aggregation-member-cleanup` seed is the 80-byte ASCII input
+`NULL aggregation member cleanup: valid prefix and suffix pointer checks: proof!\n`.
+
+This is **Informational / Low oracle hardening**, not a new clean-master
+production finding. At `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, both public aggregators clear
+their fixed-size output before checking every array member. The MuSig unit
+tests already cover NULL array members and output clearing; the existing
+fuzzer checked malformed opaque members at the beginning and end of valid
+arrays, but did not independently couple the NULL-member precondition to the
+output postcondition. No memory corruption, key disclosure, signature
+forgery, nonce-reuse, or Critical cleanup issue is claimed. In particular,
+the public aggregate nonce is not a secret cryptographic nonce; the final
+signature output is meaningful state, but callers must still check the return
+value.
+
+For causal proof, a temporary mutation guarded each production `memset` so it
+was skipped only for the two tested NULL-member layouts while preserving the
+other argument and malformed-object paths. The focused seed aborted with
+exit 134 for the `nonce_agg` mutation and independently for the
+`partial_sig_agg` mutation. With the new helper gated out, all 46
+pre-existing MuSig inputs remained green under each mutation. Both mutations
+were restored before replay. This proves that the old corpus did not detect
+these two output-state regressions without implying that clean master has
+them.
+
+The final Clang ASan/UBSan libFuzzer replay passed all 47 MuSig corpus files.
+Native GCC x86_64-assembly standalone and GCC ASan/UBSan standalone replays
+also passed all 47 files. The disposable Clang two-worker/two-job campaign
+saw all 47 seeds and completed 48 executions per job; both jobs exited 0
+without sanitizer diagnostics, assertion failures, timeouts, or artifacts.
+This commit changes no production behavior.
