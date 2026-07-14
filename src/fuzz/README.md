@@ -3639,3 +3639,35 @@ contract and create a false positive. No oracle or production change was
 added. This deliberate no-edit prevents the existing combine findings from
 being diluted by an undocumented caller-domain assumption. Public nonce state
 without cryptographic meaning remains non-critical.
+
+## 2026-07-15 MemorySanitizer-Flagged Post-Rebase Replay
+
+A fresh Clang build enabled `-fsanitize=memory -fno-omit-frame-pointer -fPIE`
+for compilation and `-fsanitize=memory -pie` for linking. The generated
+compile and link rules were checked directly; the project's optional
+`HAVE_MSAN` feature probe remained false in this toolchain, so this result is
+reported as a sanitizer-instrumented fuzz run rather than a claim that the
+probe-enabled CTest configuration was available. The fixed replay passed all
+14 tracked fuzz corpora, including the stateful MuSig corpus.
+
+The matching libFuzzer binaries replayed copied corpora with isolated working
+directories, `-workers=2 -jobs=2 -max_total_time=15 -timeout=5`, and
+`MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1`. The two job totals
+were:
+
+    api_roundtrip 117/135       context 150/148
+    hash           6191/5448    scalar  387/402
+    field          138/132      group   369/389
+    ecmult_const   205/176      ecmult_multi 43/39
+    ecdh           136/183      ellswift 62/60
+    xonly_tweak    31/35        recovery 169/144
+    schnorrsig     74/93        musig   56/56
+
+Every manager and worker exited 0. The worker logs contained no
+MemorySanitizer diagnostic, assertion failure, timeout, OOM, or crash
+artifact. The stateful MuSig jobs
+completed in about 38 seconds each; the other targets completed in about
+16-17 seconds. This is negative evidence for the current oracle set, not a
+new clean-master finding, and it does not change any existing severity rating.
+The campaign also confirms that public nonce state without cryptographic
+meaning remains non-critical.
