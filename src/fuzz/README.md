@@ -5073,3 +5073,22 @@ current oracle set, not a claim that clean master is safe and not a mutation
 proof for a new finding. No production behavior, severity rating, or existing
 master-relative finding is changed. Public nonce state without cryptographic
 meaning remains non-critical.
+
+## 2026-07-16 MuSig Invalid-SecnNonce Cleanup Recheck
+
+The suspected `secp256k1_musig_partial_sign` cleanup path was reviewed against
+the actual control flow. An invalid secnonce magic or point makes
+`secp256k1_musig_secnonce_load` return before either secret scalar is read;
+`partial_sign` then zeroes the caller's secnonce and calls
+`secp256k1_scalar_clear` on the local scalar storage. The clear helper is an
+explicit write-only memory wipe, so this is not an uninitialized scalar read or
+an observable state transition defect. The public nonce buffer has no
+cryptographic meaning and is not part of this severity assessment.
+
+A fresh Clang 22 MemorySanitizer build with origin tracking and the forced
+`int64`/10x26 backend replayed all 63 tracked MuSig inputs plus the empty input
+(`64` executions) with `-runs=1`. It exited 0 after 60 seconds with no MSan,
+UBSan, assertion, timeout, or artifact. The existing invalid-magic,
+invalid-point, overflowing-scalar, failure-cleanup, and nonce-reuse oracles
+therefore remain the stronger evidence; this review adds no production fix,
+new oracle, clean-master finding, or severity change.
