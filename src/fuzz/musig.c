@@ -20,7 +20,8 @@ typedef int (*secp256k1_fuzz_musig_nonce_gen_fn)(const secp256k1_context *, secp
 
 enum {
     SECP256K1_FUZZ_MUSIG_FORCE_ZERO_ALL = 1,
-    SECP256K1_FUZZ_MUSIG_FORCE_ZERO_SECOND_SCALAR = 2
+    SECP256K1_FUZZ_MUSIG_FORCE_ZERO_SECOND_SCALAR = 2,
+    SECP256K1_FUZZ_MUSIG_FORCE_KEYAGG_COEFFICIENT_ONE = 3
 };
 
 static size_t secp256k1_fuzz_musig_sha256_compression_calls = 0;
@@ -31,6 +32,8 @@ static size_t secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
 static int secp256k1_fuzz_musig_force_zero_sha256_state = 0;
 static int secp256k1_fuzz_musig_force_second_zero_sha256_pending = 0;
 static size_t secp256k1_fuzz_musig_force_second_zero_sha256_matches = 0;
+static int secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 0;
+static size_t secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches = 0;
 
 static const uint32_t secp256k1_fuzz_musig_keyagglist_midstate[8] = {
     0xb399d5e0ul, 0xc8fff302ul, 0x6badac71ul, 0x07c5b7f1ul,
@@ -48,9 +51,13 @@ static const uint32_t secp256k1_fuzz_musig_challenge_midstate[8] = {
     0x9cecba11ul, 0x23925381ul, 0x11679112ul, 0xd1627e0ful,
     0x97c87550ul, 0x003cc765ul, 0x90f61164ul, 0x33e9b66aul
 };
+static const uint32_t secp256k1_fuzz_musig_scalar_one_state[8] = {
+    0, 0, 0, 0, 0, 0, 0, 1
+};
 
 static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
     int second_scalar_padding = 0;
+    int keyagg_coefficient_padding = 0;
     size_t i;
     secp256k1_fuzz_musig_sha256_compression_calls += n_blocks;
     if (memcmp(state, secp256k1_fuzz_musig_keyagglist_midstate, sizeof(secp256k1_fuzz_musig_keyagglist_midstate)) == 0) {
@@ -58,6 +65,9 @@ static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsig
     }
     if (memcmp(state, secp256k1_fuzz_musig_keyaggcoef_midstate, sizeof(secp256k1_fuzz_musig_keyaggcoef_midstate)) == 0) {
         secp256k1_fuzz_musig_keyaggcoef_sha256_compression_calls++;
+        if (secp256k1_fuzz_musig_force_zero_sha256_state == SECP256K1_FUZZ_MUSIG_FORCE_KEYAGG_COEFFICIENT_ONE && n_blocks == 1) {
+            secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 1;
+        }
     }
     if (memcmp(state, secp256k1_fuzz_musig_noncecoef_midstate, sizeof(secp256k1_fuzz_musig_noncecoef_midstate)) == 0) {
         secp256k1_fuzz_musig_noncecoef_sha256_compression_calls++;
@@ -85,6 +95,21 @@ static void secp256k1_fuzz_musig_sha256_compression(uint32_t *state, const unsig
         }
     } else if (secp256k1_fuzz_musig_force_zero_sha256_state == SECP256K1_FUZZ_MUSIG_FORCE_ZERO_ALL) {
         memset(state, 0, 8 * sizeof(*state));
+    } else if (secp256k1_fuzz_musig_force_zero_sha256_state == SECP256K1_FUZZ_MUSIG_FORCE_KEYAGG_COEFFICIENT_ONE
+            && secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending) {
+        /* The 65-byte KeyAgg coefficient transcript finalizes in this block. */
+        keyagg_coefficient_padding = n_blocks == 1 && blocks64[1] == 0x80;
+        for (i = 2; keyagg_coefficient_padding && i < 56; i++) {
+            keyagg_coefficient_padding &= blocks64[i] == 0;
+        }
+        keyagg_coefficient_padding &= blocks64[56] == 0 && blocks64[57] == 0
+            && blocks64[58] == 0 && blocks64[59] == 0 && blocks64[60] == 0
+            && blocks64[61] == 0 && blocks64[62] == 0x04 && blocks64[63] == 0x08;
+        if (keyagg_coefficient_padding) {
+            memcpy(state, secp256k1_fuzz_musig_scalar_one_state, sizeof(secp256k1_fuzz_musig_scalar_one_state));
+            secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 0;
+            secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches++;
+        }
     }
 }
 
@@ -1677,6 +1702,51 @@ static void secp256k1_fuzz_check_musig_keyagg_zero_coefficient(secp256k1_context
     FUZZ_CHECK(compression_calls != 0);
     FUZZ_CHECK(keyagglist_calls != 0);
     FUZZ_CHECK(keyaggcoef_calls != 0);
+    FUZZ_CHECK(memcmp(&failed_agg_pk, zero_agg_pk, sizeof(failed_agg_pk)) == 0);
+    FUZZ_CHECK(memcmp(&failed_cache, zero_cache, sizeof(failed_cache)) == 0);
+}
+
+static void secp256k1_fuzz_check_musig_keyagg_weighted_cancellation(secp256k1_context *ctx, const secp256k1_pubkey *first_pubkey, const secp256k1_pubkey *second_pubkey) {
+    const secp256k1_pubkey *pubkey_ptrs[2];
+    secp256k1_pubkey combined_pubkey;
+    secp256k1_xonly_pubkey failed_agg_pk;
+    secp256k1_musig_keyagg_cache failed_cache;
+    unsigned char zero_agg_pk[sizeof(failed_agg_pk)] = { 0 };
+    unsigned char zero_cache[sizeof(failed_cache)] = { 0 };
+    size_t compression_calls;
+    size_t keyagglist_calls;
+    size_t keyaggcoef_calls;
+    size_t coefficient_one_matches;
+    int ret;
+
+    pubkey_ptrs[0] = first_pubkey;
+    pubkey_ptrs[1] = second_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined_pubkey, pubkey_ptrs, 2) == 0);
+    memset(&failed_agg_pk, 0xA5, sizeof(failed_agg_pk));
+    memset(&failed_cache, 0x5A, sizeof(failed_cache));
+    secp256k1_fuzz_musig_force_zero_sha256_state = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_musig_sha256_compression);
+    secp256k1_fuzz_musig_sha256_compression_calls = 0;
+    secp256k1_fuzz_musig_keyagglist_sha256_compression_calls = 0;
+    secp256k1_fuzz_musig_keyaggcoef_sha256_compression_calls = 0;
+    secp256k1_fuzz_musig_force_zero_sha256_state = SECP256K1_FUZZ_MUSIG_FORCE_KEYAGG_COEFFICIENT_ONE;
+    ret = secp256k1_musig_pubkey_agg(ctx, &failed_agg_pk, &failed_cache, pubkey_ptrs, 2);
+    compression_calls = secp256k1_fuzz_musig_sha256_compression_calls;
+    keyagglist_calls = secp256k1_fuzz_musig_keyagglist_sha256_compression_calls;
+    keyaggcoef_calls = secp256k1_fuzz_musig_keyaggcoef_sha256_compression_calls;
+    coefficient_one_matches = secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches;
+    secp256k1_fuzz_musig_force_zero_sha256_state = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches = 0;
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+
+    FUZZ_CHECK(ret == 0);
+    FUZZ_CHECK(compression_calls != 0);
+    FUZZ_CHECK(keyagglist_calls != 0);
+    FUZZ_CHECK(keyaggcoef_calls != 0);
+    FUZZ_CHECK(coefficient_one_matches == 1);
     FUZZ_CHECK(memcmp(&failed_agg_pk, zero_agg_pk, sizeof(failed_agg_pk)) == 0);
     FUZZ_CHECK(memcmp(&failed_cache, zero_cache, sizeof(failed_cache)) == 0);
 }
@@ -3462,6 +3532,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char overflow1_secnonce_trigger[] = "MuSig overflow secnonce scalar 1\n";
     static const unsigned char second_zero_nonce_trigger[] = "MuSig nonce second zero scalar\n";
     static const unsigned char keyagg_zero_coefficient_trigger[] = "MuSig keyagg zero coefficient\n";
+    static const unsigned char keyagg_cancellation_trigger[] = "MuSig keyagg weighted cancellation\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 151);
     unsigned char seckey[8][32];
@@ -3585,6 +3656,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (size == sizeof(keyagg_zero_coefficient_trigger) - 1
         && memcmp(input, keyagg_zero_coefficient_trigger, sizeof(keyagg_zero_coefficient_trigger) - 1) == 0) {
         secp256k1_fuzz_check_musig_keyagg_zero_coefficient(ctx, &fixed_pubkeys[0]);
+    }
+    if (size == sizeof(keyagg_cancellation_trigger) - 1
+        && memcmp(input, keyagg_cancellation_trigger, sizeof(keyagg_cancellation_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_musig_keyagg_weighted_cancellation(ctx, &fixed_pubkeys[0], &fixed_pubkeys[1]);
     }
     if (size == sizeof("partial keypair nonce counter invalid\n") - 1
         && memcmp(input, "partial keypair nonce counter invalid\n", sizeof("partial keypair nonce counter invalid\n") - 1) == 0) {
