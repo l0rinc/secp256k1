@@ -3969,3 +3969,48 @@ directories remained empty. An earlier concurrent attempt shared the audit
 worktree's `fuzz-0.log` and `fuzz-1.log` paths, so those logs were discarded
 and the campaign was repeated with isolated work directories before being
 recorded here.
+
+## 2026-07-15 MuSig Tweak-to-Infinity Rollback Oracle
+
+The MuSig target adds a gated 30-byte ASCII seed,
+`musig-tweak-infinity-rollback`, that builds a one-key cache for the fixed
+generator and independently recomputes its nonzero KeyAgg coefficient `a`.
+The EC API receives `-a mod n`. The x-only API receives `-a` when the cached
+point already has even Y, or `+a` when x-only normalization first negates an
+odd-Y point. This makes each API's cached point and tweak cancel exactly,
+despite a one-key aggregate not being the generator itself. Both APIs must
+return 0 without an illegal-argument callback, leave a supplied output fully
+zeroed, and preserve the opaque cache byte-for-byte. The same postcondition is
+checked with `output_pubkey == NULL`.
+
+This is an **Informational to Low master-relative API-state/oracle finding**,
+not a clean-master production vulnerability. Clean `origin/master`
+`ebf5943` already rejects the infinity result and pre-clears a non-NULL output;
+the audit branch's cleanup form also preserves the caller cache and only clears
+the public tweak scalar. No cryptographic meaning is assigned to that public
+tweak or to nonce cleanup, so no Critical severity is claimed. The point of the
+oracle is to ensure a future failure-path change cannot report success, save an
+infinity cache, or expose stale output when ordinary scalar arithmetic reaches
+the identity.
+
+Coverage showed the production `eckey_pubkey_tweak_add` failure branch was
+unhit by the existing overflow, zero, random, and invalid-cache checks. The
+deterministic MuSig tests cover overflow and malformed caches but do not create
+a valid cache whose known discrete-log relation cancels at the tweak boundary.
+The independent coefficient calculation, parity handling, and public-key
+multiplication make the focused precondition auditable rather than relying on a
+guessed coefficient or a raw `n-1` assumption.
+
+For causal proof, temporarily replace only the production infinity-failure
+`goto cleanup` with `return 1`. All 56 pre-existing MuSig corpus files plus
+`/dev/null` stayed green on both default and forced-int64/10x26 Clang ASan/UBSan
+builds; the exact new seed aborted with status 134 on both. Bypassing only the
+new gated helper made the same mutated seed exit 0 on both. The mutation and
+bypass were restored before fixed replay. The restored builds passed all 57
+MuSig corpus files plus `/dev/null` on both backends. A bounded libFuzzer run
+used `-workers=2 -jobs=2 -runs=10 -timeout=60`: default jobs completed 11 and
+12 runs, and forced-int64 jobs completed 10 and 11 runs. Every manager and
+worker exited 0; no sanitizer, assertion, timeout, OOM, or crash artifact was
+produced. This proves a missing oracle, not a new clean-master defect; severity
+is based on clean master behavior, not on whether a later minor cleanup masks
+the path.
