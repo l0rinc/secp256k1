@@ -603,6 +603,34 @@ static void secp256k1_fuzz_check_schnorrsig_verify_reference(const secp256k1_con
                == secp256k1_schnorrsig_verify(ctx, sig64, msg, msglen, xonly));
 }
 
+/* BIP340 rejects the identity as the reconstructed nonce. Use P = G and set
+ * s to the challenge so the verifier must reach that explicit rejection. */
+static void secp256k1_fuzz_check_schnorrsig_infinity_rejection(const secp256k1_context *ctx) {
+    static const unsigned char seckey32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    };
+    static const unsigned char msg32[32] = { 0 };
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    unsigned char xonly32[32];
+    unsigned char challenge32[32];
+    unsigned char sig64[64];
+    secp256k1_keypair keypair;
+    secp256k1_xonly_pubkey xonly;
+
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey32) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+
+    /* The x-coordinate is valid wire data; the reconstructed point is not. */
+    memcpy(sig64, xonly32, sizeof(xonly32));
+    secp256k1_fuzz_schnorrsig_tagged_hash_reference(challenge32, challenge_tag, sizeof(challenge_tag) - 1, sig64, 32, xonly32, 32, msg32, sizeof(msg32));
+    secp256k1_fuzz_schnorrsig_reduce_scalar(sig64 + 32, challenge32);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 0);
+}
+
 /* Check a generated signature against BIP340's public point equation without
  * calling the library verifier. This catches shared challenge/signing changes
  * that would otherwise make signing and verification agree on the same error. */
@@ -1006,6 +1034,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_schnorrsig_fixed_nonce_equation(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_odd_nonce_rejection(ctx);
+    if (size == sizeof("schnorrsig-infinity-rejection\n") - 1
+        && memcmp(input, "schnorrsig-infinity-rejection\n", sizeof("schnorrsig-infinity-rejection\n") - 1) == 0) {
+        secp256k1_fuzz_check_schnorrsig_infinity_rejection(ctx);
+    }
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);
