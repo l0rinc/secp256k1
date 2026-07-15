@@ -387,6 +387,38 @@ static void secp256k1_fuzz_group_check_zinv_inverse(void) {
     FUZZ_CHECK(secp256k1_fe_is_zero(&result.z));
 }
 
+/* The ordinary inverse-point branches also promise a zero Z-ratio output when
+ * callers request it. Exercise both Jacobian and affine-input variants. */
+static void secp256k1_fuzz_group_check_inverse_rzr(void) {
+    secp256k1_gej a;
+    secp256k1_gej negated;
+    secp256k1_ge negated_affine;
+    secp256k1_gej result;
+    secp256k1_fe rzr;
+
+    secp256k1_gej_set_ge(&a, &secp256k1_ge_const_g);
+    secp256k1_gej_neg(&negated, &a);
+    secp256k1_ge_set_gej_var(&negated_affine, &negated);
+
+    memset(&result, 0xA5, sizeof(result));
+    memset(&rzr, 0xA5, sizeof(rzr));
+    secp256k1_gej_add_var(&result, &a, &negated, &rzr);
+    FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.x));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.y));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.z));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&rzr));
+
+    memset(&result, 0xA5, sizeof(result));
+    memset(&rzr, 0xA5, sizeof(rzr));
+    secp256k1_gej_add_ge_var(&result, &a, &negated_affine, &rzr);
+    FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.x));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.y));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.z));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&rzr));
+}
+
 static void secp256k1_fuzz_group_check_zinv_in_place(const secp256k1_gej *a, const secp256k1_ge *b) {
     secp256k1_ge b_scaled;
     secp256k1_gej expected;
@@ -815,6 +847,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char infinity_validity_trigger[] = "group infinity validity\n";
     static const unsigned char affine_equality_infinity_trigger[] = "group affine equality infinity\n";
     static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
+    static const unsigned char inverse_rzr_trigger[] = "group inverse rzr\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
     secp256k1_scalar a_scalar;
@@ -926,6 +959,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     if (size == sizeof(zinv_inverse_trigger) - 1 && memcmp(input, zinv_inverse_trigger, sizeof(zinv_inverse_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_zinv_inverse();
+    }
+    if (size == sizeof(inverse_rzr_trigger) - 1 && memcmp(input, inverse_rzr_trigger, sizeof(inverse_rzr_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_inverse_rzr();
     }
     rescaled = a;
     secp256k1_gej_rescale(&rescaled, &scale);

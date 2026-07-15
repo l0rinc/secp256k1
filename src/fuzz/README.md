@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
@@ -4668,3 +4668,37 @@ and exited 0 without sanitizer, assertion, timeout, OOM, or artifact. The
 shared temporary corpora began with 63 tracked files and grew to 65 through
 ordinary libFuzzer additions during the replay; those files were not retained.
 This remains a missing oracle, not a new clean-master defect.
+
+## 2026-07-15 Group Inverse-Point Z-Ratio Oracle
+
+Coverage of the 18 pre-existing group corpus inputs reached the ordinary
+Jacobian and affine inverse-point cancellation paths, but never requested the
+optional `rzr` result in either specialized branch. The assignments at
+`src/group_impl.h:558` and `:621` therefore remained unexecuted even though
+their contract differs from cancellation with `rzr == NULL`: both paths must
+return the identity and explicitly set the caller's ratio output to zero.
+
+The gated input `group/inverse-rzr` constructs `a = G` and `b = -G`, then runs
+both `secp256k1_gej_add_var` with a Jacobian `b` and
+`secp256k1_gej_add_ge_var` with an affine `b`. Each result starts as `0xA5`,
+as does `rzr`; the oracle requires the infinity flag, all three identity
+coordinates, and the requested ratio to be zero. This is **Informational /
+Low master-relative internal-oracle hardening**, not a clean-master
+production vulnerability: clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already contains both zero
+assignments. No cryptographic or nonce-secrecy impact is claimed.
+
+For causal proof, the first assignment was temporarily changed from
+`secp256k1_fe_set_int(rzr, 0)` to `...1`. All 18 pre-existing inputs stayed
+green, while the focused seed aborted with status 134 at the new ratio
+assertion. The source was restored, and the second assignment was mutated in
+the same way: the same 18 controls exited 0 and the focused seed exited 134.
+Coverage after restoration recorded execution of both assignments, including
+the live `rzr != NULL` inverse branches. The fixed coverage replay passed all
+19 tracked inputs. A Clang ASan/UBSan standalone replay also passed all 19
+inputs. Finally, a bounded libFuzzer replay over a copied 19-file corpus used
+`-workers=2 -jobs=2 -max_total_time=20`; both jobs exited 0 after 630 and 633
+runs, with no sanitizer, assertion, timeout, OOM, or crash artifact. The
+temporary libFuzzer corpus grew through normal mutations and was removed.
+This proves two previously untested ratio-output transitions, not a new bug
+on clean master.
