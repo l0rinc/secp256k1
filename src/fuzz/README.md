@@ -4220,6 +4220,27 @@ These replays strengthen, rather than replace, the mutation proofs already in
 the two fix commits. The fork heads are therefore recorded as duplicate
 coverage, not cherry-picked behavior that could hide a master failure.
 
+## 2026-07-15 l0rinc PR #14 DER Duplicate
+
+The refreshed l0rinc PR #14 head `b5e6108` was compared with the rebased
+branch. Its `src/ecdsa_impl.h` change is byte-for-byte equivalent to the
+production part of `52cb1af`: both replace the `sig + inputlen` end-pointer
+construction with offset checks before indexing or advancing. The fork test
+snapshot is different, however: it removes existing audit assertions for
+scratch, HMAC/RFC6979 state, impossible SHA lengths, scalar boundaries, and
+field/group edge cases. Cherry-picking the whole head would therefore add no
+production behavior and would weaken the evidence carried by the current
+follow-up stack.
+
+No PR #14 source was cherry-picked. The existing `52cb1af` commit retains the
+stronger clean-master proof: Clang pointer-overflow UBSan reports the
+one-byte `{0x00}`, `SIZE_MAX` DER parse on clean master before the parser can
+reject it, while the offset implementation returns failure without forming an
+out-of-range pointer. This remains **Low parser/API robustness** against clean
+master because the public API requires an `inputlen`-byte array; it is not a
+remote signature forgery or memory-corruption claim. PR #14 is recorded as
+duplicate context rather than as a new finding.
+
 ## 2026-07-15 MuSig Partial-Sign Opaque-State Oracle
 
 Coverage of the 57 pre-existing MuSig corpus inputs showed that
