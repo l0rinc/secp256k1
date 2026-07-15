@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -4731,3 +4731,46 @@ arithmetic. A bounded libFuzzer replay used two workers and two jobs over a
 copied 17-file corpus; both jobs exited 0 after 362 and 361 executions with no
 sanitizer, assertion, timeout, OOM, or crash artifact. This proves a previously
 untested representation transition, not a new bug on clean master.
+
+## 2026-07-15 RFC6979 Algorithm-Domain Transcript Oracle
+
+The API target exercised the exported RFC6979 callback only with the ECDSA
+compatibility form where `algo16 == NULL`. That left the public callback's
+optional algorithm domain and its interaction with the 32-byte extra-data
+domain untested, even though the production transcript has separate fixed-size
+append operations for both. The existing unit test checks that a few calls with
+and without algorithm data differ, but does not independently reconstruct the
+expected transcript or cover retry counters beyond the ordinary signing path.
+
+The gated seed `api_roundtrip/rfc6979-algorithm-domain` derives a valid key,
+message, and extra-data value from the input, then calls
+`secp256k1_nonce_function_rfc6979` with a fixed 16-byte algorithm tag. A small
+raw-SHA256 HMAC model independently implements RFC6979 initialization and
+generates the expected nonce for counters 0, 1, and 2. The oracle compares all
+three outputs against the public callback, including the reduced message,
+32-byte extra-data field, and 16-byte algorithm field in their documented
+order. The raw-SHA256 reference is shared with `fuzz_hash` through
+`src/fuzz/rfc6979_reference.h`, and sensitive reference state is explicitly
+cleared after each check.
+
+This is **Informational / Low master-relative oracle hardening**, not a
+clean-master production vulnerability. The relevant `algo16` append at
+`src/secp256k1.c:613` is unchanged in clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`; no cryptographic, disclosure, or
+availability impact is claimed. The prior compact NULL-signature candidate was
+discarded because it duplicated an existing deterministic unit test and a
+branch-only output-cleanup fix, so it is not counted as a separate finding.
+
+For causal proof, the production `buffer_append(keydata, &offset, algo16, 16)`
+was temporarily changed to append zero bytes. All 38 pre-existing API corpus
+inputs stayed green, while the focused algorithm-domain seed exited with status
+134 at the independent transcript comparison. Restoring the append made all 39
+tracked inputs pass; final coverage took the algorithm branch 3 times and the
+NULL branch 468 times, with line 613 executed 3 times. Clang ASan/UBSan
+deterministic replays covered all 39 seeds plus an empty input on native and
+forced-int64/10x26 builds. Fresh two-worker, two-job libFuzzer replays over
+independent copied corpora loaded all 39 seeds and exited cleanly: native jobs
+completed 65 and 66 runs, while forced-int64 jobs completed 40 and 40. No
+sanitizer, assertion, timeout, OOM, or crash artifacts were produced. This
+proves a missing independent oracle for a reachable clean-master contract, not
+a claim that clean master currently has a nonce bug.

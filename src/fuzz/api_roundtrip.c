@@ -7,6 +7,7 @@
 #include "fuzz.h"
 #include "pubkey_reference.h"
 #include "../hash_impl.h"
+#include "rfc6979_reference.h"
 #include "../../contrib/lax_der_parsing.c"
 #include "../../contrib/lax_der_privatekey_parsing.c"
 
@@ -1421,6 +1422,43 @@ static void secp256k1_fuzz_scalar32_reduce(unsigned char *out32, const unsigned 
     FUZZ_CHECK(borrow == 0);
 }
 
+static void secp256k1_fuzz_check_rfc6979_algorithm_domain(const unsigned char *msg32, const unsigned char *key32, const unsigned char *extra32) {
+    static const unsigned char algorithm16[16] = {
+        0x73, 0x65, 0x63, 0x70, 0x32, 0x35, 0x36, 0x6B,
+        0x31, 0x2D, 0x66, 0x75, 0x7A, 0x7A, 0x00, 0x01
+    };
+    unsigned char msg_mod32[32];
+    unsigned char keydata[112];
+    secp256k1_hash_ctx hash_ctx;
+    unsigned char reference_k[32];
+    unsigned char reference_v[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    unsigned int counter;
+
+    secp256k1_fuzz_scalar32_reduce(msg_mod32, msg32);
+    memcpy(keydata, key32, 32);
+    memcpy(keydata + 32, msg_mod32, 32);
+    memcpy(keydata + 64, extra32, 32);
+    memcpy(keydata + 96, algorithm16, sizeof(algorithm16));
+
+    secp256k1_hash_ctx_init(&hash_ctx);
+    secp256k1_fuzz_rfc6979_reference_initialize(&hash_ctx, reference_k, reference_v, keydata, sizeof(keydata));
+    for (counter = 0; counter < 3; counter++) {
+        secp256k1_fuzz_rfc6979_reference_generate(&hash_ctx, reference_k, reference_v, counter != 0, expected32, sizeof(expected32));
+        memset(actual32, 0xA5, sizeof(actual32));
+        FUZZ_CHECK(secp256k1_nonce_function_rfc6979(actual32, msg32, key32, algorithm16, (void *)extra32, counter) == 1);
+        FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+    }
+
+    secp256k1_memclear_explicit(reference_k, sizeof(reference_k));
+    secp256k1_memclear_explicit(reference_v, sizeof(reference_v));
+    secp256k1_memclear_explicit(msg_mod32, sizeof(msg_mod32));
+    secp256k1_memclear_explicit(keydata, sizeof(keydata));
+    secp256k1_memclear_explicit(expected32, sizeof(expected32));
+    secp256k1_memclear_explicit(actual32, sizeof(actual32));
+}
+
 /* Add two canonical scalars with byte arithmetic, independent of the scalar
  * implementation. The 33-byte accumulator is enough for one addition; the
  * loop also makes the reduction rule explicit at the order boundary. */
@@ -2521,6 +2559,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(nonce_extra32, sizeof(nonce_extra32), input, size, 43);
     secp256k1_fuzz_valid_seckey32(ctx, equation_nonce32, input, size, 53);
     secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup(msg32, seckey, nonce_extra32);
+    if (size == sizeof("rfc6979 algorithm domain\n") - 1
+        && memcmp(input, "rfc6979 algorithm domain\n", sizeof("rfc6979 algorithm domain\n") - 1) == 0) {
+        secp256k1_fuzz_check_rfc6979_algorithm_domain(msg32, seckey, nonce_extra32);
+    }
     nonce_data.self = &nonce_data;
     nonce_data.extra32 = nonce_extra32;
     nonce_data.expected_key32 = NULL;
