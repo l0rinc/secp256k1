@@ -6626,6 +6626,17 @@ static void run_eckey_edge_case_test(void) {
     SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(pubkey));
     CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) > 0);
     pubkey_one = pubkey;
+    {
+        secp256k1_pubkey alias_expected = pubkey_one;
+        secp256k1_pubkey alias_actual = pubkey_one;
+        unsigned char alias_tweak[32];
+
+        memcpy(alias_tweak, alias_actual.data, sizeof(alias_tweak));
+        CHECK(secp256k1_ec_seckey_verify(CTX, alias_tweak) == 1);
+        CHECK(secp256k1_ec_pubkey_tweak_add(CTX, &alias_expected, alias_tweak) == 1);
+        CHECK(secp256k1_ec_pubkey_tweak_add(CTX, &alias_actual, alias_actual.data) == 1);
+        CHECK(secp256k1_ec_pubkey_cmp(CTX, &alias_expected, &alias_actual) == 0);
+    }
     /* Group order + 1 is too large, reject. */
     memcpy(ctmp, orderc, 32);
     ctmp[31] = 0x42;
