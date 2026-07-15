@@ -957,6 +957,16 @@ documented in its commit message.
   cryptographic vulnerability. The offset parser removes the undefined
   behavior while preserving valid DER behavior, and the `fuzz_api_roundtrip`
   regression checks rejection plus cleared output state.
+- **Low:** input/output tweak aliasing in
+  `secp256k1_ec_pubkey_tweak_add` and
+  `secp256k1_keypair_xonly_tweak_add`. On clean master, both functions clear
+  their in/out object before consuming `tweak32`. A caller that deliberately
+  places a valid tweak in `pubkey.data` or the keypair's secret half therefore
+  receives success but applies a zero tweak. The public contracts document the
+  output object and tweak input but do not prohibit this overlap. This is API
+  aliasing/state correctness, not memory corruption or a cryptographic key
+  compromise; the exact clean-master and production-mutation proofs are
+  recorded in the detailed entry below.
 - **Low to Medium:** fixed and variable output state left live after failed API
   calls (`c02dc5e`, `799a080`), including documented invalidation on NULL
   tweaks (`4759bd8`, `f48cd99`). A caller that ignores a failure can
@@ -4907,6 +4917,43 @@ manager and worker exited 0 with no sanitizer diagnostic, assertion, timeout,
 OOM, or crash artifact. This commit adds no production behavior change and
 does not alter any existing master-relative severity rating.
 
+## 2026-07-15 Tweak Input/Output Overlap
+
+On clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`,
+`secp256k1_ec_pubkey_tweak_add` and
+`secp256k1_keypair_xonly_tweak_add` loaded their in/out object, cleared it,
+and only then read `tweak32`. The public declarations describe an in/out
+public key or keypair and a 32-byte tweak, but do not impose a non-overlap
+precondition. A caller can therefore place a valid tweak inside the object
+being updated. With secret key one, `pubkey.data[0..31]` is a valid scalar
+encoding of the generated public-key X coordinate, and `keypair.data[0..31]`
+is a valid secret scalar. Clean master returns success for both overlapping
+calls, but the clear makes each helper consume zero and leaves the original
+key unchanged instead of applying the nonzero tweak.
+
+This is **Low master-relative API aliasing/state correctness**. It requires a
+deliberate overlap by a caller and provides no memory corruption, disclosure,
+forgery, or key-compromise primitive. The severity is therefore below the
+existing output-state findings, even though the silent successful result can
+violate a caller's key-transition contract.
+
+The deterministic proof uses a copied tweak as the reference and compares it
+with the same valid bytes supplied from the output object. A sanitized clean-
+master standalone replay printed
+`pubkey_tweak_alias=0 keypair_tweak_alias=0` and exited 1; the fixed source
+printed both values as 1 and exited 0. For causal proof, only the two
+production clear-before-helper
+orderings were restored to their clean-master form. All 12 pre-existing
+`xonly_tweak` inputs stayed green, while the exact new
+`tweak-input-output-overlap` seed aborted with status 134. Restoring both
+orderings made all 13 inputs pass. The fixed Clang ASan/UBSan replay passed
+the seed and complete corpus, `tests -t=ec`, and `tests -t=extrakeys`; a
+two-worker/two-job replay completed 22 and 25 runs with both jobs exiting 0
+and no sanitizer, assertion, timeout, OOM, or crash artifact. Generated
+libFuzzer corpus extensions were discarded. This proves a clean-master
+production behavior bug, not merely a stronger fuzzer oracle.
+
 ## 2026-07-15 Complete Native Multi-Worker Sanitizer Campaign
 
 The rebased audit tree at `cda68e3d0a865cf6a7fb5453cb51d9030278afaa` was
@@ -4930,3 +4977,38 @@ This campaign found no new oracle gap and no new clean-master production
 finding. It is negative evidence for the current branch only; it does not
 weaken the clean-master findings and severities already recorded above, and
 no nonce-cleanup severity is inferred from this run.
+
+## 2026-07-15 Follow-up Alias Boundary and Corpus Replay
+
+The follow-up Clang 22.1.7 ASan/UBSan libFuzzer build replayed the current
+rebased tree, including the new `tweak-input-output-overlap` seed, with
+`-jobs=2 -workers=2 -runs=1` for every enabled target. The two workers loaded
+the complete tracked corpora and completed these runs per job:
+
+    api_roundtrip 41/41       context 11/11       hash 10/10
+    scalar 5/5                field 18/18         group 20/20
+    ecmult_const 6/6          ecmult_multi 19/19  ecdh 7/7
+    ellswift 15/15             xonly_tweak 14/14  recovery 11/11
+    schnorrsig 14/14           musig 64/64
+
+Every manager and worker exited 0. There was no ASan/UBSan diagnostic,
+assertion failure, timeout, OOM, nonzero worker result, or crash artifact.
+The replay did not expose a new oracle gap or a new clean-master production
+finding.
+
+The same configured Clang build completed all 224 CTest cases, covering both
+`noverify_tests` and `VERIFY` `tests` modes plus every enabled module. The
+CTest log ended normally with no failed-test log; the expensive internal
+targets were allowed to complete rather than being replaced by a focused
+subset.
+
+The same review deliberately excludes three tempting aliases. The headers
+describe `xonly_pubkey_tweak_add` and both MuSig public-key tweak wrappers as
+separate `Out output_pubkey` and `In` inputs, and describe
+`ec_pubkey_combine` as separate `Out` and `In` roles. They do not promise
+overlap, so requiring those undocumented aliases would turn implementation
+behavior into a false-positive oracle. MuSig's `In/Out keyagg_cache` is loaded
+before its final save, so a tweak pointer into that cache is not the same
+clear-before-read defect. These cases remain documented no-edits rather than
+additional production changes. Public nonce state without cryptographic
+meaning remains non-critical.
