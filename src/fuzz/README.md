@@ -2710,6 +2710,22 @@ non-NULL opaque input unchanged. The focused
 `partial-sign-null-argument-cleanup` seed is the 32-byte ASCII input
 `MuSig partial sign NULL cleanup\n`.
 
+Coverage review corrected the placement of this probe in the earlier commit:
+the old call site ran after the normal signing loop had consumed and zeroed
+`secnonce[0]`, so the helper stopped at the pre-load invalid-secnonce return
+and did not actually reach the three post-load argument checks it described.
+This commit runs it before that loop, preserving the valid nonce copy for the
+named keypair, cache, and session transitions. The prior evidence should
+therefore be read as a fuzzer-oracle claim that required this correction, not
+as proof that those branches had already been exercised.
+
+The correction was separately reachability-proven: a temporary mutation that
+skipped the callback and cleanup only for `"keypair != NULL"` made the existing
+`partial-sign-null-argument-cleanup` seed abort with status 134 on both the
+default and forced-int64 sanitizer builds. The same mutation would have been
+inert at the former post-loop call site, where the copied nonce failed before
+the post-load checks.
+
 This reiterates the clean-master stale-output and secret-state finding fixed by
 `a8457e2` and `9f0e948`: **Low to Medium severity**. At `origin/master`
 `ebf5943`, a caller that ignored a post-load argument failure could retain an
@@ -3912,3 +3928,44 @@ forced-int64 jobs completed 10 and 11 runs, all with exit 0 and no sanitizer,
 assertion, or crash diagnostics. An earlier all-corpus libFuzzer attempt with
 `-timeout=5` hit the ordinary empty-input execution timeout before it could be
 used as evidence; it was discarded rather than reported as a finding.
+
+## 2026-07-15 MuSig `partial_sign` NULL-Output Oracle
+
+The MuSig target adds a gated 33-byte ASCII seed,
+`partial-sign-null-output-cleanup`, that builds a valid signing transcript and
+passes `partial_sig == NULL` while keeping the secret nonce, keypair,
+key-aggregation cache, and session valid. The call must fail with exactly one
+illegal-argument callback, consume and zero the secret nonce, and leave every
+valid neighboring opaque object byte-for-byte unchanged. There is no output
+object to inspect in this case; the assertion is specifically about the
+invalid state transition and secret-input consumption.
+
+This is a **Low to Medium API-state/oracle finding**, not a new clean-master
+production vulnerability. It extends the existing stale-output and secret
+state finding fixed by `a8457e2` and `9f0e948`; a NULL output cannot retain a
+stale partial signature, but the post-load rejection must still invalidate the
+consumed secret nonce. A nonce with no cryptographic meaning is not assigned a
+Critical cleanup severity. Clean master already rejects the NULL output; this
+commit changes no production behavior.
+
+For causal proof, a temporary mutation in
+`secp256k1_musig_partial_sign_arg_check` recognized the exact
+`"partial_sig != NULL"` failure and returned without invoking the callback or
+clearing the loaded signing scalars. All pre-existing MuSig inputs stayed
+green under that mutation, while the focused seed aborted on the new callback
+count check. Bypassing only the new gated helper made the same mutated seed
+exit 0. The mutation and bypass were restored before clean replay. This proves
+the new NULL-output oracle is active and also records why the earlier
+NULL-argument proof needed its call-site correction.
+
+The restored Clang ASan/UBSan replays passed all 56 MuSig corpus files plus an
+explicit empty input on both the default 5x52 and forced-int64/10x26 backends.
+A bounded libFuzzer campaign over five state-focused seeds used
+`-workers=2 -jobs=2 -runs=10 -timeout=60` with separate work directories and
+artifact prefixes: default jobs completed 10 and 11 runs, and forced-int64
+jobs completed 11 and 12 runs. Every manager and worker exited 0; the logs had
+no sanitizer, assertion, timeout, OOM, or crash diagnostic, and both artifact
+directories remained empty. An earlier concurrent attempt shared the audit
+worktree's `fuzz-0.log` and `fuzz-1.log` paths, so those logs were discarded
+and the campaign was repeated with isolated work directories before being
+recorded here.
