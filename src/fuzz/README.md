@@ -4323,3 +4323,35 @@ restored before replay. The fixed forced-int64 Clang ASan/UBSan corpus and the
 two-worker/two-job replay passed all 16 inputs without sanitizer, assertion,
 timeout, OOM, or crash artifacts. This proves a previously untested specialized
 group transition, not a new defect on clean master.
+
+## 2026-07-15 Group Affine-Infinity Validity Oracle
+
+The group fuzzer's affine checker intentionally skipped `secp256k1_ge_is_valid_var`
+when the converted point was infinity. The existing group corpus therefore did not
+execute the direct rejection at `src/group_impl.h:450-452`, even though the unit
+tests checked the same contract indirectly after Jacobian-to-affine conversion.
+
+The gated input `group/infinity-validity` constructs an affine infinity with
+`secp256k1_ge_set_infinity`, then requires `secp256k1_ge_is_infinity` to report
+true and `secp256k1_ge_is_valid_var` to report false. This is **Informational /
+Low master-relative fuzzer-oracle hardening**, not a clean-master production
+vulnerability: clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already rejects affine infinity.
+The existing unit assertion at `src/tests.c:4783` remains useful, but it did not
+make this fuzzer target exercise the branch. No public nonce secrecy or Critical
+cleanup finding is implied by this arithmetic validity check.
+
+For causal proof, the production infinity return in `secp256k1_ge_is_valid_var`
+was temporarily changed from `return 0` to `return 1`. All 16 pre-existing group
+corpus files stayed green (`mutated-control-status=0`, 17 total executions
+including libFuzzer initialization), while the exact new seed aborted with status
+134 under `-handle_abrt=0`. The mutation was restored before fixed replay. The
+restored forced-int64 Clang ASan/UBSan build passed all 17 group inputs and the
+empty-input path. A two-worker, two-job replay loaded all 17 inputs in each job,
+completed 18 runs per job, and both jobs exited 0 without sanitizer, assertion,
+timeout, OOM, or crash artifacts.
+
+As part of the same audit, the defensive Strauss fallback at
+`src/ecmult_impl.h:862-864` was coverage-checked. Current scratch-size ordering
+does not produce the required state where Pippenger can handle the request while
+Strauss cannot, so no unreachable-domain seed or speculative oracle was added.
