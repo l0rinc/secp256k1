@@ -587,6 +587,23 @@ static void secp256k1_fuzz_check_recovery_invalid_x_coordinate(secp256k1_context
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_recovery_zero_s_rejection(const secp256k1_context *ctx) {
+    unsigned char compact[64] = { 0 };
+    unsigned char msg32[32] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_ecdsa_recoverable_signature sig;
+    secp256k1_pubkey recovered_pubkey;
+
+    /* r = 4 is a valid recovery x-coordinate; a nonzero message makes an
+     * incorrectly accepted s = 0 produce a non-infinity result. */
+    compact[31] = 4;
+    msg32[31] = 1;
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &sig, compact, 0) == 1);
+    memset(&recovered_pubkey, 0xA5, sizeof(recovered_pubkey));
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &sig, msg32) == 0);
+    FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
+}
+
 static void secp256k1_fuzz_check_recovery_r_plus_order_equation(const secp256k1_context *ctx) {
     static const unsigned char msg32[32] = {
         'T', 'h', 'i', 's', ' ', 'i', 's', ' ',
@@ -612,6 +629,7 @@ static void secp256k1_fuzz_check_recovery_r_plus_order_equation(const secp256k1_
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #ifdef ENABLE_MODULE_RECOVERY
+    static const unsigned char zero_s_rejection_trigger[] = "recovery zero s rejection\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 91);
     secp256k1_fuzz_recovery_nonce_data nonce_data;
@@ -680,6 +698,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (size == sizeof("recovery-invalid-x-coordinate\n") - 1
         && memcmp(input, "recovery-invalid-x-coordinate\n", sizeof("recovery-invalid-x-coordinate\n") - 1) == 0) {
         secp256k1_fuzz_check_recovery_invalid_x_coordinate(ctx);
+    }
+    if (size == sizeof(zero_s_rejection_trigger) - 1
+        && memcmp(input, zero_s_rejection_trigger, sizeof(zero_s_rejection_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_recovery_zero_s_rejection(ctx);
     }
     secp256k1_fuzz_check_recovery_r_plus_order_equation(ctx);
 
