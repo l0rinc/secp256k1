@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
@@ -4355,3 +4355,35 @@ As part of the same audit, the defensive Strauss fallback at
 `src/ecmult_impl.h:862-864` was coverage-checked. Current scratch-size ordering
 does not produce the required state where Pippenger can handle the request while
 Strauss cannot, so no unreachable-domain seed or speculative oracle was added.
+
+## 2026-07-15 EllSwift Inverse Degeneracy Oracle
+
+The existing EllSwift inverse vector reached successful results and ordinary
+rejections for all eight `c` branches, but its derived nonzero `u` never directly
+exercised the two documented zero-state guards at
+`src/modules/ellswift/main_impl.h:282-286`. Those guards are distinct: odd `c`
+rejects `r == 0`, while every x3-formula branch rejects `s == 0` before inversion.
+
+The gated input `ellswift/inverse-degenerate` calls the internal inverse with
+`x = u = G.x`. This is a valid on-curve x-coordinate and a reachable field
+state: `s = x-u = 0`, `q = 0`, and `r = sqrt(q) = 0`. The helper invokes
+`c = 3` to reach the odd-`c`/zero-`r` rejection and `c = 2` to reach the
+zero-`s` rejection. It checks only the documented return value; the failed `t`
+output remains intentionally unconstrained.
+
+This is **Informational / Low master-relative fuzzer-oracle hardening**, not a
+clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already contains both guards, and
+the prior unit/inverse-vector coverage did not construct `u = x`. The finding
+does not imply a cryptographic nonce-clearing issue; public nonce data without
+cryptographic meaning is not a Critical secret-cleanup finding.
+
+For causal proof, both exact production guard conditions were temporarily
+changed to `if (0) return 0`. All 13 pre-existing EllSwift corpus files stayed
+green (`control=0`), while the exact new seed aborted with status 134 under
+`-handle_abrt=0`. Bypassing only the new helper made the same mutated binary
+exit 0, and both guards were restored before fixed replay. The restored
+forced-int64 Clang ASan/UBSan replay passed all 14 EllSwift inputs plus the
+empty-input path. A two-worker/two-job replay loaded all 14 inputs in each job,
+completed 15 runs per job, and both jobs exited 0 without sanitizer, assertion,
+timeout, OOM, or crash artifacts.
