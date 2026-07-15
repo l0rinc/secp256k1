@@ -5048,3 +5048,28 @@ outside the API domain. The forced-int64 campaigns and invalid-state barriers
 already cover the meaningful counterparts. This pass therefore adds no new
 oracle or production fix and changes no severity rating; all findings remain
 rated against clean master before any fork patch or later repair.
+
+## 2026-07-16 Post-Rebase Stateful Sanitizer Recheck
+
+The audit branch was fetched and explicitly rebased onto unchanged
+`origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297`. The l0rinc refs
+were refreshed before this run; the relevant PR tips remain represented by
+existing commits in this branch, and no fork-only optimization or repair was
+used to mask a master-relative result.
+
+A fresh Clang 22 ASan/UBSan libFuzzer build enabled all six optional modules
+and built all 14 fuzz targets. Four state-heavy targets then replayed their
+complete tracked corpora in isolated directories with two workers and two
+independent job managers per target, using a 45-second bounded campaign and a
+30-second per-input timeout:
+
+    api_roundtrip 460/457   ecmult_multi 176/181
+    ellswift       265/268  musig        66/66
+
+Every manager and worker exited 0. The logs contained no ASan/UBSan
+diagnostic, assertion failure, timeout, OOM, or crash report, and all artifact
+directories remained empty. This is negative regression evidence for the
+current oracle set, not a claim that clean master is safe and not a mutation
+proof for a new finding. No production behavior, severity rating, or existing
+master-relative finding is changed. Public nonce state without cryptographic
+meaning remains non-critical.
