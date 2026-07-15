@@ -347,6 +347,28 @@ static void secp256k1_fuzz_group_check_zinv_addition(const secp256k1_gej *a, con
     secp256k1_fuzz_group_check_gej_equal(&result, expected);
 }
 
+/* The z-inverse path has a distinct inverse-point branch. Pin G + (-G) so
+ * this helper cannot depend on random scalar cancellation to reach it. */
+static void secp256k1_fuzz_group_check_zinv_inverse(void) {
+    secp256k1_gej a;
+    secp256k1_gej negated;
+    secp256k1_ge negated_affine;
+    secp256k1_gej result;
+    secp256k1_fe bzinv;
+
+    secp256k1_gej_set_ge(&a, &secp256k1_ge_const_g);
+    secp256k1_gej_neg(&negated, &a);
+    secp256k1_ge_set_gej_var(&negated_affine, &negated);
+    secp256k1_fe_set_int(&bzinv, 1);
+    memset(&result, 0xA5, sizeof(result));
+    secp256k1_gej_add_zinv_var(&result, &a, &negated_affine, &bzinv);
+
+    FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.x));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.y));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.z));
+}
+
 static void secp256k1_fuzz_group_check_zinv_in_place(const secp256k1_gej *a, const secp256k1_ge *b) {
     secp256k1_ge b_scaled;
     secp256k1_gej expected;
@@ -772,6 +794,7 @@ static void secp256k1_fuzz_group_check_x_frac_curve(const unsigned char *input, 
 }
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
+    static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
     secp256k1_scalar a_scalar;
@@ -875,6 +898,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &finite, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&finite, &infinity, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &infinity, &infinity, &scale);
+    if (size == sizeof(zinv_inverse_trigger) - 1 && memcmp(input, zinv_inverse_trigger, sizeof(zinv_inverse_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_zinv_inverse();
+    }
     rescaled = a;
     secp256k1_gej_rescale(&rescaled, &scale);
     secp256k1_fuzz_group_check_eq_x(&rescaled);

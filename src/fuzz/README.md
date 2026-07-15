@@ -4296,3 +4296,30 @@ The two-worker/two-job replay loaded all 13 inputs in each job and completed 14
 runs per job without sanitizer, assertion, timeout, OOM, or crash artifacts.
 This proves the new oracle reaches a previously untested identity transition;
 it does not claim a clean-master bug.
+
+## 2026-07-15 Group Z-Inverse Cancellation Oracle
+
+The full group corpus covered ordinary Jacobian cancellation and the
+`secp256k1_gej_add_zinv_var` infinity-input boundaries, but did not reach its
+finite inverse-point branch at `src/group_impl.h:693-699`. That branch is
+different from `secp256k1_gej_add_var`: it compares a Jacobian point with an
+affine point whose Z inverse is supplied separately, then must represent
+`G + (-G)` as the identity.
+
+The gated input `group/zinv-inverse` fixes `a = G`, constructs the affine
+negation `-G`, supplies `bzinv = 1`, and pre-fills the result with `0xA5`. The
+oracle requires the infinity flag and all three projective coordinates to be
+zero. This is **Informational / Low master-relative group-oracle hardening**,
+not a clean-master production vulnerability: clean `origin/master` already
+calls `secp256k1_gej_set_infinity` for this algebraic cancellation. It does not
+change the existing severity ledger for malformed opaque state or arithmetic
+memory safety.
+
+For causal proof, the production `secp256k1_gej_set_infinity(r)` in this
+z-inverse inverse branch was temporarily replaced with `*r = *a`. All 15
+pre-existing group corpus files stayed green (`control=0`), while the exact
+new seed aborted with status 134 under `-handle_abrt=0`. The mutation was
+restored before replay. The fixed forced-int64 Clang ASan/UBSan corpus and the
+two-worker/two-job replay passed all 16 inputs without sanitizer, assertion,
+timeout, OOM, or crash artifacts. This proves a previously untested specialized
+group transition, not a new defect on clean master.
