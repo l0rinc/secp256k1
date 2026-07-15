@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -3857,3 +3857,58 @@ exit 0 and final-stat summaries of 170 and 173 runs on default, and 107 and
 107 runs on forced-int64. No sanitizer, assertion, timeout, OOM, or crash
 artifact was produced. This commit changes only the fuzzer, corpus seed, and
 evidence ledger.
+
+## 2026-07-15 MuSig Partial-Signature Verification Invalid-State Oracle
+
+`fuzz_musig` now has a gated 33-byte ASCII seed,
+`partial-sig-verify-invalid-state`, that first builds a valid stateful MuSig
+transcript and then calls `secp256k1_musig_partial_sig_verify` five times with
+one malformed opaque input at a time: a magic-preserving all-`0xFF` partial
+signature scalar, a corrupted pubnonce magic, an all-zero public key, a
+corrupted key-aggregation-cache magic, and session parity `2`. Every call must
+return `0`, invoke the illegal-argument callback exactly once, and leave the
+valid neighboring objects byte-for-byte unchanged. The function-pointer call
+keeps this harness contract independent of the public declaration's nonnull
+attributes.
+
+This reiterates the existing **Medium clean-master finding** from `0863a8b`,
+`musig: reject overflowing partial signatures`. At clean
+`origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297`,
+`secp256k1_musig_partial_sig_load` still uses `VERIFY_CHECK(!overflow)`: a
+magic-valid scalar at or above the group order can abort verification builds,
+while a non-`VERIFY` build reduces it and continues as a different scalar.
+That is malformed local opaque state or unsafe persistence, not a direct
+wire-format or remote attack. The audit branch already contains the production
+`ARG_CHECK(!overflow)` fix; this commit changes no production behavior. The
+four neighboring malformed-object cases are consumer-boundary barriers for
+the existing MuSig opaque-state ledger, not additional master findings. No
+nonce-cleanup or public-nonce cryptographic-severity claim is made; a public
+nonce with no cryptographic meaning is not Critical on that basis.
+
+Coverage review showed that the prior fuzzer exercised valid verifier inputs,
+valid-but-mismatched cache/session/key/pubnonce combinations, and independent
+signature equations, but did not force the five opaque-object load failures
+inside this verifier. Deterministic tests exercise the direct invalid cases,
+but they do not provide the stateful consumer oracle that couples each failure
+to a valid transcript and checks callback cardinality and input preservation.
+
+For causal proof, a temporary mutation in
+`src/modules/musig/session_impl.h` recognized exactly the all-`0xFF` scalar
+used by the new seed, loaded its reduced value without invoking the partial
+signature loader, and continued verification. All 54 pre-existing MuSig
+corpus files stayed green under that mutation on both default and
+forced-int64/10x26 builds. The exact new seed aborted with status 134 on both
+backends; disabling only the new gated helper made the identical mutated seed
+exit 0 on both. The production mutation and helper bypass were restored before
+the final replay. This proves a missing verifier oracle and reiterates the
+master-relative overflow bug; it does not claim that the already-fixed audit
+branch remains vulnerable.
+
+The restored Clang ASan/UBSan target passed all 55 MuSig corpus files and the
+explicit empty-input path on both backends. A bounded targeted libFuzzer run
+over five state-focused seeds used `-workers=2 -jobs=2 -runs=10` and
+`-timeout=60`: both default jobs completed 10 and 11 runs, and both
+forced-int64 jobs completed 10 and 11 runs, all with exit 0 and no sanitizer,
+assertion, or crash diagnostics. An earlier all-corpus libFuzzer attempt with
+`-timeout=5` hit the ordinary empty-input execution timeout before it could be
+used as evidence; it was discarded rather than reported as a finding.
