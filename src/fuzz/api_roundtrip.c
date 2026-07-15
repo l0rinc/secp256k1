@@ -1178,6 +1178,27 @@ static void secp256k1_fuzz_check_pubkey_parse_field_overflow(const secp256k1_con
     FUZZ_CHECK(memcmp(&parsed_pubkey, zero_pubkey, sizeof(parsed_pubkey)) == 0);
 }
 
+static void secp256k1_fuzz_check_compressed_pubkey_parse_boundaries(const secp256k1_context *ctx) {
+    unsigned char compressed[33];
+    int odd;
+
+    /* Exercise both square-root signs for a valid point, then both parity
+     * branches for x = 5, whose x^3 + 7 value is a non-residue. */
+    memset(compressed, 0, sizeof(compressed));
+    memcpy(compressed + 1, secp256k1_fuzz_pubkey_7g_uncompressed + 1, 32);
+    for (odd = 0; odd <= 1; odd++) {
+        compressed[0] = odd ? SECP256K1_TAG_PUBKEY_ODD : SECP256K1_TAG_PUBKEY_EVEN;
+        secp256k1_fuzz_check_pubkey_parse(ctx, compressed, sizeof(compressed));
+    }
+
+    memset(compressed + 1, 0, 32);
+    compressed[32] = 5;
+    for (odd = 0; odd <= 1; odd++) {
+        compressed[0] = odd ? SECP256K1_TAG_PUBKEY_ODD : SECP256K1_TAG_PUBKEY_EVEN;
+        secp256k1_fuzz_check_pubkey_parse(ctx, compressed, sizeof(compressed));
+    }
+}
+
 static void secp256k1_fuzz_check_pubkey_create_failure(const secp256k1_context *ctx, const unsigned char *seckey32) {
     secp256k1_pubkey pubkey;
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
@@ -2549,6 +2570,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_parse(ctx, input, 0);
     secp256k1_fuzz_check_pubkey_parse(ctx, input, size);
     secp256k1_fuzz_check_pubkey_parse(ctx, secp256k1_fuzz_pubkey_7g_uncompressed, sizeof(secp256k1_fuzz_pubkey_7g_uncompressed));
+    if (size == sizeof("compressed pubkey parse boundaries\n") - 1
+        && memcmp(input, "compressed pubkey parse boundaries\n", sizeof("compressed pubkey parse boundaries\n") - 1) == 0) {
+        secp256k1_fuzz_check_compressed_pubkey_parse_boundaries(ctx);
+    }
     secp256k1_fuzz_check_pubkey_parse_field_overflow(ctx);
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_pubkey_create_failure(ctx, secp256k1_fuzz_scalar_order);

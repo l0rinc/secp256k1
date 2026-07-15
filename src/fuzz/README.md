@@ -4774,3 +4774,46 @@ completed 65 and 66 runs, while forced-int64 jobs completed 40 and 40. No
 sanitizer, assertion, timeout, OOM, or crash artifacts were produced. This
 proves a missing independent oracle for a reachable clean-master contract, not
 a claim that clean master currently has a nonce bug.
+
+## 2026-07-15 Compressed SEC1 Non-Residue Boundary Oracle
+
+The shared SEC1 byte-level model already handled compressed encodings, but the
+fixed API corpus only forced the independently checked uncompressed 7G vector.
+That left the compressed square-root success and failure transitions dependent
+on incidental fuzzing. The gated seed
+`api_roundtrip/compressed-pubkey-parse-boundaries` now supplies both parity
+encodings of the valid 7G x-coordinate and both parity encodings of `x = 5`.
+For the latter, `x^3 + 7 = 132` is a non-residue modulo the field prime. Each
+valid encoding must serialize back byte-for-byte; each invalid encoding must
+return 0, leave no illegal-callback event, and clear the opaque public-key
+output. The expected decision comes from the standalone byte-level parser,
+not from the production field or square-root implementation.
+
+This is **Informational / Low master-relative parser-oracle hardening**, not a
+clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already rejects the non-residue and
+preserves both valid parity encodings. The existing generic public-key
+round-trip checks already detect an ordinary parity-selection regression; this
+seed adds the distinct non-residue failure state and makes both compressed
+branches explicit. No forgery, disclosure, availability, or nonce-secrecy
+impact is claimed.
+
+For causal proof, the first temporary mutation forced every compressed key to
+use the even root and immediately failed old generated-key round trips; that
+control demonstrates the generic parity behavior was already covered and was
+not counted as new evidence. The narrowed mutation changed only the
+`secp256k1_eckey_pubkey_parse` compressed failure path for the `x` prefix and
+trailer matching the fixed `x = 5` input, returning the generator instead of
+rejecting the non-residue. All 39 pre-existing API inputs stayed green, while
+the exact new seed exited with status 134 at the independent decision and
+zero-output checks. Restoring the source made all 40 tracked inputs pass.
+Fresh coverage recorded both `secp256k1_ge_set_xo_var` success and failure
+outcomes at `src/eckey_impl.h:21`.
+
+Clang ASan/UBSan deterministic replays passed all 40 API seeds plus an empty
+input on both native 5x52 and forced-int64/10x26 builds. Two-worker,
+two-job libFuzzer replays over independent 40-file corpora exited 0 for every
+manager and worker on both backends; each backend completed 101 and 102 runs
+per job with no sanitizer, assertion, timeout, OOM, or crash artifact. This
+proves a previously unforced compressed failure transition, not a new defect
+on clean master.
