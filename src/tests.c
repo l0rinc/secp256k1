@@ -2441,6 +2441,16 @@ static void run_scalar_tests(void) {
     }
 
     {
+        /* Test rounding at and above the 512-bit product width. */
+        secp256k1_scalar max, r;
+        secp256k1_scalar_negate(&max, &secp256k1_scalar_one);
+        secp256k1_scalar_mul_shift_var(&r, &max, &max, 512);
+        CHECK(secp256k1_scalar_is_one(&r));
+        secp256k1_scalar_mul_shift_var(&r, &max, &max, 513);
+        CHECK(secp256k1_scalar_is_zero(&r));
+    }
+
+    {
         /* Test that halving and doubling roundtrips on some fixed values. */
         static const secp256k1_scalar HALF_TESTS[] = {
             /* 0 */
