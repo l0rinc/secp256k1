@@ -1066,13 +1066,18 @@ documented in its commit message.
   `gej_rescale_alias` unit test abort at the field overlap check; the existing
   scale snapshot fixes all three aliases. This remains an internal availability/
   correctness issue with no current public reachability or cryptographic impact.
-- **Low:** impossible SHA256 lengths (`ab36b78`), scalar rounded-shift
-  bounds (`422bab2`), EllSwift zero-`u` normalization (`119b407`), built-in
-  ECDH failure-output cleanup (`bb15eb0`), NULL preallocated context
-  storage (`a9253c2`), and partial `ecmult_multi` results after a later batch
-  fails (`5bd9ae8`). The latter is an internal helper boundary: callers must
-  honor the failure return, so it is state hygiene rather than a remotely
-  reachable cryptographic defect.
+- **Medium, with low practical exploitability:** impossible SHA256 lengths
+  (`ab36b78`). Clean master can read beyond a caller's short buffer after it
+  accepts a `size_t` length at the SHA256 boundary; the condition requires an
+  incoherent pointer/length pair and is not a remote cryptographic attack by
+  itself. The direct clean-master replay below upgrades the earlier Low entry
+  to reflect the demonstrated sanitizer-visible memory-safety failure.
+- **Low:** scalar rounded-shift bounds (`422bab2`), EllSwift zero-`u`
+  normalization (`119b407`), built-in ECDH failure-output cleanup (`bb15eb0`),
+  NULL preallocated context storage (`a9253c2`), and partial `ecmult_multi`
+  results after a later batch fails (`5bd9ae8`). The latter is an internal
+  helper boundary: callers must honor the failure return, so it is state
+  hygiene rather than a remotely reachable cryptographic defect.
 - **Informational oracle hardening:** `fuzz_ecmult_multi` now forces a
   Pippenger invocation across two batches, independently checks the repeated
   point equation, and rejects callback failures immediately before and after
@@ -4121,3 +4126,45 @@ This campaign found no new oracle gap or clean-master production defect. The
 master-relative severity ledger and the l0rinc reconciliation above are
 unchanged. Generated corpus files and the disposable build were removed after
 the replay; no fuzz process was left running.
+
+## 2026-07-15 Clean-Master Differential Replays
+
+To reiterate the existing findings against the actual baseline, a disposable
+worktree was checked out at clean `origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297`.
+Only the audit fuzzer sources and CMake wiring were overlaid; no production
+source from `codex/fuzz-oracles` was copied into that worktree. The baseline
+was built with Clang ASan/UBSan and forced-int64/10x26 arithmetic. The
+`ecmult_multi` target was excluded because its audit harness uses the
+branch-only `checked_size_mul` helper; that build limitation is not a
+production result.
+
+Three deterministic calls then failed on clean master, while the corresponding
+fixed branch seeds completed with exit 0 under the same sanitizer settings:
+
+- `context/sha256-impossible-lengths`: `secp256k1_tagged_sha256` accepted
+  `taglen == 2^61` and attempted to hash from the fuzzer's one-byte fallback
+  pointer. ASan reported a global-buffer-overflow in the SHA read path before
+  the function could reject the unrepresentable length. This is the
+  `ab36b78` fix and is **Medium, with low practical exploitability**: it is a
+  real clean-master memory-safety/availability failure, but it needs a caller
+  to provide an invalid pointer/length pair and does not establish a remote
+  key or signature attack.
+- `ecdh/explicit-builtin-invalid-scalar`: the order-plus-one scalar was
+  replaced with one for the fallback multiplication, the explicit built-in
+  callback wrote a valid digest, and clean master returned 0 while leaving
+  that digest in the fixed output. This is the `bb15eb0` **Low** fail-closed
+  API finding; the return value remains the authoritative error signal.
+- `api_roundtrip/privkey-der-export-failure`: invalid DER export set the
+  output length to zero but left all 300 sentinel bytes unchanged. This is the
+  `36a009f` **Low** stale-output finding; only the documented 279-byte region
+  is required to be cleared.
+
+The first and third failures were also isolated at `-O0` with GDB: the SHA
+case stopped in the ASan report, the ECDH case stopped at the order-plus-one
+fixed-output assertion, and the DER case stopped at the exact sentinel
+comparison. Replaying the three focused seeds on the repaired audit branch
+completed one run each with no sanitizer or assertion diagnostic. These are
+reiterations of existing master findings, not new defects introduced by the
+current branch; the stronger baseline evidence is recorded here so a later
+optimization or cherry-pick cannot be mistaken for proof that clean master
+was safe.
