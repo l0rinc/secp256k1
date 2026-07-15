@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
-- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -4014,3 +4014,38 @@ worker exited 0; no sanitizer, assertion, timeout, OOM, or crash artifact was
 produced. This proves a missing oracle, not a new clean-master defect; severity
 is based on clean master behavior, not on whether a later minor cleanup masks
 the path.
+
+## 2026-07-15 Recoverable ECDSA Invalid-X Recovery Oracle
+
+The recovery target adds a gated 30-byte ASCII seed,
+`recovery-invalid-x-coordinate`, that parses `(r,s) = (5,1)` with recovery
+IDs 0 and 1 and a zero message. The x coordinate is below the scalar order,
+but `x^3 + 7 = 132` is a non-residue modulo the secp256k1 field prime, so
+neither Y-parity candidate exists. Each recovery call must return 0, invoke no
+illegal-argument callback, and clear the caller's prefilled public-key output.
+This targets the internal `secp256k1_ge_set_xo_var` failure, not the separate
+opaque-signature, `r+n`, or final-infinity failure paths already covered by the
+recovery oracle set.
+
+This is an **Informational to Low master-relative API-state/oracle finding**,
+not a clean-master production vulnerability. Clean `origin/master`
+`ebf5943` rejects the non-curve x coordinate and the public recovery wrapper
+clears its output. The existing deterministic `(4,4)` cases and recovery
+failure cleanup checks did not assert this fixed non-residue vector with both
+parities and callback cardinality; all eight pre-existing corpus inputs also
+survived the causal mutation. No forgery, disclosure, or availability impact
+is claimed.
+
+For causal proof, temporarily replace only the production
+`if (!secp256k1_ge_set_xo_var(...)) return 0` branch with a fallback that sets
+the candidate point to the generator and continues. The eight pre-existing
+recovery corpus files plus `/dev/null` stayed green on default and
+forced-int64/10x26 Clang ASan/UBSan builds; the exact new seed aborted with
+status 134 on both. Bypassing only the new gated helper made the same mutated
+seed exit 0 on both. The production mutation and harness bypass were restored
+before fixed replay. The restored builds passed all nine recovery corpus files
+plus `/dev/null` on both backends. Bounded libFuzzer campaigns over five
+recovery seeds used `-workers=2 -jobs=2 -runs=10 -timeout=60`; both jobs exited
+0 on each backend, with no sanitizer, assertion, timeout, OOM, or crash
+artifact. This proves a missing branch-specific oracle, not a clean-master
+production defect; severity is based on clean master behavior.

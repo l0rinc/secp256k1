@@ -558,6 +558,35 @@ static void secp256k1_fuzz_check_recovery_recid_overflow_boundary(const secp256k
     }
 }
 
+static void secp256k1_fuzz_check_recovery_invalid_x_coordinate(secp256k1_context *ctx) {
+    unsigned char compact[64] = { 0 };
+    unsigned char zero_msg32[32] = { 0 };
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_ecdsa_recoverable_signature sig;
+    secp256k1_pubkey recovered_pubkey;
+    secp256k1_fuzz_recovery_illegal_data illegal_data;
+    int (*recover_fn)(const secp256k1_context *, secp256k1_pubkey *, const secp256k1_ecdsa_recoverable_signature *, const unsigned char *) = secp256k1_ecdsa_recover;
+    unsigned int calls;
+    int recid;
+
+    /* x = 5 is below the scalar order, but x^3 + 7 = 132 is not a quadratic
+     * residue modulo the secp256k1 field prime. Test both Y-parity branches. */
+    compact[31] = 5;
+    compact[63] = 1;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_recovery_illegal_callback, &illegal_data);
+    for (recid = 0; recid < 2; recid++) {
+        FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &sig, compact, recid) == 1);
+        memset(&recovered_pubkey, 0xA5, sizeof(recovered_pubkey));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(recover_fn(ctx, &recovered_pubkey, &sig, zero_msg32) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls);
+        FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
+    }
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_recovery_r_plus_order_equation(const secp256k1_context *ctx) {
     static const unsigned char msg32[32] = {
         'T', 'h', 'i', 's', ' ', 'i', 's', ' ',
@@ -648,6 +677,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_recovery_illegal_failure_cleanup(ctx, &reparsed_sig, compact, msg32, seckey);
     secp256k1_fuzz_check_recoverable_high_s(ctx, &reparsed_sig, msg32, &pubkey);
     secp256k1_fuzz_check_recovery_recid_overflow_boundary(ctx, msg32);
+    if (size == sizeof("recovery-invalid-x-coordinate\n") - 1
+        && memcmp(input, "recovery-invalid-x-coordinate\n", sizeof("recovery-invalid-x-coordinate\n") - 1) == 0) {
+        secp256k1_fuzz_check_recovery_invalid_x_coordinate(ctx);
+    }
     secp256k1_fuzz_check_recovery_r_plus_order_equation(ctx);
 
     secp256k1_fuzz_check_sign_recoverable_failure_cleanup(ctx, msg32, secp256k1_fuzz_scalar_zero);
