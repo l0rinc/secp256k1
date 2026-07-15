@@ -4885,3 +4885,27 @@ completed 86 and 87 runs; forced-int64 jobs completed 43 and 45 runs. Every
 manager and worker exited 0 with no sanitizer diagnostic, assertion, timeout,
 OOM, or crash artifact. This commit adds no production behavior change and
 does not alter any existing master-relative severity rating.
+
+## 2026-07-15 Complete Native Multi-Worker Sanitizer Campaign
+
+The rebased audit tree at `cda68e3d0a865cf6a7fb5453cb51d9030278afaa` was
+built with Clang 22.1.7, ASan/UBSan, `VERIFY`, all six optional modules, and
+recovery enabled. Each of the 14 tracked corpora was copied to a disposable
+directory and run with `-workers=2 -jobs=2 -max_total_time=8 -timeout=20`.
+The loaded seed counts were: `api_roundtrip` 40, `context` 10, `hash` 9,
+`scalar` 4, `field` 17, `group` 19, `ecmult_const` 5, `ecmult_multi` 18,
+`ecdh` 6, `ellswift` 14, `xonly_tweak` 12, `recovery` 10, `schnorrsig`
+13, and `musig` 63.
+
+Both jobs for every target exited 0. The jobs completed 25-12,579 runs per
+worker; the state-heavy MuSig workers completed 64 corpus/fuzz runs each in
+76 seconds, and the other targets completed in 9-10 seconds each. No ASan or
+UBSan diagnostic, assertion failure, timeout, OOM, or crash artifact was
+produced. LibFuzzer-generated corpus extensions were discarded after review.
+The same build also passed all 224 CTest cases, including both verify modes
+and every enabled module test.
+
+This campaign found no new oracle gap and no new clean-master production
+finding. It is negative evidence for the current branch only; it does not
+weaken the clean-master findings and severities already recorded above, and
+no nonce-cleanup severity is inferred from this run.
