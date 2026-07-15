@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
@@ -4419,3 +4419,33 @@ forced-int64 Clang ASan/UBSan replay passed all 14 EllSwift inputs plus the
 empty-input path. A two-worker/two-job replay loaded all 14 inputs in each job,
 completed 15 runs per job, and both jobs exited 0 without sanitizer, assertion,
 timeout, OOM, or crash artifacts.
+
+## 2026-07-15 Affine Equality Infinity-Mismatch Oracle
+
+The group target already checked positive affine equality and negative
+Jacobian/affine equality, but its `secp256k1_ge_eq_var` calls compared points
+with matching infinity flags. The direct mismatch guard at
+`src/group_impl.h:403` therefore remained untested by the fuzzer. This is a
+different contract from `secp256k1_gej_eq_ge_var`: it checks the affine
+representation's infinity marker before touching coordinates.
+
+The gated input `group/affine-equality-infinity` constructs affine infinity and
+the generator, then requires infinity to equal itself and to differ from the
+generator in both argument orders. This is **Informational / Low
+master-relative internal-oracle hardening**, not a clean-master production
+vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already has the correct mismatch
+return, and the existing unit and group operations did not provide this direct
+affine equality oracle. No cryptographic nonce or secret-cleanup impact is
+claimed.
+
+For causal proof, the exact mismatch return at `src/group_impl.h:403` was
+temporarily changed from `return 0` to `return 1`. All 17 pre-existing group
+corpus inputs stayed green, while the new seed aborted on its first mismatch
+assertion with status 134. The mutation was restored before fixed replay.
+Coverage recorded the mismatch branch as `True: 2, False: 511`, one hit for
+each argument order. The restored forced-int64 Clang ASan/UBSan replay passed
+all 18 group inputs and the empty-input path. A two-worker/two-job replay
+loaded all 18 inputs in each job, completed 19 runs per job, and both jobs
+exited 0 with no sanitizer, assertion, timeout, OOM, or crash artifacts. This
+proves a missing branch-specific oracle, not a clean-master defect.
