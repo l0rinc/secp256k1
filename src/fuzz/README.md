@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -4627,4 +4627,44 @@ libFuzzer replay used two jobs with two workers per backend; every job
 completed 65 runs and exited 0 without an ASan/UBSan diagnostic, assertion,
 timeout, OOM, or artifact. The shared temporary corpora grew by two ordinary
 libFuzzer-generated inputs during the replay; those files were not retained.
+This remains a missing oracle, not a new clean-master defect.
+
+## 2026-07-15 MuSig Weighted-Key-Cancellation Infinity Oracle
+
+The zero-coefficient seed covered one route to the aggregate-infinity guard,
+but the same production contract also names cancellation of weighted public
+keys. The gated seed `musig/keyagg-weighted-cancellation` uses the fixed
+points `G` and `-G`; an independent `secp256k1_ec_pubkey_combine` check
+confirms that the two inputs cancel. During `secp256k1_musig_pubkey_agg`, the
+SHA hook leaves the `KeyAgg list` hash and all ordinary hashing unchanged, but
+replaces exactly the final compression state of the first 65-byte `KeyAgg
+coefficient` transcript with scalar one. The second distinct key naturally
+uses its identity coefficient, so the production multiscalar operation is
+`1*G + 1*(-G)` rather than a zero-coefficient shortcut. The oracle requires
+one and only one coefficient override, rejection, and zeroed aggregate/cache
+outputs.
+
+This is **Informational / Low master-relative oracle hardening**, not a
+clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already rejects the cancellation
+state at line 216. The coefficient-one state is a test-only transcript
+mutation; no forged-signature, disclosure, or availability impact is claimed.
+
+For causal proof, the 62-input control corpus already contained the separate
+zero-coefficient infinity seed and recorded one true hit at line 216. Adding
+the cancellation seed raised the same guard to two true hits and its helper
+executed once with exactly one coefficient-one match. For the isolated
+production mutation, only the line-216 condition was changed to
+`if (0 && secp256k1_gej_is_infinity(&pkj))`; the 61 controls excluding both
+focused infinity seeds stayed green, while the cancellation seed exited 134
+at the established post-infinity `VERIFY_CHECK` on line 221. Restoring the
+guard made all 63 tracked inputs pass. This demonstrates the second
+infinity cause independently of the earlier zero-coefficient oracle.
+
+Final-source Clang ASan/UBSan deterministic replays passed all 63 MuSig
+inputs on native and forced-int64/10x26 arithmetic. The bounded libFuzzer
+replay used two jobs with two workers per backend; every job completed 66 runs
+and exited 0 without sanitizer, assertion, timeout, OOM, or artifact. The
+shared temporary corpora began with 63 tracked files and grew to 65 through
+ordinary libFuzzer additions during the replay; those files were not retained.
 This remains a missing oracle, not a new clean-master defect.
