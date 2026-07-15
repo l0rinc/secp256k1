@@ -4098,3 +4098,26 @@ The proposed Schnorr `noncefp == NULL` with non-NULL auxiliary-data seed was
 reviewed and rejected as a duplicate: the existing target already exercises
 that transcript and compares custom signing with the `sign32` result. No
 duplicate seed or assertion was retained.
+
+## 2026-07-15 Multi-worker Sanitizer Campaign
+
+A disposable Clang ASan/UBSan RelWithDebInfo build was configured from this
+rebased tree with the forced-int64/10x26 test backend. Existing corpus
+directories were copied without source changes and exercised with two workers
+per target: MuSig loaded 57 seeds and completed 58 runs in 118 seconds;
+Schnorrsig loaded 12 seeds and completed 46 runs in 100 seconds; recovery
+loaded 9 seeds and completed 520 runs in 61 seconds; and EllSwift loaded 13
+seeds and completed 206 runs in 61 seconds. All managers and workers exited 0;
+no sanitizer, assertion, timeout, OOM, or crash artifact was produced.
+
+The Schnorrsig output contained one isolated symbol-address line during the
+multi-worker run, so it was treated as suspicious rather than dismissed. A
+single-worker replay with `ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1`
+and `UBSAN_OPTIONS=halt_on_error=1` loaded the resulting 41-file disposable
+corpus, completed 94 runs in 21 seconds, and produced no diagnostic. This was
+libFuzzer worker output interleaving, not a production or sanitizer finding.
+
+This campaign found no new oracle gap or clean-master production defect. The
+master-relative severity ledger and the l0rinc reconciliation above are
+unchanged. Generated corpus files and the disposable build were removed after
+the replay; no fuzz process was left running.
