@@ -11,7 +11,7 @@ Targets:
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
-- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
+- `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
@@ -4702,3 +4702,32 @@ runs, with no sanitizer, assertion, timeout, OOM, or crash artifact. The
 temporary libFuzzer corpus grew through normal mutations and was removed.
 This proves two previously untested ratio-output transitions, not a new bug
 on clean master.
+
+## 2026-07-15 Field Zero-Predicate Slow-Path Oracle
+
+The field corpus compared `secp256k1_fe_normalizes_to_zero_var` with a
+production-derived normalized value, but never forced the 5x52 variable-time
+implementation past its fast nonzero return. The missing path matters because
+zero can arrive both as the canonical zero representation and as the raw field
+modulus before normalization.
+
+The gated input `field/zero-predicate-slow-path` constructs those two
+representations and requires both constant-time and variable-time predicates
+to report the independently known zero residue. It then normalizes the raw
+modulus and checks the public field-zero postcondition. This is **Informational /
+Low master-relative arithmetic-oracle hardening**, not a clean-master
+production vulnerability: clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already returns the correct value.
+No cryptographic or nonce-secrecy impact is claimed.
+
+For causal proof, the production variable-time return at
+`src/field_5x52_impl.h:198` was temporarily changed to `return 0`. All 16
+pre-existing field inputs stayed green, while the exact focused seed exited
+with status 134 on its independent zero-residue assertion. The mutation was
+restored before fixed replay. Fresh coverage recorded six executions of the
+previously untouched slow-path lines 183-198. The restored Clang ASan/UBSan
+replay passed all 17 field inputs on both native 5x52 and forced-int64/10x26
+arithmetic. A bounded libFuzzer replay used two workers and two jobs over a
+copied 17-file corpus; both jobs exited 0 after 362 and 361 executions with no
+sanitizer, assertion, timeout, OOM, or crash artifact. This proves a previously
+untested representation transition, not a new bug on clean master.
