@@ -77,6 +77,23 @@ static void secp256k1_fuzz_musig_reduce_scalar(unsigned char out[32], const unsi
     }
 }
 
+static void secp256k1_fuzz_musig_scalar_negate(unsigned char out32[32], const unsigned char in32[32]) {
+    unsigned int borrow = 0;
+    size_t i;
+
+    if (memcmp(in32, secp256k1_fuzz_scalar_zero, sizeof(secp256k1_fuzz_scalar_zero)) == 0) {
+        memset(out32, 0, 32);
+        return;
+    }
+    for (i = 32; i-- > 0;) {
+        unsigned int minuend = secp256k1_fuzz_scalar_order[i];
+        unsigned int subtrahend = (unsigned int)in32[i] + borrow;
+        out32[i] = (unsigned char)(minuend - subtrahend);
+        borrow = minuend < subtrahend;
+    }
+    FUZZ_CHECK(borrow == 0);
+}
+
 static void secp256k1_fuzz_musig_scalar_add_mod_order(unsigned char out32[32], const unsigned char addend32[32]) {
     unsigned char sum33[33] = { 0 };
     unsigned char order33[33] = { 0 };
@@ -1932,6 +1949,67 @@ static void secp256k1_fuzz_check_musig_tweak_overflow_rollback(const secp256k1_c
     FUZZ_CHECK(memcmp(&failed_cache, cache, sizeof(failed_cache)) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_tweak_infinity_rollback(secp256k1_context *ctx, const secp256k1_pubkey *generator_pubkey) {
+    const secp256k1_pubkey *pubkeys[1];
+    const secp256k1_fuzz_musig_tweak_func tweak_funcs[2] = {
+        secp256k1_musig_pubkey_ec_tweak_add,
+        secp256k1_musig_pubkey_xonly_tweak_add
+    };
+    unsigned char coefficient[32];
+    unsigned char cancel_tweaks[2][32];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_musig_keyagg_cache cache;
+    secp256k1_musig_keyagg_cache cache_before;
+    secp256k1_musig_keyagg_cache failed_cache;
+    secp256k1_pubkey aggregate_pubkey;
+    secp256k1_pubkey expected_pubkey;
+    secp256k1_pubkey failed_output;
+    secp256k1_xonly_pubkey aggregate_xonly;
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    int aggregate_parity;
+    unsigned int calls;
+    size_t i;
+
+    FUZZ_CHECK(generator_pubkey != NULL);
+    pubkeys[0] = generator_pubkey;
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, NULL, &cache, pubkeys, 1) == 1);
+    secp256k1_fuzz_musig_keyagg_coefficient_reference(ctx, coefficient, pubkeys, 1, 0);
+    FUZZ_CHECK(memcmp(coefficient, secp256k1_fuzz_scalar_zero, sizeof(coefficient)) != 0);
+    expected_pubkey = *generator_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &expected_pubkey, coefficient) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &aggregate_pubkey, &cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &aggregate_pubkey, &expected_pubkey) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &aggregate_xonly, &aggregate_parity, &aggregate_pubkey) == 1);
+    FUZZ_CHECK(aggregate_parity == 0 || aggregate_parity == 1);
+    secp256k1_fuzz_musig_scalar_negate(cancel_tweaks[0], coefficient);
+    if (aggregate_parity) {
+        memcpy(cancel_tweaks[1], coefficient, sizeof(cancel_tweaks[1]));
+    } else {
+        memcpy(cancel_tweaks[1], cancel_tweaks[0], sizeof(cancel_tweaks[1]));
+    }
+    cache_before = cache;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+    for (i = 0; i < sizeof(tweak_funcs) / sizeof(tweak_funcs[0]); i++) {
+        failed_cache = cache_before;
+        memset(&failed_output, 0xA5, sizeof(failed_output));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(tweak_funcs[i](ctx, &failed_output, &failed_cache, cancel_tweaks[i]) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls);
+        FUZZ_CHECK(memcmp(&failed_output, zero_pubkey, sizeof(failed_output)) == 0);
+        FUZZ_CHECK(memcmp(&failed_cache, &cache_before, sizeof(failed_cache)) == 0);
+
+        failed_cache = cache_before;
+        calls = illegal_data.calls;
+        FUZZ_CHECK(tweak_funcs[i](ctx, NULL, &failed_cache, cancel_tweaks[i]) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls);
+        FUZZ_CHECK(memcmp(&failed_cache, &cache_before, sizeof(failed_cache)) == 0);
+    }
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static uint64_t secp256k1_fuzz_musig_nonzero_counter(const unsigned char *input, size_t size) {
     unsigned char counter_bytes[8];
     uint64_t counter = 0;
@@ -3243,6 +3321,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[0], secp256k1_fuzz_scalar_one) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &fixed_pubkeys[1], secp256k1_fuzz_scalar_order_minus_one) == 1);
+    if (size == sizeof("musig-tweak-infinity-rollback\n") - 1
+        && memcmp(input, "musig-tweak-infinity-rollback\n", sizeof("musig-tweak-infinity-rollback\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_tweak_infinity_rollback(ctx, &fixed_pubkeys[0]);
+    }
     secp256k1_fuzz_check_musig_noncanonical_duplicate(ctx);
     secp256k1_fuzz_check_musig_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_single_keyagg_reference(ctx);
