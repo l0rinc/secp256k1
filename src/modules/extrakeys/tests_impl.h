@@ -387,6 +387,21 @@ static void test_keypair_add(void) {
     memset(overflows, 0xFF, 32);
     CHECK(secp256k1_keypair_create(CTX, &keypair, sk) == 1);
 
+    {
+        /* keypair_save stores the secret key first. Use G so x-only tweaking by
+         * this aliased secret key deterministically yields 2*G. */
+        unsigned char sk_one[32] = { 0 };
+        secp256k1_keypair expected;
+        secp256k1_keypair actual;
+
+        sk_one[31] = 1;
+        CHECK(secp256k1_keypair_create(CTX, &expected, sk_one) == 1);
+        actual = expected;
+        CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &expected, sk_one) == 1);
+        CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &actual, actual.data) == 1);
+        CHECK(secp256k1_memcmp_var(&expected, &actual, sizeof(expected)) == 0);
+    }
+
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);
