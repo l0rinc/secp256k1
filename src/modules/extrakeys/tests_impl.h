@@ -412,6 +412,28 @@ static void test_keypair_add(void) {
     CHECK(secp256k1_keypair_create(CTX, &keypair, sk) == 1);
 
     {
+        unsigned char alias_sk[32] = { 0 };
+        unsigned char alias_tweak[32];
+        secp256k1_keypair alias_base;
+        secp256k1_keypair alias_expected;
+        secp256k1_keypair alias_actual;
+        secp256k1_pubkey alias_expected_pub;
+        secp256k1_pubkey alias_actual_pub;
+
+        alias_sk[31] = 1;
+        CHECK(secp256k1_keypair_create(CTX, &alias_base, alias_sk) == 1);
+        alias_expected = alias_base;
+        alias_actual = alias_base;
+        memcpy(alias_tweak, alias_base.data, sizeof(alias_tweak));
+        CHECK(secp256k1_ec_seckey_verify(CTX, alias_tweak) == 1);
+        CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &alias_expected, alias_tweak) == 1);
+        CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &alias_actual, alias_actual.data) == 1);
+        CHECK(secp256k1_keypair_pub(CTX, &alias_expected_pub, &alias_expected) == 1);
+        CHECK(secp256k1_keypair_pub(CTX, &alias_actual_pub, &alias_actual) == 1);
+        CHECK(secp256k1_ec_pubkey_cmp(CTX, &alias_expected_pub, &alias_actual_pub) == 0);
+    }
+
+    {
         static const unsigned char scalar_one[32] = {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

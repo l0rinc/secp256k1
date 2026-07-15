@@ -16,6 +16,45 @@ static const unsigned char secp256k1_fuzz_xonly_two_g_x[32] = {
     0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
 };
 
+static void secp256k1_fuzz_check_tweak_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "tweak input-output overlap\n";
+    unsigned char one32[32] = { 0 };
+    unsigned char tweak32[32];
+    secp256k1_pubkey pubkey_base;
+    secp256k1_pubkey pubkey_expected;
+    secp256k1_pubkey pubkey_actual;
+    secp256k1_keypair keypair_base;
+    secp256k1_keypair keypair_expected;
+    secp256k1_keypair keypair_actual;
+    secp256k1_pubkey keypair_expected_pubkey;
+    secp256k1_pubkey keypair_actual_pubkey;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    one32[31] = 1;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_base, one32) == 1);
+    pubkey_expected = pubkey_base;
+    pubkey_actual = pubkey_base;
+    memcpy(tweak32, pubkey_base.data, sizeof(tweak32));
+    FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, tweak32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &pubkey_expected, tweak32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &pubkey_actual, pubkey_actual.data) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey_expected, &pubkey_actual) == 0);
+
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair_base, one32) == 1);
+    keypair_expected = keypair_base;
+    keypair_actual = keypair_base;
+    memcpy(tweak32, keypair_base.data, sizeof(tweak32));
+    FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, tweak32) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &keypair_expected, tweak32) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &keypair_actual, keypair_actual.data) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_expected_pubkey, &keypair_expected) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_actual_pubkey, &keypair_actual) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &keypair_expected_pubkey, &keypair_actual_pubkey) == 0);
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -516,6 +555,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
+    secp256k1_fuzz_check_tweak_input_output_alias(ctx, input, size);
     secp256k1_fuzz_check_invalid_keypair_xonly_pub(ctx);
     secp256k1_fuzz_check_invalid_pubkey_xonly_pub(ctx);
     if (size == sizeof("xonly pubkey from pubkey null\n") - 1
