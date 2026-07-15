@@ -4817,3 +4817,37 @@ manager and worker on both backends; each backend completed 101 and 102 runs
 per job with no sanitizer, assertion, timeout, OOM, or crash artifact. This
 proves a previously unforced compressed failure transition, not a new defect
 on clean master.
+
+## 2026-07-15 Scratch Invalid-Checkpoint State Oracle
+
+`fuzz_ecmult_multi` already exercised an invalid scratch object whose allocation
+cursor exceeded its capacity, but it did not pass an invalid checkpoint to a
+valid scratch object. The gated corpus input
+`ecmult_multi/scratch-invalid-checkpoint-boundaries` now allocates 16 bytes,
+attempts checkpoints at `alloc_size + 1` and `SIZE_MAX`, and independently
+checks that each call reports one error, leaves `alloc_size` unchanged, and
+does not alter the allocated bytes. It then applies the valid zero checkpoint
+and checks that destruction remains quiet. This reaches the distinct
+`checkpoint > scratch->alloc_size` branch in `src/scratch_impl.h:62` and keeps
+the existing invalid-object oracle separate.
+
+This is **Informational / Low master-relative scratch-state oracle hardening**,
+not a clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` contains the same callback-and-
+preserve contract. The state is internal allocation bookkeeping and has no
+cryptographic or nonce-secrecy meaning; no Critical severity is claimed.
+
+For causal proof, a temporary production mutation replaced the guard with
+`if (0)`. All 16 pre-existing `ecmult_multi` corpus inputs remained green,
+while the exact new seed aborted with exit 134 on the cursor-preservation
+assertion. Restoring the guard made all 17 tracked inputs pass. Clean coverage
+reached the new helper once and the production invalid-checkpoint callback
+branch twice at `src/scratch_impl.h:62-65`.
+
+Clang ASan/UBSan deterministic replays passed all 17 inputs on native 5x52 and
+forced-int64/10x26 builds. Isolated libFuzzer replays used
+`-workers=2 -jobs=2 -max_total_time=20` over copied corpora. Native jobs
+completed 91 and 96 runs; forced-int64 jobs completed 50 and 54 runs. Every
+manager and worker exited 0 with no sanitizer diagnostic, assertion, timeout,
+OOM, or crash artifact. This commit adds no production behavior change and
+does not alter any existing master-relative severity rating.
