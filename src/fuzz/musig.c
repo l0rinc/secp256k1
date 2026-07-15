@@ -2672,6 +2672,68 @@ static void secp256k1_fuzz_check_musig_partial_sign_null_output_cleanup(secp256k
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_partial_sign_opaque_state_cleanup(secp256k1_context *ctx, const secp256k1_musig_secnonce *valid_secnonce, const secp256k1_keypair *valid_keypair, const secp256k1_musig_keyagg_cache *valid_cache, const secp256k1_musig_session *valid_session) {
+    secp256k1_fuzz_musig_illegal_data illegal_data;
+    secp256k1_keypair invalid_keypair;
+    secp256k1_keypair generator_keypair;
+    secp256k1_pubkey generator_pubkey;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_partial_sig partial_sig;
+    secp256k1_musig_session invalid_session;
+    secp256k1_keypair keypair_before;
+    secp256k1_keypair valid_keypair_before;
+    secp256k1_musig_keyagg_cache cache_before;
+    secp256k1_musig_session session_before;
+    secp256k1_musig_session invalid_session_before;
+    unsigned char zero_partial_sig[sizeof(partial_sig)] = { 0 };
+    unsigned char zero_secnonce[sizeof(secnonce)] = { 0 };
+    unsigned int calls;
+
+    /* Make keypair_load's documented dummy point equal the secnonce point so
+     * a mutation that ignores the failed load reaches the signing code. */
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &generator_keypair, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &generator_pubkey, &generator_keypair) == 1);
+    invalid_keypair = *valid_keypair;
+    memset(invalid_keypair.data + 32, 0, sizeof(invalid_keypair.data) - 32);
+    secnonce = *valid_secnonce;
+    memcpy(secnonce.data + 68, generator_pubkey.data, sizeof(generator_pubkey.data));
+    keypair_before = invalid_keypair;
+    valid_keypair_before = *valid_keypair;
+    cache_before = *valid_cache;
+    session_before = *valid_session;
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_musig_illegal_callback, &illegal_data);
+
+    memset(&partial_sig, 0xA5, sizeof(partial_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &secnonce, &invalid_keypair, valid_cache, valid_session) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&partial_sig, zero_partial_sig, sizeof(partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_keypair, &keypair_before, sizeof(invalid_keypair)) == 0);
+    FUZZ_CHECK(memcmp(valid_keypair, &valid_keypair_before, sizeof(valid_keypair_before)) == 0);
+    FUZZ_CHECK(memcmp(valid_cache, &cache_before, sizeof(cache_before)) == 0);
+    FUZZ_CHECK(memcmp(valid_session, &session_before, sizeof(session_before)) == 0);
+
+    invalid_session = *valid_session;
+    invalid_session.data[4] = 2;
+    invalid_session_before = invalid_session;
+    secnonce = *valid_secnonce;
+    memset(&partial_sig, 0x5A, sizeof(partial_sig));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &secnonce, valid_keypair, valid_cache, &invalid_session) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&partial_sig, zero_partial_sig, sizeof(partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(valid_keypair, &valid_keypair_before, sizeof(valid_keypair_before)) == 0);
+    FUZZ_CHECK(memcmp(valid_cache, &cache_before, sizeof(cache_before)) == 0);
+    FUZZ_CHECK(memcmp(&invalid_session, &invalid_session_before, sizeof(invalid_session)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_musig_secnonce_reuse(secp256k1_context *ctx, secp256k1_musig_secnonce *secnonce, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_musig_session *session) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_keypair generator_keypair;
@@ -2785,6 +2847,10 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &wrong_cache_session, &aggnonce, msg32, &wrong_cache) == 1);
     secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
     secp256k1_fuzz_check_musig_partial_sign_null_argument_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
+    if (size == sizeof("partial-sign-opaque-state-cleanup\n") - 1
+            && memcmp(input, "partial-sign-opaque-state-cleanup\n", sizeof("partial-sign-opaque-state-cleanup\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_partial_sign_opaque_state_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
+    }
     if (size == sizeof("partial-sign-null-output-cleanup\n") - 1
             && memcmp(input, "partial-sign-null-output-cleanup\n", sizeof("partial-sign-null-output-cleanup\n") - 1) == 0) {
         secp256k1_fuzz_check_musig_partial_sign_null_output_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
