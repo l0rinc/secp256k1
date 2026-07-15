@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid full-pubkey conversion, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
@@ -4355,6 +4355,38 @@ As part of the same audit, the defensive Strauss fallback at
 `src/ecmult_impl.h:862-864` was coverage-checked. Current scratch-size ordering
 does not produce the required state where Pippenger can handle the request while
 Strauss cannot, so no unreachable-domain seed or speculative oracle was added.
+
+## 2026-07-15 X-Only NULL Source-Key Output Oracle
+
+The x-only target already supplied invalid opaque public-key bytes to
+`secp256k1_xonly_pubkey_from_pubkey`, but that is a different state from a NULL
+source pointer. The latter is rejected by the public argument contract before
+the loader runs, and clean master explicitly zeroes the destination and resets
+the optional parity output first (`src/modules/extrakeys/main_impl.h:108-115`).
+The existing corpus did not reach that branch.
+
+The gated input `xonly_tweak/pubkey-from-pubkey-null` passes a compiler-opaque
+NULL source pointer while keeping a valid destination, then requires one illegal
+callback, a zeroed `secp256k1_xonly_pubkey`, and parity `0`. This is
+**Informational / Low master-relative API-oracle hardening**, not a clean-master
+production vulnerability. A caller that passes NULL has already violated the
+API precondition; no key disclosure, forgery, or cryptographic nonce-cleanup
+impact is claimed. In particular, public nonce data without cryptographic
+meaning is not a Critical secret-clearing finding.
+
+For causal proof, only the exact NULL-source cleanup at
+`src/modules/extrakeys/main_impl.h:112-114` was disabled. All pre-existing
+x-only corpus inputs (11) stayed green, while the new seed aborted with status
+134 on the zero-output assertion. The mutation was restored before fixed replay.
+Coverage then recorded the NULL branch as `True: 1, False: 111` and the cleanup
+`memset` as executed once. The restored forced-int64 Clang ASan/UBSan build
+passed all 12 x-only inputs plus the empty-input path with no diagnostics. A
+two-worker/two-job replay loaded all 12 inputs in each job, completed 13 runs
+per job, and both jobs exited 0 without sanitizer, assertion, timeout, OOM, or
+crash artifacts. The intentionally illegal call is made through an unannotated
+function pointer so UBSan does not mistake the harness's deliberate API
+precondition test for a production violation. This demonstrates a previously
+untested public API state transition, not a new clean-master defect.
 
 ## 2026-07-15 EllSwift Inverse Degeneracy Oracle
 

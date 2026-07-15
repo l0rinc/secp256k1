@@ -33,6 +33,13 @@ typedef int (*secp256k1_fuzz_xonly_pubkey_cmp_fn)(
     const secp256k1_xonly_pubkey *pk1
 );
 
+typedef int (*secp256k1_fuzz_xonly_pubkey_from_pubkey_fn)(
+    const secp256k1_context *ctx,
+    secp256k1_xonly_pubkey *xonly_pubkey,
+    int *pk_parity,
+    const secp256k1_pubkey *pubkey
+);
+
 static void secp256k1_fuzz_xonly_illegal_callback(const char *message, void *data) {
     secp256k1_fuzz_xonly_illegal_data *illegal_data = (secp256k1_fuzz_xonly_illegal_data *)data;
 
@@ -385,6 +392,31 @@ static void secp256k1_fuzz_check_invalid_pubkey_xonly_pub(secp256k1_context *ctx
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_null_pubkey_xonly_pub(secp256k1_context *ctx, const secp256k1_pubkey *valid_pubkey) {
+    secp256k1_fuzz_xonly_illegal_data illegal_data;
+    secp256k1_xonly_pubkey output;
+    secp256k1_fuzz_xonly_pubkey_from_pubkey_fn from_pubkey = secp256k1_xonly_pubkey_from_pubkey;
+    const secp256k1_pubkey * volatile null_pubkey = valid_pubkey;
+    unsigned char zero_xonly[sizeof(output)] = { 0 };
+    unsigned int calls;
+    int parity = 7;
+
+    /* Keep the NULL argument opaque to the compiler so this remains a real API call. */
+    null_pubkey = NULL;
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_xonly_illegal_callback, &illegal_data);
+
+    memset(&output, 0xA5, sizeof(output));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(from_pubkey(ctx, &output, &parity, null_pubkey) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(&output, zero_xonly, sizeof(output)) == 0);
+    FUZZ_CHECK(parity == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
 static void secp256k1_fuzz_check_invalid_xonly_cmp(secp256k1_context *ctx, const secp256k1_xonly_pubkey *valid_xonly) {
     secp256k1_fuzz_xonly_illegal_data illegal_data;
     secp256k1_xonly_pubkey invalid_xonly;
@@ -486,6 +518,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
     secp256k1_fuzz_check_invalid_keypair_xonly_pub(ctx);
     secp256k1_fuzz_check_invalid_pubkey_xonly_pub(ctx);
+    if (size == sizeof("xonly pubkey from pubkey null\n") - 1
+        && memcmp(input, "xonly pubkey from pubkey null\n", sizeof("xonly pubkey from pubkey null\n") - 1) == 0) {
+        secp256k1_fuzz_check_null_pubkey_xonly_pub(ctx, &pubkey);
+    }
     if (size == sizeof("invalid keypair create cleanup\n") - 1
         && memcmp(input, "invalid keypair create cleanup\n", sizeof("invalid keypair create cleanup\n") - 1) == 0) {
         secp256k1_fuzz_check_keypair_create_failure(ctx);
