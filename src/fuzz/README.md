@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering
-- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -4480,3 +4480,40 @@ ASan/UBSan replay passed the same set. A two-worker/two-job forced-int64 replay
 loaded all 59 inputs in each job, completed 60 runs per job, and both jobs
 exited 0 without sanitizer, assertion, timeout, OOM, or crash artifacts. This
 proves a missing secret-state oracle, not a clean-master defect.
+
+## 2026-07-15 Recoverable ECDSA Zero-S Oracle
+
+The recovery target already reached the first side of the internal
+`secp256k1_scalar_is_zero(sigr) || secp256k1_scalar_is_zero(sigs)` guard with
+all-zero signatures and an `(r, s) = (0, order)` vector. The second side was
+not reachable from the existing compact parser corpus: `(order, 0)` is rejected
+as an overflowing scalar before recovery. That left the valid-`r`, zero-`s`
+state without a direct rejection oracle.
+
+The gated input `recovery/zero-s-rejection` parses `(r, s) = (4, 0)` with
+recovery id `0`, then recovers with a nonzero message. `r = 4` is a valid
+recovery x-coordinate, so an incorrectly accepted `s = 0` cannot silently
+produce the infinity result expected from this invalid signature. The helper
+requires recovery to return `0` and independently checks that the destination
+`secp256k1_pubkey` is zeroed.
+
+This is **Informational / Low master-relative fuzzer-oracle hardening**, not a
+clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already rejects both zero scalar
+states; no signature-forgery, key-disclosure, or nonce-clearing impact is
+claimed. In particular, public nonce data without cryptographic meaning is not
+a Critical secret-cleanup finding.
+
+For causal proof, only the production condition at
+`src/modules/recovery/main_impl.h:122` was changed from
+`scalar_is_zero(sigr) || scalar_is_zero(sigs)` to `scalar_is_zero(sigr)`. All
+9 pre-existing recovery corpus inputs stayed green, while the exact new seed
+aborted with status 134 on the zero-output assertion. The mutation was restored
+before fixed replay. Coverage then recorded the first branch as `True: 12,
+False: 126` and the previously unhit `sigs` branch as `True: 1, False: 125`.
+The restored forced-int64 Clang ASan/UBSan replay passed all 10 recovery inputs
+plus empty input; native-width Clang ASan/UBSan passed the same 11 inputs. A
+two-worker/two-job forced-int64 replay loaded all 10 inputs in each job,
+completed 11 runs per job, and both jobs exited 0 without sanitizer, assertion,
+timeout, OOM, or crash artifacts. This proves a missing zero-`s` oracle, not a
+clean-master defect.
