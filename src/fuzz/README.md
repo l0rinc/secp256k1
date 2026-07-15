@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -3822,3 +3822,38 @@ both reported jobs exited 0, with interleaved final-stat summaries of 39, 38,
 and 43 runs on default and 38, 39, and 41 runs on forced-int64. No sanitizer,
 assertion, timeout, OOM, or crash artifact was produced. This commit changes
 only the fuzzer, corpus seed, and evidence ledger.
+
+## 2026-07-15 Public-Key Serialization NULL-Output Oracle
+
+`fuzz_api_roundtrip` now has a gated 29-byte ASCII seed,
+`pubkey-serialize-null-output`, that passes a valid public key with a NULL
+output pointer to `secp256k1_ec_pubkey_serialize` for both compressed and
+uncompressed encodings. Each rejected call must invoke the illegal-argument
+callback once and reset the caller-owned output length to zero.
+
+This is **Informational / Low API-oracle hardening**, not a clean-master
+production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already zeroes `*outputlen`
+before rejecting the NULL output pointer, and the deterministic API test
+checks this boundary. The existing round-trip fuzzer covered short buffers,
+invalid flag types, and NULL parser inputs, but did not observe this distinct
+serializer precondition. No disclosure, forgery, or availability impact is
+claimed, and no master-relative severity change is made.
+
+For causal proof, temporarily replace the production
+`ARG_CHECK(output != NULL)` in `secp256k1_ec_pubkey_serialize` with an early
+`return 0` after the output length has been reset. All 37 pre-existing
+`fuzz_api_roundtrip` corpus files exited 0 under that mutation on both
+backends; the exact new seed aborted with status 134 on both. Bypassing only
+the new helper made the same mutated seed exit 0 on both. The production
+mutation and helper bypass were restored before fixed replay. This proves an
+oracle gap, not a clean-master defect.
+
+The restored Clang ASan/UBSan target passed all 38 API corpus files plus the
+empty-input path on both default 5x52 and forced-int64/10x26, with no
+sanitizer or assertion diagnostic. Copied-corpus
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=5` campaigns reported job
+exit 0 and final-stat summaries of 170 and 173 runs on default, and 107 and
+107 runs on forced-int64. No sanitizer, assertion, timeout, OOM, or crash
+artifact was produced. This commit changes only the fuzzer, corpus seed, and
+evidence ledger.
