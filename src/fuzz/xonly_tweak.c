@@ -20,14 +20,23 @@ static void secp256k1_fuzz_check_tweak_input_output_alias(const secp256k1_contex
     static const unsigned char trigger[] = "tweak input-output overlap\n";
     unsigned char one32[32] = { 0 };
     unsigned char tweak32[32];
+    unsigned char seckey_expected[32];
+    unsigned char seckey_actual[32];
     secp256k1_pubkey pubkey_base;
     secp256k1_pubkey pubkey_expected;
     secp256k1_pubkey pubkey_actual;
+    secp256k1_pubkey pubkey_mul_expected;
+    secp256k1_pubkey pubkey_mul_actual;
     secp256k1_keypair keypair_base;
     secp256k1_keypair keypair_expected;
     secp256k1_keypair keypair_actual;
     secp256k1_pubkey keypair_expected_pubkey;
     secp256k1_pubkey keypair_actual_pubkey;
+    size_t offset;
+    size_t pubkey_shifted_cases = 0;
+    size_t keypair_shifted_cases = 0;
+    int expected_ret;
+    int actual_ret;
 
     if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
         return;
@@ -35,24 +44,75 @@ static void secp256k1_fuzz_check_tweak_input_output_alias(const secp256k1_contex
 
     one32[31] = 1;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_base, one32) == 1);
-    pubkey_expected = pubkey_base;
-    pubkey_actual = pubkey_base;
-    memcpy(tweak32, pubkey_base.data, sizeof(tweak32));
-    FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, tweak32) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &pubkey_expected, tweak32) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &pubkey_actual, pubkey_actual.data) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey_expected, &pubkey_actual) == 0);
+    /* The in/out object and tweak input are separate API roles, but the
+     * declarations do not prohibit their storage from overlapping. Exercise
+     * windows at multiple offsets so a fix that handles only the object base
+     * does not appear complete. */
+    for (offset = 0; offset <= sizeof(pubkey_base.data) - sizeof(tweak32); offset += 16) {
+        memcpy(tweak32, pubkey_base.data + offset, sizeof(tweak32));
+        if (!secp256k1_ec_seckey_verify(ctx, tweak32)) {
+            continue;
+        }
+        if (offset != 0) {
+            pubkey_shifted_cases++;
+        }
+
+        pubkey_expected = pubkey_base;
+        pubkey_actual = pubkey_base;
+        expected_ret = secp256k1_ec_pubkey_tweak_add(ctx, &pubkey_expected, tweak32);
+        actual_ret = secp256k1_ec_pubkey_tweak_add(ctx, &pubkey_actual, pubkey_actual.data + offset);
+        FUZZ_CHECK(expected_ret == actual_ret);
+        if (expected_ret) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey_expected, &pubkey_actual) == 0);
+        }
+
+        /* Multiplication must snapshot the factor before clearing output,
+         * just as the addition helper does. */
+        pubkey_mul_expected = pubkey_base;
+        pubkey_mul_actual = pubkey_base;
+        expected_ret = secp256k1_ec_pubkey_tweak_mul(ctx, &pubkey_mul_expected, tweak32);
+        actual_ret = secp256k1_ec_pubkey_tweak_mul(ctx, &pubkey_mul_actual, pubkey_mul_actual.data + offset);
+        FUZZ_CHECK(expected_ret == actual_ret);
+        if (expected_ret) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey_mul_expected, &pubkey_mul_actual) == 0);
+        }
+    }
+    FUZZ_CHECK(pubkey_shifted_cases != 0);
+
+    memcpy(seckey_expected, one32, sizeof(seckey_expected));
+    memcpy(seckey_actual, one32, sizeof(seckey_actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, seckey_expected, one32) == 1);
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, seckey_actual, seckey_actual) == 1);
+    FUZZ_CHECK(memcmp(seckey_expected, seckey_actual, sizeof(seckey_expected)) == 0);
+
+    memcpy(seckey_expected, one32, sizeof(seckey_expected));
+    memcpy(seckey_actual, one32, sizeof(seckey_actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, seckey_expected, one32) == 1);
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, seckey_actual, seckey_actual) == 1);
+    FUZZ_CHECK(memcmp(seckey_expected, seckey_actual, sizeof(seckey_expected)) == 0);
 
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair_base, one32) == 1);
-    keypair_expected = keypair_base;
-    keypair_actual = keypair_base;
-    memcpy(tweak32, keypair_base.data, sizeof(tweak32));
-    FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, tweak32) == 1);
-    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &keypair_expected, tweak32) == 1);
-    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &keypair_actual, keypair_actual.data) == 1);
-    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_expected_pubkey, &keypair_expected) == 1);
-    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_actual_pubkey, &keypair_actual) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &keypair_expected_pubkey, &keypair_actual_pubkey) == 0);
+    for (offset = 0; offset <= sizeof(keypair_base.data) - sizeof(tweak32); offset += 16) {
+        memcpy(tweak32, keypair_base.data + offset, sizeof(tweak32));
+        if (!secp256k1_ec_seckey_verify(ctx, tweak32)) {
+            continue;
+        }
+        if (offset != 0) {
+            keypair_shifted_cases++;
+        }
+
+        keypair_expected = keypair_base;
+        keypair_actual = keypair_base;
+        expected_ret = secp256k1_keypair_xonly_tweak_add(ctx, &keypair_expected, tweak32);
+        actual_ret = secp256k1_keypair_xonly_tweak_add(ctx, &keypair_actual, keypair_actual.data + offset);
+        FUZZ_CHECK(expected_ret == actual_ret);
+        if (expected_ret) {
+            FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_expected_pubkey, &keypair_expected) == 1);
+            FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_actual_pubkey, &keypair_actual) == 1);
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &keypair_expected_pubkey, &keypair_actual_pubkey) == 0);
+        }
+    }
+    FUZZ_CHECK(keypair_shifted_cases != 0);
 }
 
 typedef struct {

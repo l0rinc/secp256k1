@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
@@ -5109,3 +5109,69 @@ master mutation proof. It found no release-only transition bug, adds no
 production change or fuzzer oracle, and does not change any master-relative
 finding or severity. In particular, public nonce cleanup is not treated as
 cryptographic secret erasure.
+
+## 2026-07-16 Complete In/Out Tweak Alias Oracle
+
+The existing `tweak-input-output-overlap` seed already proves the clean-master
+Low aliasing finding for `secp256k1_ec_pubkey_tweak_add` and
+`secp256k1_keypair_xonly_tweak_add`. It now also supplies valid overlapping
+cases for `secp256k1_ec_pubkey_tweak_mul` (`tweak32 == pubkey.data`) and both
+secret-key in/out helpers (`tweak32 == seckey`). The declarations expose an
+In/Out object plus an In tweak and do not impose a non-overlap precondition, so
+the fixed implementations must snapshot all tweak bytes before writing the
+object.
+
+These three additions are negative regression oracles, not new clean-master
+findings. The current source passed the exact trigger and all 13 tracked
+`xonly_tweak` inputs under Clang 22 ASan/UBSan with two jobs and two workers.
+They do not change the existing Low severity rating, which remains limited to
+the two clean-master add-path findings.
+
+The trigger now also checks shifted 32-byte windows at 16-byte offsets inside
+the 64-byte public-key object and the 96-byte keypair object. Each window is
+copied into an independent reference call, then supplied directly from the
+in/out object for the comparison call; non-scalar windows are skipped rather
+than being treated as valid API inputs. This closes the oracle gap where an
+implementation could snapshot only an object-base alias while still clearing
+a valid shifted overlap. It remains negative oracle evidence: no new
+clean-master defect or severity change is claimed.
+
+Causal proof used three disposable production mutations. Moving factor parsing
+in `secp256k1_ec_pubkey_tweak_mul` below its output `memset`, inserting
+`memset(seckey, 0, 32)` before `ec_seckey_tweak_add_helper`, and inserting the
+same read-after-clear mutation before factor parsing in
+`ec_seckey_tweak_mul` each made `tweak-input-output-overlap` terminate with
+`ERROR: libFuzzer: deadly signal`. Restoring the source made the exact seed and
+the two-worker corpus replay pass. No mutation was committed, no production
+behavior changed, and no new severity is claimed.
+
+## 2026-07-16 MuSig Cache/Tweak Alias Oracle
+
+The MuSig target now has a gated 32-byte seed,
+`tweak-input-cache-overlap`. It first applies an independent `+1` tweak so the
+cache's serialized accumulated tweak is nonzero, then compares both
+`secp256k1_musig_pubkey_ec_tweak_add` and
+`secp256k1_musig_pubkey_xonly_tweak_add` with an independent tweak copy versus
+the same 32-byte field through `keyagg_cache->data`. The output public key,
+return value, and complete updated cache must agree. This is a distinct
+In/Out-cache plus In-tweak boundary; it does not broaden the deliberately
+excluded pure Out-plus-In aliases such as `ec_pubkey_combine`.
+
+This is **Informational / Low master-relative oracle hardening**, not a new
+clean-master production bug. The public header labels `keyagg_cache` In/Out and
+does not impose a separate non-overlap precondition. Clean master already
+loads the complete cache before parsing the tweak and saves it only afterward,
+so the current implementation passes the alias. No production fix or severity
+change is claimed; the existing Low clean-master alias finding remains limited
+to the two core add paths. Public nonce cleanup is unrelated and remains
+non-critical when the nonce carries no cryptographic meaning.
+
+For causal proof, a disposable production mutation cleared the cache after
+`secp256k1_keyagg_cache_load` but only when `tweak32` was the exact serialized
+tweak address. All 63 pre-existing MuSig inputs stayed green and exited 0;
+the exact new seed aborted with `ERROR: libFuzzer: deadly signal` and exit 134.
+After restoring the source, the seed exited 0, two independent jobs with two
+workers replayed all 64 tracked inputs (65 executions per job including the
+empty input) with no ASan/UBSan diagnostic or artifact, and sanitized `tests`
+and `noverify_tests` passed their `musig` and `extrakeys` suites. The mutation
+was never committed.

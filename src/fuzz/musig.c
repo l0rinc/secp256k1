@@ -2064,6 +2064,42 @@ static void secp256k1_fuzz_check_musig_keyagg_cache_semantic_barrier(secp256k1_c
 
 typedef int (*secp256k1_fuzz_musig_tweak_func)(const secp256k1_context *ctx, secp256k1_pubkey *output_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *tweak32);
 
+static void secp256k1_fuzz_check_musig_tweak_input_cache_alias(const secp256k1_context *ctx, const secp256k1_musig_keyagg_cache *valid_cache) {
+    const secp256k1_fuzz_musig_tweak_func tweak_funcs[2] = {
+        secp256k1_musig_pubkey_ec_tweak_add,
+        secp256k1_musig_pubkey_xonly_tweak_add
+    };
+    secp256k1_musig_keyagg_cache prepared_cache;
+    unsigned char tweak32[32];
+    size_t tweak_offset;
+    size_t i;
+
+    /* The cache's final 32 bytes are its serialized accumulated tweak. Make
+     * that field nonzero, then use it as the next tweak through the cache
+     * itself. The implementation must finish loading the cache and tweak
+     * before saving the updated cache. */
+    prepared_cache = *valid_cache;
+    FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(ctx, NULL, &prepared_cache, secp256k1_fuzz_scalar_one) == 1);
+    tweak_offset = sizeof(prepared_cache.data) - sizeof(tweak32);
+    memcpy(tweak32, prepared_cache.data + tweak_offset, sizeof(tweak32));
+    FUZZ_CHECK(memcmp(tweak32, secp256k1_fuzz_scalar_one, sizeof(tweak32)) == 0);
+
+    for (i = 0; i < sizeof(tweak_funcs) / sizeof(tweak_funcs[0]); i++) {
+        secp256k1_musig_keyagg_cache expected_cache = prepared_cache;
+        secp256k1_musig_keyagg_cache actual_cache = prepared_cache;
+        secp256k1_pubkey expected_output;
+        secp256k1_pubkey actual_output;
+        int expected_ret;
+        int actual_ret;
+
+        expected_ret = tweak_funcs[i](ctx, &expected_output, &expected_cache, tweak32);
+        actual_ret = tweak_funcs[i](ctx, &actual_output, &actual_cache, actual_cache.data + tweak_offset);
+        FUZZ_CHECK(actual_ret == expected_ret);
+        FUZZ_CHECK(memcmp(&actual_output, &expected_output, sizeof(actual_output)) == 0);
+        FUZZ_CHECK(memcmp(&actual_cache, &expected_cache, sizeof(actual_cache)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_musig_tweak_overflow_rollback(const secp256k1_context *ctx, secp256k1_fuzz_musig_tweak_func tweak_func, const secp256k1_musig_keyagg_cache *cache) {
     unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
     secp256k1_musig_keyagg_cache failed_cache;
@@ -3648,6 +3684,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, NULL, &cache_no_output, pubkey_ptrs, n_pubkeys) == 1);
     FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, NULL, NULL, pubkey_ptrs, n_pubkeys) == 1);
     secp256k1_fuzz_check_musig_pubkey_agg_success(ctx, NULL, &cache_no_output);
+    if (size == sizeof("musig tweak input cache overlap\n") - 1
+        && memcmp(input, "musig tweak input cache overlap\n", sizeof("musig tweak input cache overlap\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_tweak_input_cache_alias(ctx, &cache);
+    }
     secp256k1_fuzz_check_musig_pubkey_agg_failure_cleanup(ctx, &agg_xonly, &cache);
     secp256k1_fuzz_check_musig_empty_aggregation(ctx, &pubkeys[0], &fixed_pubnonce);
     secp256k1_fuzz_check_musig_keyagg_cache_curve_barrier(ctx, &pubkeys[0], &cache);
