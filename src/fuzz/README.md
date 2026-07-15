@@ -4988,7 +4988,7 @@ the complete tracked corpora and completed these runs per job:
     api_roundtrip 41/41       context 11/11       hash 10/10
     scalar 5/5                field 18/18         group 20/20
     ecmult_const 6/6          ecmult_multi 19/19  ecdh 7/7
-    ellswift 15/15             xonly_tweak 14/14  recovery 11/11
+    ellswift 15/15       xonly_tweak 14/14  recovery 11/11
     schnorrsig 14/14           musig 64/64
 
 Every manager and worker exited 0. There was no ASan/UBSan diagnostic,
@@ -5012,3 +5012,39 @@ before its final save, so a tweak pointer into that cache is not the same
 clear-before-read defect. These cases remain documented no-edits rather than
 additional production changes. Public nonce state without cryptographic
 meaning remains non-critical.
+
+## 2026-07-15 Coverage and Static Audit Recheck
+
+After the preceding replay, `origin/master` was fetched again and remained
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`. The l0rinc remote was also
+refreshed. The newly visible `boundary-condition-bugs` head `65d38b0` still
+contains the `fe_equal` bound and 10x26 normalization repairs already
+represented by `994b350` and `cf5631f`; the
+`musig-clear-invalid-seckey-pubnonce` head `7ed2abc` still contains the public
+nonce cleanup already represented by `b4de762`. Their parent patches
+(`161a39a` and `fde940f`) were compared directly. No exact cherry-pick is
+needed: applying them would duplicate behavior already present here and would
+discard the stronger master-relative mutation and fuzzer evidence carried by
+the audit commits. The public nonce has no cryptographic meaning, so its
+cleanup remains Low/informational stale-state hygiene rather than Critical
+secret erasure.
+
+A disposable Clang profile build replayed every tracked corpus once with
+`-runs=1`. All 14 targets loaded their complete current seed sets and exited
+0: `api_roundtrip` 41, `context` 11, `hash` 10, `scalar` 5, `field` 18,
+`group` 20, `ecmult_const` 6, `ecmult_multi` 19, `ecdh` 7, `ellswift` 15,
+`xonly_tweak` 14, `recovery` 11, `schnorrsig` 14, and `musig` 64. The
+profile report was inspected per target because LLVM 22 hangs when one report
+combines raw profiles from different fuzz executables. No replay diagnostic,
+assertion, timeout, or sanitizer-like failure occurred.
+
+A separate production-only `scan-build-22 --status-bugs --keep-going` build
+covered the core library and all six enabled modules with no analyzer reports.
+The remaining zero-coverage regions are known boundaries rather than new
+findings: native builds do not execute the alternate 10x26 scalar/field
+serialization branches, the cofactor-one curve has no valid non-subgroup
+public-key input, and proper-context guards require an invalid opaque context
+outside the API domain. The forced-int64 campaigns and invalid-state barriers
+already cover the meaningful counterparts. This pass therefore adds no new
+oracle or production fix and changes no severity rating; all findings remain
+rated against clean master before any fork patch or later repair.
