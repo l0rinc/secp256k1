@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -4588,3 +4588,43 @@ forced-int64 replay loaded all 61 corpus files, completed 62 runs per job,
 and both jobs exited 0 after 121 seconds without sanitizer, assertion,
 timeout, OOM, or crash artifacts. This proves a missing second-zero oracle,
 not a clean-master defect.
+
+## 2026-07-15 MuSig Key-Aggregation Zero-Coefficient Infinity Oracle
+
+The existing MuSig key-aggregation corpus covered successful aggregation and
+invalid input cleanup, but did not reach the explicit aggregate-infinity
+rejection at `src/modules/musig/keyagg_impl.h:216`. The gated seed
+`musig/keyagg-zero-coefficient` supplies one valid fixed public key and
+temporarily installs the existing SHA compression hook in an all-zero mode.
+That makes both the one-key `KeyAgg list` hash and its `KeyAgg coefficient`
+hash zero, so the weighted aggregate is the point at infinity. The helper
+requires both hash domains to execute, requires `secp256k1_musig_pubkey_agg`
+to return 0, and checks that the aggregate x-only key and cache remain fully
+zeroed after rejection.
+
+This is **Informational / Low master-relative oracle hardening**, not a
+clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already contains the infinity
+guard. The zero hash is a test-only callback mutation of the internal hash
+transcript, not a claim that an attacker can choose MuSig's cryptographic
+hash output; no forgery, disclosure, or availability impact is claimed.
+
+For causal proof, coverage of the 61 pre-existing MuSig inputs recorded zero
+true hits for the condition at line 216 and zero executions of its rejection
+return. With the new seed added, the same coverage build recorded one true
+hit and one rejection return. Changing only that production condition from
+`if (secp256k1_gej_is_infinity(&pkj))` to
+`if (0 && secp256k1_gej_is_infinity(&pkj))` left all 61 pre-existing inputs
+green, while the focused seed exited with status 134 at the established
+post-infinity `VERIFY_CHECK` on line 221. Restoring the guard made all 62
+tracked inputs pass. This proves the seed reaches the intended production
+state transition rather than merely duplicating a successful aggregation
+case.
+
+Final-source Clang ASan/UBSan deterministic replays passed all 62 MuSig
+inputs on both native and forced-int64/10x26 arithmetic. The bounded
+libFuzzer replay used two jobs with two workers per backend; every job
+completed 65 runs and exited 0 without an ASan/UBSan diagnostic, assertion,
+timeout, OOM, or artifact. The shared temporary corpora grew by two ordinary
+libFuzzer-generated inputs during the replay; those files were not retained.
+This remains a missing oracle, not a new clean-master defect.
