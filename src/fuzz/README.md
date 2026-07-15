@@ -4851,3 +4851,37 @@ completed 91 and 96 runs; forced-int64 jobs completed 50 and 54 runs. Every
 manager and worker exited 0 with no sanitizer diagnostic, assertion, timeout,
 OOM, or crash artifact. This commit adds no production behavior change and
 does not alter any existing master-relative severity rating.
+
+## 2026-07-15 Scratch Allocation-Overflow Boundary Oracle
+
+The scratch harness previously covered invalid scratch metadata and ordinary
+capacity exhaustion, but it did not exercise the two overflow guards on a
+valid scratch object. The gated input
+`ecmult_multi/scratch-allocation-overflow-boundaries` now checks
+`secp256k1_scratch_max_allocation` with
+`SIZE_MAX / (ALIGNMENT - 1) + 1` and `secp256k1_scratch_alloc` with
+`SIZE_MAX`. Both calls must return failure without invoking the error callback,
+moving the allocation cursor, or changing an existing allocation. The helper
+then rolls back and destroys the scratch object normally.
+
+This is **Informational / Low master-relative scratch-overflow oracle
+hardening**, not a clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already contains both guards at
+`src/scratch_impl.h:74-90`. The state is internal allocation bookkeeping with
+no cryptographic or nonce-secrecy meaning; no Critical severity is claimed.
+
+For causal proof, replacing only the alignment-product guard with `if (0)`
+left all 17 pre-existing `ecmult_multi` inputs green and made the new seed
+abort with exit 134. Restoring it and replacing only the `ROUND_TO_ALIGN`
+wraparound guard with `if (0)` produced the same result. Restoring both guards
+made all 18 tracked inputs pass. Clean coverage reached each production guard
+once and the gated helper once; the two mutation controls show that the
+assertions are independent rather than duplicate capacity checks.
+
+Clang ASan/UBSan deterministic replays passed all 18 inputs on native 5x52 and
+forced-int64/10x26 builds. Isolated libFuzzer replays used
+`-workers=2 -jobs=2 -max_total_time=20` over copied corpora. Native jobs
+completed 86 and 87 runs; forced-int64 jobs completed 43 and 45 runs. Every
+manager and worker exited 0 with no sanitizer diagnostic, assertion, timeout,
+OOM, or crash artifact. This commit adds no production behavior change and
+does not alter any existing master-relative severity rating.
