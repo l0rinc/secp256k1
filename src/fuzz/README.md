@@ -737,7 +737,7 @@ documented in its commit message.
   (`ab0cb33`), ECDH/EllSwift hash callbacks (`35ffb87`), and missing prefix
   data in the EllSwift built-in XDH callback (`067d4a3`). Clean master can
   dereference required callback input before returning ordinary failure.
-  Direct RFC6979 callback attempts at `UINT_MAX` (`e862628`) are a separate
+  Direct RFC6979 callback attempts at `UINT_MAX` (`c7d8760`) are a separate
   availability bug: the unsigned retry loop can wrap and hang. These are
   public callback/API misuse paths, not wire-format attacks.
 - **Medium:** HMAC/RFC6979 secret-state retention after finalization
@@ -1072,7 +1072,7 @@ documented in its commit message.
   incoherent pointer/length pair and is not a remote cryptographic attack by
   itself. The direct clean-master replay below upgrades the earlier Low entry
   to reflect the demonstrated sanitizer-visible memory-safety failure.
-- **Low:** scalar rounded-shift bounds (`422bab2`), EllSwift zero-`u`
+- **Low:** scalar rounded-shift bounds (`5bb982d`), EllSwift zero-`u`
   normalization (`119b407`), built-in ECDH failure-output cleanup (`bb15eb0`),
   NULL preallocated context storage (`a9253c2`), and partial `ecmult_multi`
   results after a later batch fails (`5bd9ae8`). The latter is an internal
@@ -4060,11 +4060,12 @@ production defect; severity is based on clean master behavior.
 The audit worktree was fetched and rebased onto `origin/master` at
 `ebf594320dc838b9de1abb54d5ba98cef84f4297`; Git reported that
 `codex/fuzz-oracles` was already up to date. All currently published l0rinc
-pull heads (#1 through #12), the fork branch `field-5x52-serialize-word`,
-and the fork master head were refreshed and compared against this rebased
-branch. No additional exact cherry-pick is justified: relevant behavior is
-already represented by equivalent or stronger audit commits, while the
-remaining changes are optimization, comment, or test maintenance.
+pull heads (#1 through #13), including the current PR #12 head `944932c` and
+PR #13 head `87e57c8`, the fork branch `field-5x52-serialize-word`, and the
+fork master head were refreshed and compared against this rebased branch.
+No additional exact cherry-pick is justified: relevant behavior is already
+represented by equivalent or stronger audit commits, while the remaining
+changes are optimization, comment, or test maintenance.
 
 - PRs 1, 2, and 3 repeat the MuSig cleanup, invalid-secret, and stale-output
   work already represented by the split cleanup series and matching fuzzer
@@ -4080,9 +4081,19 @@ remaining changes are optimization, comment, or test maintenance.
 - PR 11's `pubkey_load` checks are represented by the existing production
   checks and callback barriers. The clean-master rating is **Medium** for
   invalid opaque state reaching a non-aborting callback path.
-- PR 12's 5x52 serializer and the force-updated 10x26 serializer are already
-  represented. They are behavior-preserving consistency work, not evidence
-  that clean master is safe without the associated round-trip assertions.
+- The PR #12 head (`944932c`)'s 5x52 serializer and the force-updated 10x26
+  serializer (`e217ead`) are already represented by the adapted
+  `91e4f02`/`0bf5669` commits. They are behavior-preserving consistency work,
+  not evidence that clean master is safe without the associated round-trip
+  assertions.
+- PR 13 (`87e57c8`) repeats the scalar shift-width guard. The stronger
+  `04bfcac` commit also guards rounded shifts, carries the deterministic
+  `mul-shift-over-512` oracle, and records the clean-master sanitizer proof.
+  The finding remains **Low/latent internal memory safety** because current
+  in-tree callers use bounded shifts and no public caller controls this
+  helper's shift. The exact fork head was therefore retained as comparison
+  context rather than cherry-picked; it does not lower the master-relative
+  severity or replace the causal replay.
 - PRs 4, 5, 6, and inherited PR 8 were deliberately not applied as whole
   heads. Their optimization stack changes behavior relevant to this audit:
   they restore unchecked public-key loads, alter failure-output handling, or
@@ -4168,3 +4179,43 @@ reiterations of existing master findings, not new defects introduced by the
 current branch; the stronger baseline evidence is recorded here so a later
 optimization or cherry-pick cannot be mistaken for proof that clean master
 was safe.
+
+## 2026-07-15 l0rinc Boundary-Branch Refresh
+
+The l0rinc remote was refetched after the previous reconciliation. The new
+heads are `7b47f1f` (`rfc6979-reject-max-counter`) and `87e57c8`
+(`scalar-mul-shift-width`); `c0f32d4` (`scratch-free-warning`) and the
+boundary-condition stack were also rechecked. No new cherry-pick is justified:
+the two security-relevant heads are already superseded here by the stronger
+fix-and-oracle commits `bc3f625` and `04bfcac`, while the scratch change is a
+GCC test-warning adjustment and the boundary stack is already in master or
+represented by the 10x26 field oracle. Applying the fork heads would duplicate
+the fixes without preserving their current clean-master discovery order.
+
+The direct clean-master replays below were run from `ebf5943` with only the
+audit fuzzer and CMake sources overlaid, using Clang ASan/UBSan. The repaired
+branch was replayed with the same forced-int64/10x26 configuration:
+
+- `api_roundtrip/rfc6979-counter-max`: clean master did not return from the
+  exported callback within a three-second hard timeout (libFuzzer exited via
+  its interrupted-run path, status 77). The callback's `i <= counter` loop
+  wraps when `counter == UINT_MAX`. The repaired seed completed in 150 ms with
+  exit 0. This is **Medium** for a direct public callback caller that can
+  forward an untrusted attempt, and **Low/edge-case** on ordinary signing
+  retries; it is a denial-of-service issue, not a cryptographic compromise.
+  Clearing a nonce buffer is fail-closed hygiene only and is not critical when
+  the nonce has no cryptographic meaning.
+- `scalar/mul-shift-over-512`: clean master reports a stack-buffer-overflow
+  while reading `l[8]` in the native 5x52/4x64 implementation at
+  `scalar_4x64_impl.h:910`, and `l[16]` in the forced 10x26/8x32
+  implementation at `scalar_8x32_impl.h:707`, both for the shift-513 boundary.
+  The repaired forced-int64 seed completed in 53 ms with exit 0. This remains
+  **Low/latent internal memory safety**: the documented helper domain permits
+  the shift, but current in-tree callers use 384 and no public caller controls
+  it. The initial baseline runs also printed unrelated UBSan diagnostics from
+  `ecmult_impl.h:201`; those were allowed to continue so the independent
+  scalar ASan finding could be captured and are not a separate audit finding.
+
+These replays strengthen, rather than replace, the mutation proofs already in
+the two fix commits. The fork heads are therefore recorded as duplicate
+coverage, not cherry-picked behavior that could hide a master failure.
