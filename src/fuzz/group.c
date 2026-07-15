@@ -200,6 +200,14 @@ static void secp256k1_fuzz_group_check_affine(const secp256k1_gej *point) {
     }
 }
 
+static void secp256k1_fuzz_group_check_infinity_invalid(void) {
+    secp256k1_ge infinity;
+
+    secp256k1_ge_set_infinity(&infinity);
+    FUZZ_CHECK(secp256k1_ge_is_infinity(&infinity));
+    FUZZ_CHECK(!secp256k1_ge_is_valid_var(&infinity));
+}
+
 /* The existing equality checks exercise only the true branch. Keep a fixed,
  * independently distinguishable pair to guard against false positives. */
 static void secp256k1_fuzz_group_check_gej_eq_ge_negative(const secp256k1_gej *point) {
@@ -794,6 +802,7 @@ static void secp256k1_fuzz_group_check_x_frac_curve(const unsigned char *input, 
 }
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
+    static const unsigned char infinity_validity_trigger[] = "group infinity validity\n";
     static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
@@ -898,6 +907,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &finite, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&finite, &infinity, &finite, &scale);
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &infinity, &infinity, &scale);
+    if (size == sizeof(infinity_validity_trigger) - 1 && memcmp(input, infinity_validity_trigger, sizeof(infinity_validity_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_infinity_invalid();
+    }
     if (size == sizeof(zinv_inverse_trigger) - 1 && memcmp(input, zinv_inverse_trigger, sizeof(zinv_inverse_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_zinv_inverse();
     }
