@@ -220,6 +220,20 @@ static void secp256k1_fuzz_check_ellswift_inverse_vector(const secp256k1_context
     secp256k1_ge_clear(&point);
 }
 
+static void secp256k1_fuzz_check_ellswift_inverse_degenerate(void) {
+    secp256k1_fe t;
+    int ret;
+
+    /* With x=u=G.x, s=x-u and r are both zero. The two c values select the
+     * distinct documented guards without making any claim about failed t. */
+    t = secp256k1_ge_const_g.x;
+    ret = secp256k1_ellswift_xswiftec_inv_var(&t, &secp256k1_ge_const_g.x, &secp256k1_ge_const_g.x, 3);
+    FUZZ_CHECK(ret == 0);
+    t = secp256k1_ge_const_g.x;
+    ret = secp256k1_ellswift_xswiftec_inv_var(&t, &secp256k1_ge_const_g.x, &secp256k1_ge_const_g.x, 2);
+    FUZZ_CHECK(ret == 0);
+}
+
 static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_context *ctx) {
     /* This vector was generated independently and is part of the BIP324
      * ElligatorSwift decode test set. Do not pin encode/create output: those
@@ -628,6 +642,7 @@ static void secp256k1_fuzz_check_ellswift_ctx_hash(secp256k1_context *ctx, const
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #ifdef ENABLE_MODULE_ELLSWIFT
+    static const unsigned char inverse_degenerate_trigger[] = "ellswift inverse degenerate\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 173);
     secp256k1_fuzz_ellswift_hash_data hash_data;
@@ -702,6 +717,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_overflow_secret(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_invalid_secret_callback_x(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_ctx_hash(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
+
+    if (size == sizeof(inverse_degenerate_trigger) - 1 && memcmp(input, inverse_degenerate_trigger, sizeof(inverse_degenerate_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_ellswift_inverse_degenerate();
+    }
 
     secp256k1_context_destroy(ctx);
 #else
