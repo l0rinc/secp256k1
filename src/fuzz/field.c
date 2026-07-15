@@ -1074,6 +1074,24 @@ static void secp256k1_fuzz_fe_check_zero_predicate_false_positive(void) {
 }
 #endif
 
+static void secp256k1_fuzz_fe_check_zero_predicate_slow_path(void) {
+    secp256k1_fe zero;
+    secp256k1_fe modulus;
+
+    /* Both encodings are distinct internal representations of the zero
+     * residue. Keep the expected result independent of normalization output. */
+    secp256k1_fe_set_int(&zero, 0);
+    secp256k1_fe_set_b32_mod(&modulus, secp256k1_fuzz_field_prime);
+
+    FUZZ_CHECK(secp256k1_fe_normalizes_to_zero(&zero) == 1);
+    FUZZ_CHECK(secp256k1_fe_normalizes_to_zero_var(&zero) == 1);
+    FUZZ_CHECK(secp256k1_fe_normalizes_to_zero(&modulus) == 1);
+    FUZZ_CHECK(secp256k1_fe_normalizes_to_zero_var(&modulus) == 1);
+
+    secp256k1_fe_normalize_var(&modulus);
+    FUZZ_CHECK(secp256k1_fe_is_zero(&modulus));
+}
+
 static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_t size) {
     unsigned char x32[32];
     unsigned char y32[32];
@@ -1195,6 +1213,7 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
+    static const unsigned char zero_predicate_slow_path_trigger[] = "field zero-predicate slow path\n";
     unsigned char boundary[32];
     unsigned char limit_input[32];
     int i;
@@ -1240,6 +1259,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_shifted_zero();
     secp256k1_fuzz_fe_check_zero_predicate_false_positive();
 #endif
+    if (size == sizeof(zero_predicate_slow_path_trigger) - 1 && memcmp(input, zero_predicate_slow_path_trigger, sizeof(zero_predicate_slow_path_trigger) - 1) == 0) {
+        secp256k1_fuzz_fe_check_zero_predicate_slow_path();
+    }
     secp256k1_fuzz_fe_check_arithmetic(input, size);
 
     return 0;
