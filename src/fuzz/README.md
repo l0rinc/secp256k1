@@ -4049,3 +4049,52 @@ recovery seeds used `-workers=2 -jobs=2 -runs=10 -timeout=60`; both jobs exited
 0 on each backend, with no sanitizer, assertion, timeout, OOM, or crash
 artifact. This proves a missing branch-specific oracle, not a clean-master
 production defect; severity is based on clean master behavior.
+
+## 2026-07-15 Rebased l0rinc Pull-Head Reconciliation
+
+The audit worktree was fetched and rebased onto `origin/master` at
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`; Git reported that
+`codex/fuzz-oracles` was already up to date. All currently published l0rinc
+pull heads (#1 through #12), the fork branch `field-5x52-serialize-word`,
+and the fork master head were refreshed and compared against this rebased
+branch. No additional exact cherry-pick is justified: relevant behavior is
+already represented by equivalent or stronger audit commits, while the
+remaining changes are optimization, comment, or test maintenance.
+
+- PRs 1, 2, and 3 repeat the MuSig cleanup, invalid-secret, and stale-output
+  work already represented by the split cleanup series and matching fuzzer
+  barriers. Clean-master severity remains **Medium** for malformed
+  cryptographic opaque state and **Low/informational** for public nonce stale
+  state. A public nonce without cryptographic meaning is not a Critical
+  secret-clearing issue.
+- PR 10's field-10x26 normalization behavior is represented by the existing
+  overflow oracle and zero-predicate coverage. Both remain **Medium/latent**:
+  arithmetic impact could become **High** only if the maximum magnitude state
+  is reachable through a real caller; this is not a remote key or signature
+  claim. The field equality bound is already in master.
+- PR 11's `pubkey_load` checks are represented by the existing production
+  checks and callback barriers. The clean-master rating is **Medium** for
+  invalid opaque state reaching a non-aborting callback path.
+- PR 12's 5x52 serializer and the force-updated 10x26 serializer are already
+  represented. They are behavior-preserving consistency work, not evidence
+  that clean master is safe without the associated round-trip assertions.
+- PRs 4, 5, 6, and inherited PR 8 were deliberately not applied as whole
+  heads. Their optimization stack changes behavior relevant to this audit:
+  they restore unchecked public-key loads, alter failure-output handling, or
+  remove cleanup and callback barriers. Applying those commits would mask
+  master findings and invalidate causal proof. PRs 7 and 9 are comment/test
+  maintenance and have been imported where they affect a fuzzer contract.
+
+The current master-relative severity ledger therefore remains: **Medium**
+for opaque-state and callback failure paths; **Medium/latent** for the
+10x26 arithmetic defects; **Low/informational** for internal scratch
+robustness; and **Low/informational** for public nonce cleanup. Every claimed
+fix is tied to clean-master reproduction, a deterministic regression or
+corpus condition, and mutation/control evidence. A later fork fix never
+proves master safe; when it changes a follow-up path, that interaction is
+recorded with the finding rather than silently treated as a regression test.
+
+The proposed Schnorr `noncefp == NULL` with non-NULL auxiliary-data seed was
+reviewed and rejected as a duplicate: the existing target already exercises
+that transcript and compares custom signing with the `sign32` result. No
+duplicate seed or assertion was retained.
