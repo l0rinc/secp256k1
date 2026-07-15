@@ -99,6 +99,49 @@ static void secp256k1_fuzz_check_scratch_accounting_boundary(secp256k1_context *
     secp256k1_context_set_error_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_scratch_invalid_checkpoint(secp256k1_context *ctx) {
+    const size_t scratch_size = 64;
+    const size_t allocation_size = 16;
+    secp256k1_fuzz_ecmult_multi_error_data error_data;
+    secp256k1_scratch *scratch;
+    unsigned char *storage;
+    unsigned char expected_storage[16];
+    size_t checkpoint;
+    unsigned int calls;
+
+    scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_size);
+    FUZZ_CHECK(scratch != NULL);
+    storage = (unsigned char *)secp256k1_scratch_alloc(&ctx->error_callback, scratch, allocation_size);
+    FUZZ_CHECK(storage != NULL);
+    memset(storage, 0xA5, allocation_size);
+    memcpy(expected_storage, storage, sizeof(expected_storage));
+    checkpoint = scratch->alloc_size;
+
+    error_data.self = &error_data;
+    error_data.calls = 0;
+    secp256k1_context_set_error_callback(ctx, secp256k1_fuzz_ecmult_multi_error_callback, &error_data);
+
+    calls = error_data.calls;
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, checkpoint + 1u);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+    FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    FUZZ_CHECK(memcmp(storage, expected_storage, sizeof(expected_storage)) == 0);
+
+    calls = error_data.calls;
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, SIZE_MAX);
+    FUZZ_CHECK(error_data.calls == calls + 1);
+    FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    FUZZ_CHECK(memcmp(storage, expected_storage, sizeof(expected_storage)) == 0);
+
+    calls = error_data.calls;
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, 0);
+    FUZZ_CHECK(error_data.calls == calls);
+    FUZZ_CHECK(scratch->alloc_size == 0);
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+    FUZZ_CHECK(error_data.calls == calls);
+    secp256k1_context_set_error_callback(ctx, NULL, NULL);
+}
+
 static size_t secp256k1_fuzz_size_t(const unsigned char *input, size_t size, unsigned int salt) {
     unsigned char bytes[sizeof(size_t)];
     size_t ret = 0;
@@ -876,6 +919,7 @@ static void secp256k1_fuzz_ecmult_multi_fail_callback(const secp256k1_context *c
 
 int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     static const unsigned char sixteen_trigger[] = "sixteen direct ecmult batch\n";
+    static const unsigned char scratch_trigger[] = "scratch invalid checkpoint boundaries\n";
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 211);
     secp256k1_fuzz_ecmult_multi_data data;
     secp256k1_scalar g_sc;
@@ -886,10 +930,12 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     size_t i;
     int overflow;
     int sixteen_case;
+    int scratch_case;
 
     memset(&data, 0, sizeof(data));
     secp256k1_fuzz_ecmult_multi_check_equality_barrier();
     sixteen_case = size == sizeof(sixteen_trigger) - 1 && memcmp(input, sixteen_trigger, sizeof(sixteen_trigger) - 1) == 0;
+    scratch_case = size == sizeof(scratch_trigger) - 1 && memcmp(input, scratch_trigger, sizeof(scratch_trigger) - 1) == 0;
     n_points = sixteen_case ? SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS : secp256k1_fuzz_byte(input, size, 3) % 9u;
     initialized_points = n_points < 8 ? 8 : n_points;
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
@@ -899,6 +945,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_check_scratch_accounting_boundary(ctx);
     secp256k1_fuzz_check_error_callback_routing(ctx);
     secp256k1_fuzz_check_error_callback_clone(ctx);
+    if (scratch_case) {
+        secp256k1_fuzz_check_scratch_invalid_checkpoint(ctx);
+    }
 
     secp256k1_fuzz_scalar32(scalar32, input, size, 223);
     secp256k1_scalar_set_b32(&g_sc, scalar32, &overflow);
