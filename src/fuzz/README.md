@@ -5092,3 +5092,20 @@ UBSan, assertion, timeout, or artifact. The existing invalid-magic,
 invalid-point, overflowing-scalar, failure-cleanup, and nonce-reuse oracles
 therefore remain the stronger evidence; this review adds no production fix,
 new oracle, clean-master finding, or severity change.
+
+## 2026-07-16 Release-Mode MuSig/Extrakeys Recheck
+
+The audit tree was also built as a disposable CMake `RelWithDebInfo` release
+library with all enabled modules and `SECP256K1_BUILD_FUZZ=OFF`. The
+`noverify_tests` target therefore exercised the production library without the
+`VERIFY` definition. The focused `musig` and `extrakeys` suites passed, then
+the complete no-`VERIFY` test dispatch passed at the normal 16 iterations with
+two worker processes. This includes the opaque cache, keypair, nonce, and
+session-state barriers reviewed above.
+
+This is negative release-mode evidence for the rebased audit tree, not a claim
+that assertions are a substitute for production validation and not a clean-
+master mutation proof. It found no release-only transition bug, adds no
+production change or fuzzer oracle, and does not change any master-relative
+finding or severity. In particular, public nonce cleanup is not treated as
+cryptographic secret erasure.
