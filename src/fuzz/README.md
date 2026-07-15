@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -4449,3 +4449,34 @@ all 18 group inputs and the empty-input path. A two-worker/two-job replay
 loaded all 18 inputs in each job, completed 19 runs per job, and both jobs
 exited 0 with no sanitizer, assertion, timeout, OOM, or crash artifacts. This
 proves a missing branch-specific oracle, not a clean-master defect.
+
+## 2026-07-15 MuSig Secret-Nonce Zero-Scalar Load Oracle
+
+The MuSig opaque-nonce barrier already used a valid secret nonce with an
+overflowing scalar, so it exercised `secnonce_load`'s `overflow0` rejection but
+never reached either scalar-zero clause. Coverage of the 58 pre-existing MuSig
+inputs showed zero hits for both `secp256k1_scalar_is_zero(&k[0])` and
+`secp256k1_scalar_is_zero(&k[1])` at `src/modules/musig/session_impl.h:82-84`.
+
+The gated input `musig/secnonce-zero-scalar-load` keeps the magic, signer
+binding, and public point valid, then makes two independent copies of the
+secret nonce: one with `k[0] = 0`, and one with `k[1] = 0`. Each
+`secp256k1_musig_partial_sign` call must reject once, clear the partial-signature
+output, and fully invalidate the consumed secret nonce. This is
+**Informational / Low master-relative secret-state oracle hardening**, not a
+clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already rejects both states. The
+secret nonce is cryptographically meaningful, but this finding does not claim
+that clean master permits nonce reuse, forgery, disclosure, or a Critical
+cleanup failure.
+
+For causal proof, the two production clauses were mutated independently: first
+only the `k[0] == 0` rejection was removed, then only the `k[1] == 0` rejection
+was removed. All 58 pre-existing MuSig inputs stayed green under each mutation;
+the focused seed aborted with status 134 in each case. Fixed coverage recorded
+one hit for each zero-scalar branch. The restored forced-int64 Clang ASan/UBSan
+replay passed all 59 MuSig inputs plus empty input, and the native Clang
+ASan/UBSan replay passed the same set. A two-worker/two-job forced-int64 replay
+loaded all 59 inputs in each job, completed 60 runs per job, and both jobs
+exited 0 without sanitizer, assertion, timeout, OOM, or crash artifacts. This
+proves a missing secret-state oracle, not a clean-master defect.
