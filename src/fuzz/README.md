@@ -4219,3 +4219,50 @@ branch was replayed with the same forced-int64/10x26 configuration:
 These replays strengthen, rather than replace, the mutation proofs already in
 the two fix commits. The fork heads are therefore recorded as duplicate
 coverage, not cherry-picked behavior that could hide a master failure.
+
+## 2026-07-15 MuSig Partial-Sign Opaque-State Oracle
+
+Coverage of the 57 pre-existing MuSig corpus inputs showed that
+`secp256k1_musig_partial_sign` never reached either the invalid loaded-keypair
+failure at `src/modules/musig/session_impl.h:737` or the invalid session-state
+failure at `:761`. Existing inputs covered invalid secnonces, caches, NULL
+arguments, and signer binding, but did not couple those two rejected state
+transitions to the partial-sign output and consumed-secnonce postconditions.
+
+The new gated input
+`musig/partial-sign-opaque-state-cleanup` exercises both paths. It corrupts a
+keypair's opaque public half while making the secnonce's embedded point equal
+to the loader's documented dummy generator point, then supplies a session with
+an invalid final-nonce parity byte. Each call must return 0, invoke the
+illegal callback exactly once, clear the partial-signature output and consumed
+secnonce, and preserve every caller-owned keypair, cache, and session object.
+
+This is **Informational / Low master-relative API-state oracle hardening**, not
+a clean-master production vulnerability. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already rejects both states and
+clears the temporary signing state. The existing malformed opaque-state ledger
+therefore remains **Medium** where invalid state can reach a non-aborting
+callback or consumer; this commit adds branch-specific regression detection and
+does not change that severity. No public nonce secrecy or Critical cleanup
+finding is implied: a public nonce without cryptographic meaning is not a
+Critical secret-clearing issue.
+
+For causal proof, two temporary production mutations ignored, rather than
+skipped, the corresponding loader return values:
+
+- Replacing the invalid-keypair branch with `(void)secp256k1_keypair_load(...)`
+  left all 57 pre-existing inputs green (`control=0`), while the exact new
+  seed aborted with status 134 when the oracle allowed the rejected state to
+  continue.
+- Replacing the invalid-session branch with
+  `(void)secp256k1_musig_session_load(...)` likewise left all 57 pre-existing
+  inputs green (`control=0`), while the same seed aborted with status 134.
+
+The mutations were run with `-handle_abrt=0` to make the assertion failure
+status deterministic and were restored before the fixed replay. The restored
+forced-int64 coverage build passed all 58 MuSig inputs with status 0. A focused
+Clang ASan/UBSan replay passed in 1.95 seconds; a two-worker, two-job ASan/UBSan
+replay loaded all 58 inputs, each worker completed 59 runs in 115 seconds, and
+both jobs exited 0 without sanitizer, assertion, timeout, OOM, or crash
+artifacts. This proves that the new oracle distinguishes both rejected state
+transitions from the prior corpus, not that clean master contained a new bug.
