@@ -3225,7 +3225,7 @@ static void secp256k1_fuzz_check_musig_noncanonical_nonce_storage(secp256k1_cont
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
-static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
+static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *ctx, const secp256k1_keypair *keypair, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, int check_zero_scalar) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     secp256k1_musig_secnonce secnonce;
     secp256k1_musig_secnonce invalid_signer_secnonce;
@@ -3320,12 +3320,35 @@ static void secp256k1_fuzz_check_musig_opaque_nonce_barriers(secp256k1_context *
     FUZZ_CHECK(memcmp(&partial_sig, zero132, sizeof(partial_sig)) == 0);
     FUZZ_CHECK(memcmp(&invalid_scalar_secnonce, zero132, sizeof(invalid_scalar_secnonce)) == 0);
 
+    if (check_zero_scalar) {
+        /* Overflow rejection above does not reach the scalar-zero clauses in
+         * secnonce_load. Exercise each secret scalar independently. */
+        invalid_scalar_secnonce = secnonce;
+        memset(invalid_scalar_secnonce.data + 4, 0, 32);
+        memset(&partial_sig, 0xA5, sizeof(partial_sig));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &invalid_scalar_secnonce, keypair, keyagg_cache, &session) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(&partial_sig, zero132, sizeof(partial_sig)) == 0);
+        FUZZ_CHECK(memcmp(&invalid_scalar_secnonce, zero132, sizeof(invalid_scalar_secnonce)) == 0);
+
+        invalid_scalar_secnonce = secnonce;
+        memset(invalid_scalar_secnonce.data + 36, 0, 32);
+        memset(&partial_sig, 0xA5, sizeof(partial_sig));
+        calls = illegal_data.calls;
+        FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &partial_sig, &invalid_scalar_secnonce, keypair, keyagg_cache, &session) == 0);
+        FUZZ_CHECK(illegal_data.calls == calls + 1);
+        FUZZ_CHECK(memcmp(&partial_sig, zero132, sizeof(partial_sig)) == 0);
+        FUZZ_CHECK(memcmp(&invalid_scalar_secnonce, zero132, sizeof(invalid_scalar_secnonce)) == 0);
+    }
+
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
+    static const unsigned char zero_scalar_secnonce_trigger[] = "MuSig zero secnonce scalar\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 151);
     unsigned char seckey[8][32];
@@ -3452,7 +3475,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_check_musig_keypair_consistency(ctx, &keypairs[0], &pubkeys[1], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_noncanonical_nonce_storage(ctx, tweak, &cache);
-    secp256k1_fuzz_check_musig_opaque_nonce_barriers(ctx, &keypairs[0], tweak, &cache, session_rand);
+    secp256k1_fuzz_check_musig_opaque_nonce_barriers(ctx, &keypairs[0], tweak, &cache, session_rand,
+        size == sizeof(zero_scalar_secnonce_trigger) - 1
+        && memcmp(input, zero_scalar_secnonce_trigger, sizeof(zero_scalar_secnonce_trigger) - 1) == 0);
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_optional_inputs(ctx, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(ctx, input, size, seckey[0], &pubkeys[0], tweak, &cache, session_rand);
