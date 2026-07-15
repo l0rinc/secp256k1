@@ -4266,3 +4266,33 @@ replay loaded all 58 inputs, each worker completed 59 runs in 115 seconds, and
 both jobs exited 0 without sanitizer, assertion, timeout, OOM, or crash
 artifacts. This proves that the new oracle distinguishes both rejected state
 transitions from the prior corpus, not that clean master contained a new bug.
+
+## 2026-07-15 Schnorr Infinity-Rejection Oracle
+
+Branch coverage of the 12 pre-existing Schnorr corpus inputs left the explicit
+`secp256k1_schnorrsig_verify` infinity rejection at
+`src/modules/schnorrsig/main_impl.h:270-272` unexecuted. The existing target
+checked valid signatures, overflowing `r`/`s`, odd reconstructed nonces, and
+coordinate equations, but none of those cases made the verifier's reconstructed
+nonce the identity.
+
+The new gated input `schnorrsig/infinity-rejection` creates `P = G`, uses
+`r = x(G)`, recomputes the BIP340 challenge independently, and sets `s` to that
+challenge. Therefore the verifier's own equation is
+`sG - eP = eG - eG = infinity`, while all wire scalars and the x-coordinate are
+valid. The call must return 0 at the dedicated identity check. This is an
+**Informational / Low master-relative API-oracle finding**, not a clean-master
+production vulnerability: clean `origin/master` `ebf5943` already rejects the
+identity before checking its Y parity or x-coordinate. It does not change the
+existing severity of malformed opaque cryptographic state, and no nonce
+clearing severity is implied by this public test vector.
+
+For causal proof, the production infinity branch was temporarily changed from
+`return 0` to `return 1`. All 12 pre-existing corpus files stayed green
+(`control=0`) under that mutation, while the exact new seed aborted with status
+134 under `-handle_abrt=0`. The mutation was restored before the fixed replay.
+The restored forced-int64 Clang ASan/UBSan build passed all 13 Schnorr inputs.
+The two-worker/two-job replay loaded all 13 inputs in each job and completed 14
+runs per job without sanitizer, assertion, timeout, OOM, or crash artifacts.
+This proves the new oracle reaches a previously untested identity transition;
+it does not claim a clean-master bug.
