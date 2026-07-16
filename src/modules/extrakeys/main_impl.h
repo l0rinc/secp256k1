@@ -142,24 +142,19 @@ int secp256k1_xonly_pubkey_from_pubkey(const secp256k1_context* ctx, secp256k1_x
 
 int secp256k1_xonly_pubkey_tweak_add(const secp256k1_context* ctx, secp256k1_pubkey *output_pubkey, const secp256k1_xonly_pubkey *internal_pubkey, const unsigned char *tweak32) {
     secp256k1_ge pk;
-    int ret;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(output_pubkey != NULL);
-    /* Preserve the documented failure cleanup for mandatory NULL inputs. */
-    if (internal_pubkey == NULL || tweak32 == NULL) {
-        memset(output_pubkey, 0, sizeof(*output_pubkey));
-    }
+    memset(output_pubkey, 0, sizeof(*output_pubkey));
     ARG_CHECK(internal_pubkey != NULL);
     ARG_CHECK(tweak32 != NULL);
 
-    ret = secp256k1_xonly_pubkey_load(ctx, &pk, internal_pubkey);
-    ret = ret && secp256k1_ec_pubkey_tweak_add_helper(&pk, tweak32);
-    memset(output_pubkey, 0, sizeof(*output_pubkey));
-    if (ret) {
-        secp256k1_pubkey_save(output_pubkey, &pk);
+    if (!secp256k1_xonly_pubkey_load(ctx, &pk, internal_pubkey)
+        || !secp256k1_ec_pubkey_tweak_add_helper(&pk, tweak32)) {
+        return 0;
     }
-    return ret;
+    secp256k1_pubkey_save(output_pubkey, &pk);
+    return 1;
 }
 
 int secp256k1_xonly_pubkey_tweak_add_check(const secp256k1_context* ctx, const unsigned char *tweaked_pubkey32, int tweaked_pk_parity, const secp256k1_xonly_pubkey *internal_pubkey, const unsigned char *tweak32) {
