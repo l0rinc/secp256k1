@@ -6570,3 +6570,44 @@ zero or one. No clean-master scalar defect was reproduced, so no production
 fix, new seed, or severity change is justified. Existing findings remain
 rated against clean master; clearing a nonce without cryptographic meaning is
 not a Critical erasure finding.
+
+## 2026-07-16 Latest l0rinc Ref Reconciliation and ecmult Clone Oracle Recheck
+
+The audit branch is based on `origin/master` at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; that ref is already an ancestor,
+so no rebase was needed after the latest fetch. The current fork refs were
+checked against the complete audit history before another `ecmult_multi`
+campaign. The exact `6f2828a` cloned-error-callback oracle is already in this
+branch, including `error-callback-clone`: it installs distinct non-NULL error
+callback data, clones both heap and preallocated contexts, forces each clone
+through invalid scratch destruction, and verifies that changing the original
+context does not redirect either clone.
+
+The remaining detached refs do not justify duplicate cherry-picks:
+`248be19` fixes the BER test helper and is represented by `4104f54` plus the
+stronger DER parser oracle; `8363a2d` checks all 66 MuSig aggregate-nonce
+bytes and is already covered by the current unit and independent fuzzer
+checks; `994b350` is in upstream through `5a8a411`; and `65d38b0` is covered
+by `0d03dda` and the magnitude-32 field corpus. The older MuSig cleanup refs
+(`bb02b1e` and `7ed2abc`) are represented by the current cleanup and invalid
+state barriers. The force-inline, xor-mask-CMOV, hash-stack, EllSwift
+unchecked-square-root, and Strauss fast-path refs are optimization snapshots
+or behavior-changing stacks. They remain excluded from the discovery branch
+so they cannot mask a clean-master failure or be used to lower its severity.
+
+The cloned-error-callback seed and all 25 tracked `ecmult_multi` inputs were
+replayed after rebuilding the exact source with Clang 22.1.7 ASan/UBSan,
+assembly disabled, both natively and with
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`. Private copies of each corpus
+then ran with `-workers=2 -jobs=2 -max_total_time=12 -timeout=60
+-rss_limit_mb=4096`; every manager and worker exited 0. No sanitizer report,
+assertion, timeout, OOM, crash artifact, or generated file remained.
+
+This is negative fork reconciliation and oracle verification, not a new
+clean-master production finding. The existing ledger is unchanged: malformed
+opaque state and public callback failure paths remain **Medium**, the
+reachable-status 10x26 magnitude-32 arithmetic issue remains
+**Medium/latent**, documented tweak-input overlap remains **Low**, and
+cleanup-only or oracle-only checks remain **Informational**. Severity is still
+assigned against clean master before later fixes or fork patches; a nonce
+without cryptographic meaning is not a Critical erasure finding.
