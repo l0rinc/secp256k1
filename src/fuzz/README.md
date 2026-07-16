@@ -5662,3 +5662,47 @@ ratings remain: Medium for the SHA and 10x26 production findings, Low for
 documented tweak-input overlap and related state correctness, and
 Informational for oracle-only hardening. Public nonce cleanup remains
 non-Critical because the nonce carries no cryptographic meaning.
+
+## 2026-07-16 ECDSA DER Parser Boundary Oracle
+
+The `api_roundtrip` target now has a gated `ecdsa-der-parser-boundaries` seed
+and an extension of its existing DER round-trip oracle. The focused table
+exercises an absent length octet, forbidden `0xFF` and indefinite lengths,
+truncated and over-wide long-form lengths, long-form lengths exceeding the
+input, non-shortest encodings, an invalid integer tag, and excessive `0xFF`
+integer padding. Every malformed input must return failure and zero the
+public signature object. A positive case with `r = 0x80` checks that one
+required leading zero is accepted and that compact serialization returns
+exactly `r = 0x80, s = 1`.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding or a production fix. The existing DER checks already
+covered ordinary round trips, trailing data, zero padding, short long-form
+lengths, empty integers, and negative values, but coverage showed that these
+specific `der_read_len` rejection paths and the invalid integer tag path were
+not reached. The coverage replay reached 100% of the `ecdsa_impl.h` branches
+and 95.56% of its lines; the only remaining non-executed parser line is the
+successful long-form return, which requires an encoded sequence of at least
+128 bytes and is outside ordinary ECDSA signature encoding.
+
+For causal proof, a disposable production mutation changed only the
+excessive-`0xFF` guard in `src/ecdsa_impl.h` to `if (0)`. All 42 pre-existing
+`api_roundtrip` corpus files stayed green, while the exact new seed aborted
+at the strict rejection assertion with status 134. Disabling only the new
+helper call made that mutated seed pass with status 0. Restoring the guard
+and helper made the focused seed, all 43 API corpus files, and empty input
+pass. The mutation was never committed. The failure models acceptance of a
+noncanonical signature integer that the master parser must reject; it is not
+claimed as a master vulnerability.
+
+Verification used the Clang 22.1.7 ASan/UBSan libFuzzer build with every
+optional module enabled and `SECP256K1_ASM=OFF`: all 14 targets passed empty
+input and all 251 tracked corpus files in the non-libFuzzer replay; the new
+seed passed directly; and two job managers with two workers each completed
+479 API fuzzing runs in 46 seconds with no sanitizer, assertion, timeout, OOM,
+or crash artifact. The ASan/UBSan `tests -t=ec -i=1` and
+`noverify_tests -t=ec -i=1` suites passed. Existing master-relative ratings
+remain unchanged: Medium for the established SHA, impossible-length, and
+10x26 findings; Low for documented state-correctness overlaps; and
+Informational for oracle-only hardening. Clearing a public nonce remains
+non-Critical because it carries no cryptographic meaning.
