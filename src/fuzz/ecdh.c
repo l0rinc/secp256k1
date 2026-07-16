@@ -297,10 +297,18 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, default_ba, &pubkey_a, seckey_b, NULL, NULL) == 1);
     FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, explicit_ab, &pubkey_b, seckey_a, secp256k1_ecdh_hash_function_sha256, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, explicit_ba, &pubkey_a, seckey_b, secp256k1_ecdh_hash_function_sha256, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, default_fn_ab, &pubkey_b, seckey_a, secp256k1_ecdh_hash_function_default, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
+    secp256k1_fuzz_ecdh_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdh(ctx, default_fn_ba, &pubkey_a, seckey_b, secp256k1_ecdh_hash_function_default, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdh_sha256_compression_calls != 0);
     FUZZ_CHECK(memcmp(default_ab, default_ba, sizeof(default_ab)) == 0);
     FUZZ_CHECK(memcmp(default_ab, explicit_ab, sizeof(default_ab)) == 0);
     FUZZ_CHECK(memcmp(default_ba, explicit_ba, sizeof(default_ba)) == 0);
