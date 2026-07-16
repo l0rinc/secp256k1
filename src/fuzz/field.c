@@ -514,6 +514,79 @@ static void secp256k1_fuzz_ref_u32_mul_mod(uint32_t out[8], const uint32_t a[8],
     memcpy(out, remainder, sizeof(uint32_t) * 8);
 }
 
+/* Check products whose operands are derived from the fuzz input against the
+ * standalone model. The raised operands exercise the largest magnitude
+ * accepted by fe_mul without changing their field values. */
+static void secp256k1_fuzz_fe_check_product_reference(const unsigned char *input, size_t size) {
+    unsigned char x32[32];
+    unsigned char y32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    uint32_t modulus[8];
+    uint32_t x_words[8];
+    uint32_t y_words[8];
+    uint32_t product_words[8];
+    secp256k1_fe x;
+    secp256k1_fe y;
+    secp256k1_fe zero7;
+    secp256k1_fe raised_x;
+    secp256k1_fe raised_y;
+    secp256k1_fe product;
+    secp256k1_fe alias_product;
+
+    secp256k1_fuzz_derive(x32, sizeof(x32), input, size, 307);
+    secp256k1_fuzz_derive(y32, sizeof(y32), input, size, 311);
+    secp256k1_fe_set_b32_mod(&x, x32);
+    secp256k1_fe_set_b32_mod(&y, y32);
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_normalize_var(&y);
+    secp256k1_fe_get_b32(x32, &x);
+    secp256k1_fe_get_b32(y32, &y);
+
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(x_words, x32);
+    secp256k1_fuzz_ref_u32_from_be(y_words, y32);
+    secp256k1_fuzz_ref_u32_mul_mod(product_words, x_words, y_words, modulus);
+    secp256k1_fuzz_ref_u32_to_be(expected32, product_words);
+
+    secp256k1_fe_mul(&product, &x, &y);
+    secp256k1_fe_normalize_var(&product);
+    secp256k1_fe_get_b32(actual32, &product);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* fe_mul allows r == a, provided r does not alias b. */
+    alias_product = x;
+    secp256k1_fe_mul(&alias_product, &alias_product, &y);
+    secp256k1_fe_normalize_var(&alias_product);
+    secp256k1_fe_get_b32(actual32, &alias_product);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised_x = x;
+    raised_y = y;
+    secp256k1_fe_add(&raised_x, &zero7);
+    secp256k1_fe_add(&raised_y, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_x.magnitude == 8);
+    FUZZ_CHECK(raised_y.magnitude == 8);
+    FUZZ_CHECK(raised_x.normalized == 0);
+    FUZZ_CHECK(raised_y.normalized == 0);
+#endif
+
+    secp256k1_fe_mul(&product, &raised_x, &raised_y);
+    secp256k1_fe_normalize_var(&product);
+    secp256k1_fe_get_b32(actual32, &product);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    alias_product = raised_x;
+    secp256k1_fe_mul(&alias_product, &alias_product, &raised_y);
+    secp256k1_fe_normalize_var(&alias_product);
+    secp256k1_fe_get_b32(actual32, &alias_product);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
+
 static void secp256k1_fuzz_ref_field_inverse(unsigned char out32[32], const unsigned char input32[32]) {
     uint32_t modulus[8];
     uint32_t base[8];
@@ -1255,6 +1328,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_fe_check_comparisons(input, size);
     secp256k1_fuzz_fe_check_cmov_metadata();
     secp256k1_fuzz_fe_check_nonnormalized_arithmetic();
+    secp256k1_fuzz_fe_check_product_reference(input, size);
 #if defined(SECP256K1_WIDEMUL_INT64)
     secp256k1_fuzz_fe_check_shifted_zero();
     secp256k1_fuzz_fe_check_zero_predicate_false_positive();
