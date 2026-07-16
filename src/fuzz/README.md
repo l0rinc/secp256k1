@@ -6224,3 +6224,32 @@ outside this target's generated verification domain. The restored Clang
 assertion, timeout, OOM, or crash artifact. Existing master-relative findings
 remain rated against clean master, and clearing a public nonce remains
 **non-Critical** because it carries no cryptographic meaning.
+
+## 2026-07-16 Hash and EllSwift Reachability Recheck
+
+After refreshing `origin/master`, the audit branch still has clean master as
+an ancestor (`origin/master`=`ebf594320dc838b9de1abb54d5ba98cef84f4297`), so
+no rebase was required. The hash target replayed all ten tracked inputs in a
+Clang 22.1.7 ASan/UBSan build, including the buffered-block cleanup seed. The
+`hash` and `noverify_tests` slices both passed at one iteration, and an
+isolated `-workers=2 -jobs=2 -max_total_time=8 -timeout=60` campaign completed
+with both jobs exiting 0 and no sanitizer, assertion, timeout, OOM, or crash
+artifact. This independently rechecks the Medium clean-master secret-state
+retention finding and the production wipe carried by `55f98a8`; it does not
+raise the finding to a disclosure or Critical cryptographic issue.
+
+A fresh GCC 16.1.0 Coverage build replayed all 14 EllSwift corpus inputs. The
+EllSwift implementation reached 100% of its 264 production lines and 100% of
+its 156 production branches. The remaining audit misses are outside this
+module's valid public state domain or belong to unrelated targets; adding a
+synthetic callback or impossible point would weaken the oracle rather than
+discover a master bug. This is negative reachability evidence, not a new
+production finding or fix.
+
+The severity ledger is unchanged when evaluated against clean master before
+later audit or fork repairs: malformed opaque state and public callback
+failure paths remain **Medium**, the reachable-status 10x26 arithmetic issue
+remains **Medium/latent**, documented tweak alias behavior remains **Low**,
+and the remaining cleanup/oracle checks are **Informational** unless they
+demonstrate a production failure. A nonce without cryptographic meaning is
+not a Critical erasure finding.
