@@ -6320,3 +6320,38 @@ oracles. The BER generator, compact-signature bounds, MuSig cleanup, and
 magnitude-32 field fixes are likewise already present. No duplicate fork
 commit was cherry-picked, and no optimization-only fork commit was applied
 because it would change the clean-master behavior being audited.
+
+## 2026-07-16 Rebase and Exact-Master Worker Recheck
+
+After the previous audit replay, `origin/master` advanced from
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` to `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`.
+The new upstream commits only update `SECURITY.md`. The audit branch was
+rebased with `git rebase origin/master`; it completed without conflicts and
+left the production and fuzzer sources unchanged.
+
+The rebased Clang 22.1.7 ASan/UBSan build, with assembly disabled and all six
+optional modules enabled, replayed every tracked input once. All 14 targets
+exited 0: `api_roundtrip`, `context`, `ecdh`, `ecmult_const`, `ecmult_multi`,
+`ellswift`, `field`, `group`, `hash`, `musig`, `recovery`, `scalar`,
+`schnorrsig`, and `xonly_tweak`. There was no sanitizer diagnostic, assertion,
+timeout, OOM, or crash artifact. The exact recovery corpus still reaches its
+malformed signature, callback-failure, invalid-point, message-reduction, and
+output-cleanup oracles; a separate review found no untested recovery contract
+that justified another duplicate seed.
+
+Private copies of the API-roundtrip, ecmult-multi, recovery, and MuSig corpora
+then ran with `-workers=2 -jobs=2 -max_total_time=10 -timeout=60`. Every
+manager and worker exited 0. Fuzzing generated additional inputs only in the
+private copies; those files were removed after the run, and the tracked
+corpora remained unchanged. No sanitizer, assertion, timeout, OOM, or crash
+artifact was produced.
+
+This is negative post-rebase verification, not a new clean-master finding.
+Severity remains evaluated against clean master before later audit or fork
+repairs: malformed opaque state and public callback failure paths remain
+**Medium**, the reachable-status 10x26 arithmetic issue remains
+**Medium/latent**, documented tweak alias behavior remains **Low**, and
+cleanup/oracle-only checks remain **Informational**. Clearing a public nonce
+is not a Critical erasure finding because that nonce carries no cryptographic
+meaning. No production fix or duplicate l0rinc cherry-pick is justified by
+this replay.
