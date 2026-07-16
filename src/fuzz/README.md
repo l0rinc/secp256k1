@@ -5779,3 +5779,42 @@ respectively, without sanitizer diagnostics, assertions, timeouts, OOMs, or
 crash artifacts. The default and forced-int64 `tests` and `noverify_tests`
 group slices (`ge`, `gej`, `gej_rescale_alias`, `gej_zinv_in_place`, and
 `group_decompress`, one iteration) also passed.
+
+## 2026-07-16 Pippenger Second-Allocation-Failure Oracle
+
+The internal `ecmult_multi` target now has a gated
+`pippenger-second-allocation-failure` seed. It calls the single-batch
+Pippenger helper with one point and a scratch arena sized to admit the
+`points`, `scalars`, and `state_space` allocations but reject the subsequent
+`state_space->ps` allocation. Both NULL and non-NULL generator-scalar cases
+are exercised. The result starts as a valid finite generator, so the oracle
+requires failure to produce canonical Jacobian infinity, zero callback calls,
+an untouched callback trace, and complete scratch rollback.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding or fix. Clean master
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already resets the result and
+rolls back the scratch checkpoint on this allocation failure. The previous
+21-input corpus reached only the first Pippenger allocation-failure block;
+coverage showed that the later `state_space->ps`/scratch-object failure block
+was absent. No public API vulnerability or availability claim is made, and
+no cryptographic nonce or secret-state issue is involved.
+
+For causal proof, a disposable mutation changed only the initial
+`secp256k1_gej_set_infinity(r)` in `secp256k1_ecmult_pippenger_batch` to
+`r->infinity = 1`. The 21 pre-existing inputs stayed green on both default
+and forced-int64/10x26 ASan/UBSan builds, while the new seed aborted with
+status 134 at the canonical-coordinate assertion. Disabling only the new
+helper made the same mutated seed pass with status 0 on both backends. The
+mutation and bypass were restored before the clean replay. This proves the
+new postcondition observes a failure-state representation that the old
+infinity-bit oracle did not.
+
+The Clang 22.1.7 ASan/UBSan builds with `SECP256K1_ASM=OFF` replayed all 22
+inputs plus empty input on both backends. The default and forced-int64
+`tests` and `noverify_tests` `ecmult_multi_tests` targets passed one
+iteration. Isolated `-workers=2 -jobs=2 -max_total_time=15 -timeout=10`
+campaigns used private corpus copies; every manager and worker exited 0
+without sanitizer diagnostics, assertions, timeouts, OOMs, or artifacts.
+Existing master-relative findings and nonce-cleanup severity remain
+unchanged.
