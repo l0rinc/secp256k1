@@ -6388,3 +6388,41 @@ and public callback failure paths are **Medium**, the reachable-status 10x26
 arithmetic issue is **Medium/latent**, documented tweak alias behavior is
 **Low**, and cleanup/oracle-only checks are **Informational**. A public nonce
 without cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-16 External-Callback Corpus and Worker Recheck
+
+The context target has several illegal-argument and null-preallocation paths
+that are compiled only with `SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON`.
+Those paths were verified separately instead of being treated as covered by
+the normal aborting-callback build. A disposable Clang 22.1.7 ASan/UBSan
+libFuzzer build used `SECP256K1_ASM=OFF`, all six optional modules, tests, and
+the external default callbacks. It replayed all 259 tracked corpus files once;
+the extra empty-input execution made the per-target totals:
+
+```
+api_roundtrip 45   context 12       ecdh 7          ecmult_const 7
+ecmult_multi  25   ellswift 15     field 18        group 21
+hash          11   musig 66        recovery 12     scalar 5
+schnorrsig    15   xonly_tweak 14
+```
+
+The command was run as `bin/fuzz_<target> -runs=1 -timeout=10
+src/fuzz/corpora/<target>` for every target. All 14 processes exited 0 with no
+sanitizer diagnostic, assertion failure, timeout, OOM, or crash artifact. The
+API, context, ecmult-multi, and MuSig targets were then replayed from private
+corpus copies with two workers and two jobs using:
+
+```
+-workers=2 -jobs=2 -max_total_time=10 -timeout=5 -rss_limit_mb=4096
+```
+
+Both workers for each target exited 0. Generated inputs stayed outside the
+audit tree, and the tracked corpora were unchanged. This is distinct negative
+verification for the external callback paths, not a new clean-master finding.
+The severity ledger therefore remains evaluated against clean master before
+later audit or fork repairs: malformed opaque state and public callback
+failure paths are **Medium**, the reachable-status 10x26 arithmetic issue is
+**Medium/latent**, documented tweak alias behavior is **Low**, and
+cleanup/oracle-only checks are **Informational**. Clearing a public nonce is
+not a Critical erasure finding because that nonce carries no cryptographic
+meaning.
