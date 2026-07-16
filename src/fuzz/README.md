@@ -6388,3 +6388,26 @@ and public callback failure paths are **Medium**, the reachable-status 10x26
 arithmetic issue is **Medium/latent**, documented tweak alias behavior is
 **Low**, and cleanup/oracle-only checks are **Informational**. A public nonce
 without cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-16 Tagged SHA256 Wrapper Oracle
+
+The API-roundtrip target now checks the public `secp256k1_tagged_sha256`
+wrapper against the independent one-shot SHA256 model. It covers tag and
+message lengths at 0, 1, 55, 56, 63, 64, 65, 127, 128, 129, and 191 bytes,
+plus an input-derived pair, while the context's custom compression callback is
+installed. The named `tagged-sha256-wrapper-boundaries` corpus input preserves
+this replay condition.
+
+This is **Informational / Low oracle hardening**, not a clean-master production
+finding. The existing `tagged_sha256_tests` unit test only uses tag/message
+lengths 32 and 3, and the generic hash target did not exercise the public
+context-aware wrapper. For causal proof, a disposable mutation made tags of at
+least 128 bytes use ordinary SHA256 initialization instead of tagged
+initialization. The existing `tests -t=tagged_sha256_tests -i=1` still passed,
+but the new API fuzzer aborted on the first corpus input; the mutation was
+restored before fixed replay. The restored Clang 22.1.7 ASan/UBSan target
+passed all 45 API inputs, and isolated two-worker runs completed without a
+sanitizer, assertion, timeout, OOM, or crash artifact. No production bug is
+claimed. Existing master-relative findings and their severity ratings are
+unchanged, and clearing a public nonce remains non-Critical because it has no
+cryptographic meaning.
