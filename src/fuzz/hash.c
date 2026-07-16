@@ -80,6 +80,34 @@ static void secp256k1_fuzz_check_sha256_reference(const secp256k1_hash_ctx *hash
     secp256k1_memclear_explicit(boundary, sizeof(boundary));
 }
 
+static void secp256k1_fuzz_check_sha256_buffer_cleanup(const secp256k1_hash_ctx *hash_ctx) {
+    unsigned char message[64];
+    unsigned char expected[32];
+    unsigned char actual[32];
+    secp256k1_sha256 hash;
+    size_t i;
+
+    for (i = 0; i < sizeof(message); i++) {
+        message[i] = (unsigned char)(0x43u + i * 29u);
+    }
+    secp256k1_fuzz_sha256_standalone(expected, message, sizeof(message));
+
+    secp256k1_sha256_initialize(&hash);
+    secp256k1_sha256_write(hash_ctx, &hash, message, 1);
+    secp256k1_sha256_write(hash_ctx, &hash, message + 1, sizeof(message) - 1);
+
+    /* The buffered block has been consumed; it must not remain in the reusable
+     * SHA state while a caller continues a secret-bearing computation. */
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(hash.buf, sizeof(hash.buf)));
+    secp256k1_sha256_finalize(hash_ctx, &hash, actual);
+    FUZZ_CHECK(memcmp(actual, expected, sizeof(actual)) == 0);
+    secp256k1_sha256_clear(&hash);
+    FUZZ_CHECK(secp256k1_fuzz_cleared_zero(&hash, sizeof(hash)));
+    secp256k1_memclear_explicit(message, sizeof(message));
+    secp256k1_memclear_explicit(expected, sizeof(expected));
+    secp256k1_memclear_explicit(actual, sizeof(actual));
+}
+
 static void secp256k1_fuzz_check_sha256_vectors(const secp256k1_hash_ctx *hash_ctx) {
     static const unsigned char zeroes[65] = { 0 };
     static const size_t zero_lengths[] = { 0, 55, 56, 63, 64, 65 };
@@ -370,6 +398,7 @@ static void secp256k1_fuzz_check_rfc6979(const secp256k1_hash_ctx *hash_ctx, con
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
+    static const unsigned char buffer_cleanup_trigger[] = "sha256 write buffer\n";
     secp256k1_hash_ctx hash_ctx;
     unsigned char key[160];
     unsigned char long_key[96];
@@ -385,6 +414,12 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_hash_derive_bytes(long_key, sizeof(long_key), input, size, 17);
     secp256k1_fuzz_hash_derive_bytes(msg, sizeof(msg), input, size, 19);
     secp256k1_hash_ctx_init(&hash_ctx);
+
+    if (size == sizeof(buffer_cleanup_trigger) - 1
+        && memcmp(input, buffer_cleanup_trigger, sizeof(buffer_cleanup_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_sha256_buffer_cleanup(&hash_ctx);
+        return 0;
+    }
 
     secp256k1_fuzz_check_sha256_vectors(&hash_ctx);
     secp256k1_fuzz_check_sha256_reference(&hash_ctx, msg, msglen);
