@@ -6185,3 +6185,42 @@ particular, malformed opaque state and public callback failure paths remain
 **Medium**, clean-master 10x26 arithmetic defects remain **Medium/latent**, and
 clearing a public nonce remains **non-Critical** because that nonce carries no
 cryptographic meaning.
+
+## 2026-07-16 ECDSA DER Scalar-Overflow Oracle
+
+The API-roundtrip fuzzer now has a gated
+`ecdsa-der-scalar-overflow` seed for the parser branch that handles a positive
+33-byte DER INTEGER. The encoding is syntactically valid DER but out of range
+for a secp256k1 scalar. The helper tests both an overflowing `r` and an
+overflowing `s`, requires the public parser to return success and initialize a
+serializable signature, and independently requires verification to fail. It
+therefore checks the documented distinction between parseability and signature
+validity instead of treating an accepted input as a valid signature.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding. Clean master deliberately accepts valid DER with
+out-of-range numbers and produces a signature that cannot verify. The prior
+43-file API corpus exercised malformed DER, leading-zero and order-overflow
+integers, but never reached the separate positive 33-byte `rlen > 32` branch;
+ordinary build/tests therefore did not provide a deterministic fuzzer oracle
+for this postcondition. No production fix or severity change is justified.
+
+For causal proof, a disposable mutation changed the `rlen > 32` overflow guard
+in `src/ecdsa_impl.h` to allow the 33-byte copy. All 43 pre-existing API inputs
+passed under that mutation, while the exact new seed triggered an ASan
+stack-buffer-overflow on the 33-byte write. Disabling only the new helper made
+the same mutated seed pass with status 0. The production and harness mutations
+were restored before fixed replay and are not committed.
+
+The restored GCC coverage replay passed all 44 API inputs and reached 96.30%
+of the 135 `ecdsa_impl.h` lines and all 106 production branches; the remaining
+misses are the cryptographically unreachable successful long-form return, the
+recovery-only recid overflow/high-S assignments, and invalid-point branches
+outside this target's generated verification domain. The restored Clang
+22.1.7 ASan/UBSan binary passed the focused seed and all 44 inputs. Both
+`tests -t=ec -i=1` and `noverify_tests -t=ec -i=1` passed. A private-copy
+`-workers=2 -jobs=2 -max_total_time=8 -timeout=60` campaign completed 92 and
+93 executions with both managers and workers exiting 0 and no sanitizer,
+assertion, timeout, OOM, or crash artifact. Existing master-relative findings
+remain rated against clean master, and clearing a public nonce remains
+**non-Critical** because it carries no cryptographic meaning.
