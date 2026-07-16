@@ -6053,3 +6053,51 @@ malformed opaque state and public callback failure paths remain **Medium**,
 and clearing a public nonce remains **non-Critical** because it has no
 cryptographic meaning. No production fix, new corpus seed, cherry-pick, or
 severity change is justified by this recheck.
+
+## 2026-07-16 Fresh MuSig Coverage Recheck
+
+The audit branch was checked against unchanged clean master
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`; it was already an ancestor of
+`HEAD`, so no rebase was needed. This pass used GCC 16.1.0, CMake 3.31.6,
+the `Coverage` build type, and a fresh out-of-tree build of the non-libFuzzer
+`fuzz_musig` binary with all modules enabled:
+
+```sh
+cmake -S . -B /tmp/secp256k1-coverage-musig-next \
+  -DCMAKE_BUILD_TYPE=Coverage -DSECP256K1_BUILD_FUZZ=ON \
+  -DSECP256K1_FUZZ_USE_LIBFUZZER=OFF -DSECP256K1_BUILD_TESTS=OFF \
+  -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_BENCHMARK=OFF \
+  -DSECP256K1_BUILD_CTIME_TESTS=OFF -DSECP256K1_INSTALL=OFF \
+  -DSECP256K1_ENABLE_MODULE_RECOVERY=ON
+cmake --build /tmp/secp256k1-coverage-musig-next --target fuzz_musig -j2
+cd /tmp/secp256k1-coverage-musig-next
+./bin/fuzz_musig /tmp/secp256k1-oracles-next/src/fuzz/corpora/musig/*
+```
+
+The replay covered all 65 tracked MuSig corpus inputs and exited 0 with an
+empty diagnostic log. `gcov -b -f` recorded 99.79% of the 468 production
+lines and 100% of the 310 branches in
+`src/modules/musig/session_impl.h`. The sole missed production line is the
+subgroup rejection after a successful compressed-point parse. It is not a
+fuzzer gap on this curve: secp256k1 has cofactor one, so every successfully
+parsed finite curve point is in the subgroup. The fuzzer-side checks already
+exercise malformed encodings and the full failure cleanup around that parser.
+
+`src/modules/musig/keyagg_impl.h` reached 99.35% of 154 lines and 100% of
+all 100 branches. Its only missed line is the `ecmult_multi_var` callback
+failure fallback at line 212, which the source itself documents as unreachable
+with the current non-failing internal callback. The fuzzer covers the
+callback's real invalid-input barriers, aggregate-infinity result, duplicate
+and cancellation cases, and output cleanup. The harness reached 97.55% of
+its 2,407 lines and 97.92% of its 2,114 branches; the misses are helper
+reference edge cases or deliberately synthetic failure hooks, not an
+unasserted production state transition.
+
+This is a fresh negative reachability and oracle-strength pass, not a new
+clean-master finding. No production mutation, new corpus seed, cherry-pick,
+or severity change is justified. Existing findings remain rated against clean
+master before later audit or fork repairs: Medium for malformed opaque state
+and public callback failure paths, Medium/latent for the clean-master 10x26
+arithmetic defects, Low/informational for internal scratch robustness, and
+non-Critical for clearing public nonce state because it carries no
+cryptographic meaning.
