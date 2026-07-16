@@ -596,6 +596,25 @@ static void run_sha256_multi_block_compression_tests(void) {
 
         CHECK(secp256k1_memcmp_var(out_one, out_two, 32) == 0);
     }
+
+    {   /* 5) A consumed buffered block is wiped before the hash continues */
+        unsigned char data[64];
+        unsigned char i;
+
+        for (i = 0; i < sizeof(data); i++) data[i] = (unsigned char)(0x43 + i * 29);
+
+        secp256k1_sha256_initialize(&sha256_one);
+        secp256k1_sha256_write(&hash_ctx, &sha256_one, data, sizeof(data));
+        secp256k1_sha256_finalize(&hash_ctx, &sha256_one, out_one);
+
+        secp256k1_sha256_initialize(&sha256_two);
+        secp256k1_sha256_write(&hash_ctx, &sha256_two, data, 1);
+        secp256k1_sha256_write(&hash_ctx, &sha256_two, data + 1, sizeof(data) - 1);
+        CHECK(all_bytes_equal(sha256_two.buf, 0, sizeof(sha256_two.buf)));
+        secp256k1_sha256_finalize(&hash_ctx, &sha256_two, out_two);
+
+        CHECK(secp256k1_memcmp_var(out_one, out_two, 32) == 0);
+    }
 }
 
 static void run_ctz_tests(void) {
