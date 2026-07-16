@@ -5999,3 +5999,57 @@ evidence only: no new seed, production fix, or severity change is justified.
 The existing findings remain rated against clean master, and clearing a public
 nonce remains non-Critical because that nonce carries no cryptographic
 meaning.
+
+## 2026-07-16 10x26 Backend Corpus and Worker Recheck
+
+The branch was checked against unchanged clean master
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`; `origin/master` was already an
+ancestor, so no rebase was needed. A disposable Clang 22.1.7 Debug
+ASan/UBSan build selected the alternate `int64` wide-multiply backend with
+`SECP256K1_ASM=OFF`, all six optional modules, exhaustive tests, and the
+libFuzzer runtime:
+
+```sh
+cmake -S . -B /tmp/secp256k1-next-int64-audit -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang \
+  -DSECP256K1_ASM=OFF -DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64 \
+  -DSECP256K1_BUILD_TESTS=ON -DSECP256K1_BUILD_BENCHMARK=OFF \
+  -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=ON \
+  -DSECP256K1_BUILD_FUZZ=ON -DSECP256K1_FUZZ_USE_LIBFUZZER=ON \
+  -DSECP256K1_ENABLE_MODULE_ECDH=ON \
+  -DSECP256K1_ENABLE_MODULE_RECOVERY=ON \
+  -DSECP256K1_ENABLE_MODULE_EXTRAKEYS=ON \
+  -DSECP256K1_ENABLE_MODULE_SCHNORRSIG=ON \
+  -DSECP256K1_ENABLE_MODULE_MUSIG=ON \
+  -DSECP256K1_ENABLE_MODULE_ELLSWIFT=ON \
+  -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+cmake --build /tmp/secp256k1-next-int64-audit -j2
+```
+
+Fixed-input replay passed all 256 tracked corpus files and one temporary
+zero-byte input for each of the 14 targets: `api_roundtrip` 43, `context` 11,
+`ecdh` 6, `ecmult_const` 6, `ecmult_multi` 24, `ellswift` 14, `field` 17,
+`group` 20, `hash` 10, `musig` 65, `recovery` 10, `scalar` 4,
+`schnorrsig` 13, and `xonly_tweak` 13. The complete `bin/noverify_tests`
+and `bin/tests` suites also passed, taking 564.813 and 1542.775 seconds,
+respectively.
+
+For a bounded parallel campaign after the complete replay, each target used
+the first four existing seeds in sorted order plus an empty input in a
+private corpus copy. `-workers=2 -jobs=2 -max_total_time=8 -timeout=60`
+campaigns passed for all 14 targets; every manager and worker exited 0 with
+no target assertion, sanitizer report, timeout, OOM, or crash artifact. An
+earlier full-seed worker attempt was stopped solely because libFuzzer replayed
+the entire corpus independently in every worker. Its ASan trace ended in
+libFuzzer's `InterruptExitCode` during that external interruption, not in
+production or harness code; it is excluded from the pass counts and is not a
+secp256k1 finding.
+
+This is negative cross-backend evidence, not a new clean-master finding. The
+existing magnitude-32 10x26 normalization defects remain **Medium/latent**
+when rated against clean master, even though this branch carries their fix;
+malformed opaque state and public callback failure paths remain **Medium**,
+and clearing a public nonce remains **non-Critical** because it has no
+cryptographic meaning. No production fix, new corpus seed, cherry-pick, or
+severity change is justified by this recheck.
