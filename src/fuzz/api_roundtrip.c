@@ -82,6 +82,7 @@ typedef struct {
 } secp256k1_fuzz_ecdsa_equation_nonce_data;
 
 typedef int (*secp256k1_fuzz_ecdsa_serialize_der_fn)(const secp256k1_context *ctx, unsigned char *output, size_t *outputlen, const secp256k1_ecdsa_signature *sig);
+typedef int (*secp256k1_fuzz_ecdsa_serialize_compact_fn)(const secp256k1_context *ctx, unsigned char *output64, const secp256k1_ecdsa_signature *sig);
 typedef int (*secp256k1_fuzz_ecdsa_sign_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *signature, const unsigned char *msghash32, const unsigned char *seckey, secp256k1_nonce_function noncefp, const void *noncedata);
 typedef int (*secp256k1_fuzz_ec_pubkey_parse_fn)(const secp256k1_context *ctx, secp256k1_pubkey *pubkey, const unsigned char *input, size_t inputlen);
 typedef int (*secp256k1_fuzz_ecdsa_parse_der_fn)(const secp256k1_context *ctx, secp256k1_ecdsa_signature *sig, const unsigned char *input, size_t inputlen);
@@ -641,6 +642,31 @@ static void secp256k1_fuzz_check_ecdsa_variable_output_cleanup(secp256k1_context
     FUZZ_CHECK(normalize(ctx, &normalized_sig, NULL) == 0);
     FUZZ_CHECK(illegal_data.calls == calls + 1);
     FUZZ_CHECK(memcmp(&normalized_sig, zero_sig, sizeof(normalized_sig)) == 0);
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+}
+
+static void secp256k1_fuzz_check_ecdsa_compact_null_output(secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecdsa compact NULL output\n";
+    secp256k1_fuzz_ecdsa_serialize_compact_fn serialize_compact = secp256k1_ecdsa_signature_serialize_compact;
+    secp256k1_fuzz_api_illegal_data illegal_data;
+    unsigned char output64[64];
+    unsigned char zero64[64] = { 0 };
+    unsigned int calls;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    illegal_data.self = &illegal_data;
+    illegal_data.calls = 0;
+    secp256k1_context_set_illegal_callback(ctx, secp256k1_fuzz_api_illegal_callback, &illegal_data);
+
+    memset(output64, 0xA5, sizeof(output64));
+    calls = illegal_data.calls;
+    FUZZ_CHECK(serialize_compact(ctx, output64, NULL) == 0);
+    FUZZ_CHECK(illegal_data.calls == calls + 1);
+    FUZZ_CHECK(memcmp(output64, zero64, sizeof(output64)) == 0);
 
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
@@ -2710,6 +2736,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, sig_retry64, &retry_sig) == 1);
     FUZZ_CHECK(memcmp(sig64, sig_retry64, sizeof(sig64)) == 0);
     secp256k1_fuzz_check_ecdsa_variable_output_cleanup(ctx, &sig);
+    secp256k1_fuzz_check_ecdsa_compact_null_output(ctx, input, size);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &pubkey) == 1);
     secp256k1_fuzz_check_ecdsa_signature_state_barrier(ctx, &sig, msg32, &pubkey);
     secp256k1_fuzz_check_ecdsa_invalid_pubkey(ctx, &sig, msg32);
