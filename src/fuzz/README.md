@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -5448,3 +5448,27 @@ tracked inputs pass in both two-worker jobs (12 executions per job), and the
 deterministic `tests -t=ecdsa -i=1` and `noverify_tests -t=ecdsa -i=1` runs
 also passed. The mutation was never committed; no production behavior or
 master-relative severity rating changed.
+
+## 2026-07-16 Secret-Key Tweak Input/Output Alias Oracle
+
+The API target now has a gated `secret-tweak-input-output-overlap` seed. It
+passes the same 32-byte storage as both the documented `In/Out` secret key and
+the `In` tweak to `secp256k1_ec_seckey_tweak_add` and
+`secp256k1_ec_seckey_tweak_mul`. Independent byte-level modular addition and
+double-and-add multiplication determine the expected return values and output
+bytes. This is the secret-key counterpart to the existing public-key and
+keypair alias checks; the headers impose no non-overlap precondition.
+
+Clean master currently passes both aliases because it parses the scalar inputs
+before writing the `In/Out` buffer. This is informational negative oracle
+hardening, not a clean-master production finding, so no severity is assigned.
+For causal proof, two disposable mutations were tested separately: each
+cleared `seckey` when `tweak32 == seckey` before operand parsing, once in the
+add wrapper and once in the multiply wrapper. The focused seed aborted under
+each mutation while all 41 pre-existing `api_roundtrip` inputs remained green;
+restoring the source made the focused seed and the complete 42-input corpus
+pass. The fixed Clang 22.1.7 ASan/UBSan native build and the assembly-off
+forced-int64 build each passed both two-worker jobs (43 executions per job,
+including the empty input), the focused seed, and the deterministic `ec` and
+`ecdsa` suites. The mutations were never committed, and no production
+behavior or master-relative severity rating changed.

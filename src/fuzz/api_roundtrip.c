@@ -1556,6 +1556,32 @@ static void secp256k1_fuzz_scalar32_mul_mod_order(unsigned char *out32, const un
     memcpy(out32, product, 32);
 }
 
+static void secp256k1_fuzz_check_seckey_tweak_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey) {
+    static const unsigned char trigger[] = "secret tweak input-output overlap\n";
+    unsigned char expected_add[32];
+    unsigned char expected_mul[32];
+    unsigned char actual[32];
+    unsigned char zero32[32] = { 0 };
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* The In/Out seckey and In tweak have no documented non-overlap
+     * precondition. Compare the exact alias with independent scalar arithmetic. */
+    secp256k1_fuzz_scalar32_add_mod_order(expected_add, seckey, seckey);
+    FUZZ_CHECK(memcmp(expected_add, zero32, sizeof(expected_add)) != 0);
+    memcpy(actual, seckey, sizeof(actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, actual, actual) == 1);
+    FUZZ_CHECK(memcmp(actual, expected_add, sizeof(actual)) == 0);
+
+    secp256k1_fuzz_scalar32_mul_mod_order(expected_mul, seckey, seckey);
+    FUZZ_CHECK(memcmp(expected_mul, zero32, sizeof(expected_mul)) != 0);
+    memcpy(actual, seckey, sizeof(actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, actual, actual) == 1);
+    FUZZ_CHECK(memcmp(actual, expected_mul, sizeof(actual)) == 0);
+}
+
 /* Check the order-minus-one boundary against byte arithmetic. The ordinary
  * tweak checks compare two production paths, so a shared scalar-conversion
  * regression could make both sides agree on the same wrong result. */
@@ -2632,6 +2658,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_null_tweak_cleanup(ctx, &pubkey, seckey, input, size);
 
     secp256k1_fuzz_scalar32(tweak32, input, size, 31);
+    secp256k1_fuzz_check_seckey_tweak_input_output_alias(ctx, input, size, seckey);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_one);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_order);
