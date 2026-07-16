@@ -7013,3 +7013,47 @@ These are baseline confirmations, not new defects introduced by the current
 oracle work. The production fixes remain independently justified by their
 named mutation proofs and deterministic tests; no severity is reduced merely
 because a later or unrelated fix makes a replay pass.
+
+## 2026-07-17 Affine X-Only Multiplication Oracle
+
+`src/fuzz/ecmult_const.c` now includes a bounded independent affine model for
+the x-only multiplication contract. It implements the ordinary secp256k1
+slopes for doubling and addition directly with field operations, including
+infinity and opposite-point transitions. It does not call `ecmult_const`,
+`ecmult`, `ecmult_gen`, projective group-addition helpers, scalar recoding, or
+precomputed tables. For every input it derives a scalar in `[1, 16]` with
+salt `149`, computes the affine reference point, and checks
+`secp256k1_ecmult_const_xonly` for both `known_on_curve` values with both the
+direct `n` form and the equivalent `n/d` form. The existing arbitrary-scalar
+cross-implementation checks remain in place; the small scalar bounds the
+reference's variable-time inversions without weakening the random production
+path coverage.
+
+The exact six tracked `ecmult_const` corpus inputs passed in single-process
+replays on native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan builds.
+The native replay then ran two workers in two jobs, with value profiling,
+entropic scheduling, and `-reduce_inputs=0`; both jobs requested 100 runs and
+exited 0. The forced-int64 replay used the same settings with 50 runs per job;
+both jobs exited 0. No sanitizer diagnostic, fuzzer assertion, timeout, OOM,
+or crash artifact was produced. The normal `ecmult_const_tests` and
+`noverify_tests.ecmult_const_tests` CTest entries also passed in both builds.
+All worker corpora and artifacts were disposable copies; no generated corpus
+files were added to the repository.
+
+As a clean-master control, the same current harness was transplanted into a
+disposable worktree at `origin/master` `11dad6d`. Its native 5x52 ASan/UBSan
+two-worker, two-job replay requested 100 runs per job and exited 0 in both
+jobs. The forced-int64/10x26 ASan/UBSan control requested 50 runs per job and
+also exited 0 in both jobs. This control copied no production fix from the
+audit branch, so it does not downgrade or mask any of the previously recorded
+clean-master findings.
+
+This is **Informational / oracle hardening**, not a production finding. The
+new model provides a separate affine group-law path for future mutations of
+projective multiplication and x-only denominator handling, but this campaign
+did not reproduce a clean-master defect and therefore claims no production
+fix or severity change. Existing findings remain rated against unmodified
+master, including the Medium malformed-opaque-state and secret-SHA-state
+issues, the Medium/latent 10x26 magnitude-32 defect, and the Low documented
+tweak-input overlap. A nonce or other public buffer without cryptographic
+meaning is not a Critical erasure finding.
