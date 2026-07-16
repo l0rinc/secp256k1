@@ -5563,3 +5563,33 @@ seed aborted with libFuzzer status 77, while all 10 other pre-existing context
 corpus files exited 0 under the mutation. Restoring the source made the focused
 seed pass and all 11 copied context inputs pass; no production mutation was
 committed and no master-relative severity rating changed.
+
+## 2026-07-16 Pippenger All-Filtered Identity Oracle
+
+The `ecmult_multi` target now has a gated `pippenger-all-filtered` seed with
+exactly `ECMULT_PIPPENGER_THRESHOLD` (88) callback entries. It runs the
+Pippenger dispatcher twice: once with finite points and zero scalars, and once
+with infinity points and nonzero scalars. Both cases must enumerate every
+callback index, return success, restore the scratch checkpoint, and produce
+the canonical all-zero Jacobian infinity representation. The generator term is
+also absent in the first run and explicitly zero in the second, so the result
+cannot depend on an untested generator-only contribution.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding. The existing random inputs can filter individual terms,
+and the larger fixtures use nonzero finite terms, but coverage showed that the
+Pippenger `no == 0` identity return had never executed. The public dispatcher
+already initializes this result correctly; no production defect or severity
+change is claimed.
+
+For causal proof, a disposable mutation inserted `r->infinity = 0` in the
+all-filtered branch immediately before its successful return. All 19
+pre-existing `ecmult_multi` corpus files remained green, while the focused
+seed recorded a noncanonical result for both filter configurations and exited
+134 under `-handle_abrt=0` at the final identity assertion. Restoring the
+source made the focused seed and the complete 20-file corpus pass. A separate
+mutation that changed the internal return value was rejected as non-probative:
+the dispatcher currently ignores that helper status. The accepted mutation
+was never committed. This fixture complements, rather than duplicates, the
+existing batch, callback, zero-scalar, and infinity-point checks by proving
+their conjunction reaches the early identity state.
