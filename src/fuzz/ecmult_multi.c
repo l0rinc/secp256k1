@@ -388,7 +388,7 @@ static void secp256k1_fuzz_ecmult_multi_check_failure_output(const secp256k1_gej
     FUZZ_CHECK(secp256k1_gej_is_infinity(result));
 }
 
-static void secp256k1_fuzz_ecmult_multi_check_canonical_failure_output(const secp256k1_gej *result) {
+static void secp256k1_fuzz_ecmult_multi_check_canonical_infinity(const secp256k1_gej *result) {
     secp256k1_fe zero;
 
     secp256k1_fe_set_int(&zero, 0);
@@ -396,6 +396,11 @@ static void secp256k1_fuzz_ecmult_multi_check_canonical_failure_output(const sec
     FUZZ_CHECK(memcmp(&result->x, &zero, sizeof(zero)) == 0);
     FUZZ_CHECK(memcmp(&result->y, &zero, sizeof(zero)) == 0);
     FUZZ_CHECK(memcmp(&result->z, &zero, sizeof(zero)) == 0);
+}
+
+static void secp256k1_fuzz_ecmult_multi_check_canonical_failure_output(const secp256k1_gej *result) {
+    /* A failed batch must use the same canonical identity representation. */
+    secp256k1_fuzz_ecmult_multi_check_canonical_infinity(result);
 }
 
 static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata);
@@ -463,6 +468,37 @@ static void secp256k1_fuzz_check_ecmult_multi_pippenger_second_allocation_failur
         FUZZ_CHECK(data.calls == 0);
         FUZZ_CHECK(data.seen_mask == 0);
         secp256k1_fuzz_ecmult_multi_check_canonical_failure_output(&result);
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+        secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+    }
+}
+
+static void secp256k1_fuzz_check_ecmult_multi_direct_empty_batch(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult direct empty batch\n";
+    static const secp256k1_ecmult_multi_func batch_fns[2] = {
+        secp256k1_ecmult_strauss_batch_single,
+        secp256k1_ecmult_pippenger_batch_single
+    };
+    secp256k1_fuzz_ecmult_multi_data data;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < sizeof(batch_fns) / sizeof(batch_fns[0]); i++) {
+        secp256k1_scratch *scratch = secp256k1_scratch_create(&ctx->error_callback, 0);
+        secp256k1_gej result;
+        size_t checkpoint;
+
+        FUZZ_CHECK(scratch != NULL);
+        memset(&data, 0, sizeof(data));
+        checkpoint = scratch->alloc_size;
+        secp256k1_gej_set_ge(&result, &secp256k1_ge_const_g);
+        FUZZ_CHECK(batch_fns[i](&ctx->error_callback, scratch, &result, NULL, secp256k1_fuzz_ecmult_multi_callback, &data, 0) == 1);
+        FUZZ_CHECK(data.calls == 0);
+        FUZZ_CHECK(data.seen_mask == 0);
+        secp256k1_fuzz_ecmult_multi_check_canonical_infinity(&result);
         FUZZ_CHECK(scratch->alloc_size == checkpoint);
         secp256k1_scratch_destroy(&ctx->error_callback, scratch);
     }
@@ -1352,6 +1388,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_fail_callback(ctx, g_sc_ptr, n_points, &data);
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_strauss_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_pippenger_batch_single, g_sc_ptr, &data);
+    secp256k1_fuzz_check_ecmult_multi_direct_empty_batch(ctx, input, size);
     secp256k1_fuzz_check_ecmult_multi_pippenger_second_allocation_failure(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
     secp256k1_fuzz_ecmult_multi_all_filtered_pippenger(ctx, input, size);
