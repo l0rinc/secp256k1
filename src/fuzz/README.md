@@ -698,15 +698,19 @@ documented in its commit message.
   library. Its rule now matches the internal CMake target, and the prior link
   failure plus the post-fix 14-target `make check` are recorded in the commit.
 
-- **Low / informational:** `ecmult_multi/scratch-wrap-create` (`b827e0e`). The
-  internal scratch constructor can wrap `base_alloc + size` before allocation,
-  but caller-reachability is limited to static test, benchmark, and fuzz
-  helpers: the public `secp256k1_scratch_space_create` symbols were removed and
-  production MuSig aggregation currently uses the no-scratch path. The guard is
-  still useful internal robustness and future-proofing, but this is not a
-  remotely reachable or exported production memory-corruption primitive. The
-  original commit's High label is superseded by this clean-master reachability
-  audit.
+- **Medium / confirmed internal memory safety, low current reachability:**
+  `ecmult_multi/scratch-wrap-create` (`b827e0e`). A clean-origin/master
+  ASan/UBSan replay at `11dad6d` requests `SIZE_MAX`; `base_alloc + size`
+  wraps to 31 bytes, and the constructor then clears the 32-byte scratch
+  header. Native 5x52 and forced-int64/10x26 builds both report the resulting
+  heap-buffer-overflow. The constructor is static/internal in this baseline,
+  the removed public scratch-space symbols are not an entry point, and current
+  production MuSig aggregation uses the no-scratch path, so no remotely
+  reachable public-API exploit was demonstrated. That reachability limit does
+  not make the confirmed memory corruption informational. The guard and
+  `SIZE_MAX` regression test are in `cac07e8`; the earlier Low label
+  understated impact, while the original High label overstated current public
+  reachability.
 - **Low / informational:** a magic-valid scratch object whose `alloc_size`
   exceeds `max_size` makes clean master subtract in unsigned arithmetic before
   the next allocation. The object is internal and no valid master path was
@@ -7057,3 +7061,38 @@ master, including the Medium malformed-opaque-state and secret-SHA-state
 issues, the Medium/latent 10x26 magnitude-32 defect, and the Low documented
 tweak-input overlap. A nonce or other public buffer without cryptographic
 meaning is not a Critical erasure finding.
+
+## 2026-07-17 Independent Affine Ecmult-Multi Oracle
+
+`src/fuzz/ecmult_multi.c` now checks the direct multi-scalar result against a
+separate affine double-and-add model. The model implements secp256k1 point
+addition and doubling with direct field slopes, and handles infinity,
+doubling with `y == 0`, equal points, and opposite points explicitly. It does
+not call `ecmult_multi`, `ecmult`, projective group-addition helpers, scalar
+recoding, or precomputed multiplication tables. The point inputs retain the
+existing generator-derived construction, but the accumulation path is now
+independent from the production batch implementation; both no-scratch/simple
+and 64 KiB/Strauss results are checked when the model is enabled.
+
+The exact `ecmult_multi` corpus was replayed one input at a time on native
+5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan builds. The six direct
+batch and repeated-batch seeds, plus the full tracked corpus, passed after
+the final 64 KiB gate change. Short value-profiled native and forced-int64
+two-worker/two-job campaigns also exited 0. No sanitizer diagnostic, fuzzer
+assertion, timeout, OOM, or crash artifact was produced. The existing
+`ecmult_multi` unit tests and the dedicated scratch-wrap seed passed with the
+branch guard enabled.
+
+The clean-master control was checked separately at `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with only the audit fuzzer overlay
+and a disposable source-compatibility helper for the branch-only
+`checked_size_mul` symbol. Both ASan/UBSan backends stopped before the affine
+comparison on `ecmult_multi/sixteen-direct-batch`: the harness's unconditional
+`SIZE_MAX` scratch-constructor probe triggered the existing
+`base_alloc + size` wrap in clean `scratch_impl.h`. The native and int64
+reports both show a 32-byte `memset` immediately past a 31-byte allocation.
+This is a re-confirmation of the existing **Medium** clean-master finding,
+fixed by `cac07e8`, not a defect in this oracle. The control therefore does
+not downgrade the finding merely because the branch guard makes the replay
+pass. A nonce or other public buffer without cryptographic meaning remains
+non-Critical for erasure severity.
