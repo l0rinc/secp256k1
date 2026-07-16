@@ -5286,3 +5286,31 @@ job 1 completed 1,337, both with exit 0 and no assertion, sanitizer
 diagnostic, timeout, OOM, or artifact. The production wipe is the only
 non-fuzzer behavior change in this finding; no unrelated optimization-stack
 commit was cherry-picked over it.
+
+## 2026-07-16 Full Isolated Multi-Worker Recheck
+
+The current branch was already based on clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`, so no rebase was required. A
+fresh Clang 22.1.7 `RelWithDebInfo` build used ASan, UBSan, no assembly, all
+optional modules, and the libFuzzer runtime. Every target was run with two
+jobs and two workers, `-max_total_time=20`, `-timeout=10`, and
+`-rss_limit_mb=2048`. Each target received a copied corpus in a private
+temporary directory; this matters because libFuzzer writes newly discovered
+inputs into a directory passed as a corpus argument.
+
+The fixed build replayed `api_roundtrip`, `context`, `ecdh`, `ecmult_const`,
+`ecmult_multi`, `ellswift`, `field`, `group`, `hash`, `musig`, `recovery`,
+`scalar`, `schnorrsig`, and `xonly_tweak`. Both workers for every target
+exited 0. The arithmetic and API workers completed 54--17,393 executions
+each; the stateful MuSig and Schnorr workers completed 65 and 35 executions
+each because their protocol seeds are deliberately expensive. There was no
+sanitizer diagnostic, assertion failure, timeout, OOM, or crash artifact.
+
+This is negative verification evidence, not a new clean-master finding and
+does not reduce the severity of any existing finding. The source review also
+rejected undocumented output/input overlap, public MuSig nonce clearing, and
+internal helper failure outputs as findings because the public contracts do
+not promise those behaviors. In particular, a nonce with no cryptographic
+meaning is not a Critical cleanup issue. Existing master-relative findings
+remain rated against clean master before later audit fixes or l0rinc fork
+patches; no fork optimization commit was applied over this recheck.
