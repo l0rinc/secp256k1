@@ -115,6 +115,39 @@ static void secp256k1_fuzz_check_tweak_input_output_alias(const secp256k1_contex
     FUZZ_CHECK(keypair_shifted_cases != 0);
 }
 
+static void secp256k1_fuzz_check_xonly_tweak_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "xonly tweak input-output overlap\n";
+    unsigned char one32[32] = { 0 };
+    secp256k1_keypair keypair;
+    secp256k1_xonly_pubkey internal_xonly;
+    secp256k1_pubkey expected_pubkey;
+    secp256k1_pubkey actual_pubkey;
+    size_t offset;
+    int expected_ret;
+    int actual_ret;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    one32[31] = 1;
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, one32) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &internal_xonly, NULL, &keypair) == 1);
+
+    /* output_pubkey is an Out object and tweak32 is an In byte array. The
+     * public contract does not prohibit their storage from overlapping. */
+    for (offset = 0; offset <= sizeof(actual_pubkey.data) - sizeof(one32); offset += 16) {
+        memset(&actual_pubkey, 0, sizeof(actual_pubkey));
+        memcpy(actual_pubkey.data + offset, one32, sizeof(one32));
+        expected_ret = secp256k1_xonly_pubkey_tweak_add(ctx, &expected_pubkey, &internal_xonly, one32);
+        actual_ret = secp256k1_xonly_pubkey_tweak_add(ctx, &actual_pubkey, &internal_xonly, actual_pubkey.data + offset);
+        FUZZ_CHECK(expected_ret == actual_ret);
+        if (expected_ret) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &expected_pubkey, &actual_pubkey) == 0);
+        }
+    }
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -616,6 +649,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
     secp256k1_fuzz_check_tweak_input_output_alias(ctx, input, size);
+    secp256k1_fuzz_check_xonly_tweak_input_output_alias(ctx, input, size);
     secp256k1_fuzz_check_invalid_keypair_xonly_pub(ctx);
     secp256k1_fuzz_check_invalid_pubkey_xonly_pub(ctx);
     if (size == sizeof("xonly pubkey from pubkey null\n") - 1
