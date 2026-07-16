@@ -7096,3 +7096,19 @@ fixed by `cac07e8`, not a defect in this oracle. The control therefore does
 not downgrade the finding merely because the branch guard makes the replay
 pass. A nonce or other public buffer without cryptographic meaning remains
 non-Critical for erasure severity.
+
+## 2026-07-17 MuSig Native and Int64 Worker Recheck
+
+After the master and fork refresh, `fuzz_musig` was run against all 65 tracked
+MuSig corpus inputs with `-jobs=2 -workers=2`, value profiling, entropic
+scheduling, `-reduce_inputs=0`, `-rss_limit_mb=0`, and a 45-second per-job
+budget. Native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan managers
+completed cleanly; each worker replayed the 65-file corpus plus the
+empty-input path and reported `Done 66 runs`. No sanitizer diagnostic,
+assertion, timeout, OOM, crash artifact, or nonzero worker result was
+observed.
+
+This was a recheck of the existing state-machine and opaque-object oracles,
+not a new production finding. The current-master severity ledger is
+unchanged: existing findings remain rated against unmodified master, and a
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
