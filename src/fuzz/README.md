@@ -6355,3 +6355,36 @@ cleanup/oracle-only checks remain **Informational**. Clearing a public nonce
 is not a Critical erasure finding because that nonce carries no cryptographic
 meaning. No production fix or duplicate l0rinc cherry-pick is justified by
 this replay.
+
+## 2026-07-16 Private Multi-Worker Campaign and PR 15 Reconciliation
+
+The exact latest fork pull head for l0rinc PR #15 is `a2a0ac2`. Its
+production change moves the keypair clear in `secp256k1_keypair_xonly_tweak_add`
+until after the tweak has been read, preserving the documented keypair/tweak
+overlap. That behavior is already present in `ba8d379`, with the related
+x-only projection coverage in `dc14cb7`; those commits also add stronger
+copied-versus-aliased comparisons, deterministic tests, a focused corpus
+input, and allocation-failure/mutation proof. The fork commit therefore adds
+no distinct clean-master behavior or evidence and remains intentionally
+uncherry-picked.
+
+Against `origin/master` at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, private copies of the
+`api_roundtrip`, `ecmult_multi`, `recovery`, and `musig` corpora ran under the
+Clang 22.1.7 ASan/UBSan libFuzzer build with all six optional modules enabled,
+assembly disabled, and:
+
+```
+-workers=4 -jobs=4 -max_total_time=120 -timeout=60 -rss_limit_mb=4096
+```
+
+Each manager and worker exited 0. The artifact directories stayed empty, and
+there was no ASan/UBSan diagnostic, assertion failure, timeout, OOM, or crash.
+The generated corpus files and worker logs were kept outside the audit tree;
+the tracked corpus remains unchanged. This is stronger negative evidence for
+the stateful paths, not a new production finding. Severity is still assessed
+against clean master before later audit/fork repairs: malformed opaque state
+and public callback failure paths are **Medium**, the reachable-status 10x26
+arithmetic issue is **Medium/latent**, documented tweak alias behavior is
+**Low**, and cleanup/oracle-only checks are **Informational**. A public nonce
+without cryptographic meaning is not a Critical erasure finding.
