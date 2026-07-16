@@ -6834,3 +6834,56 @@ overlap; and **Informational** for cleanup/oracle-only checks. A nonce without
 cryptographic meaning is not a Critical erasure finding. No production fix or
 severity downgrade is claimed without a clean-master reproduction or a
 minimal production mutation proof.
+
+## 2026-07-17 Value-Profiled Arithmetic and Scratch Recheck
+
+The remotes were refreshed before this pass. `origin/master` remained
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, the audit branch was already its
+descendant, and the l0rinc fork still had no commit ahead of that baseline
+that warranted a new cherry-pick. No rebase was needed.
+
+To search for state combinations that ordinary corpus replay may not generate,
+the native 5x52 Clang 22.1.7 ASan/UBSan build and the forced-int64/10x26
+Clang 22.1.7 ASan/UBSan build each ran `field`, `group`, `scalar`,
+`ecmult_const`, `ecmult_multi`, and `hash` with private copies of the tracked
+corpora. Each invocation used:
+
+```
+-use_value_profile=1 -entropic=1 -reduce_inputs=0
+-workers=2 -jobs=2 -max_total_time=45 -timeout=60 -rss_limit_mb=4096
+-print_final_stats=1
+```
+
+The 12 invocations requested 24 isolated libFuzzer jobs. All jobs exited 0;
+there was no ASan/UBSan diagnostic, fuzzer assertion, timeout, OOM, or crash
+artifact. The native backend executed 685/365 field, 627/618 group,
+1710/1707 scalar, 371/376 ecmult-const, 163/73 ecmult-multi, and
+30847/30999 hash units across its two jobs. The forced-int64 backend executed
+638/352, 375/376, 758/718, 227/261, 33/33, and 59417/30900 respectively.
+The differing rates reflect target cost and backend speed, not a behavioral
+disagreement.
+
+The forced-int64 `ecmult_multi` run emitted one `slow-unit` artifact for the
+existing 22-byte input `pippenger window 1261\n`, corresponding to the tracked
+`pippenger-window-1261` boundary seed. Replaying that exact artifact took
+7.565 seconds, returned 0, and produced no diagnostic; it is an intentional
+Pippenger-window stress case, not a new failure. All artifact directories were
+otherwise empty, and no fuzz process remained after polling.
+
+The first attempt at this pass was discarded because libFuzzer wrote its
+`-jobs` child logs in the shared repository working directory, interleaving
+streams from different targets. The corrected rerun changed only the runner's
+working directory and retained isolated corpora and artifact prefixes; its
+per-target logs show the expected 17, 20, 4, 6, 24, and 10 seed counts.
+
+A separate 32-bit CMake configuration could not start: the host lacks the
+32-bit C runtime objects (`Scrt1.o`, `crti.o`, `libc`) and headers
+(`bits/libc-header-start.h`). This is an environment limitation, not a
+32-bit code result. The value-profiled cross-backend pass found no new
+clean-master production bug and does not change severity. Existing findings
+remain **Medium** for malformed opaque state, callback failure, and secret
+SHA-state lifetime; **Medium/latent** for the reachable 10x26 magnitude-32
+arithmetic defect; **Low** for documented tweak-input overlap; and
+**Informational** for cleanup/oracle-only checks. A nonce without cryptographic
+meaning is not a Critical erasure finding. No production fix is claimed
+without a clean-master reproduction or a minimal production mutation proof.
