@@ -5314,3 +5314,29 @@ not promise those behaviors. In particular, a nonce with no cryptographic
 meaning is not a Critical cleanup issue. Existing master-relative findings
 remain rated against clean master before later audit fixes or l0rinc fork
 patches; no fork optimization commit was applied over this recheck.
+
+## 2026-07-16 l0rinc PR #15 Duplicate Reconciliation
+
+The complete public pull-head scan found l0rinc PR #15 at `a2a0ac2`, in
+addition to PRs #1--#14 already recorded above. PR #15 moves the clearing of
+the in/out keypair in `secp256k1_keypair_xonly_tweak_add` until after both
+helpers consume `tweak32`, and adds a copied-versus-aliased regression. This
+is the keypair half of the existing `ba8d379` production fix, not a new
+behavioral change.
+
+The branch already contains stronger evidence: `ba8d379` covers both the
+core public-key and extrakeys keypair paths, records **Low** severity against
+clean `origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297`, and includes
+the clean-master reproducer, exact production mutation, deterministic tests,
+gated corpus seed, sanitized replay, and multi-worker verification. The
+current xonly_tweak oracle also covers the complete in/out alias surface,
+including shifted valid windows. PR #15's production patch therefore has
+already been applied and its test does not add independent proof.
+
+PR #15 was deliberately not cherry-picked: doing so would duplicate the
+production hunk and weaken the master-relative audit history by presenting a
+follow-up fork commit as a second fix. No commit needed amendment because the
+existing `ba8d379` message already states the affected API, clean-master
+failure, severity, proof, and boundary decision. The other fork heads remain
+reconciled in the earlier ledger; no optimization or later fix was applied
+over the master-relative alias finding.
