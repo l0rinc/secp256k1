@@ -6101,3 +6101,50 @@ and public callback failure paths, Medium/latent for the clean-master 10x26
 arithmetic defects, Low/informational for internal scratch robustness, and
 non-Critical for clearing public nonce state because it carries no
 cryptographic meaning.
+
+## 2026-07-16 Schnorr Custom-Tag Boundary Oracle
+
+The Schnorr fuzzer already independently modeled the BIP340 nonce equation,
+but its custom-algorithm check only generated tags of lengths 14 through 32.
+That skipped the API's accepted short-tag range and the production dispatch
+boundary: the optimized BIP340 midstate is selected at exactly 13 bytes, while
+other non-NULL tags use the general tagged-SHA initializer. A gated
+`schnorrsig-custom-nonce-tag-boundaries` seed now invokes the independent
+reference for lengths 0 through 16, with and without auxiliary randomness.
+Lengths 13 and 14 are deliberately adjacent so an optimization boundary
+cannot silently become an oracle blind spot; length 0 also proves that a
+non-NULL zero-length tag remains a valid callback-domain input.
+
+The clean GCC 16.1.0 non-libFuzzer replay ran each of the 14 Schnorr corpus
+files individually and exited 0 with no diagnostics. The non-libFuzzer driver
+must receive file paths rather than the corpus directory itself; the equivalent
+replay command is:
+
+```sh
+./bin/fuzz_schnorrsig /tmp/secp256k1-oracles-next/src/fuzz/corpora/schnorrsig/*
+```
+
+For causal proof, a disposable production-only mutation changed
+`secp256k1_sha256_initialize_tagged(..., algolen)` to
+`secp256k1_sha256_initialize_tagged(..., algolen + (algolen < 14))`. All 13
+pre-existing Schnorr inputs stayed green under that mutation, while the exact
+new boundary seed aborted with status 134. Removing only the new boundary call
+made the mutated seed pass with status 0, isolating the failure to the new
+oracle. The production mutation was restored; it is not a product fix.
+
+A disposable Clang 22.1.7 ASan/UBSan libFuzzer build with assembly disabled and
+all six optional modules enabled replayed the 14 tracked seeds plus an empty
+input with `-runs=1`; it exited 0 after 15 runs. A private-copy campaign with
+`-workers=2 -jobs=2 -max_total_time=8 -timeout=60` ran both jobs to exit 0
+after 34 and 34 executions in 94 seconds. No sanitizer report, assertion,
+timeout, OOM, or crash artifact was produced, and generated inputs stayed out
+of the repository.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding: master already computes the short-tag paths consistently. No
+production fix or severity change is justified. Existing findings continue to
+be rated against clean master before later audit or fork repairs; in
+particular, malformed opaque state and public callback failure paths remain
+**Medium**, clean-master 10x26 arithmetic defects remain **Medium/latent**, and
+clearing a public nonce remains **non-Critical** because that nonce carries no
+cryptographic meaning.
