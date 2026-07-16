@@ -6253,3 +6253,70 @@ remains **Medium/latent**, documented tweak alias behavior remains **Low**,
 and the remaining cleanup/oracle checks are **Informational** unless they
 demonstrate a production failure. A nonce without cryptographic meaning is
 not a Critical erasure finding.
+
+## 2026-07-16 Exact-Commit Corpus and Worker Recheck
+
+The audit tree was rebuilt from commit `8d6eb1f` after refreshing both
+`origin/master` and the l0rinc fork. `origin/master` remained
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` and an ancestor of the audit tree,
+so no rebase was required. The exact-commit Clang 22.1.7 ASan/UBSan
+libFuzzer build has all six optional modules enabled. A `-runs=1` replay of
+the complete tracked corpus passed with these execution counts:
+
+```
+api_roundtrip 45   context 12       ecdh 7          ecmult_const 7
+ecmult_multi  25   ellswift 15     field 18        group 21
+hash          11   musig 66        recovery 12     scalar 5
+schnorrsig    15   xonly_tweak 14
+```
+
+The stateful targets then ran in private working directories with
+`-workers=2 -jobs=2 -max_total_time=15` (MuSig used 5 seconds after its
+long corpus replay): `fuzz_api_roundtrip` completed 168 and 169 executions,
+`fuzz_ecmult_multi` completed 45 and 45, `fuzz_recovery` completed 227 and
+230, and `fuzz_musig` completed 66 and 66. Every job exited 0. The remaining
+targets ran with `-workers=2 -max_total_time=10` and completed 138, 152, 63,
+87, 312, 14,488, 416, 83, and 14 executions for `context`, `ecdh`,
+`ellswift`, `field`, `group`, `hash`, `scalar`, `schnorrsig`, and
+`xonly_tweak`, respectively. No ASan/UBSan diagnostic, assertion failure,
+OOM, timeout, or crash artifact was produced. Generated mutation files were
+removed from the tracked corpus directories after the run.
+
+`clang-tidy -p /tmp/secp256k1-tidy src/secp256k1.c
+-checks='-*,clang-analyzer-*' --quiet` emitted only the existing release-build
+dead-store warning for the EllSwift square-root result consumed by
+`VERIFY_CHECK`; verification builds use the result and the preceding
+square-class test establishes the precondition. It is not a production bug or
+a reason to add a weaker oracle.
+
+The same `clang-analyzer-core` and `clang-analyzer-security` checks against
+the `-DVERIFY` production translation unit completed with no diagnostics.
+GCC 16.1.0 `-fanalyzer` completed the equivalent module-expanded syntax pass
+with no diagnostics as well.
+
+The matching `clang-analyzer-core` and `clang-analyzer-security` pass over all
+14 fuzz translation units emitted no memory or arithmetic defect. Its only
+diagnostics were deliberate NULL calls made through function-pointer typedefs
+so the harness can test illegal-argument callbacks despite public non-NULL
+attributes, and stack-address-escape warnings for callback counters whose
+callbacks are cleared before each helper returns. These are harness-modeling
+warnings, not production findings, so no suppression or weaker oracle was
+added.
+
+This is negative verification evidence, not a new clean-master finding. The
+severity ledger is unchanged when evaluated before later audit or fork
+repairs: malformed opaque state and public callback failure paths remain
+**Medium**, the reachable-status 10x26 arithmetic issue remains
+**Medium/latent**, documented tweak alias behavior remains **Low**, and
+cleanup/oracle-only checks remain **Informational**. A nonce without
+cryptographic meaning is not a Critical erasure finding.
+
+The latest relevant l0rinc fork tips were also reconciled before this
+recheck. `b5e6108` (DER lengths with offsets) is the same parser and boundary
+test as `52cb1af`; `87e57c8` (scalar shifts above the product width) is the
+same guard and regression as `04bfcac`; and `c0f32d4` (scratch test pointer
+provenance) is already represented by `527770c` and its stronger scratch
+oracles. The BER generator, compact-signature bounds, MuSig cleanup, and
+magnitude-32 field fixes are likewise already present. No duplicate fork
+commit was cherry-picked, and no optimization-only fork commit was applied
+because it would change the clean-master behavior being audited.
