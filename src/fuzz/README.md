@@ -944,6 +944,19 @@ documented in its commit message.
   makes each mutation pass. All temporary changes were restored before
   replay. This is oracle hardening, not a current-master production finding,
   and does not change any severity rating.
+- **Informational oracle hardening:** `fuzz_musig` now checks exact aliases of
+  the documented `In/Out session_secrand32` buffer with each optional 32-byte
+  nonce input: `seckey`, `msg32`, and `extra_input32`. The independent MuSig
+  transcript is evaluated from pre-call bytes, while the postcondition still
+  requires successful calls to zero the shared session-random storage and
+  produce the expected secret and public nonces. The focused
+  `session-random-input-overlap` seed and the complete 65-file MuSig corpus
+  pass on the restored Clang ASan/UBSan build. A temporary production
+  clear-before-read mutation leaves all 64 pre-existing files green but makes
+  the new seed abort, proving this is an independent alias oracle rather than
+  duplicate coverage. This is negative oracle hardening only: no clean-master
+  production defect or severity change is claimed, and invalidation of a
+  cryptographically non-meaningful public nonce is not rated Critical.
 - **Medium:** malformed long-form lengths in
   `contrib/lax_der_privatekey_parsing` (`d334351`). Clean master forms an
   out-of-range pointer while evaluating a short caller buffer before rejecting
@@ -5355,7 +5368,36 @@ header documents `output_pubkey` as `Out` and both `internal_pubkey` and
 `tweak32` as `In`; unlike the core pubkey and keypair tweak APIs, it does not
 promise an In/Out object or aliasing. The earlier `ba8d379` boundary decision
 therefore excludes this path, along with the pure Out-plus-In MuSig tweak
-wrappers and `ec_pubkey_combine`. `e5e1c8a` reverted the temporary production
+wrappers and `ec_pubkey_combine`. `c7ee9d4` reverted the temporary production
 change, unit test, fuzzer oracle, corpus input, and severity entry. The
 supported Low core/keypair alias findings and the MuSig keyagg-cache/tweak
 oracle are unchanged.
+
+## 2026-07-16 MuSig Session-Random Input Alias Oracle
+
+The public MuSig declaration gives `session_secrand32` an explicit `In/Out`
+role: it is consumed as nonce-derivation input and must be invalidated after a
+successful call. The optional `seckey`, `msg32`, and `extra_input32` arguments
+are 32-byte `In` inputs, and the header does not impose a non-overlap
+precondition. The new gated
+`session-random-input-overlap` seed therefore exercises one exact alias for
+each of those three inputs.
+
+Each case snapshots the pre-call bytes, computes the nonce transcript with
+the independent MuSig reference, invokes `secp256k1_musig_nonce_gen` with the
+shared pointer, and checks the return value, both secret nonce scalars, public
+nonce serialization, and the required zeroing of the shared session-random
+buffer. The oracle intentionally does not require an aliased `const` input
+view to remain readable after the documented `In/Out` invalidation; that would
+test a different and unsupported preservation contract.
+
+This is informational/negative oracle hardening, not a clean-master finding.
+The restored Clang 22.1.7 ASan/UBSan build passed the focused seed and all 65
+tracked MuSig files (66 executions including the empty input). For causal
+proof, a disposable production mutation cleared `session_secrand32` before
+nonce derivation whenever it exactly aliased `seckey`, `msg32`, or
+`extra_input32`. The new seed aborted at the independent postcondition, while
+all 64 pre-existing files remained green in a 65-execution replay. The
+mutation was restored before the fixed replay. No production behavior or
+severity rating changes; a public nonce without cryptographic meaning is not
+a Critical cleanup issue.
