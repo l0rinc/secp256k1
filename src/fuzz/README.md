@@ -6766,3 +6766,35 @@ issue, **Low** for documented tweak-input overlap, and **Informational** for
 this negative oracle result. A nonce without cryptographic meaning is not a
 Critical erasure finding. No fork fix or later audit commit was used to lower
 any master-relative severity.
+
+## 2026-07-16 Four-Target Cross-Backend Worker Campaign
+
+The audit branch remained a clean descendant of
+`origin/master 11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, so no rebase was
+needed. Private copies of the `api_roundtrip` (44 inputs), `ecmult_multi`
+(24), `ellswift` (14), and `musig` (65) corpora were replayed with the
+Clang 22.1.7 ASan/UBSan native 5x52 build and the forced-int64/10x26 build.
+Each target used four workers and four jobs:
+
+```
+-workers=4 -jobs=4 -max_total_time=30 -timeout=60 -rss_limit_mb=4096
+-print_final_stats=1
+```
+
+All 32 manager jobs exited 0. The stateful MuSig jobs took up to 140 seconds
+to finish their complete corpus because each input performs a long protocol
+trace; the slower run was not an input timeout. No sanitizer diagnostic,
+fuzzer assertion, nonzero worker result, OOM, timeout, or crash artifact was
+observed, and the private artifact directories remained empty. Generated
+mutations stayed outside the repository and were removed with the temporary
+campaign directories after inspection.
+
+This is negative regression evidence for the committed audit oracles, not
+proof that clean master has no additional defect: the branch contains prior
+production fixes whose behavior could mask a later mutation. It therefore
+does not lower any master-relative rating or replace a clean-master or
+minimal-mutation proof. The existing ledger remains **Medium** for malformed
+opaque state, callback failure, and secret SHA-state lifetime; **Medium/latent**
+for the reachable 10x26 magnitude-32 arithmetic issue; **Low** for documented
+tweak-input overlap; and **Informational** for cleanup/oracle-only checks. A
+nonce without cryptographic meaning remains non-Critical.
