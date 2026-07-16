@@ -635,6 +635,9 @@ static int secp256k1_ecdsa_sign_inner(const secp256k1_context* ctx, secp256k1_sc
     secp256k1_scalar sec, non, msg;
     int ret = 0;
     int is_sec_valid;
+    int known_noncefp = noncefp == NULL
+        || noncefp == secp256k1_nonce_function_rfc6979
+        || noncefp == secp256k1_nonce_function_default;
     unsigned char nonce32[32];
     unsigned int count = 0;
     /* Default initialization here is important so we won't pass uninit values to the cmov in the end */
@@ -651,8 +654,8 @@ static int secp256k1_ecdsa_sign_inner(const secp256k1_context* ctx, secp256k1_sc
     while (1) {
         int is_nonce_valid;
 
-        if (noncefp == NULL) {
-            /* Use ctx-aware function by default */
+        if (known_noncefp) {
+            /* Library-owned nonce functions use the caller's context. */
             ret = nonce_function_rfc6979_impl(secp256k1_get_hash_context(ctx), nonce32, msg32, seckey, NULL, (void*)noncedata, count);
         } else {
             ret = !!noncefp(nonce32, msg32, seckey, NULL, (void*)noncedata, count);

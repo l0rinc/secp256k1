@@ -6467,3 +6467,40 @@ and the reachable 10x26 magnitude-32 arithmetic issue remain **Medium** or
 **Medium/latent** as previously recorded; documented tweak-input overlap is
 **Low**; oracle-only hardening is **Informational**. Clearing a public nonce
 does not become Critical because that nonce carries no cryptographic meaning.
+
+## 2026-07-16 ECDSA Explicit Built-In RFC6979 Context Dispatch
+
+The clean-master source at `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` had a
+second reachable instance of the context-dispatch contract already examined
+for ECDH. `secp256k1_ecdsa_sign_inner` used the caller's SHA-256 context when
+`noncefp == NULL`, but passing either exported library-owned nonce pointer,
+`secp256k1_nonce_function_rfc6979` or `secp256k1_nonce_function_default`,
+called the public wrapper bound to `secp256k1_context_static`. The shared
+helper made this affect both ordinary and recoverable ECDSA signing.
+
+This is a **Low master-relative production finding**: a caller selecting an
+explicit built-in nonce function silently bypassed a configured hardware or
+platform SHA compressor. The generated signature, recovery id, and RFC6979
+transcript remain correct because the compression callback is required to be
+SHA-256-equivalent; this is a public API dispatch/performance failure, not a
+forgery, nonce-reuse, key-disclosure, or cryptographic-result finding. The
+severity is assessed against clean master, not reduced because later audit
+changes or unrelated fork fixes happen to touch nonce handling.
+
+This reiterates and tightens the earlier `63c9bd4` recoverable-signing oracle:
+that check proved `NULL` routing and compared explicit/default signatures, but
+output equality cannot detect a valid compressor being bypassed. The new
+oracles clear a counted exact-SHA callback after setter self-tests and require
+the callback to run for both explicit aliases in `fuzz_api_roundtrip` and
+`fuzz_recovery`; `ecdsa_ctx_sha256` provides the deterministic unit regression.
+Arbitrary caller callbacks remain dispatched directly and retain their data
+semantics. The analogous ECDH production fix is recorded separately in
+`955daba`; no l0rinc fork pull request duplicated this ECDSA dispatch behavior.
+
+For causal proof, a temporary production mutation changed only
+`if (known_noncefp)` back to `if (noncefp == NULL)`. With the new assertions
+present, `bin/tests -t=ecdsa -i=1`, all 44 existing API-roundtrip corpus inputs,
+and all 11 existing recovery corpus inputs each aborted with exit 134 at the
+callback-use oracle. Restoring the shared context-aware branch made the unit,
+API corpus, and recovery corpus pass under Clang 22.1.7 ASan/UBSan; the
+mutation was temporary and is not part of the fix.
