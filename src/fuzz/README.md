@@ -5818,3 +5818,46 @@ campaigns used private corpus copies; every manager and worker exited 0
 without sanitizer diagnostics, assertions, timeouts, OOMs, or artifacts.
 Existing master-relative findings and nonce-cleanup severity remain
 unchanged.
+
+## 2026-07-16 Direct Empty-Batch Oracle
+
+The internal `ecmult_multi` target now has a gated
+`direct-empty-batch` seed (`ecmult direct empty batch\n`). It calls both
+single-batch implementations directly with `inp_g_sc = NULL`, no callback
+points, and a zero-capacity scratch arena. The result is prefixed with a
+finite generator to make stale output observable. The oracle requires a
+successful return, canonical Jacobian infinity storage, zero callback calls,
+an untouched callback trace, and unchanged scratch allocation state for both
+Strauss and Pippenger.
+
+This is **Informational / Low internal-oracle hardening** relative to clean
+master `ebf594320dc838b9de1abb54d5ba98cef84f4297`, not a production finding or
+fix. The public empty-input API paths were already covered, but the corpus
+never invoked the internal single-batch `n_points == 0` exits directly. These
+entry points are internal implementation contracts and the new assertion does
+not imply a remotely triggerable availability, memory-safety, or cryptographic
+issue. No nonce or secret-state finding is involved.
+
+For causal proof, two disposable production mutations were tested separately:
+after the existing `secp256k1_gej_set_infinity(r)` in
+`secp256k1_ecmult_strauss_batch` or
+`secp256k1_ecmult_pippenger_batch`, the empty branch wrote
+`secp256k1_fe_set_int(&r->x, 1)` before returning success. This models a
+noncanonical identity transition without changing the surrounding arithmetic.
+The 22 pre-existing `ecmult_multi` controls stayed green on both default and
+forced-int64/10x26 ASan/UBSan builds, while the exact new seed reached the
+canonical-coordinate assertion and exited with libFuzzer status 77 on each
+backend. Disabling only the new helper made the same mutated seed pass with
+status 0 on both backends. Both mutations and both bypasses were restored; no
+production mutation is committed.
+
+Coverage replay of all 23 inputs reached both direct empty-batch branches; it
+also preserved coverage of the prior Pippenger allocation-failure oracle. The
+clean Clang 22.1.7 ASan/UBSan builds with `SECP256K1_ASM=OFF` replayed the
+focused seed and complete corpus on both backends. The default and forced-
+int64 `tests` and `noverify_tests` `ecmult_multi_tests` slices passed one
+iteration. Isolated `-workers=2 -jobs=2 -max_total_time=15 -timeout=10`
+campaigns used private corpus copies, completed with zero manager/worker
+failures, and produced no sanitizer, assertion, timeout, OOM, or crash
+artifacts. The master-relative severity ledger and public-nonce assessment
+remain unchanged.
