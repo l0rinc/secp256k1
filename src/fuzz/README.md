@@ -5472,3 +5472,24 @@ forced-int64 build each passed both two-worker jobs (43 executions per job,
 including the empty input), the focused seed, and the deterministic `ec` and
 `ecdsa` suites. The mutations were never committed, and no production
 behavior or master-relative severity rating changed.
+
+## 2026-07-16 Pippenger Boundary Replay Budget Clarification
+
+The `pippenger-window-1261` fixture is intentionally expensive: it builds
+1,261 points and performs two complete independent 1,261-term scalar-sum
+models. On this host, an initial all-target run used `-workers=2 -jobs=2
+-max_total_time=20 -timeout=10`; both `ecmult_multi` worker logs timed out
+while executing `ecmult_multi.c:735`, the exact `pippenger-window-1261` seed.
+The timeout was caused by concurrent sanitizer workers sharing the CPU, not by
+an infinite loop, memory error, or oracle failure. The isolated seed completed
+successfully in 4,381 ms, and a corrected two-worker/two-job replay with
+`-max_total_time=30 -timeout=60` completed 118 and 124 executions with both
+jobs exiting 0 and no sanitizer diagnostic, assertion, timeout, OOM, or
+artifact. The deterministic ECDSA and MuSig suites also passed in both verify
+modes.
+
+This is a campaign-budget correction only. It is not a clean-master
+production finding, does not change the Informational/Low oracle-hardening
+rating of `5e5491e`, and does not justify treating the internal Pippenger
+boundary as a denial-of-service bug. Future multi-worker replays of this target
+must give this gated fixture a per-input timeout of at least 60 seconds.
