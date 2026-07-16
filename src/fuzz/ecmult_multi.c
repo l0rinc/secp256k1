@@ -668,6 +668,157 @@ static void secp256k1_fuzz_ecmult_multi_make_point(const secp256k1_context *ctx,
     secp256k1_scalar_clear(&sc);
 }
 
+/* Keep a bounded multi-scalar check independent from both ecmult_const and
+ * the projective addition paths used by ecmult_multi. This affine model is
+ * intentionally limited to the direct batches so its inversions remain cheap
+ * enough to run on every corpus input. */
+static void secp256k1_fuzz_ecmult_multi_affine_double(secp256k1_ge *result, const secp256k1_ge *point) {
+    secp256k1_fe x = point->x;
+    secp256k1_fe y = point->y;
+    secp256k1_fe lambda;
+    secp256k1_fe tmp;
+
+    if (point->infinity || secp256k1_fe_normalizes_to_zero_var(&y)) {
+        secp256k1_ge_set_infinity(result);
+        return;
+    }
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_normalize_var(&y);
+
+    secp256k1_fe_sqr(&lambda, &x);
+    secp256k1_fe_mul_int(&lambda, 3);
+    tmp = y;
+    secp256k1_fe_add(&tmp, &y);
+    secp256k1_fe_inv_var(&tmp, &tmp);
+    secp256k1_fe_mul(&lambda, &lambda, &tmp);
+
+    secp256k1_fe_sqr(&result->x, &lambda);
+    secp256k1_fe_negate(&tmp, &x, 1);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_normalize_var(&result->x);
+
+    secp256k1_fe_negate(&tmp, &result->x, 1);
+    secp256k1_fe_add(&tmp, &x);
+    secp256k1_fe_mul(&result->y, &lambda, &tmp);
+    secp256k1_fe_negate(&tmp, &y, 1);
+    secp256k1_fe_add(&result->y, &tmp);
+    secp256k1_fe_normalize_var(&result->y);
+    result->infinity = 0;
+}
+
+static void secp256k1_fuzz_ecmult_multi_affine_add(secp256k1_ge *result, const secp256k1_ge *a, const secp256k1_ge *b) {
+    secp256k1_fe ax = a->x;
+    secp256k1_fe ay = a->y;
+    secp256k1_fe bx = b->x;
+    secp256k1_fe by = b->y;
+    secp256k1_fe lambda;
+    secp256k1_fe tmp;
+
+    if (a->infinity) {
+        *result = *b;
+        return;
+    }
+    if (b->infinity) {
+        *result = *a;
+        return;
+    }
+    secp256k1_fe_normalize_var(&ax);
+    secp256k1_fe_normalize_var(&ay);
+    secp256k1_fe_normalize_var(&bx);
+    secp256k1_fe_normalize_var(&by);
+
+    if (secp256k1_fe_equal(&ax, &bx)) {
+        if (secp256k1_fe_equal(&ay, &by)) {
+            secp256k1_ge point = *a;
+            point.x = ax;
+            point.y = ay;
+            secp256k1_fuzz_ecmult_multi_affine_double(result, &point);
+        } else {
+            secp256k1_ge_set_infinity(result);
+        }
+        return;
+    }
+
+    secp256k1_fe_negate(&lambda, &ax, 1);
+    secp256k1_fe_add(&lambda, &bx);
+    secp256k1_fe_inv_var(&lambda, &lambda);
+    secp256k1_fe_negate(&tmp, &ay, 1);
+    secp256k1_fe_add(&tmp, &by);
+    secp256k1_fe_mul(&lambda, &lambda, &tmp);
+
+    secp256k1_fe_sqr(&result->x, &lambda);
+    secp256k1_fe_negate(&tmp, &ax, 1);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_negate(&tmp, &bx, 1);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_normalize_var(&result->x);
+
+    secp256k1_fe_negate(&tmp, &result->x, 1);
+    secp256k1_fe_add(&tmp, &ax);
+    secp256k1_fe_mul(&result->y, &lambda, &tmp);
+    secp256k1_fe_negate(&tmp, &ay, 1);
+    secp256k1_fe_add(&result->y, &tmp);
+    secp256k1_fe_normalize_var(&result->y);
+    result->infinity = 0;
+}
+
+static void secp256k1_fuzz_ecmult_multi_affine_scalar_mul(secp256k1_ge *result, const secp256k1_ge *point, const secp256k1_scalar *scalar) {
+    unsigned char scalar32[32];
+    secp256k1_ge accumulator;
+    unsigned int bit;
+
+    secp256k1_ge_set_infinity(&accumulator);
+    secp256k1_scalar_get_b32(scalar32, scalar);
+    for (bit = 256; bit != 0; bit--) {
+        secp256k1_ge doubled;
+        secp256k1_ge added;
+        unsigned int source_bit = bit - 1;
+
+        secp256k1_fuzz_ecmult_multi_affine_double(&doubled, &accumulator);
+        accumulator = doubled;
+        if (((scalar32[31 - (source_bit >> 3)] >> (source_bit & 7)) & 1u) != 0) {
+            secp256k1_fuzz_ecmult_multi_affine_add(&added, &accumulator, point);
+            accumulator = added;
+        }
+    }
+    *result = accumulator;
+    secp256k1_memclear_explicit(scalar32, sizeof(scalar32));
+}
+
+static void secp256k1_fuzz_ecmult_multi_affine_reference(secp256k1_ge *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data) {
+    secp256k1_ge accumulator;
+    secp256k1_ge term;
+    size_t i;
+
+    secp256k1_ge_set_infinity(&accumulator);
+    if (g_sc != NULL) {
+        secp256k1_fuzz_ecmult_multi_affine_scalar_mul(&term, &secp256k1_ge_const_g, g_sc);
+        secp256k1_fuzz_ecmult_multi_affine_add(&accumulator, &accumulator, &term);
+    }
+    for (i = 0; i < n_points; i++) {
+        secp256k1_fuzz_ecmult_multi_affine_scalar_mul(&term, &data->pt[i], &data->sc[i]);
+        secp256k1_fuzz_ecmult_multi_affine_add(&accumulator, &accumulator, &term);
+    }
+    *expected = accumulator;
+}
+
+static void secp256k1_fuzz_ecmult_multi_check_affine_result(const secp256k1_gej *actual, const secp256k1_ge *expected) {
+    secp256k1_ge actual_affine;
+    secp256k1_gej actual_copy = *actual;
+    unsigned char actual_bytes[64];
+    unsigned char expected_bytes[64];
+
+    secp256k1_ge_set_gej_var(&actual_affine, &actual_copy);
+    FUZZ_CHECK(actual_affine.infinity == expected->infinity);
+    if (expected->infinity) {
+        return;
+    }
+    secp256k1_ge_to_bytes_ext(actual_bytes, &actual_affine);
+    secp256k1_ge_to_bytes_ext(expected_bytes, expected);
+    FUZZ_CHECK(memcmp(actual_bytes, expected_bytes, sizeof(actual_bytes)) == 0);
+}
+
 static void secp256k1_fuzz_ecmult_multi_reference(secp256k1_gej *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data) {
     secp256k1_gej term;
     size_t i;
@@ -972,6 +1123,7 @@ static void secp256k1_fuzz_ecmult_multi_check_equality_barrier(void) {
 
 static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, size_t scratch_size, const secp256k1_scalar *g_sc, size_t n_points, secp256k1_fuzz_ecmult_multi_data *data) {
     secp256k1_scratch *scratch;
+    secp256k1_ge affine_expected;
     secp256k1_gej expected;
     secp256k1_gej no_scratch;
     secp256k1_gej with_scratch;
@@ -982,6 +1134,12 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
     scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_size);
     FUZZ_CHECK(scratch != NULL);
     checkpoint = scratch->alloc_size;
+    /* 64 KiB selects the bounded Strauss path for the direct batches; the
+     * no-scratch call in this same comparison selects the simple path. Avoid
+     * paying for the affine model four times per input. */
+    if (scratch_size == 65536) {
+        secp256k1_fuzz_ecmult_multi_affine_reference(&affine_expected, g_sc, n_points, data);
+    }
     secp256k1_fuzz_ecmult_multi_reference(&expected, g_sc, n_points, data);
 
     secp256k1_fuzz_ecmult_multi_reset_trace(data);
@@ -992,6 +1150,10 @@ static void secp256k1_fuzz_ecmult_multi_compare(const secp256k1_context *ctx, si
     secp256k1_fuzz_ecmult_multi_check_success_trace(data, n_points);
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     FUZZ_CHECK(no_scratch_ret == with_scratch_ret);
+    if (with_scratch_ret && scratch_size == 65536) {
+        secp256k1_fuzz_ecmult_multi_check_affine_result(&no_scratch, &affine_expected);
+        secp256k1_fuzz_ecmult_multi_check_affine_result(&with_scratch, &affine_expected);
+    }
     if (with_scratch_ret) {
         secp256k1_fuzz_ecmult_multi_check_result(&no_scratch, &expected);
         secp256k1_fuzz_ecmult_multi_check_result(&no_scratch, &with_scratch);
