@@ -6798,3 +6798,39 @@ opaque state, callback failure, and secret SHA-state lifetime; **Medium/latent**
 for the reachable 10x26 magnitude-32 arithmetic issue; **Low** for documented
 tweak-input overlap; and **Informational** for cleanup/oracle-only checks. A
 nonce without cryptographic meaning remains non-Critical.
+
+## 2026-07-16 Signing and Context Worker Recheck
+
+After refreshing both remotes, the audit branch remained a clean descendant of
+`origin/master 11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; no rebase was
+needed. The l0rinc comparison had no fork-side commits to cherry-pick: the
+only three left-side commits were the upstream security-contact merge and its
+`SECURITY.md` follow-ups.
+
+Private copies of the tracked `context` (11 files), `ecdh` (6), `recovery`
+(11), `schnorrsig` (14), and `xonly_tweak` (13) corpora were replayed on
+native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan builds. Each of
+the ten target/backend invocations used:
+
+```
+-workers=4 -jobs=4 -max_total_time=60 -timeout=60 -rss_limit_mb=4096
+-print_final_stats=1
+```
+
+All 40 worker jobs exited 0. One forced-int64 Schnorr manager took longer than
+the nominal manager budget while draining its complete stateful corpus, but
+finished successfully. No sanitizer diagnostic, fuzzer assertion, nonzero
+worker, timeout, OOM, or crash artifact was observed; no fuzz process remained
+after polling. Generated mutations and artifacts stayed in disposable
+directories outside the repository.
+
+This is negative regression evidence for the committed branch oracles, not a
+clean-master discovery proof: prior branch production fixes can mask a
+clean-master mutation. The existing findings therefore remain rated against
+unmodified master: **Medium** for malformed opaque state, public callback
+failure, and secret SHA-state lifetime; **Medium/latent** for the reachable
+10x26 magnitude-32 arithmetic defect; **Low** for documented tweak-input
+overlap; and **Informational** for cleanup/oracle-only checks. A nonce without
+cryptographic meaning is not a Critical erasure finding. No production fix or
+severity downgrade is claimed without a clean-master reproduction or a
+minimal production mutation proof.
