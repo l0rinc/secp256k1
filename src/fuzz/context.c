@@ -199,23 +199,24 @@ static void secp256k1_fuzz_check_context_ecdsa_equivalence(const secp256k1_conte
     FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
 }
 
-static void secp256k1_fuzz_check_sha256_secret_operations(secp256k1_context *custom_ctx, const unsigned char *input, size_t size, const unsigned char *seed32, const unsigned char *msg32, const unsigned char *seckey) {
+static void secp256k1_fuzz_check_sha256_secret_operations(const secp256k1_context *custom_ctx, const secp256k1_context *custom_clone, const secp256k1_context *custom_prealloc_clone, const unsigned char *input, size_t size, const unsigned char *seed32, const unsigned char *msg32, const unsigned char *seckey) {
     static const unsigned char trigger[] = "sha256 secret operations\n";
+    const secp256k1_context *custom_contexts[3];
     secp256k1_context *default_ctx;
-    secp256k1_pubkey custom_pubkey;
     secp256k1_pubkey default_pubkey;
-    secp256k1_ecdsa_signature custom_sig;
     secp256k1_ecdsa_signature default_sig;
-    unsigned char custom_serialized[33];
     unsigned char default_serialized[33];
-    unsigned char custom_compact[64];
     unsigned char default_compact[64];
-    size_t custom_serialized_len = sizeof(custom_serialized);
     size_t default_serialized_len = sizeof(default_serialized);
+    size_t i;
 
     if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
         return;
     }
+
+    custom_contexts[0] = custom_ctx;
+    custom_contexts[1] = custom_clone;
+    custom_contexts[2] = custom_prealloc_clone;
 
     /* A valid replacement compression function must preserve secret-dependent
      * API results, even though the context's blinding state is different. */
@@ -223,37 +224,54 @@ static void secp256k1_fuzz_check_sha256_secret_operations(secp256k1_context *cus
     FUZZ_CHECK(default_ctx != NULL);
     FUZZ_CHECK(secp256k1_context_randomize(default_ctx, seed32) == 1);
 
-    secp256k1_fuzz_sha256_compression_calls = 0;
-    FUZZ_CHECK(secp256k1_ec_pubkey_create(custom_ctx, &custom_pubkey, seckey) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(default_ctx, &default_pubkey, seckey) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(custom_ctx, custom_serialized, &custom_serialized_len, &custom_pubkey, SECP256K1_EC_COMPRESSED) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_serialize(default_ctx, default_serialized, &default_serialized_len, &default_pubkey, SECP256K1_EC_COMPRESSED) == 1);
-    FUZZ_CHECK(custom_serialized_len == sizeof(custom_serialized));
     FUZZ_CHECK(default_serialized_len == sizeof(default_serialized));
-    FUZZ_CHECK(memcmp(custom_serialized, default_serialized, sizeof(custom_serialized)) == 0);
-
-    FUZZ_CHECK(secp256k1_ecdsa_sign(custom_ctx, &custom_sig, msg32, seckey, NULL, NULL) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_sign(default_ctx, &default_sig, msg32, seckey, NULL, NULL) == 1);
-    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(custom_ctx, custom_compact, &custom_sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(default_ctx, default_compact, &default_sig) == 1);
-    FUZZ_CHECK(memcmp(custom_compact, default_compact, sizeof(custom_compact)) == 0);
-    FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &custom_sig, msg32, &custom_pubkey) == 1);
-    FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls != 0);
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_SCHNORRSIG)
     {
-        secp256k1_keypair custom_keypair;
         secp256k1_keypair default_keypair;
-        unsigned char custom_schnorr[64];
         unsigned char default_schnorr[64];
 
-        FUZZ_CHECK(secp256k1_keypair_create(custom_ctx, &custom_keypair, seckey) == 1);
         FUZZ_CHECK(secp256k1_keypair_create(default_ctx, &default_keypair, seckey) == 1);
-        FUZZ_CHECK(secp256k1_schnorrsig_sign32(custom_ctx, custom_schnorr, msg32, &custom_keypair, NULL) == 1);
         FUZZ_CHECK(secp256k1_schnorrsig_sign32(default_ctx, default_schnorr, msg32, &default_keypair, NULL) == 1);
-        FUZZ_CHECK(memcmp(custom_schnorr, default_schnorr, sizeof(custom_schnorr)) == 0);
+
+        for (i = 0; i < sizeof(custom_contexts) / sizeof(custom_contexts[0]); ++i) {
+            secp256k1_keypair custom_keypair;
+            unsigned char custom_schnorr[64];
+            size_t calls;
+
+            calls = secp256k1_fuzz_sha256_compression_calls;
+            FUZZ_CHECK(secp256k1_keypair_create(custom_contexts[i], &custom_keypair, seckey) == 1);
+            FUZZ_CHECK(secp256k1_schnorrsig_sign32(custom_contexts[i], custom_schnorr, msg32, &custom_keypair, NULL) == 1);
+            FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls > calls);
+            FUZZ_CHECK(memcmp(custom_schnorr, default_schnorr, sizeof(custom_schnorr)) == 0);
+        }
     }
 #endif
+
+    secp256k1_fuzz_sha256_compression_calls = 0;
+    for (i = 0; i < sizeof(custom_contexts) / sizeof(custom_contexts[0]); ++i) {
+        secp256k1_pubkey custom_pubkey;
+        secp256k1_ecdsa_signature custom_sig;
+        unsigned char custom_serialized[33];
+        unsigned char custom_compact[64];
+        size_t custom_serialized_len = sizeof(custom_serialized);
+        size_t calls;
+
+        calls = secp256k1_fuzz_sha256_compression_calls;
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(custom_contexts[i], &custom_pubkey, seckey) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(custom_contexts[i], custom_serialized, &custom_serialized_len, &custom_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(custom_serialized_len == sizeof(custom_serialized));
+        FUZZ_CHECK(memcmp(custom_serialized, default_serialized, sizeof(custom_serialized)) == 0);
+        FUZZ_CHECK(secp256k1_ecdsa_sign(custom_contexts[i], &custom_sig, msg32, seckey, NULL, NULL) == 1);
+        FUZZ_CHECK(secp256k1_fuzz_sha256_compression_calls > calls);
+        FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(custom_contexts[i], custom_compact, &custom_sig) == 1);
+        FUZZ_CHECK(memcmp(custom_compact, default_compact, sizeof(custom_compact)) == 0);
+        FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &custom_sig, msg32, &custom_pubkey) == 1);
+    }
 
     secp256k1_context_destroy(default_ctx);
 }
@@ -510,7 +528,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
     secp256k1_fuzz_check_tagged_sha256_compression(prealloc_hash_clone, input + tag_offset, taglen, input + msg_offset, msglen, 1);
     secp256k1_fuzz_check_sha256_reject_keeps_backend(ctx, input + tag_offset, taglen, input + msg_offset, msglen);
-    secp256k1_fuzz_check_sha256_secret_operations(ctx, input, size, seed32, msg32, seckey);
+    secp256k1_fuzz_check_sha256_secret_operations(ctx, hash_clone, prealloc_hash_clone, input, size, seed32, msg32, seckey);
     secp256k1_context_set_sha256_compression(ctx, NULL);
     secp256k1_fuzz_check_tagged_sha256_compression(ctx, input + tag_offset, taglen, input + msg_offset, msglen, 0);
     secp256k1_fuzz_check_tagged_sha256_compression(hash_clone, input, size, input, size, 1);

@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
+- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -5534,3 +5534,32 @@ flags was a harness-mode mismatch, not a fuzz result.
 This is negative evidence only. No new seed, oracle, production patch, or
 severity change is justified, and no production bug is claimed without a
 reproduction on master or a minimal production mutation.
+
+## 2026-07-16 Custom SHA Clone Secret-Operation Oracle
+
+The existing gated `sha256-secret-operations` seed now exercises the valid
+custom SHA-256 compression backend through the source context, a heap clone,
+and a preallocated clone. The source and default reference contexts are
+randomized from the same seed; the clones retain the state copied at creation,
+as required for context cloning. Each context must produce the same compressed
+public key and deterministic ECDSA compact signature as the default reference,
+and each custom context must invoke the installed compression callback during
+ECDSA signing. With the optional modules enabled, the same per-context checks
+also cover BIP340 Schnorr signatures and callback use.
+
+The earlier clone oracle checked illegal-callback inheritance and tagged-SHA
+routing, while the existing custom-SHA seed checked secret operations only on
+the source context. Those checks would not prove that generator blinding and
+custom hashing remain coherent when secret APIs run through a cloned context.
+This extension adds no undocumented alias or opaque-state comparison.
+
+This is Informational oracle hardening, not a clean-master production finding;
+the public clone and SHA callback contracts are already respected. For causal
+proof, a disposable production mutation in
+`secp256k1_context_preallocated_clone` added one to the cloned generator's
+`scalar_offset` only when the source used a non-default SHA backend. The
+callback pointer and tagged-SHA behavior remained intact: the focused existing
+seed aborted with libFuzzer status 77, while all 10 other pre-existing context
+corpus files exited 0 under the mutation. Restoring the source made the focused
+seed pass and all 11 copied context inputs pass; no production mutation was
+committed and no master-relative severity rating changed.
