@@ -6887,3 +6887,52 @@ arithmetic defect; **Low** for documented tweak-input overlap; and
 **Informational** for cleanup/oracle-only checks. A nonce without cryptographic
 meaning is not a Critical erasure finding. No production fix is claimed
 without a clean-master reproduction or a minimal production mutation proof.
+
+## 2026-07-17 Independent Arbitrary Field Product Oracle
+
+The field fuzzer now checks arbitrary products derived with salts `307` and
+`311` against the standalone 8x32-bit schoolbook-and-long-division model in
+`src/fuzz/field.c`. The model does not call field multiplication, inversion,
+or normalization helpers from the library under test. The production result
+is checked for canonical operands, for the documented `r == a` aliasing case,
+and again after both operands are raised by `7p` to magnitude 8 without
+changing their field values. The focused corpus input is the exact ASCII
+string `field product independent reference\n` in
+`src/fuzz/corpora/field/product-independent-reference`.
+
+Clean replay of the focused input and all 18 field corpus files passed on
+native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan builds. A
+two-worker, two-job value-profiled campaign over the same corpus used:
+
+```
+-use_value_profile=1 -entropic=1 -reduce_inputs=0
+-workers=2 -jobs=2 -max_total_time=30 -timeout=60 -rss_limit_mb=4096
+-print_final_stats=1
+```
+
+Both jobs exited 0 on each backend, with no sanitizer diagnostic, assertion,
+timeout, OOM, crash, or artifact. The first wrapper attempt stopped before
+launching the target because its disposable artifact directory had not been
+created; the corrected replay created it explicitly and passed.
+
+The oracle's value was proven with a temporary production mutation, compiled
+under `SECP256K1_FUZZ_MUTATE_PRODUCT` in `src/field_impl.h`: immediately after
+`secp256k1_fe_impl_mul`, it flipped `r->n[0] ^= 1` only when the canonical
+operand limbs exactly matched the focused seed's derived `x` and `y` values
+(with backend-specific 5x52 and 10x26 constants). All 17 pre-existing field
+inputs stayed green on both backends, while the focused input deterministically
+exited through the fuzzer assertion on both. The mutation was removed before
+the clean replay and is not a production finding; it proves that the new
+independent product oracle detects a plausible arithmetic corruption that the
+previous corpus/oracles did not bind.
+
+The native sanitizer CTest suite then passed all 224 tests; the forced-int64
+suite passed all 222 tests. No new clean-master production bug was found, so
+this change is **Informational / oracle hardening**, not a severity finding.
+Existing findings remain rated against unmodified master: **Medium** for
+malformed opaque state, public callback failure, and secret SHA-state
+lifetime; **Medium/latent** for the reachable 10x26 magnitude-32 arithmetic
+defect; **Low** for documented tweak-input overlap; and **Informational** for
+cleanup/oracle-only checks. A nonce without cryptographic meaning is not a
+Critical erasure finding. No production fix or severity downgrade is claimed
+without a clean-master reproduction or a minimal production mutation proof.
