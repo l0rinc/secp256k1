@@ -5244,3 +5244,45 @@ Isolated two-worker/two-job campaigns completed 78 executions per job on each
 backend with every manager and worker exiting 0. No sanitizer diagnostic,
 assertion failure, timeout, OOM, or crash artifact occurred. This commit
 changes only the fuzzer, its corpus, and this evidence ledger.
+
+## 2026-07-16 SHA256 Buffered-Block Cleanup Oracle
+
+The `hash` target now has a gated `sha256-write-buffer-clear` seed. It writes
+one byte and then the remaining 63 bytes of a fixed 64-byte message, forcing
+`secp256k1_sha256_write` to consume a previously buffered block. Before
+finalization, the oracle requires the reusable `hash->buf` storage to be zero
+and independently checks the final digest against standalone SHA256. The
+postcondition is about the consumed block, not about clearing the live hash
+state before its caller finishes using it.
+
+This is a **Medium master-relative memory-hygiene finding**, extending the
+existing HMAC/RFC6979 secret-state retention finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` documents this path as wiping the
+buffer but leaves the consumed 64-byte block in place after compression. A
+buffered HMAC/RFC6979 block can contain key- or nonce-derived material while
+the computation continues. There is no standalone memory-read primitive, so
+this is not rated as a disclosure or Critical cryptographic compromise; the
+rating matches the existing secret-state lifetime issue. It is distinct from
+public nonce cleanup, which carries no cryptographic meaning here and remains
+non-critical.
+
+The old hash corpus and hash unit tests compare digests and only inspect
+state after an explicit full-object clear, so they did not observe this
+intermediate state. For causal proof, removing only the new
+`secp256k1_memclear_explicit(hash->buf, sizeof(hash->buf))` made all nine
+pre-existing hash corpus inputs pass, while the exact new seed aborted with
+standalone ASan/UBSan exit 134. Restoring the wipe made the seed, all ten
+tracked inputs, and `tests -t=hash` pass. The digest assertion prevents the
+oracle from being reduced to a cleanup-only check that could miss a corrupted
+state transition.
+
+The fixed Clang 22 ASan/UBSan `SECP256K1_ASM=OFF` build replayed all ten
+tracked hash inputs and the hash unit suite without a diagnostic. A separate
+Clang 22 ASan/UBSan `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` build also
+replayed all ten inputs without a diagnostic. A separate
+libFuzzer build replayed the seed and completed an isolated two-worker/two-job
+campaign on a disposable corpus copy: job 0 completed 1,323 executions and
+job 1 completed 1,337, both with exit 0 and no assertion, sanitizer
+diagnostic, timeout, OOM, or artifact. The production wipe is the only
+non-fuzzer behavior change in this finding; no unrelated optimization-stack
+commit was cherry-picked over it.

@@ -157,6 +157,7 @@ static void secp256k1_sha256_write(const secp256k1_hash_ctx *hash_ctx, secp256k1
         data += chunk_len;
         len -= chunk_len;
         hash_ctx->fn_sha256_compression(hash->s, hash->buf, 1);
+        secp256k1_memclear_explicit(hash->buf, sizeof(hash->buf));
         bufsize = 0;
     }
 
