@@ -6634,3 +6634,38 @@ master defect. The existing reachable-status 10x26 magnitude-32 issue stays
 **Medium/latent**, and no severity is reduced because later fork fixes or
 optimization snapshots were not used to mask it. A nonce without
 cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-16 Complete Refreshed l0rinc Detached-Ref Reconciliation
+
+After the latest `git fetch l0rinc --prune`, the additional detached refs were
+compared against the complete audit history and current source. No rebase was
+needed: `origin/master` remains `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`
+and is an ancestor of `HEAD`.
+
+The following behavior-bearing refs are already represented by equal or
+stronger commits here, so cherry-picking them would duplicate history rather
+than test clean master independently:
+
+```
+6e60f8d  -> d8f4bdc   clear keypair on NULL x-only tweak
+13308e3  -> 6920d56   clear failed MuSig aggregate signature output
+51e93c4  -> 6920d56   same MuSig fix from the alternate detached parent
+b5e6108  -> cad8e5b   parse DER lengths with offsets
+e217ead  -> 6f602e7   serialize field elements by word
+a2a0ac2  -> 45d05f7,
+             dc14cb7  preserve documented overlapping tweak inputs
+d1dca5c  -> c51b255  reject invalid loaded public keys, with stronger
+                       ECDH and combine failure barriers
+7b47f1f  -> 6fa1dbc  reject RFC6979's maximum retry counter
+87e57c8  -> 96e21ad  guard scalar rounded shifts above 512 bits
+```
+
+The current versions add independent fuzz assertions, broader output cleanup,
+or cross-backend mutation proofs where applicable. The detached
+`3f5fafa` ref changes only a modinv32 comment and has no runtime effect. These
+decisions therefore do not alter clean-master behavior or lower any existing
+finding: malformed opaque state and callback failure paths remain **Medium**,
+the reachable-status 10x26 arithmetic issue remains **Medium/latent**,
+documented tweak overlap remains **Low**, and cleanup/comment/optimization-only
+changes remain **Informational**. A nonce without cryptographic meaning is not
+a Critical erasure finding.
