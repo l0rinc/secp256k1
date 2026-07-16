@@ -6669,3 +6669,36 @@ the reachable-status 10x26 arithmetic issue remains **Medium/latent**,
 documented tweak overlap remains **Low**, and cleanup/comment/optimization-only
 changes remain **Informational**. A nonce without cryptographic meaning is not
 a Critical erasure finding.
+
+## 2026-07-16 Complete Current-Master Corpus Recheck
+
+The audit tree was rechecked after the latest fetch at clean `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. The ref is already an ancestor of
+`codex/fuzz-oracles`, so no rebase was required. All 14 tracked targets were
+run from private copies of their existing corpora, keeping libFuzzer's
+generated mutations and job logs outside the repository:
+
+```
+api_roundtrip context ecdh ecmult_const ecmult_multi ellswift field
+group hash musig recovery scalar schnorrsig xonly_tweak
+```
+
+The native Clang 22.1.7 ASan/UBSan build used two workers and two jobs per
+target with `-max_total_time=12 -timeout=60 -rss_limit_mb=4096`. Every manager
+and worker exited 0. The forced-int64/10x26 Clang 22.1.7 ASan/UBSan build used
+the same private-corpus layout, two workers and two jobs, with
+`-max_total_time=10`; every manager and worker also exited 0. There was no
+sanitizer report, assertion failure, timeout, OOM, crash artifact, or tracked
+corpus change. The expensive 65-input MuSig corpus and the high-window
+Pippenger inputs completed on both backends.
+
+This is a negative verification pass, not a new clean-master finding. It
+reiterates the existing ratings against the unmodified master baseline:
+malformed opaque state and public callback failure paths remain **Medium**;
+secret hash-state lifetime, impossible SHA lengths, and the reachable-status
+10x26 magnitude-32 arithmetic issue remain **Medium** or **Medium/latent**;
+documented tweak-input overlap remains **Low**; and cleanup-only or
+oracle-only checks remain **Informational**. A nonce with no cryptographic
+meaning is not a Critical erasure finding. No fork patch or later audit fix
+was used to downgrade a master finding, and no production change is claimed
+without a master reproduction or a minimal mutation proof.
