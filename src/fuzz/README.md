@@ -5950,3 +5950,52 @@ independent public state transition or production failure was found, adding a
 synthetic trigger here would only duplicate deterministic arithmetic coverage.
 This is another negative reachability result, with no production fix and no
 change to the clean-master severity ledger.
+
+## 2026-07-16 Struct-Backed Wide-Multiply Recheck
+
+The branch was refreshed against unchanged clean master
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`; no rebase was needed. A disposable
+Clang 22.1.7 ASan/UBSan build selected the previously unrecorded
+struct-backed 5x52 backend with `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=
+int128_struct`, `SECP256K1_ASM=OFF`, all six optional modules, and the
+libFuzzer runtime. The build command was:
+
+```sh
+cmake -S . -B /tmp/secp256k1-next-int128struct -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined' \
+  -DSECP256K1_ASM=OFF -DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int128_struct \
+  -DSECP256K1_BUILD_BENCHMARK=OFF -DSECP256K1_BUILD_TESTS=ON \
+  -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_CTIME_TESTS=OFF \
+  -DSECP256K1_BUILD_FUZZ=ON -DSECP256K1_FUZZ_USE_LIBFUZZER=ON \
+  -DSECP256K1_ENABLE_MODULE_ECDH=ON \
+  -DSECP256K1_ENABLE_MODULE_RECOVERY=ON \
+  -DSECP256K1_ENABLE_MODULE_EXTRAKEYS=ON \
+  -DSECP256K1_ENABLE_MODULE_SCHNORRSIG=ON \
+  -DSECP256K1_ENABLE_MODULE_MUSIG=ON \
+  -DSECP256K1_ENABLE_MODULE_ELLSWIFT=ON
+cmake --build /tmp/secp256k1-next-int128struct -j2
+```
+
+Independent replay passed all 256 tracked corpus files and an empty input for
+each of the 14 targets: `api_roundtrip` 43, `context` 11, `ecdh` 6,
+`ecmult_const` 6, `ecmult_multi` 24, `ellswift` 14, `field` 17, `group` 20,
+`hash` 10, `musig` 65, `recovery` 10, `scalar` 4, `schnorrsig` 13, and
+`xonly_tweak` 13. The same private corpus copies passed isolated
+`-workers=2 -jobs=2 -max_total_time=8 -timeout=60` campaigns for every target;
+all managers and workers exited 0, with no sanitizer, assertion, timeout, OOM,
+or artifact output. The longest run was MuSig: 69 worker executions in 138
+seconds.
+
+The exact deterministic slices `tests` and `noverify_tests` for `ecdsa`,
+`musig`, `ecmult_multi_tests`, `fe_normalize_max_magnitude`, and `group`
+passed. The complete `ctest --test-dir /tmp/secp256k1-next-int128struct
+--output-on-failure -j1` matrix passed all 224 tests in 615.85 seconds. This
+backend pass found no cross-configuration inconsistency, but it cannot
+downgrade findings that are specific to clean master's 10x26 implementation,
+malformed opaque state, or public callback contracts. It is negative backend
+evidence only: no new seed, production fix, or severity change is justified.
+The existing findings remain rated against clean master, and clearing a public
+nonce remains non-Critical because that nonce carries no cryptographic
+meaning.
