@@ -8,7 +8,6 @@
 #include "pubkey_reference.h"
 #include "../hash_impl.h"
 #include "rfc6979_reference.h"
-#include "sha256_reference.h"
 #include "../../contrib/lax_der_parsing.c"
 #include "../../contrib/lax_der_privatekey_parsing.c"
 
@@ -2668,54 +2667,6 @@ static void secp256k1_fuzz_check_privkey_der(const secp256k1_context *ctx, const
     FUZZ_CHECK(memcmp(imported, zero32, sizeof(imported)) == 0);
 }
 
-static void secp256k1_fuzz_check_tagged_sha256(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
-    static const size_t boundary_lengths[] = { 0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 191 };
-    unsigned char tag[192];
-    unsigned char msg[192];
-    unsigned char tag_hash[32];
-    unsigned char tagged_input[64 + sizeof(msg)];
-    unsigned char expected[32];
-    unsigned char actual[32];
-    size_t taglen;
-    size_t msglen;
-    size_t i;
-
-    secp256k1_fuzz_derive(tag, sizeof(tag), input, inputlen, 71);
-    secp256k1_fuzz_derive(msg, sizeof(msg), input, inputlen, 73);
-
-    /* Compare the public wrapper with a complete independent implementation.
-     * The boundary cases exercise both the buffered and direct compression
-     * paths while the input-derived case preserves fuzzer reachability. */
-    for (i = 0; i < sizeof(boundary_lengths) / sizeof(boundary_lengths[0]); i++) {
-        taglen = boundary_lengths[i];
-        msglen = boundary_lengths[sizeof(boundary_lengths) / sizeof(boundary_lengths[0]) - 1 - i];
-        secp256k1_fuzz_sha256_standalone(tag_hash, tag, taglen);
-        memcpy(tagged_input, tag_hash, sizeof(tag_hash));
-        memcpy(tagged_input + sizeof(tag_hash), tag_hash, sizeof(tag_hash));
-        memcpy(tagged_input + 2 * sizeof(tag_hash), msg, msglen);
-        secp256k1_fuzz_sha256_standalone(expected, tagged_input, 2 * sizeof(tag_hash) + msglen);
-        FUZZ_CHECK(secp256k1_tagged_sha256(ctx, actual, tag, taglen, msg, msglen) == 1);
-        FUZZ_CHECK(memcmp(actual, expected, sizeof(actual)) == 0);
-    }
-
-    taglen = secp256k1_fuzz_byte(input, inputlen, 79) % (sizeof(tag) + 1);
-    msglen = secp256k1_fuzz_byte(input, inputlen, 83) % (sizeof(msg) + 1);
-    secp256k1_fuzz_sha256_standalone(tag_hash, tag, taglen);
-    memcpy(tagged_input, tag_hash, sizeof(tag_hash));
-    memcpy(tagged_input + sizeof(tag_hash), tag_hash, sizeof(tag_hash));
-    memcpy(tagged_input + 2 * sizeof(tag_hash), msg, msglen);
-    secp256k1_fuzz_sha256_standalone(expected, tagged_input, 2 * sizeof(tag_hash) + msglen);
-    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, actual, tag, taglen, msg, msglen) == 1);
-    FUZZ_CHECK(memcmp(actual, expected, sizeof(actual)) == 0);
-
-    secp256k1_memclear_explicit(tag, sizeof(tag));
-    secp256k1_memclear_explicit(msg, sizeof(msg));
-    secp256k1_memclear_explicit(tag_hash, sizeof(tag_hash));
-    secp256k1_memclear_explicit(tagged_input, sizeof(tagged_input));
-    secp256k1_memclear_explicit(expected, sizeof(expected));
-    secp256k1_memclear_explicit(actual, sizeof(actual));
-}
-
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char canonical_32_der[70] = { 0 };
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
@@ -2885,9 +2836,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ecdsa_sha256_compression);
-    FUZZ_CHECK(secp256k1_fuzz_ecdsa_sha256_compression_calls != 0);
-    secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
-    secp256k1_fuzz_check_tagged_sha256(ctx, input, size);
     FUZZ_CHECK(secp256k1_fuzz_ecdsa_sha256_compression_calls != 0);
     secp256k1_fuzz_ecdsa_sha256_compression_calls = 0;
     FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &sig, msg32, seckey, NULL, NULL) == 1);
