@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
+- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -5419,3 +5419,32 @@ both workers for every target exited 0. The deterministic `tests -t=ecdsa
 evidence only: no production patch or severity change is justified by this
 pass, and pure undocumented output/input aliases remain outside the supported
 oracle boundary.
+
+## 2026-07-16 Custom SHA Secret-Operation Oracle
+
+The context target now has a gated `sha256-secret-operations` seed. It keeps a
+valid replacement SHA-256 compression callback installed while comparing
+compressed public-key creation, deterministic ECDSA compact signatures, and
+BIP340 Schnorr signatures with a fresh default context randomized from the same
+seed. The callback counter must also increase during the secret-dependent
+operation. The comparison is made through public encodings and verification,
+not by treating opaque context or blinding state as portable.
+
+The public callback contract requires the exact SHA-256 compression effect, so
+secret-dependent API results must remain unchanged even when generator
+blinding state is represented differently. The previous context oracle checked
+tagged hashing and callback routing, but restored the default backend before
+its ordinary signing checks; the unit probe intentionally uses a non-SHA
+compression function and therefore cannot prove this equivalence.
+
+This is informational negative oracle hardening, not a clean-master finding;
+no severity is assigned. For causal proof, a disposable mutation in
+`src/ecmult_gen_impl.h` added one to `scalar_offset` after custom-backend
+randomization only when the derived seed began `6a 58 69 09`, the exact prefix
+from the new corpus input. The new seed then stopped with libFuzzer's deadly
+signal (exit 77), while all 10 pre-existing context inputs stayed green in
+both two-worker jobs. Restoring the source made the focused seed and all 11
+tracked inputs pass in both two-worker jobs (12 executions per job), and the
+deterministic `tests -t=ecdsa -i=1` and `noverify_tests -t=ecdsa -i=1` runs
+also passed. The mutation was never committed; no production behavior or
+master-relative severity rating changed.
