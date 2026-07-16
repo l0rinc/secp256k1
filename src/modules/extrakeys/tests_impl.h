@@ -179,6 +179,24 @@ static void test_xonly_pubkey_tweak(void) {
     CHECK(secp256k1_ec_pubkey_create(CTX, &internal_pk, sk) == 1);
     CHECK(secp256k1_xonly_pubkey_from_pubkey(CTX, &internal_xonly_pk, &pk_parity, &internal_pk) == 1);
 
+    /* The output is a separate object, but the tweak input may be stored in
+     * its caller-owned buffer. The implementation must consume the tweak
+     * before clearing the output object. */
+    {
+        unsigned char one32[32] = { 0 };
+        secp256k1_pubkey expected_pk;
+        size_t offset;
+
+        one32[31] = 1;
+        for (offset = 0; offset <= sizeof(output_pk.data) - sizeof(one32); offset += 16) {
+            memset(&output_pk, 0, sizeof(output_pk));
+            memcpy(output_pk.data + offset, one32, sizeof(one32));
+            CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &expected_pk, &internal_xonly_pk, one32) == 1);
+            CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &output_pk, &internal_xonly_pk, output_pk.data + offset) == 1);
+            CHECK(secp256k1_ec_pubkey_cmp(CTX, &expected_pk, &output_pk) == 0);
+        }
+    }
+
     CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &output_pk, &internal_xonly_pk, tweak) == 1);
     CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &output_pk, &internal_xonly_pk, tweak) == 1);
     CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &output_pk, &internal_xonly_pk, tweak) == 1);
