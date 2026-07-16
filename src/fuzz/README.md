@@ -5900,3 +5900,53 @@ cases. The default and forced-int64 `tests` and `noverify_tests`
 24-file corpus copies; every manager and worker exited 0 without sanitizer,
 assertion, timeout, OOM, or crash artifacts. Existing master-relative ratings
 and the non-critical public-nonce assessment remain unchanged.
+
+## 2026-07-16 Refreshed Reachability and Isolated Worker Recheck
+
+After amending the zero-point batch-size context, the complete 256-file
+corpus was replayed through the instrumented build. All 14 CTest fuzz suites
+passed. The refreshed reachability review found no independent next oracle:
+EllSwift's implementation paths were reached by its corpus; the remaining
+MuSig subgroup rejection requires a non-subgroup point, which cannot occur on
+the cofactor-one secp256k1 curve after a valid point load; and the MuSig
+KeyAgg callback-failure return is unreachable with the current non-failing
+internal callback. The remaining ecmult gaps are the zero-scalar WNAF path,
+bucket-window inverse boundaries, and constrained-scratch simple fallback,
+all directly exercised by `test_fixed_wnaf_small`,
+`test_secp256k1_pippenger_bucket_window_inv`, or
+`test_ecmult_multi_batching` in `src/tests.c`. No duplicate seed, production
+change, or severity downgrade was justified.
+
+The rebuilt Clang ASan/UBSan tree passed all 224 CTest cases, including the
+verified ecmult-multi, MuSig, Schnorr, Recovery, EllSwift, field, and group
+slices. Correctly isolated `-workers=2 -jobs=2 -max_total_time=8` campaigns
+then passed with no sanitizer, assertion, timeout, OOM, or artifact result,
+using private copies of every corpus: `api_roundtrip` completed 44 and 92
+runs; `context` 84 and 76; `ecmult_multi` 25 and 25; `ellswift` 50 and 36;
+`recovery` 76 and 71; `schnorrsig` 51 and 45; and `musig` 66 and 66. A
+preliminary wrapper was discarded because its managers inherited shared
+`fuzz-0.log` and `fuzz-1.log` paths and wrote 253 generated inputs under the
+source corpus directories. Those generated files were removed before this
+evidence run; the recorded counts are only from private per-target corpus
+copies and temporary work directories, all removed after completion.
+
+This remains a negative reachability pass, not a new clean-master finding.
+Severity is still assessed against clean master before later fork or audit
+fixes: Medium for malformed opaque state and public callback failure paths,
+Medium/latent for the 10x26 arithmetic defects, Low/informational for
+internal scratch robustness, and non-Critical for clearing a public nonce
+that carries no cryptographic meaning.
+
+The only additional field-side miss worth checking was the loop in
+`secp256k1_jacobi64_maybe_var` that inspects the non-low limbs after
+`f.v[0] == 1`. The 17 tracked field inputs and an isolated two-worker,
+two-job libFuzzer search produced 935 and 931 executions, 32 and 36 new
+units, and private corpora of 73 and 74 inputs; replaying the resulting 80
+unique private inputs through the coverage binary passed without a diagnostic,
+but still did not reach that line. The generic arbitrary-modulus Jacobi and
+inversion model remains covered by `run_modinv_tests` in `src/tests.c`.
+Because the fuzzer's field domain fixes the secp256k1 field modulus and no
+independent public state transition or production failure was found, adding a
+synthetic trigger here would only duplicate deterministic arithmetic coverage.
+This is another negative reachability result, with no production fix and no
+change to the clean-master severity ledger.
