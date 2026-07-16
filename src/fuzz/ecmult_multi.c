@@ -865,6 +865,64 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger(const secp256k1_conte
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
+/* Pippenger drops zero-scalar and infinity-point terms before building its
+ * WNAF state. Keep the all-filtered identity return explicit. */
+static void secp256k1_fuzz_ecmult_multi_all_filtered_pippenger(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "pippenger all filtered terms\n";
+    const size_t n_points = ECMULT_PIPPENGER_THRESHOLD;
+    const secp256k1_scalar *generator_scalars[2];
+    secp256k1_fuzz_ecmult_multi_repeat_data data;
+    secp256k1_scratch *scratch;
+    secp256k1_gej actual;
+    size_t scratch_size;
+    size_t checkpoint;
+    size_t n_batches;
+    size_t n_batch_points;
+    int results[2];
+    int canonical_identity[2];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memset(&data, 0, sizeof(data));
+    generator_scalars[0] = NULL;
+    generator_scalars[1] = &secp256k1_scalar_zero;
+    scratch_size = secp256k1_pippenger_scratch_size(n_points, secp256k1_pippenger_bucket_window(n_points));
+    scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_size + PIPPENGER_SCRATCH_OBJECTS * ALIGNMENT);
+    FUZZ_CHECK(scratch != NULL);
+    FUZZ_CHECK(secp256k1_pippenger_max_points(&ctx->error_callback, scratch) >= n_points);
+    FUZZ_CHECK(secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, secp256k1_pippenger_max_points(&ctx->error_callback, scratch), n_points) == 1);
+    FUZZ_CHECK(n_batches == 1);
+    FUZZ_CHECK(n_batch_points >= ECMULT_PIPPENGER_THRESHOLD);
+
+    for (i = 0; i < sizeof(generator_scalars) / sizeof(generator_scalars[0]); i++) {
+        checkpoint = scratch->alloc_size;
+        secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
+        if (i == 0) {
+            secp256k1_scalar_set_int(&data.sc, 0);
+            data.pt = secp256k1_ge_const_g;
+        } else {
+            secp256k1_scalar_set_int(&data.sc, 1);
+            secp256k1_ge_set_infinity(&data.pt);
+        }
+        results[i] = secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, generator_scalars[i], secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points);
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+        secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
+        canonical_identity[i] = secp256k1_gej_is_infinity(&actual)
+            && secp256k1_fe_is_zero(&actual.x)
+            && secp256k1_fe_is_zero(&actual.y)
+            && secp256k1_fe_is_zero(&actual.z);
+    }
+    FUZZ_CHECK(results[0] == 1);
+    FUZZ_CHECK(results[1] == 1);
+    FUZZ_CHECK(canonical_identity[0]);
+    FUZZ_CHECK(canonical_identity[1]);
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+}
+
 static void secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(const secp256k1_context *ctx, const secp256k1_scalar *g_sc, const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_repeat_data data;
     secp256k1_scratch *scratch;
@@ -1164,6 +1222,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_strauss_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_pippenger_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
+    secp256k1_fuzz_ecmult_multi_all_filtered_pippenger(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(ctx, g_sc_ptr, input, size);
     secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_pippenger_window_boundary(ctx, input, size);
