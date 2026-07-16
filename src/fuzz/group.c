@@ -208,6 +208,19 @@ static void secp256k1_fuzz_group_check_infinity_invalid(void) {
     FUZZ_CHECK(!secp256k1_ge_is_valid_var(&infinity));
 }
 
+static void secp256k1_fuzz_group_check_canonical_infinity(void) {
+    secp256k1_ge infinity;
+    secp256k1_fe zero;
+
+    /* The constructor promises a complete affine infinity representation. */
+    memset(&infinity, 0xA5, sizeof(infinity));
+    secp256k1_ge_set_infinity(&infinity);
+    secp256k1_fe_set_int(&zero, 0);
+    FUZZ_CHECK(secp256k1_ge_is_infinity(&infinity));
+    FUZZ_CHECK(memcmp(&infinity.x, &zero, sizeof(zero)) == 0);
+    FUZZ_CHECK(memcmp(&infinity.y, &zero, sizeof(zero)) == 0);
+}
+
 static void secp256k1_fuzz_group_check_ge_eq_infinity(void) {
     secp256k1_ge infinity;
     secp256k1_ge generator = secp256k1_ge_const_g;
@@ -845,6 +858,7 @@ static void secp256k1_fuzz_group_check_x_frac_curve(const unsigned char *input, 
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char infinity_validity_trigger[] = "group infinity validity\n";
+    static const unsigned char canonical_infinity_trigger[] = "group canonical infinity storage\n";
     static const unsigned char affine_equality_infinity_trigger[] = "group affine equality infinity\n";
     static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
     static const unsigned char inverse_rzr_trigger[] = "group inverse rzr\n";
@@ -953,6 +967,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_zinv_addition(&infinity, &infinity, &infinity, &scale);
     if (size == sizeof(infinity_validity_trigger) - 1 && memcmp(input, infinity_validity_trigger, sizeof(infinity_validity_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_infinity_invalid();
+    }
+    if (size == sizeof(canonical_infinity_trigger) - 1 && memcmp(input, canonical_infinity_trigger, sizeof(canonical_infinity_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_canonical_infinity();
     }
     if (size == sizeof(affine_equality_infinity_trigger) - 1 && memcmp(input, affine_equality_infinity_trigger, sizeof(affine_equality_infinity_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_ge_eq_infinity();
