@@ -5593,3 +5593,28 @@ the dispatcher currently ignores that helper status. The accepted mutation
 was never committed. This fixture complements, rather than duplicates, the
 existing batch, callback, zero-scalar, and infinity-point checks by proving
 their conjunction reaches the early identity state.
+
+## 2026-07-16 MuSig Stateful Coverage Negative Pass
+
+The current clean source was rebuilt with Clang 22.1.7 ASan/UBSan instrumentation
+and the `fuzz_musig` target. All 65 existing MuSig corpus files passed the
+standalone replay (`66` executions including the empty input), and two independent
+libFuzzer jobs with two workers each also exited 0. Neither run produced an
+assertion, sanitizer, timeout, OOM, or artifact diagnostic. The deterministic
+`tests -t=musig -i=1` and `noverify_tests -t=musig -i=1` suites passed as well.
+
+A separate coverage build replayed the same corpus as individual inputs. It
+executed 97.06% of the fuzzer source, 99.41% of MuSig key aggregation, and
+99.81% of MuSig session production code. The only missed production lines are
+the callback-failure return in `keyagg_impl.h` (the current aggregation callback
+cannot fail) and the subgroup rejection in `session_impl.h` (secp256k1 has
+cofactor one). These are negative coverage explanations, not missing security
+oracles; adding forced callers would invent unsupported domains.
+
+The existing master-relative ratings therefore remain unchanged: Medium for
+SHA state retention, impossible SHA length handling, and the 10x26 magnitude-32
+normalization issue; Low for documented tweak-input overlap; and Informational
+for callback/session-random, secret-key tweak, and Pippenger oracle hardening.
+As recorded elsewhere, clearing a public nonce has no cryptographic meaning and
+is not a Critical cleanup finding. No production bug, severity change, or new
+MuSig fixture is claimed without a master reproduction or a minimal mutation.
