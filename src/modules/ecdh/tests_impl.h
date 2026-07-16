@@ -105,10 +105,17 @@ static void test_ecdh_generator_basepoint(void) {
 }
 
 DEFINE_SHA256_TRANSFORM_PROBE(sha256_ecdh)
+static size_t sha256_ecdh_valid_calls;
+static void sha256_ecdh_valid(uint32_t *s, const unsigned char *msg, size_t rounds) {
+    sha256_ecdh_valid_calls += rounds;
+    secp256k1_sha256_transform(s, msg, rounds);
+}
+
 static void test_ecdh_ctx_sha256(void) {
     /* Check ctx-provided SHA256 compression override takes effect */
     secp256k1_context *ctx = secp256k1_context_clone(CTX);
     unsigned char out_default[65], out_custom[65];
+    unsigned char out_explicit[32];
     const unsigned char sk[32] = {1};
     secp256k1_pubkey pubkey;
     CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, sk) == 1);
@@ -124,6 +131,19 @@ static void test_ecdh_ctx_sha256(void) {
     /* Outputs must differ if custom compression was used */
     CHECK(secp256k1_memcmp_var(out_default, out_custom, 32) != 0);
     CHECK(sha256_ecdh_called);
+
+    /* Explicit library-owned callbacks must use the same context backend. */
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+    sha256_ecdh_valid_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, sha256_ecdh_valid);
+    sha256_ecdh_valid_calls = 0;
+    CHECK(secp256k1_ecdh(ctx, out_explicit, &pubkey, sk, secp256k1_ecdh_hash_function_sha256, NULL) == 1);
+    CHECK(sha256_ecdh_valid_calls != 0);
+    CHECK(secp256k1_memcmp_var(out_default, out_explicit, 32) == 0);
+    sha256_ecdh_valid_calls = 0;
+    CHECK(secp256k1_ecdh(ctx, out_explicit, &pubkey, sk, secp256k1_ecdh_hash_function_default, NULL) == 1);
+    CHECK(sha256_ecdh_valid_calls != 0);
+    CHECK(secp256k1_memcmp_var(out_default, out_explicit, 32) == 0);
 
     secp256k1_context_destroy(ctx);
 }
