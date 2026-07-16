@@ -5618,3 +5618,47 @@ for callback/session-random, secret-key tweak, and Pippenger oracle hardening.
 As recorded elsewhere, clearing a public nonce has no cryptographic meaning and
 is not a Critical cleanup finding. No production bug, severity change, or new
 MuSig fixture is claimed without a master reproduction or a minimal mutation.
+
+## 2026-07-16 Pippenger Window-10 Boundary Oracle
+
+The `ecmult_multi` target now has a gated `pippenger-window-4421` seed. It
+constructs 4,421 repeated generator terms, forcing the first Pippenger batch
+with `bucket_window == 10`; the adjacent 4,420-point selector remains window
+9, and the window-10 inverse boundary is checked as 7,880. Each callback index
+must be visited exactly once, scratch allocation must return to its checkpoint,
+and a callback failure at the final index must return failure with a canonical
+infinity output after visiting the complete prefix.
+
+The result oracle is independent of the Pippenger implementation: every term
+uses the same scalar `2^60 + 1` and point G, the generator term is 17G, and the
+expected point is computed as one constant-time multiplication by
+`4,421 * (2^60 + 1) + 17` modulo the group order. The actual and expected
+points are compared through serialized affine coordinates as well as the
+existing Jacobian equality helper. The high scalar component is deliberate: an
+initial scalar-1 draft was rejected because all nonzero work stayed in the
+lowest window while the accumulator was infinity, so a skipped high-window
+doubling did not change the result.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding. The previous 20-file corpus did not exercise the first
+window-10 batch, so normal build and test coverage could not distinguish a
+window-10 arithmetic regression from an untested path. For causal proof, a
+disposable mutation changed the production loop in `src/ecmult_impl.h` from
+`j < bucket_window` to
+`j < bucket_window - (bucket_window == 10)`. The old 20-file corpus stayed
+green; the exact new seed failed at the independent result assertion with
+libFuzzer status 77 and `-handle_abrt=1`. Bypassing only the new helper made
+the same mutated seed pass with status 0. Restoring both source and helper
+made the focused seed and all 21 tracked inputs pass. The mutation was never
+committed, and no master-relative severity change or production fix is claimed.
+
+The fixed Clang 22.1.7 ASan/UBSan libFuzzer build passed the focused seed, the
+complete 21-input corpus, and two independent workers in two job managers with
+`-max_total_time=45 -timeout=60`; both managers exited 0 with no sanitizer,
+assertion, timeout, OOM, or crash artifact. The deterministic
+`tests -t=ec -i=1` and `noverify_tests -t=ec -i=1` suites also passed. The
+verification build used `SECP256K1_ASM=OFF` and all optional modules. Existing
+ratings remain: Medium for the SHA and 10x26 production findings, Low for
+documented tweak-input overlap and related state correctness, and
+Informational for oracle-only hardening. Public nonce cleanup remains
+non-Critical because the nonce carries no cryptographic meaning.
