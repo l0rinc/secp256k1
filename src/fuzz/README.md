@@ -5493,3 +5493,44 @@ production finding, does not change the Informational/Low oracle-hardening
 rating of `5e5491e`, and does not justify treating the internal Pippenger
 boundary as a denial-of-service bug. Future multi-worker replays of this target
 must give this gated fixture a per-input timeout of at least 60 seconds.
+
+## 2026-07-16 Public API Contract Audit Negative Pass
+
+The audit was repeated against clean-master baseline `ebf594320dc838b9de1abb54d5ba98cef84f4297`.
+The source review covered the remaining public stateful surfaces in
+`src/modules/ellswift/main_impl.h`, `src/secp256k1.c`, ECDH, recovery,
+extrakeys, Schnorr, and MuSig key aggregation/session loading. EllSwift
+already models canonical aliases, inverse branches, both party selections,
+invalid secrets, callback transcripts, cleanup, and BIP324's ignored data.
+Context reset, callback routing, recovery output cleanup, opaque loaders, and
+MuSig cleanup likewise already have focused postconditions. The only direct
+public entry point absent from the call inventory is `secp256k1_selftest`,
+which context creation already executes; the other omissions are internal
+helpers or undocumented pure output/input aliases. Adding assertions for
+those cases would invent contracts rather than discover master bugs.
+
+The existing master-relative dispositions remain: Medium for SHA state
+retention (`55f98a8`), impossible SHA length handling (`ee2e591`), and the
+10x26 field magnitude-32 normalization issue (`cf5631f`); Low for the
+documented public/keypair tweak-input overlap fixes (`ba8d379` and
+`c0c6948`); and Informational for the session-random, secret-key tweak, and
+Pippenger oracle hardening. A public nonce without cryptographic meaning is
+not a Critical cleanup finding. The existing README entries contain the
+reproductions and mutation proofs; this pass found no severity downgrade or
+hidden severe master bug.
+
+The initial standalone Clang 22.1.7 ASan/UBSan build enabled all modules and
+passed all 14 tracked fuzz suites. After reconfiguring the disposable build
+with `SECP256K1_FUZZ_USE_LIBFUZZER=ON`, the deterministic commands
+`tests -t=ecdsa -i=1`, `noverify_tests -t=ecdsa -i=1`,
+`tests -t=musig -i=1`, and `noverify_tests -t=musig -i=1` also passed. A
+copied set of 248 corpus files was then replayed with every target using
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=60`; all 14 targets exited
+zero, including the expensive Pippenger boundary, with no sanitizer,
+assertion, timeout, OOM, or artifact output. The disposable build used
+the libFuzzer runtime; the earlier standalone runner's rejection of worker
+flags was a harness-mode mismatch, not a fuzz result.
+
+This is negative evidence only. No new seed, oracle, production patch, or
+severity change is justified, and no production bug is claimed without a
+reproduction on master or a minimal production mutation.
