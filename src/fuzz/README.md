@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -5175,3 +5175,32 @@ workers replayed all 64 tracked inputs (65 executions per job including the
 empty input) with no ASan/UBSan diagnostic or artifact, and sanitized `tests`
 and `noverify_tests` passed their `musig` and `extrakeys` suites. The mutation
 was never committed.
+
+## 2026-07-16 ECDSA Compact Serializer NULL-Output Oracle
+
+The API target now has a gated `ecdsa-compact-null-output` seed. It calls
+`secp256k1_ecdsa_signature_serialize_compact` through a function pointer with
+an initialized context illegal callback, a valid 64-byte output buffer
+prefilled with `0xA5`, and a NULL signature input. The call must return zero,
+invoke the illegal callback exactly once, and clear all 64 output bytes.
+
+This reiterates the existing **Low to Medium master-relative API-state
+finding** fixed by `a5aa4ce`: clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` rejects the NULL signature after
+checking the output pointer but leaves a caller's previous compact signature
+in place. The unit suite already covered the behavior, but the API fuzzer did
+not reach the serializer's `sig == NULL` branch; its opaque-signature and DER
+output checks therefore could not independently detect this stale-output
+transition. This is fail-closed state correctness, not memory corruption,
+signature forgery, disclosure, or nonce-cleanup severity.
+
+For causal proof, a disposable production mutation removed only the
+`if (sig == NULL) memset(output64, 0, 64)` block from
+`src/secp256k1.c`. All pre-existing API corpus inputs stayed green, while the
+new seed stopped at the exact 64-byte zero assertion with exit 134. Disabling
+only the new helper made the same mutation pass; restoring the cleanup made
+the focused seed and the complete API corpus pass. The fixed Clang ASan/UBSan
+replay, two-worker replay, and the deterministic ECDSA unit suite passed with
+no sanitizer diagnostic, assertion, timeout, or artifact. The production
+mutation was never committed, and the existing master-relative severity is
+unchanged.
