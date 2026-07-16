@@ -6702,3 +6702,37 @@ oracle-only checks remain **Informational**. A nonce with no cryptographic
 meaning is not a Critical erasure finding. No fork patch or later audit fix
 was used to downgrade a master finding, and no production change is claimed
 without a master reproduction or a minimal mutation proof.
+
+## 2026-07-16 Extended Stateful Multi-Worker Campaign
+
+The audit branch was still a clean descendant of
+`origin/master 11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, so no rebase was
+needed before this pass. The four highest-state targets were copied from the
+tracked corpora into disposable directories: `musig` (65 inputs),
+`ecmult_multi` (24), `api_roundtrip` (44), and `ellswift` (14). Eight workers
+and eight jobs per target shared only those private directories, allowing
+libFuzzer to mutate stateful inputs without changing the repository:
+
+```
+-workers=8 -jobs=8 -max_total_time=60 -timeout=60 -rss_limit_mb=4096
+-print_final_stats=1
+```
+
+The native Clang 22.1.7 ASan/UBSan binaries and the forced
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` Clang 22.1.7 ASan/UBSan
+binaries each ran all four targets. All 64 manager jobs and their workers
+exited 0. The workers generated additional private mutations; the expensive
+Pippenger-window and MuSig inputs took substantially longer than ordinary
+corpus replay, but produced only four libFuzzer `slow-unit-*` records and no
+crash artifact. There was no sanitizer diagnostic, assertion failure, timeout,
+OOM, or runtime-error marker, and no fuzz process remained after polling.
+
+This is a longer backend-agreement recheck, not a new clean-master finding.
+It reinforces the existing oracle and severity ledger: malformed opaque state
+and public callback failure paths remain **Medium**; the reachable-status
+10x26 magnitude-32 arithmetic issue remains **Medium/latent**; documented
+tweak-input overlap remains **Low**; and cleanup-only or oracle-only checks
+remain **Informational**. Severity is still assigned against clean master
+before later fork fixes or audit repairs. A nonce without cryptographic
+meaning is not a Critical erasure finding. No production fix is claimed
+without a master reproduction or a minimal production mutation proof.
