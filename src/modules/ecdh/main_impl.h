@@ -79,8 +79,8 @@ int secp256k1_ecdh(const secp256k1_context* ctx, unsigned char *output, const se
     secp256k1_fe_get_b32(x, &pt.x);
     secp256k1_fe_get_b32(y, &pt.y);
 
-    if (hashfp == NULL) {
-        /* Use ctx-aware function by default */
+    if (known_hashfp) {
+        /* Library-owned callbacks use the caller's context, even when passed explicitly. */
         ret = ecdh_hash_function_sha256_impl(secp256k1_get_hash_context(ctx), output, x, y, data);
     } else {
         ret = hashfp(output, x, y, data);

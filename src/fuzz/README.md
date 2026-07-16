@@ -6426,3 +6426,44 @@ failure paths are **Medium**, the reachable-status 10x26 arithmetic issue is
 cleanup/oracle-only checks are **Informational**. Clearing a public nonce is
 not a Critical erasure finding because that nonce carries no cryptographic
 meaning.
+
+## 2026-07-16 ECDH Explicit Built-In SHA Context Dispatch
+
+The clean-master source at `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` had a
+reachable dispatch inconsistency in `secp256k1_ecdh`. The runtime SHA-256
+compression setter documents a context backend for library operations, and the
+`hashfp == NULL` ECDH path already used that backend. Passing either exported
+library-owned callback, `secp256k1_ecdh_hash_function_sha256` or
+`secp256k1_ecdh_hash_function_default`, instead called the callback wrapper,
+which is bound to `secp256k1_context_static`. A caller selecting the explicit
+built-in therefore received the right digest but silently bypassed the custom
+hardware or platform compressor installed on the supplied context.
+
+This is a **Low master-relative production finding**: it is a public API
+contract and performance/dispatch failure, not a cryptographic result change,
+secret disclosure, or signature/ECDH weakness. A valid replacement compressor
+must be SHA-256-equivalent, so the strongest observable proof is callback
+invocation rather than output inequality. The fuzzer now resets its callback
+counter around all four explicit built-in ECDH calls and requires each call to
+use the configured context backend. Previously the same six-file corpus only
+compared explicit and default outputs; that comparison passed because both
+paths still computed the standard digest.
+
+For causal proof, the new deterministic ECDH test installs an exact
+SHA-256-equivalent compressor through the public setter, resets its counter
+after setter self-tests, and invokes both exported built-in callback aliases.
+A disposable production mutation changing the repaired `if (known_hashfp)`
+dispatch back to `if (hashfp == NULL)` made `bin/tests -t=ecdh -i=1` abort at
+`sha256_ecdh_valid_calls != 0` (exit 134). Before the mutation, the enhanced
+fuzzer likewise aborted on the first existing ECDH corpus input (exit 134),
+while the prior unasserted corpus replay remained green. Restoring the
+context-aware dispatch made the six corpus files plus empty input pass, along
+with `tests -t=ecdh -i=1` and `noverify_tests -t=ecdh -i=1`, under Clang
+22.1.7 ASan/UBSan. The mutation was restored and is not itself a fix.
+
+The master-relative severity ledger remains explicit: malformed opaque state,
+public callback failure paths, SHA state retention, impossible SHA lengths,
+and the reachable 10x26 magnitude-32 arithmetic issue remain **Medium** or
+**Medium/latent** as previously recorded; documented tweak-input overlap is
+**Low**; oracle-only hardening is **Informational**. Clearing a public nonce
+does not become Critical because that nonce carries no cryptographic meaning.
