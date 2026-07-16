@@ -6504,3 +6504,41 @@ and all 11 existing recovery corpus inputs each aborted with exit 134 at the
 callback-use oracle. Restoring the shared context-aware branch made the unit,
 API corpus, and recovery corpus pass under Clang 22.1.7 ASan/UBSan; the
 mutation was temporary and is not part of the fix.
+
+## 2026-07-16 SHA-Sensitive Cross-Backend Multi-Worker Recheck
+
+After the ECDSA dispatch fix, the clean-master audit was refreshed at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` and the l0rinc pull-request refs
+were fetched again. `origin/master` was already an ancestor of the audit
+branch, so no rebase was required. The source review checked the remaining
+uses of `secp256k1_context_static`, the public keypair projection accessors,
+and the serialization/state-machine paths most likely to hide a weak oracle.
+The keypair accessors intentionally return raw halves and document success
+even for malformed opaque state; treating that behavior as a validity oracle
+would be a stale fuzzer contract, not a production bug.
+
+The following exact targets were rebuilt with Clang 22.1.7 ASan/UBSan and
+replayed against their existing corpora on the native backend and with
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`:
+
+```
+context api_roundtrip ecdh ellswift musig recovery schnorrsig
+```
+
+Each target used two workers and two jobs with
+`-workers=2 -jobs=2 -rss_limit_mb=4096`; the native pass used
+`-max_total_time=15 -timeout=60` and the forced-int64 pass used
+`-max_total_time=10 -timeout=60`. Every worker/job exited 0. There was no
+sanitizer diagnostic, assertion failure, timeout, OOM, crash artifact, or
+cross-backend result mismatch. The expensive MuSig state corpus completed in
+both configurations, and the explicit built-in SHA callback paths were
+exercised again after the ECDSA/ECDH fixes. Generated mutations were kept in
+disposable corpus copies or removed after verification; tracked corpora and
+production sources remained unchanged.
+
+This is a distinct negative verification pass, not a new clean-master
+finding. The severity ledger is therefore unchanged: the previously proven
+master-relative production findings retain their recorded ratings, while
+the rejected accessor interpretation remains an invalid oracle. Clearing a
+public nonce is not a Critical erasure finding because that nonce carries no
+cryptographic meaning.
