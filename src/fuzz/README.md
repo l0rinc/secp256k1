@@ -5741,3 +5741,41 @@ also passed all six inputs plus `tests -t=ec -i=1` and
 `noverify_tests -t=ec -i=1`. Existing master-relative findings remain
 unchanged, and public nonce cleanup remains non-Critical because the nonce
 has no cryptographic meaning.
+
+## 2026-07-16 Group Canonical Affine-Infinity Storage Oracle
+
+The internal `group` target now has a separate gated
+`canonical-infinity-storage` seed. It poisons an affine point, calls
+`secp256k1_ge_set_infinity`, and independently requires the infinity marker
+plus the exact field-zero representation in both coordinates. The existing
+`group/infinity-validity` seed intentionally remains a control: it checks the
+semantic infinity and invalidity results, but does not observe the raw
+coordinates. The new fixture therefore covers the affine constructor's
+explicit zero writes without changing the older validity oracle.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding or a production fix. Clean master
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` already writes both affine
+coordinates to zero. This is a distinct affine storage contract from the
+Jacobian infinity output covered by the preceding `ecmult_const` oracle; no
+cryptographic nonce or secret-state impact is involved.
+
+For causal proof, a disposable production mutation changed both explicit
+`secp256k1_fe_set_int(..., 0)` coordinate writes in `secp256k1_ge_set_infinity`
+to `1`. All 19 pre-existing group corpus files stayed green, while the exact
+new seed aborted with status 134. Disabling only the new gated helper made the
+same mutated seed pass with status 0. An initial sentinel-preservation
+mutation was rejected because it triggered an unrelated field-metadata
+`VERIFY` failure in old controls; the accepted nonzero-field mutation models
+a valid but noncanonical infinity representation. Restoring the constructor
+and helper made all 20 inputs and empty input pass. The mutation was never
+committed, and no master-relative severity change is claimed.
+
+The Clang 22.1.7 ASan/UBSan builds with `SECP256K1_ASM=OFF` passed the focused
+seed, the complete 20-input group corpus, and empty input on both the default
+and forced-`int64`/10x26 backends. Two workers in two job managers completed
+bounded campaigns in 16 seconds with 464 default and 457 forced-int64 runs,
+respectively, without sanitizer diagnostics, assertions, timeouts, OOMs, or
+crash artifacts. The default and forced-int64 `tests` and `noverify_tests`
+group slices (`ge`, `gej`, `gej_rescale_alias`, `gej_zinv_in_place`, and
+`group_decompress`, one iteration) also passed.
