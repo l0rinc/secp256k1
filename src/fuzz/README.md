@@ -6611,3 +6611,26 @@ reachable-status 10x26 magnitude-32 arithmetic issue remains
 cleanup-only or oracle-only checks remain **Informational**. Severity is still
 assigned against clean master before later fixes or fork patches; a nonce
 without cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-16 Arithmetic Worker Recheck
+
+The native and forced-int64 Clang 22.1.7 ASan/UBSan builds were rebuilt from
+the same clean audit source and replayed over the tracked `field`, `group`,
+and `ecmult_const` corpora. Each target used private corpus copies and
+
+```
+-workers=2 -jobs=2 -max_total_time=20 -timeout=60 -rss_limit_mb=4096
+```
+
+All manager and worker processes exited 0 in both wide-multiply
+configurations. No sanitizer diagnostic, assertion failure, timeout, OOM,
+crash artifact, or cross-backend mismatch occurred; temporary corpora and
+logs were removed and no tracked input changed. The first forced-int64
+attempt was incomplete because `fuzz_field` had not been built; it was built
+before the successful replay, so the pass covers all three targets.
+
+This is a negative arithmetic oracle recheck, not evidence of a new clean
+master defect. The existing reachable-status 10x26 magnitude-32 issue stays
+**Medium/latent**, and no severity is reduced because later fork fixes or
+optimization snapshots were not used to mask it. A nonce without
+cryptographic meaning is not a Critical erasure finding.
