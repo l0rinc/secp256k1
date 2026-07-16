@@ -27,6 +27,33 @@ static void secp256k1_fuzz_ecmult_const_check_null_generator(const secp256k1_gej
     FUZZ_CHECK(secp256k1_gej_eq_var(&null_generator, &zero_generator));
 }
 
+static void secp256k1_fuzz_ecmult_const_check_canonical_infinity_result(const secp256k1_gej *result) {
+    secp256k1_fe zero_fe;
+
+    secp256k1_fe_set_int(&zero_fe, 0);
+
+    FUZZ_CHECK(result->infinity == 1);
+    FUZZ_CHECK(memcmp(&result->x, &zero_fe, sizeof(zero_fe)) == 0);
+    FUZZ_CHECK(memcmp(&result->y, &zero_fe, sizeof(zero_fe)) == 0);
+    FUZZ_CHECK(memcmp(&result->z, &zero_fe, sizeof(zero_fe)) == 0);
+}
+
+static void secp256k1_fuzz_ecmult_const_check_canonical_infinity(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult const canonical infinity\n";
+    secp256k1_ge infinity;
+    secp256k1_gej result;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_ge_set_infinity(&infinity);
+
+    memset(&result, 0xA5, sizeof(result));
+    secp256k1_ecmult_const(&result, &infinity, &secp256k1_scalar_one);
+    secp256k1_fuzz_ecmult_const_check_canonical_infinity_result(&result);
+}
+
 static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context *ctx, const secp256k1_scalar *scalar) {
     secp256k1_gej generated;
     secp256k1_ge generated_affine;
@@ -254,6 +281,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_ecmult_const_check_null_generator(&basej, &secp256k1_scalar_zero);
     secp256k1_ecmult_const(&result, &infinity, &scalar);
     FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
+    secp256k1_fuzz_ecmult_const_check_canonical_infinity(input, size);
 
     secp256k1_scalar_clear(&base_scalar);
     secp256k1_scalar_clear(&scalar);
