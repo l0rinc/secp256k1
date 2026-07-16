@@ -6936,3 +6936,80 @@ defect; **Low** for documented tweak-input overlap; and **Informational** for
 cleanup/oracle-only checks. A nonce without cryptographic meaning is not a
 Critical erasure finding. No production fix or severity downgrade is claimed
 without a clean-master reproduction or a minimal production mutation proof.
+
+## 2026-07-17 Clean-Master Recheck After Master Refresh
+
+After refreshing both remotes, `origin/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; `codex/fuzz-oracles` is already a
+descendant, so no rebase was required. The current `l0rinc/master` has no
+commit ahead of this baseline that is not already represented in the branch,
+so no additional cherry-pick was applied.
+
+A disposable worktree at that exact origin baseline received only
+`src/CMakeLists.txt` and `src/fuzz` from this branch. No production source or
+fix commit was copied into it. The native Clang 22.1.7 ASan/UBSan build
+replayed all 18 field inputs and all 6 `ecmult_const` inputs successfully.
+The clean-master harness transplant has two known compatibility limits:
+`context` and related targets refer to the newer branch-only
+`SECP256K1_SHA256_MAX_SIZE` macro, and `ecmult_multi` refers to the newer
+`checked_size_mul` helper. Those compile/link limits are not production
+results and were excluded from the baseline classification. A disposable
+forced-include header defining only the absent size macro then compiled the
+remaining API/module targets without copying production fixes.
+
+The following clean-master failures reiterate existing findings and were
+verified against the repaired branch with the same focused inputs:
+
+- `scalar/mul-shift-over-512` exits 134 on both backends. Native 5x52/4x64
+  reports UBSan index 8 and an ASan stack-buffer-overflow at
+  `scalar_4x64_impl.h:910`, reading past local `l[8]`; forced-int64/10x26
+  reports the matching index 16 and overflow at `scalar_8x32_impl.h:707`.
+  Both use the shift-513 boundary. This remains **Low/latent internal memory
+  safety** because current in-tree callers use shift 384 and no public caller
+  controls this helper domain. The unrelated clean-master WNAF diagnostics at
+  `ecmult_impl.h:201` are not a second finding. The branch fix and both
+  focused replays exit 0.
+- The forced-int64 field replay exits 134 on its deterministic magnitude-32
+  check before input-dependent product work, including for
+  `field/product-independent-reference`. The old 10x26 `uint32_t` carry chain
+  loses the valid maximum-magnitude contributions during normalization. This
+  preserves the existing **Medium/latent 10x26 correctness** rating: the
+  state is valid at the internal contract boundary, but no public path making
+  this exact representation reachable has been demonstrated. The repaired
+  forced-int64 `magnitude32-normalize` replay exits 0.
+- `group/off-curve-opaque-pubkey` exits 134 at `src/fuzz/group.c:124` because
+  clean-master `secp256k1_pubkey_load` accepts the storage encoding of
+  `x = 1, y = 1`, even though the point is off curve. This is the existing
+  **Medium opaque-state** finding: it requires corrupted or directly
+  misused local opaque state, not a serialized wire input, but can otherwise
+  let invalid group state cross API boundaries. The repaired branch rejects
+  it through the illegal callback and zeroes failure outputs; its focused
+  replay exits 0.
+- `hash/hmac-independent-reference` reaches the independent output check on
+  clean master, then exits 134 at `src/fuzz/hash.c:298` because
+  `secp256k1_hmac_sha256_finalize` leaves the internal HMAC state live. This
+  reiterates the **Medium secret-state lifetime** finding, not a demonstrated
+  disclosure. A nonce or other public buffer without cryptographic meaning is
+  not a Critical erasure finding. The repaired branch's focused replay exits
+  0.
+- The macro-compatible `context/sha256-impossible-lengths` replay produces an
+  ASan heap-buffer-overflow while clean master hashes a `2^61`-byte tag from
+  the fuzzer's short fallback pointer. This is the existing **Medium, low
+  practical exploitability** impossible-length finding, not a new oracle
+  failure. `ellswift/xdh-overflow-plus-one` separately reaches clean master's
+  `main_impl.h:362` zero-`u` VERIFY guard after the fuzzer deliberately
+  replaces a SHA callback state with zero. In a non-VERIFY build the same
+  condition is the existing **Low** wrong-encoding edge case; the production
+  fix maps zero `u` to one and retries.
+- The remaining macro-compatible first stops are also previously classified:
+  `schnorrsig/opaque-keypair-consistency` reaches the intentional
+  `nonce_function_bip340(NULL, ...)` contract probe and ASan reports the
+  existing **Medium** callback NULL write; `musig/off-curve-keyagg-cache`
+  reaches the existing **Medium** noncanonical opaque-cache state; and the
+  API, ECDH, recovery, and x-only seeds stop at their existing stale-output or
+  inconsistent-opaque-state assertions. None is a new clean-master category.
+
+These are baseline confirmations, not new defects introduced by the current
+oracle work. The production fixes remain independently justified by their
+named mutation proofs and deterministic tests; no severity is reduced merely
+because a later or unrelated fix makes a replay pass.
