@@ -235,6 +235,26 @@ static void secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(const unsigned char
     FUZZ_CHECK(memcmp(actual_nonce, expected_nonce, sizeof(actual_nonce)) == 0);
 }
 
+static void secp256k1_fuzz_check_schnorrsig_custom_nonce_tag_boundaries(const unsigned char *input, size_t size, const unsigned char *key32, const unsigned char *xonly_pk32, const unsigned char *aux32) {
+    static const unsigned char trigger[] = "schnorrsig-custom-nonce-tag-boundaries\n";
+    static const unsigned char boundary_algo[16] = {
+        0x42, 0x49, 0x50, 0x30, 0x33, 0x34, 0x30, 0x2f,
+        0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x42, 0x59, 0x54
+    };
+    size_t algolen;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* The optimized BIP-340 tag is selected only at length 13. Exercise both
+     * sides of that dispatch and the short-tag lengths accepted by the API. */
+    for (algolen = 0; algolen <= sizeof(boundary_algo); algolen++) {
+        secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(input, size, key32, xonly_pk32, boundary_algo, algolen, aux32);
+        secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(input, size, key32, xonly_pk32, boundary_algo, algolen, NULL);
+    }
+}
+
 static void secp256k1_fuzz_check_schnorrsig_sign_failure_cleanup(const secp256k1_context *ctx, const unsigned char *msg, size_t msglen, const secp256k1_keypair *keypair, const unsigned char *aux32) {
     secp256k1_fuzz_schnorrsig_nonce_data nonce_data;
     secp256k1_schnorrsig_extraparams extraparams = SECP256K1_SCHNORRSIG_EXTRAPARAMS_INIT;
@@ -993,6 +1013,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_schnorrsig_nonce_reference(input, msglen, seckey, xonly32, NULL);
     secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(input, msglen, seckey, xonly32, custom_algo, custom_algolen, aux32);
     secp256k1_fuzz_check_schnorrsig_custom_nonce_tag(input, msglen, seckey, xonly32, custom_algo, custom_algolen, NULL);
+    secp256k1_fuzz_check_schnorrsig_custom_nonce_tag_boundaries(input, size, seckey, xonly32, aux32);
     secp256k1_fuzz_check_bip340_nonce_failure_cleanup(input, msglen, seckey, xonly32, aux32);
     memcpy(negated_seckey, seckey, sizeof(negated_seckey));
     FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, negated_seckey) == 1);
