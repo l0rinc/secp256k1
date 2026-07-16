@@ -120,6 +120,21 @@ static int secp256k1_fuzz_recovery_nonce_s_zero_then_two(unsigned char *nonce32,
     return 0;
 }
 
+static int secp256k1_fuzz_recovery_nonce_one(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
+    secp256k1_fuzz_recovery_nonce_data *nonce_data = (secp256k1_fuzz_recovery_nonce_data *)data;
+
+    FUZZ_CHECK(nonce_data != NULL);
+    FUZZ_CHECK(nonce_data->self == nonce_data);
+    FUZZ_CHECK(msg32 != NULL);
+    FUZZ_CHECK(key32 != NULL);
+    secp256k1_fuzz_recovery_nonce_check_domain(nonce_data, msg32, key32);
+    FUZZ_CHECK(algo16 == NULL);
+    FUZZ_CHECK(attempt == 0);
+    nonce_data->calls++;
+    memcpy(nonce32, secp256k1_fuzz_scalar_one, 32);
+    return 1;
+}
+
 static int secp256k1_fuzz_recovery_nonce_fail(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
     secp256k1_fuzz_recovery_nonce_data *nonce_data = (secp256k1_fuzz_recovery_nonce_data *)data;
 
@@ -604,6 +619,50 @@ static void secp256k1_fuzz_check_recovery_zero_s_rejection(const secp256k1_conte
     FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
 }
 
+static void secp256k1_fuzz_check_recovery_message_reduction(const secp256k1_context *ctx) {
+    secp256k1_fuzz_recovery_nonce_data nonce_data;
+    secp256k1_ecdsa_recoverable_signature reduced_sig;
+    secp256k1_ecdsa_recoverable_signature overflowing_sig;
+    secp256k1_pubkey reduced_pubkey;
+    secp256k1_pubkey overflowing_pubkey;
+    unsigned char overflowing_msg32[32];
+    unsigned char reduced_compact[64];
+    unsigned char overflowing_compact[64];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    int reduced_recid;
+    int overflowing_recid;
+
+    /* The recovery API consumes a 32-byte message hash as a scalar modulo n.
+     * Use n + 1 so this contract is tested independently of random chance. */
+    memcpy(overflowing_msg32, secp256k1_fuzz_scalar_order, sizeof(overflowing_msg32));
+    overflowing_msg32[31]++;
+
+    nonce_data.self = &nonce_data;
+    nonce_data.expected_key32 = secp256k1_fuzz_scalar_one;
+    nonce_data.expected_msg32 = overflowing_msg32;
+    nonce_data.calls = 0;
+    memset(&overflowing_sig, 0xA5, sizeof(overflowing_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &overflowing_sig, overflowing_msg32, secp256k1_fuzz_scalar_one, secp256k1_fuzz_recovery_nonce_one, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls == 1);
+
+    nonce_data.expected_msg32 = secp256k1_fuzz_scalar_one;
+    nonce_data.calls = 0;
+    memset(&reduced_sig, 0xA5, sizeof(reduced_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &reduced_sig, secp256k1_fuzz_scalar_one, secp256k1_fuzz_scalar_one, secp256k1_fuzz_recovery_nonce_one, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls == 1);
+
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, overflowing_compact, &overflowing_recid, &overflowing_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, reduced_compact, &reduced_recid, &reduced_sig) == 1);
+    FUZZ_CHECK(overflowing_recid == reduced_recid);
+    FUZZ_CHECK(memcmp(overflowing_compact, reduced_compact, sizeof(reduced_compact)) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &overflowing_pubkey, &overflowing_sig, overflowing_msg32) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &reduced_pubkey, &reduced_sig, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &overflowing_pubkey, &reduced_pubkey) == 0);
+    FUZZ_CHECK(memcmp(&overflowing_pubkey, zero_pubkey, sizeof(zero_pubkey)) != 0);
+    secp256k1_fuzz_check_recovery_equation(ctx, &overflowing_sig, overflowing_msg32, &overflowing_pubkey);
+}
+
 static void secp256k1_fuzz_check_recovery_r_plus_order_equation(const secp256k1_context *ctx) {
     static const unsigned char msg32[32] = {
         'T', 'h', 'i', 's', ' ', 'i', 's', ' ',
@@ -630,6 +689,7 @@ static void secp256k1_fuzz_check_recovery_r_plus_order_equation(const secp256k1_
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #ifdef ENABLE_MODULE_RECOVERY
     static const unsigned char zero_s_rejection_trigger[] = "recovery zero s rejection\n";
+    static const unsigned char message_reduction_trigger[] = "recovery message order reduction\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 91);
     secp256k1_fuzz_recovery_nonce_data nonce_data;
@@ -702,6 +762,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (size == sizeof(zero_s_rejection_trigger) - 1
         && memcmp(input, zero_s_rejection_trigger, sizeof(zero_s_rejection_trigger) - 1) == 0) {
         secp256k1_fuzz_check_recovery_zero_s_rejection(ctx);
+    }
+    if (size == sizeof(message_reduction_trigger) - 1
+        && memcmp(input, message_reduction_trigger, sizeof(message_reduction_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_recovery_message_reduction(ctx);
     }
     secp256k1_fuzz_check_recovery_r_plus_order_equation(ctx);
 
