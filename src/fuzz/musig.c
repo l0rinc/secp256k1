@@ -2349,6 +2349,76 @@ static void secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(const secp256k1
     }
 }
 
+static void secp256k1_fuzz_check_musig_nonce_gen_session_random_alias_case(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey32, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, unsigned int alias) {
+    unsigned char session_rand[32];
+    unsigned char session_rand_before[32];
+    unsigned char shared[32];
+    unsigned char expected_k64[64];
+    unsigned char expected_pubnonce66[66];
+    unsigned char serialized_pubnonce66[66];
+    unsigned char zero32[32] = { 0 };
+    unsigned char zero132[132] = { 0 };
+    const unsigned char *case_seckey = seckey32;
+    const unsigned char *case_msg32 = msg32;
+    const unsigned char *case_extra_input32 = extra_input32;
+    int expected_ret;
+    int actual_ret;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+
+    secp256k1_fuzz_derive(session_rand, sizeof(session_rand), input, size, 419u + alias);
+    if (memcmp(session_rand, zero32, sizeof(session_rand)) == 0) {
+        memcpy(session_rand, secp256k1_fuzz_scalar_one, sizeof(session_rand));
+    }
+    memcpy(session_rand_before, session_rand, sizeof(session_rand));
+
+    /* The public API promises to invalidate session_secrand32 after a
+     * successful call. Test that required write while an optional input points
+     * at the same 32-byte storage, using the pre-call bytes for the reference. */
+    switch (alias) {
+        case 0:
+            memcpy(shared, seckey32, sizeof(shared));
+            memcpy(session_rand_before, shared, sizeof(session_rand_before));
+            case_seckey = shared;
+            break;
+        case 1:
+            memcpy(shared, session_rand, sizeof(shared));
+            case_msg32 = shared;
+            break;
+        case 2:
+            memcpy(shared, session_rand, sizeof(shared));
+            case_extra_input32 = shared;
+            break;
+        default:
+            FUZZ_CHECK(0);
+            return;
+    }
+
+    expected_ret = secp256k1_fuzz_musig_nonce_reference(ctx, expected_k64, expected_pubnonce66, session_rand_before, case_seckey, pubkey, case_msg32, keyagg_cache, case_extra_input32);
+    memset(&secnonce, 0xA5, sizeof(secnonce));
+    memset(&pubnonce, 0x5A, sizeof(pubnonce));
+    actual_ret = secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, shared, case_seckey, pubkey, case_msg32, keyagg_cache, case_extra_input32);
+    FUZZ_CHECK(actual_ret == expected_ret);
+    if (expected_ret == 0) {
+        FUZZ_CHECK(memcmp(&secnonce, zero132, sizeof(secnonce)) == 0);
+        FUZZ_CHECK(memcmp(&pubnonce, zero132, sizeof(pubnonce)) == 0);
+        FUZZ_CHECK(memcmp(shared, session_rand_before, sizeof(shared)) == 0);
+        return;
+    }
+    FUZZ_CHECK(memcmp(shared, zero32, sizeof(shared)) == 0);
+    FUZZ_CHECK(memcmp(secnonce.data + 4, expected_k64, sizeof(expected_k64)) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized_pubnonce66, &pubnonce) == 1);
+    FUZZ_CHECK(memcmp(serialized_pubnonce66, expected_pubnonce66, sizeof(serialized_pubnonce66)) == 0);
+}
+
+static void secp256k1_fuzz_check_musig_nonce_gen_session_random_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey32, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32) {
+    unsigned int alias;
+
+    for (alias = 0; alias < 3; alias++) {
+        secp256k1_fuzz_check_musig_nonce_gen_session_random_alias_case(ctx, input, size, seckey32, pubkey, msg32, keyagg_cache, extra_input32, alias);
+    }
+}
+
 static void secp256k1_fuzz_check_musig_nonce_scalar_barrier(secp256k1_context *ctx) {
     unsigned char zero32[32] = { 0 };
     unsigned char serialized66[66];
@@ -3567,6 +3637,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char zero_scalar_secnonce_trigger[] = "MuSig zero secnonce scalar\n";
     static const unsigned char overflow1_secnonce_trigger[] = "MuSig overflow secnonce scalar 1\n";
     static const unsigned char second_zero_nonce_trigger[] = "MuSig nonce second zero scalar\n";
+    static const unsigned char session_random_alias_trigger[] = "MuSig nonce session-random input overlap\n";
     static const unsigned char keyagg_zero_coefficient_trigger[] = "MuSig keyagg zero coefficient\n";
     static const unsigned char keyagg_cancellation_trigger[] = "MuSig keyagg weighted cancellation\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
@@ -3715,6 +3786,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_nonce_gen_counter(ctx, input, size, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_counter_optional_inputs(ctx, seckey[0], &keypairs[0], &pubkeys[0], tweak, &cache, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(ctx, input, size, seckey[0], &pubkeys[0], tweak, &cache, session_rand);
+    if (size == sizeof(session_random_alias_trigger) - 1
+        && memcmp(input, session_random_alias_trigger, sizeof(session_random_alias_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_musig_nonce_gen_session_random_alias(ctx, input, size, seckey[0], &pubkeys[0], tweak, &cache, session_rand);
+    }
     secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup(ctx, &keypairs[0], tweak, &cache, session_rand);
     if (size == sizeof("MuSig nonce null session random\n") - 1
         && memcmp(input, "MuSig nonce null session random\n", sizeof("MuSig nonce null session random\n") - 1) == 0) {
