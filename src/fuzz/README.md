@@ -5706,3 +5706,38 @@ remain unchanged: Medium for the established SHA, impossible-length, and
 10x26 findings; Low for documented state-correctness overlaps; and
 Informational for oracle-only hardening. Clearing a public nonce remains
 non-Critical because it carries no cryptographic meaning.
+
+## 2026-07-16 ecmult_const Canonical Infinity Oracle
+
+The internal `ecmult_const` target now has a gated
+`ecmult-const-canonical-infinity` seed. It drives the infinity-base early
+return with `q = 1`, prefills the output with a sentinel, and requires the
+result to have the infinity flag plus the exact canonical field-zero storage
+written by `secp256k1_gej_set_infinity`. This complements the existing
+zero-scalar and infinity-base checks, which previously observed only the
+infinity flag.
+
+The oracle intentionally does **not** assert cleared coordinates for
+`0 * G`: clean master returns the infinity flag there with noncanonical
+intermediate coordinates, and treating that representation as a documented
+contract would create a false positive. The new assertion is limited to the
+branch whose production code explicitly calls `secp256k1_gej_set_infinity`.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production finding or fix. For causal proof, a disposable mutation changed
+only the infinity-base branch in `src/ecmult_const_impl.h` from
+`secp256k1_gej_set_infinity(r)` to `r->infinity = 1`. All five pre-existing
+`ecmult_const` corpus inputs stayed green, while the exact new seed aborted at
+the coordinate assertion with status 134. Disabling only the new helper call
+made the mutated seed pass with status 0. Restoring the production line and
+helper made all six inputs and empty input pass; the mutation was never
+committed. Coverage recorded the infinity-base branch 10 times.
+
+The fixed Clang 22.1.7 ASan/UBSan libFuzzer build passed the focused seed and
+all six inputs, then completed a two-worker/two-job campaign in 31 seconds
+with 521 runs and no sanitizer, assertion, timeout, OOM, or crash artifact.
+The supported `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` / 10x26 build
+also passed all six inputs plus `tests -t=ec -i=1` and
+`noverify_tests -t=ec -i=1`. Existing master-relative findings remain
+unchanged, and public nonce cleanup remains non-Critical because the nonce
+has no cryptographic meaning.
