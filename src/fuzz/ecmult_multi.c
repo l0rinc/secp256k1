@@ -261,6 +261,37 @@ static void secp256k1_fuzz_check_ecmult_multi_batch_size_helper(const unsigned c
     }
 }
 
+static void secp256k1_fuzz_check_ecmult_multi_batch_size_zero(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult batch size zero\n";
+    static const size_t max_cases[] = {
+        0,
+        1,
+        ECMULT_MAX_POINTS_PER_BATCH + 1u,
+        SIZE_MAX
+    };
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < sizeof(max_cases) / sizeof(max_cases[0]); i++) {
+        size_t n_batches = SIZE_MAX;
+        size_t n_batch_points = SIZE_MAX;
+        int ret = secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, max_cases[i], 0);
+
+        if (max_cases[i] == 0) {
+            FUZZ_CHECK(ret == 0);
+            FUZZ_CHECK(n_batches == SIZE_MAX);
+            FUZZ_CHECK(n_batch_points == SIZE_MAX);
+        } else {
+            FUZZ_CHECK(ret == 1);
+            FUZZ_CHECK(n_batches == 0);
+            FUZZ_CHECK(n_batch_points == 0);
+        }
+    }
+}
+
 static void secp256k1_fuzz_check_scratch_create_boundaries(const secp256k1_context *ctx) {
     const size_t base_alloc = ROUND_TO_ALIGN(sizeof(secp256k1_scratch));
 
@@ -1316,6 +1347,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     initialized_points = n_points < 8 ? 8 : n_points;
     data.fail_at = secp256k1_fuzz_byte(input, size, 5);
     secp256k1_fuzz_check_ecmult_multi_batch_size_helper(input, size);
+    secp256k1_fuzz_check_ecmult_multi_batch_size_zero(input, size);
     secp256k1_fuzz_check_scratch_create_boundaries(ctx);
     secp256k1_fuzz_check_checked_size_mul(ctx, input, size);
     secp256k1_fuzz_check_scratch_accounting_boundary(ctx);

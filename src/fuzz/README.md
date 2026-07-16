@@ -5861,3 +5861,42 @@ campaigns used private corpus copies, completed with zero manager/worker
 failures, and produced no sanitizer, assertion, timeout, OOM, or crash
 artifacts. The master-relative severity ledger and public-nonce assessment
 remain unchanged.
+
+## 2026-07-16 Zero-Point Batch-Size Oracle
+
+The internal `ecmult_multi` target now has a gated `batch-size-zero` seed
+(`ecmult batch size zero\n`). It calls
+`secp256k1_ecmult_multi_batch_size_helper` with `n == 0` and four capacity
+cases: zero, one, one above `ECMULT_MAX_POINTS_PER_BATCH`, and `SIZE_MAX`.
+The zero-capacity failure must leave both output counters at their sentinels;
+every valid capacity must return success and set both `n_batches` and
+`n_batch_points` to zero.
+
+This is **Informational / Low internal-oracle hardening** relative to clean
+master `ebf594320dc838b9de1abb54d5ba98cef84f4297`, not a production finding or
+fix. The helper is an internal batch-planning contract. Public
+`ecmult_multi_var` returns before calling it when `n == 0`. The unit suite
+already directly covers the `max == 1, n == 0` boundary; this seed is a
+corpus-driven reiteration of that internal contract, not a claim that unit
+coverage was missing. The older input-derived helper checks and tracked fuzz
+corpus did not select zero, so fuzzer replay lacked this explicit oracle. No
+public availability, memory-safety, cryptographic, or nonce-state issue is
+claimed.
+
+For causal proof, a disposable production mutation changed only
+`*n_batches = 0` in the `n == 0` branch to `*n_batches = 1`. All 23
+pre-existing `ecmult_multi` inputs stayed green on both default and
+forced-int64/10x26 ASan/UBSan builds, while the exact new seed reached the
+zero-count assertion and exited with libFuzzer status 77 on both backends.
+Disabling only the new helper made the same mutated seed pass with status 0.
+The mutation and bypass were restored; no production mutation is committed.
+
+Clean Clang 22.1.7 ASan/UBSan builds with `SECP256K1_ASM=OFF` replayed all 24
+inputs on both backends, and coverage recorded three executions of the
+production `n == 0` branch, including the clamped and ordinary valid-capacity
+cases. The default and forced-int64 `tests` and `noverify_tests`
+`ecmult_multi_tests` slices passed one iteration. Isolated
+`-workers=2 -jobs=2 -max_total_time=15 -timeout=10` campaigns used private
+24-file corpus copies; every manager and worker exited 0 without sanitizer,
+assertion, timeout, OOM, or crash artifacts. Existing master-relative ratings
+and the non-critical public-nonce assessment remain unchanged.
