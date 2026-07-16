@@ -7112,3 +7112,38 @@ This was a recheck of the existing state-machine and opaque-object oracles,
 not a new production finding. The current-master severity ledger is
 unchanged: existing findings remain rated against unmodified master, and a
 public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Independent Affine Group-Law Oracle
+
+`src/fuzz/group.c` now checks generated Jacobian addition and doubling results
+against a direct affine model using only field slopes. The reference handles
+infinity, equal points, opposite points, and the `y == 0` doubling contract;
+it does not use generator multiplication, Jacobian equality, or the
+production addition/doubling routines to construct its expected coordinates.
+The production `gej_add_var`, `gej_add_ge_var`, constant-time affine add, and
+both doubling variants are each checked against the serialized affine
+postcondition. The existing generator-derived points remain the input domain,
+so the model tests actual valid state transitions rather than synthetic
+off-curve objects.
+
+The dedicated `group/affine-addition-reference` seed exercises `G + G`,
+`G + (-G)`, `infinity + G`, and `G + infinity`. The complete 21-file group
+corpus passed single-input native 5x52 and forced-int64/10x26 Clang 22.1.7
+ASan/UBSan replays, including the new seed. For differential proof, a
+disposable mutation normalized the ordinary Jacobian-addition x coordinate
+and added one before producing the y coordinate. With only the older
+production-equality/addition assertions bypassed for isolation, the focused
+seed aborted with `run_rc=134` on both backends; the mutation and bypasses were
+restored before fixed replay. This demonstrates that the new postcondition
+rejects a representation-valid but mathematically wrong group result.
+
+The clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with the same fuzzer overlay and
+no branch production fixes. Clean master first stopped at the existing
+malformed opaque-pubkey finding and, after that control-only bypass, at the
+existing `gej_rescale` scale-alias assertion. Bypassing those two known
+stops in the disposable harness allowed the focused seed and all 21 group
+inputs to pass on native and forced-int64 ASan/UBSan. No new clean-master
+production defect or severity change was found. Existing findings remain
+rated against unmodified master, and a nonce without cryptographic meaning is
+not a Critical erasure finding.

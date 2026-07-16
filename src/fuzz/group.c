@@ -180,6 +180,186 @@ static void secp256k1_fuzz_group_check_independent_generator(const secp256k1_gej
     secp256k1_fuzz_group_check_gej_equal(actual, &expected);
 }
 
+/* Keep group-law results independent from generator multiplication, Jacobian
+ * addition, and gej equality. The generated points below are valid affine
+ * curve points, so ordinary short-Weierstrass slopes are sufficient. */
+static void secp256k1_fuzz_group_affine_double(secp256k1_ge *result, const secp256k1_ge *point) {
+    secp256k1_fe x = point->x;
+    secp256k1_fe y = point->y;
+    secp256k1_fe lambda;
+    secp256k1_fe tmp;
+
+    if (point->infinity) {
+        secp256k1_ge_set_infinity(result);
+        return;
+    }
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_normalize_var(&y);
+    if (secp256k1_fe_is_zero(&y)) {
+        secp256k1_ge_set_infinity(result);
+        return;
+    }
+
+    secp256k1_fe_sqr(&lambda, &x);
+    secp256k1_fe_mul_int(&lambda, 3);
+    tmp = y;
+    secp256k1_fe_add(&tmp, &y);
+    secp256k1_fe_inv_var(&tmp, &tmp);
+    secp256k1_fe_mul(&lambda, &lambda, &tmp);
+
+    secp256k1_fe_sqr(&result->x, &lambda);
+    secp256k1_fe_negate(&tmp, &x, 1);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_normalize_var(&result->x);
+
+    secp256k1_fe_negate(&tmp, &result->x, 1);
+    secp256k1_fe_add(&tmp, &x);
+    secp256k1_fe_mul(&result->y, &lambda, &tmp);
+    secp256k1_fe_negate(&tmp, &y, 1);
+    secp256k1_fe_add(&result->y, &tmp);
+    secp256k1_fe_normalize_var(&result->y);
+    result->infinity = 0;
+}
+
+static void secp256k1_fuzz_group_affine_add(secp256k1_ge *result, const secp256k1_ge *a, const secp256k1_ge *b) {
+    secp256k1_fe ax = a->x;
+    secp256k1_fe ay = a->y;
+    secp256k1_fe bx = b->x;
+    secp256k1_fe by = b->y;
+    secp256k1_fe lambda;
+    secp256k1_fe tmp;
+
+    if (a->infinity) {
+        *result = *b;
+        return;
+    }
+    if (b->infinity) {
+        *result = *a;
+        return;
+    }
+    secp256k1_fe_normalize_var(&ax);
+    secp256k1_fe_normalize_var(&ay);
+    secp256k1_fe_normalize_var(&bx);
+    secp256k1_fe_normalize_var(&by);
+
+    if (secp256k1_fe_equal(&ax, &bx)) {
+        if (secp256k1_fe_equal(&ay, &by)) {
+            secp256k1_ge normalized_a = *a;
+            normalized_a.x = ax;
+            normalized_a.y = ay;
+            secp256k1_fuzz_group_affine_double(result, &normalized_a);
+        } else {
+            secp256k1_ge_set_infinity(result);
+        }
+        return;
+    }
+
+    secp256k1_fe_negate(&lambda, &ax, 1);
+    secp256k1_fe_add(&lambda, &bx);
+    secp256k1_fe_inv_var(&lambda, &lambda);
+    secp256k1_fe_negate(&tmp, &ay, 1);
+    secp256k1_fe_add(&tmp, &by);
+    secp256k1_fe_mul(&lambda, &lambda, &tmp);
+
+    secp256k1_fe_sqr(&result->x, &lambda);
+    secp256k1_fe_negate(&tmp, &ax, 1);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_negate(&tmp, &bx, 1);
+    secp256k1_fe_add(&result->x, &tmp);
+    secp256k1_fe_normalize_var(&result->x);
+
+    secp256k1_fe_negate(&tmp, &result->x, 1);
+    secp256k1_fe_add(&tmp, &ax);
+    secp256k1_fe_mul(&result->y, &lambda, &tmp);
+    secp256k1_fe_negate(&tmp, &ay, 1);
+    secp256k1_fe_add(&result->y, &tmp);
+    secp256k1_fe_normalize_var(&result->y);
+    result->infinity = 0;
+}
+
+static void secp256k1_fuzz_group_check_affine_result(const secp256k1_gej *actual, const secp256k1_ge *expected) {
+    secp256k1_ge actual_affine;
+    secp256k1_gej actual_copy = *actual;
+    unsigned char actual_bytes[64];
+    unsigned char expected_bytes[64];
+
+    secp256k1_ge_set_gej_var(&actual_affine, &actual_copy);
+    FUZZ_CHECK(actual_affine.infinity == expected->infinity);
+    if (expected->infinity) {
+        return;
+    }
+    secp256k1_ge_to_bytes_ext(actual_bytes, &actual_affine);
+    secp256k1_ge_to_bytes_ext(expected_bytes, expected);
+    FUZZ_CHECK(memcmp(actual_bytes, expected_bytes, sizeof(actual_bytes)) == 0);
+}
+
+static void secp256k1_fuzz_group_check_independent_addition(const secp256k1_gej *a, const secp256k1_gej *b, const secp256k1_gej *sum, const secp256k1_gej *doubled) {
+    secp256k1_ge affine_a;
+    secp256k1_ge affine_b;
+    secp256k1_ge expected_sum;
+    secp256k1_ge expected_double;
+    secp256k1_gej copy_a = *a;
+    secp256k1_gej copy_b = *b;
+    secp256k1_gej actual;
+
+    secp256k1_ge_set_gej_var(&affine_a, &copy_a);
+    secp256k1_ge_set_gej_var(&affine_b, &copy_b);
+    secp256k1_fuzz_group_affine_add(&expected_sum, &affine_a, &affine_b);
+    secp256k1_fuzz_group_affine_double(&expected_double, &affine_a);
+    secp256k1_fuzz_group_check_affine_result(sum, &expected_sum);
+    secp256k1_fuzz_group_check_affine_result(doubled, &expected_double);
+
+    secp256k1_gej_add_var(&actual, a, b, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected_sum);
+    secp256k1_gej_add_ge_var(&actual, a, &affine_b, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected_sum);
+    if (!affine_b.infinity) {
+        secp256k1_gej_add_ge(&actual, a, &affine_b);
+        secp256k1_fuzz_group_check_affine_result(&actual, &expected_sum);
+    }
+    secp256k1_gej_double(&actual, a);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected_double);
+    secp256k1_gej_double_var(&actual, a, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected_double);
+}
+
+static void secp256k1_fuzz_group_check_affine_addition_edges(void) {
+    secp256k1_ge generator = secp256k1_ge_const_g;
+    secp256k1_ge negated_generator;
+    secp256k1_ge infinity;
+    secp256k1_ge expected;
+    secp256k1_gej generator_j;
+    secp256k1_gej negated_generator_j;
+    secp256k1_gej infinity_j;
+    secp256k1_gej actual;
+
+    secp256k1_ge_neg(&negated_generator, &generator);
+    secp256k1_ge_set_infinity(&infinity);
+    secp256k1_gej_set_ge(&generator_j, &generator);
+    secp256k1_gej_set_ge(&negated_generator_j, &negated_generator);
+    secp256k1_gej_set_infinity(&infinity_j);
+
+    secp256k1_fuzz_group_affine_add(&expected, &generator, &generator);
+    secp256k1_gej_add_var(&actual, &generator_j, &generator_j, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected);
+    secp256k1_gej_add_ge_var(&actual, &generator_j, &generator, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected);
+
+    secp256k1_fuzz_group_affine_add(&expected, &generator, &negated_generator);
+    secp256k1_gej_add_var(&actual, &generator_j, &negated_generator_j, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected);
+    secp256k1_gej_add_ge_var(&actual, &generator_j, &negated_generator, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected);
+
+    secp256k1_fuzz_group_affine_add(&expected, &infinity, &generator);
+    secp256k1_gej_add_var(&actual, &infinity_j, &generator_j, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected);
+    secp256k1_fuzz_group_affine_add(&expected, &generator, &infinity);
+    secp256k1_gej_add_var(&actual, &generator_j, &infinity_j, NULL);
+    secp256k1_fuzz_group_check_affine_result(&actual, &expected);
+}
+
 static void secp256k1_fuzz_group_check_affine(const secp256k1_gej *point) {
     secp256k1_ge constant_time;
     secp256k1_ge variable_time;
@@ -860,6 +1040,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char infinity_validity_trigger[] = "group infinity validity\n";
     static const unsigned char canonical_infinity_trigger[] = "group canonical infinity storage\n";
     static const unsigned char affine_equality_infinity_trigger[] = "group affine equality infinity\n";
+    static const unsigned char affine_addition_trigger[] = "group affine addition reference\n";
     static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
     static const unsigned char inverse_rzr_trigger[] = "group inverse rzr\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
@@ -924,6 +1105,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_group_check_eq_x(&sum);
     secp256k1_fuzz_group_check_addition(&a, &b, &sum);
     secp256k1_fuzz_group_check_double(&a, &doubled);
+    secp256k1_fuzz_group_check_independent_addition(&a, &b, &sum, &doubled);
     secp256k1_fuzz_group_check_batch(&a, &b, &sum);
 
     secp256k1_gej_neg(&negated, &a);
@@ -973,6 +1155,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     if (size == sizeof(affine_equality_infinity_trigger) - 1 && memcmp(input, affine_equality_infinity_trigger, sizeof(affine_equality_infinity_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_ge_eq_infinity();
+    }
+    if (size == sizeof(affine_addition_trigger) - 1 && memcmp(input, affine_addition_trigger, sizeof(affine_addition_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_affine_addition_edges();
     }
     if (size == sizeof(zinv_inverse_trigger) - 1 && memcmp(input, zinv_inverse_trigger, sizeof(zinv_inverse_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_zinv_inverse();
