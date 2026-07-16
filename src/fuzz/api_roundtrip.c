@@ -2391,6 +2391,66 @@ static void secp256k1_fuzz_check_signature_parse_der_negative(const secp256k1_co
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
 }
 
+static void secp256k1_fuzz_check_signature_parse_der_malformed(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    static const unsigned char trigger[] = "ecdsa DER parser boundaries\n";
+    static const unsigned char no_length[] = { 0x30 };
+    static const unsigned char forbidden_length[] = { 0x30, 0xFF };
+    static const unsigned char indefinite_length[] = { 0x30, 0x80 };
+    static const unsigned char incomplete_long_length[] = { 0x30, 0x82, 0x01 };
+    static const unsigned char non_shortest_zero_length[] = { 0x30, 0x81, 0x00 };
+    static const unsigned char oversized_length[] = {
+        0x30, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    static const unsigned char length_exceeds_input[] = { 0x30, 0x81, 0x80 };
+    static const unsigned char non_shortest_long_length[] = { 0x30, 0x81, 0x01 };
+    static const unsigned char invalid_integer_tag[] = {
+        0x30, 0x06, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01
+    };
+    static const unsigned char excessive_ff_padding[] = {
+        0x30, 0x07, 0x02, 0x02, 0xFF, 0x80, 0x02, 0x01, 0x01
+    };
+    static const unsigned char valid_leading_zero[] = {
+        0x30, 0x07, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0x01
+    };
+    static const struct {
+        const unsigned char *data;
+        size_t len;
+    } malformed[] = {
+        { no_length, sizeof(no_length) },
+        { forbidden_length, sizeof(forbidden_length) },
+        { indefinite_length, sizeof(indefinite_length) },
+        { incomplete_long_length, sizeof(incomplete_long_length) },
+        { non_shortest_zero_length, sizeof(non_shortest_zero_length) },
+        { oversized_length, sizeof(oversized_length) },
+        { length_exceeds_input, sizeof(length_exceeds_input) },
+        { non_shortest_long_length, sizeof(non_shortest_long_length) },
+        { invalid_integer_tag, sizeof(invalid_integer_tag) },
+        { excessive_ff_padding, sizeof(excessive_ff_padding) }
+    };
+    unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = { 0 };
+    unsigned char compact[64] = { 0 };
+    unsigned char expected[64] = { 0 };
+    secp256k1_ecdsa_signature parsed_sig;
+    size_t i;
+
+    if (inputlen != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++) {
+        memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+        FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, malformed[i].data, malformed[i].len) == 0);
+        FUZZ_CHECK(memcmp(&parsed_sig, zero_sig, sizeof(parsed_sig)) == 0);
+    }
+
+    expected[31] = 0x80;
+    expected[63] = 1;
+    memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, valid_leading_zero, sizeof(valid_leading_zero)) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+    FUZZ_CHECK(memcmp(compact, expected, sizeof(compact)) == 0);
+}
+
 static int secp256k1_fuzz_der_read_tlv(const unsigned char *data, size_t data_len, size_t *pos, unsigned char tag, size_t value_len, unsigned int length_bytes, const unsigned char **value) {
     if (length_bytes > 2 || *pos > data_len || data_len - *pos < 2 + length_bytes || data[*pos] != tag) {
         return 0;
@@ -2829,6 +2889,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_lax_long_lengths(ctx);
     secp256k1_fuzz_check_signature_parse_der_empty_integer(ctx, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_negative(ctx, msg32, &pubkey);
+    secp256k1_fuzz_check_signature_parse_der_malformed(ctx, input, size);
     secp256k1_fuzz_check_signature_parse_der_input(ctx, canonical_32_der, sizeof(canonical_32_der), msg32, &pubkey);
     secp256k1_fuzz_derive(sig64, sizeof(sig64), input, size, 41);
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, sig64, sig64 + 32, msg32, &pubkey);
