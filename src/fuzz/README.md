@@ -5204,3 +5204,43 @@ replay, two-worker replay, and the deterministic ECDSA unit suite passed with
 no sanitizer diagnostic, assertion, timeout, or artifact. The production
 mutation was never committed, and the existing master-relative severity is
 unchanged.
+
+## 2026-07-16 ecmult_multi Pippenger Window-9 Boundary Oracle
+
+The `ecmult_multi` target now has a gated `pippenger-window-1261` seed. It
+constructs 1,261 distinct generator-derived points and nonzero scalar terms
+on the heap, uses a generator scalar of 17, and forces the dispatcher to use a
+single Pippenger batch. The point result is checked against an independent
+model that calls `secp256k1_ecmult_const` for every term and compares
+serialized affine coordinates. The callback transcript requires every input
+index exactly once, the scratch checkpoint must be restored, and a second run
+rejecting the final callback must return an infinity result rather than expose
+a partial sum.
+
+This is **Informational / Low internal-oracle hardening**, not a new
+clean-master production finding. Clean `origin/master`
+`ebf594320dc838b9de1abb54d5ba98cef84f4297` intentionally jumps from bucket
+window 7 at 1,260 points to window 9 at 1,261 points; window 8 is not used
+with the endomorphism. The earlier fuzzer transcripts reached at most 264
+points, and the unit batching test reached only two Pippenger thresholds.
+The selector's inverse-boundary test therefore did not execute the high-window
+arithmetic, bucket allocation, or callback rollback at the first window-9
+point count. No public nonce or cryptographic secret-erasure severity is
+assigned here.
+
+For causal proof, a disposable mutation in `src/ecmult_impl.h` skipped bucket
+index 1 from the running sum only when `bucket_window == 9`. All 18
+pre-existing `ecmult_multi` corpus files remained green; the exact new seed
+aborted with `-handle_abrt=0` and exit 134. Disabling only the new helper made
+that same mutated seed pass with exit 0. Restoring the loop and the helper
+produced a clean exit for the new seed and all 19 tracked corpus files. The
+mutation was never committed, so this proves the fixture detects a high-window
+regression without claiming that clean master is currently defective.
+
+The restored Clang 22 ASan/UBSan builds passed the deterministic seed and all
+19 tracked corpus files on both the default backend and forced-int64/10x26;
+each fixed corpus replay completed 20 executions including the empty input.
+Isolated two-worker/two-job campaigns completed 78 executions per job on each
+backend with every manager and worker exiting 0. No sanitizer diagnostic,
+assertion failure, timeout, OOM, or crash artifact occurred. This commit
+changes only the fuzzer, its corpus, and this evidence ledger.
