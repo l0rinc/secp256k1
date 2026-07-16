@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage, including x-only output/tweak storage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
@@ -5340,3 +5340,39 @@ existing `ba8d379` message already states the affected API, clean-master
 failure, severity, proof, and boundary decision. The other fork heads remain
 reconciled in the earlier ledger; no optimization or later fix was applied
 over the master-relative alias finding.
+
+## 2026-07-16 xonly Tweak Input/Output Alias
+
+The x-only tweak target now has the exact 33-byte seed
+`xonly tweak input-output overlap\n`. It initializes a valid scalar at offsets
+0, 16, and 32 inside the caller-owned `output_pubkey.data`, then compares
+`secp256k1_xonly_pubkey_tweak_add` against the same tweak copied to independent
+storage. The deterministic extrakeys test exercises the same three offsets.
+
+This is a **Low master-relative API aliasing/state finding**. Clean
+`origin/master` `ebf594320dc838b9de1abb54d5ba98cef84f4297` clears the `Out`
+public-key object before the `In` `tweak32` bytes are consumed. A caller that
+stores a valid tweak in that output buffer therefore receives a successful
+zero-tweak result instead of the requested point. The public declarations
+separate the output and tweak roles but do not impose a non-overlap
+precondition. This is incorrect successful output, not memory corruption,
+key disclosure, signature forgery, or a public-nonce cleanup issue.
+
+The clean-master proof restored the original `memset(output_pubkey, 0, ...)`
+ordering in `src/modules/extrakeys/main_impl.h`. The focused seed aborted with
+exit 134, while all 13 pre-existing xonly seeds remained green with exit 0,
+showing that the old corpus did not exercise this output/tweak overlap. The
+fix loads the x-only point and parses the tweak before the final output wipe,
+then preserves zeroed output on invalid tweaks, invalid points, and mandatory
+NULL arguments. The repaired Clang 22.1.7 ASan/UBSan standalone target passed
+the focused seed and all 14 tracked xonly seeds on both native and forced
+`int64`/10x26 arithmetic. A separate RelWithDebInfo ASan/UBSan libFuzzer
+replay used `-workers=2 -jobs=2 -runs=1`; both jobs completed 15 executions
+(14 corpus inputs plus the empty input) in about 6 seconds with no diagnostic,
+failure, timeout, or artifact. `tests` and
+`noverify_tests` each passed the `extrakeys` module at one iteration.
+
+This path is independent of l0rinc PR #15: that fork commit fixes the already
+covered keypair in/out tweak alias, while this finding is the separate x-only
+public-output/tweak-input path. PR #15 was not applied over this commit, so it
+cannot mask the clean-master reproduction or change its Low rating.
