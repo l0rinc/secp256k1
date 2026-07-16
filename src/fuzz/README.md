@@ -6542,3 +6542,31 @@ master-relative production findings retain their recorded ratings, while
 the rejected accessor interpretation remains an invalid oracle. Clearing a
 public nonce is not a Critical erasure finding because that nonce carries no
 cryptographic meaning.
+
+## 2026-07-16 Scalar Inversion Worker Recheck
+
+The scalar target was rechecked separately after the SHA-sensitive campaign.
+The audit tree was clean at `48f1a5a`, with `origin/master` at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` already an ancestor, so no rebase
+was required. The four tracked scalar inputs were copied to disposable corpus
+directories and run with two libFuzzer workers and two jobs:
+
+```
+-workers=2 -jobs=2 -max_total_time=20 -timeout=60 -rss_limit_mb=4096
+```
+
+The native Clang 22.1.7 ASan/UBSan build and the forced
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` Clang 22.1.7 ASan/UBSan build
+both completed all manager jobs with exit 0. The runs generated additional
+mutations, and neither backend produced a sanitizer diagnostic, assertion
+failure, timeout, OOM, or crash artifact. Temporary corpora and libFuzzer
+logs were removed; the tracked scalar corpus was unchanged.
+
+This recheck confirms the existing scalar oracle rather than adding a weaker
+duplicate: canonical decoding is independently reduced, multiplication is
+checked against a base-2^16 product and long-division model, constant-time and
+variable-time inverses are compared, and the inverse product is checked as
+zero or one. No clean-master scalar defect was reproduced, so no production
+fix, new seed, or severity change is justified. Existing findings remain
+rated against clean master; clearing a nonce without cryptographic meaning is
+not a Critical erasure finding.
