@@ -6102,6 +6102,43 @@ arithmetic defects, Low/informational for internal scratch robustness, and
 non-Critical for clearing public nonce state because it carries no
 cryptographic meaning.
 
+## 2026-07-16 Recovery Message-Order Reduction Oracle
+
+The recovery fuzzer already used an independent byte-level reduction model for
+the ECDSA message scalar, but random 32-byte derivation almost never reaches
+the `message >= n` branch. The gated
+`recovery/message-order-reduction` seed now constructs the exact 32-byte value
+`n + 1`, signs it and the reduced message `1` with the same fixed nonce, and
+requires identical compact `(r, s, recid)` output. It then recovers both public
+keys and checks the `n + 1` result with the independent point equation. This
+tests the full sign/recover transition rather than merely marking a reference
+branch covered.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. Clean master already reduces the message scalar in both signing and
+recovery. No production fix or severity change is justified; existing
+master-relative findings remain rated against clean master, and clearing a
+public nonce remains **non-Critical** because it carries no cryptographic
+meaning.
+
+For causal proof, a disposable mutation in
+`src/modules/recovery/main_impl.h` matched only the exact `n + 1` transcript
+after message loading and replaced its message scalar with zero. All ten
+pre-existing recovery inputs passed under the mutation, while the new seed
+aborted with status 134 at the signature/recovery equivalence assertion.
+Disabling only the new gated helper made that same mutated seed pass with
+status 0. The production and harness mutations were restored before fixed
+replay; the mutation was never committed.
+
+The restored GCC coverage binary passed all 11 recovery inputs and reached
+100% of the 109 production lines and all 98 production branches in
+`src/modules/recovery/main_impl.h`. The restored Clang 22.1.7 ASan/UBSan
+binary passed the focused seed and all 11 inputs. Both `tests -t=recovery -i=1`
+and `noverify_tests -t=recovery -i=1` passed. A private-corpus
+`-workers=2 -jobs=2 -max_total_time=8 -timeout=60` campaign completed 134 and
+136 executions with both managers and workers exiting 0, and produced no
+sanitizer, assertion, timeout, OOM, or crash artifact.
+
 ## 2026-07-16 Schnorr Custom-Tag Boundary Oracle
 
 The Schnorr fuzzer already independently modeled the BIP340 nonce equation,
