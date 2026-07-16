@@ -5401,3 +5401,21 @@ all 64 pre-existing files remained green in a 65-execution replay. The
 mutation was restored before the fixed replay. No production behavior or
 severity rating changes; a public nonce without cryptographic meaning is not
 a Critical cleanup issue.
+
+## 2026-07-16 Callback and Output-Lifecycle Recheck
+
+The context, ECDH, and recoverable-signature callback paths were re-reviewed
+against their public contracts and replayed without finding a new clean-master
+bug. Context cloning copies callback state by value and reset restores the
+default backend; ECDH keeps callback coordinates in local storage and clears
+its built-in output on callback failure; recovery clears malformed outputs and
+rejects invalid recovered points. The existing oracles also cover callback
+domain separation, failure cleanup, clone routing, and post-retry state.
+
+The Clang 22.1.7 libFuzzer build replayed the complete context corpus (10
+inputs), ECDH corpus (6), and recovery corpus (10) with `-workers=2 -jobs=2`;
+both workers for every target exited 0. The deterministic `tests -t=ecdsa
+-i=1` and `noverify_tests -t=ecdsa -i=1` runs also passed. This is negative
+evidence only: no production patch or severity change is justified by this
+pass, and pure undocumented output/input aliases remain outside the supported
+oracle boundary.
