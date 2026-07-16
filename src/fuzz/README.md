@@ -6736,3 +6736,33 @@ remain **Informational**. Severity is still assigned against clean master
 before later fork fixes or audit repairs. A nonce without cryptographic
 meaning is not a Critical erasure finding. No production fix is claimed
 without a master reproduction or a minimal production mutation proof.
+
+## 2026-07-16 MuSig `s_part` Mutation Proof
+
+The serialized session field at `session->data + 101` is the tweak-dependent
+`s_part` that `secp256k1_musig_partial_sig_agg` adds before emitting the final
+signature. To test whether the existing oracle independently binds that field,
+a disposable production mutation changed the clean-master condition in
+`src/modules/musig/session_impl.h` from
+`if (!secp256k1_scalar_is_zero(&cache_i.tweak))` to
+`if (0 && !secp256k1_scalar_is_zero(&cache_i.tweak))`. This removes only the
+`e * tweak` contribution; no fuzzer code or corpus file was changed.
+
+The exact input `src/fuzz/corpora/musig/tweaked-signing-parity` (23 bytes)
+reached the tweaked signing path and aborted at the independent
+`secp256k1_fuzz_check_musig_final_sig_equation` assertion at
+`src/fuzz/musig.c:459`, after `secp256k1_fuzz_check_musig_tweaked_sign_case`
+at line 1038. Native Clang 22.1.7 ASan/UBSan and forced-int64/10x26
+Clang 22.1.7 ASan/UBSan builds both reproduced the same SIGABRT under GDB.
+After restoring the one-line mutation, both builds replayed the same input
+once with exit status 0 and no sanitizer output.
+
+This is an oracle-strength proof, not a production bug: clean master already
+contains the `s_part` contribution and the independent final equation catches
+its removal. It does not change the existing severity ledger. Master-relative
+ratings remain **Medium** for malformed opaque state and callback failure,
+**Medium/latent** for the reachable-status 10x26 magnitude-32 arithmetic
+issue, **Low** for documented tweak-input overlap, and **Informational** for
+this negative oracle result. A nonce without cryptographic meaning is not a
+Critical erasure finding. No fork fix or later audit commit was used to lower
+any master-relative severity.
