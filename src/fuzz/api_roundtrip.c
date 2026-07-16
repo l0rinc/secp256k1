@@ -2391,6 +2391,38 @@ static void secp256k1_fuzz_check_signature_parse_der_negative(const secp256k1_co
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
 }
 
+static void secp256k1_fuzz_check_signature_parse_der_scalar_overflow(const secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    static const unsigned char overflow_r_der[40] = {
+        0x30, 0x26, 0x02, 0x21, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x02, 0x01, 0x01
+    };
+    static const unsigned char overflow_s_der[40] = {
+        0x30, 0x26, 0x02, 0x01, 0x01,
+        0x02, 0x21, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    const unsigned char *overflow_der[] = { overflow_r_der, overflow_s_der };
+    unsigned char compact[64];
+    secp256k1_ecdsa_signature parsed_sig;
+    size_t i;
+
+    /* A positive 33-byte INTEGER is valid DER but cannot fit in a scalar.
+     * The public API must initialize it and guarantee verification failure. */
+    for (i = 0; i < sizeof(overflow_der) / sizeof(overflow_der[0]); i++) {
+        memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+        FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, overflow_der[i], 40) == 1);
+        FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+        FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_signature_parse_der_malformed(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
     static const unsigned char trigger[] = "ecdsa DER parser boundaries\n";
     static const unsigned char no_length[] = { 0x30 };
@@ -2889,6 +2921,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_lax_long_lengths(ctx);
     secp256k1_fuzz_check_signature_parse_der_empty_integer(ctx, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_negative(ctx, msg32, &pubkey);
+    if (size == sizeof("ecdsa DER scalar overflow\n") - 1
+        && memcmp(input, "ecdsa DER scalar overflow\n", sizeof("ecdsa DER scalar overflow\n") - 1) == 0) {
+        secp256k1_fuzz_check_signature_parse_der_scalar_overflow(ctx, msg32, &pubkey);
+    }
     secp256k1_fuzz_check_signature_parse_der_malformed(ctx, input, size);
     secp256k1_fuzz_check_signature_parse_der_input(ctx, canonical_32_der, sizeof(canonical_32_der), msg32, &pubkey);
     secp256k1_fuzz_derive(sig64, sizeof(sig64), input, size, 41);
