@@ -9995,3 +9995,40 @@ bug is claimed in this pass, and no nonce cleanup is rated Critical merely
 because a public/non-cryptographic nonce object was invalidated. The existing
 production commit messages retain the deterministic tests, exact mutations,
 and verifier commands for each finding.
+
+## 2026-07-17 Fresh ASan/UBSan Multi-Worker Exploration
+
+The current fixed Clang 22.1.7 ASan/UBSan build ran fresh generated-input
+campaigns for `fuzz_ecmult_multi` and `fuzz_musig`. Each target started from a
+private copy of its tracked corpus (`24` and `68` seed files respectively)
+and used `-workers=2 -jobs=2 -max_total_time=60 -timeout=60
+-rss_limit_mb=0 -handle_abrt=0`. All four job managers returned exit zero.
+The ecmult campaign reached the independent affine-double oracle at
+`src/fuzz/ecmult_multi.c:675`; neither target emitted an ASan/UBSan report,
+`FUZZ_CHECK` failure, crash artifact, command timeout, or OOM. The temporary
+corpora and generated units were removed after the jobs completed.
+
+This is fresh negative sanitizer and worker evidence, not proof that clean
+master is defect-free and not a new production finding. It does not change
+the existing master-relative Medium, Medium/latent, Low/latent, or
+Informational ratings. The clean-master differential replays and exact
+production mutations remain the stronger evidence for those ratings. A
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Forced-Int64 Arithmetic Recheck
+
+The fixed Clang 22.1.7 ASan/UBSan build configured with forced 64-bit
+arithmetic also completed isolated multi-worker campaigns for `fuzz_field`
+and `fuzz_scalar`. Each target used a private copy of its tracked corpus
+(`20` and `7` seed files respectively), `-workers=2 -jobs=2`,
+`-max_total_time=35 -timeout=60 -rss_limit_mb=0 -handle_abrt=0`, and the
+same fail-fast sanitizer environment. The field jobs reported 20 input files
+and the scalar jobs reported 7 in every worker; both managers returned zero.
+No ASan/UBSan report, `FUZZ_CHECK` failure, crash artifact, timeout, or OOM
+was observed, and both temporary corpora were removed afterward.
+
+This is negative evidence for the forced-int64 arithmetic configuration only.
+It neither downgrades the existing Medium/latent 10x26 normalization finding
+nor claims that clean master is defect-free. The earlier cross-target log
+capture was excluded because concurrent libFuzzer job managers shared their
+worker-log names; only the isolated runs above are part of this record.
