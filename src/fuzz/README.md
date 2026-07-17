@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -9206,6 +9206,48 @@ external-callback forced-int64/10x26. The combine-focused deterministic test
 `ec_illegal_argument_tests` passed with one iteration on all three builds.
 The mutation was restored before commit and no production behavior or severity
 rating changed.
+
+## 2026-07-17 Recoverable ECDSA Signing Alias Boundary
+
+The `recovery/recoverable-sign-input-output-overlap` fixture checks exact
+aliasing of `secp256k1_ecdsa_sign_recoverable` output with the message hash and
+with the secret key. Its independent fixed vector uses `z = 0`, `d = 1`, and
+`k = 1`, so `r = s = x(G)` and `recid = 0`; the check serializes all three
+output fields after each alias case. This is a separate optional-module
+boundary from the normal ECDSA signer because it exercises the 65-byte
+recoverable object and recovery-id save path.
+
+This is **Informational alias-contract hardening**, not a clean-master
+production finding. The recovery header describes the input and output roles
+but does not state a non-overlap precondition; master produced the fixed
+signature consistently in native Clang, external-callback Clang, and external-
+callback forced-int64/10x26 Clang ASan/UBSan builds. Existing recovery tests
+and the fuzzer used disjoint signing buffers, so they did not exercise this
+read-before-save transition. The master-relative severity ledger is unchanged:
+malformed opaque state, callback-failure memory safety, and secret-state
+lifetime remain **Medium** where proven; the forced-int64 magnitude boundary
+remains **Medium/latent**; bounded/documented aliases remain **Low/latent**;
+cleanup and model checks remain **Informational**. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, a disposable `memset(signature, 0, sizeof(*signature));`
+was inserted immediately after the output argument check in
+`secp256k1_ecdsa_sign_recoverable`. The exact fixture exited 134 in all three
+builds with `-handle_abrt=0`, while the previous 13-file recovery corpus
+passed 14 executions per job in both worker jobs for every configuration.
+After restoration, the 14-file corpus including the new fixture passed 15
+executions per job in both worker jobs for every configuration, with no
+sanitizer report, oracle failure, or crash artifact. The mutation was restored
+before commit; no production behavior or severity rating changed.
+
+The bounded follow-up used isolated copies of the same 14-file corpus with
+`-workers=2 -jobs=2 -max_total_time=30 -timeout=60 -rss_limit_mb=0
+-handle_abrt=0`. Native jobs completed 426 and 429 executions, external-
+callback jobs completed 434 and 435, and external-callback
+forced-int64/10x26 jobs completed 262 and 260. All six jobs exited zero with
+no sanitizer report, oracle failure, crash artifact, or master-relative
+severity change; generated mutation units were discarded with the temporary
+copies.
 
 ## 2026-07-17 Tagged SHA Output Overlap Boundary
 
