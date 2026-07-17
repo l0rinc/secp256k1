@@ -7915,3 +7915,52 @@ MuSig fuzzer target. No clean-master production mismatch was confirmed. This
 is **Informational / oracle hardening**, with no production fix or severity
 change. Severity remains master-relative; a public or otherwise
 non-cryptographic nonce buffer does not make a clearing issue Critical.
+
+## 2026-07-17 Full Corpus and Worker Recheck
+
+After the master refresh, `origin/master` remained
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, and `codex/fuzz-oracles` remained
+its descendant. The fetched `l0rinc/master` and pull-request heads contain no
+additional commit that is not already represented by this branch, so no rebase
+or extra cherry-pick was needed for this pass.
+
+All 275 tracked corpus files were replayed from disposable copies, one target
+at a time, with Clang 22.1.7 ASan/UBSan builds in both native 5x52 and forced
+int64/10x26 configurations. The target/file counts were: `api_roundtrip` 44,
+`context` 11, `hash` 10, `scalar` 7, `field` 20, `group` 21,
+`ecmult_const` 8, `ecmult_multi` 24, `ecdh` 7, `ellswift` 15,
+`xonly_tweak` 14, `recovery` 12, `schnorrsig` 15, and `musig` 67. Every
+replay exited 0; no assertion, sanitizer diagnostic, timeout, OOM, or
+artifact was produced. A second pass ran each target with
+`-fork=2 -max_total_time=5 -timeout=15 -rss_limit_mb=0` on both backends.
+All 28 worker jobs exited 0 and produced no artifacts. The worker pass is
+evidence that the current oracles remain stable under parallel execution; it
+is not treated as proof that random exploration found every state.
+
+This recheck found no new production defect and no severity change. The
+existing findings are still rated against unmodified master, even where a
+later branch fix or unrelated change causes a replay to pass:
+
+- **Medium**: confirmed internal scratch-allocation wraparound; malformed or
+  off-curve opaque group/key-aggregation state; public callback failure paths
+  that can expose invalid or stale state; and secret SHA/HMAC state lifetime
+  until the relevant state is explicitly cleared. These are not promoted to
+  Critical without a master-reachable security impact.
+- **Medium/latent**: forced-int64/10x26 magnitude-32 normalization overflow
+  and impossible SHA-length handling. The first is a real internal arithmetic
+  contract failure; the second has low practical reachability. Neither is
+  downgraded because the audit branch contains a fix.
+- **Low/latent**: scalar shift-above-width reads and generic WNAF signed-width
+  behavior; EllSwift zero-`u` wrong-encoding behavior in non-VERIFY builds;
+  documented tweak-input overlap; and partial results after a later
+  `ecmult_multi` callback failure where the API contract permits the caller to
+  observe them.
+- **Informational**: fixed vectors, affine/product equations, cleanup checks,
+  and other oracle-only hardening whose clean-master mutation controls did not
+  demonstrate a production mismatch. Clearing a public or otherwise
+  non-cryptographic nonce buffer is not a Critical erasure finding.
+
+No production mutation was used to claim a new issue in this recheck. The
+previous mutation-backed findings and deterministic tests remain the required
+proof for the production fixes; no finding is considered closed merely because
+a minor follow-up commit masks the triggering state.
