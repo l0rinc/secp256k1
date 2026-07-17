@@ -9787,3 +9787,26 @@ wide-multiply implementation and external callback projection. The
 master-relative Medium, Medium/latent, Low/latent, and Informational ratings
 remain unchanged. In particular, a public or non-cryptographic nonce buffer
 is not a Critical erasure finding.
+
+## 2026-07-17 Context-Clone Allocation-Failure Negative Control
+
+The context boundary was checked with a disposable production mutation at
+`secp256k1_context_clone`: immediately after `checked_malloc` returned, the
+mutation replaced the result with `NULL` and explicitly replayed the
+`"Out of memory"` error callback. A small public-API probe installed returning
+error and illegal callbacks, then called `secp256k1_context_clone`. The mutated
+build produced exactly one error callback, exactly one subsequent
+`"prealloc != NULL"` illegal callback, and a NULL clone with exit zero. The
+unmutated control returned a non-NULL clone and made neither callback call.
+
+This is not a clean-master production finding. `checked_malloc` already routes
+allocation failure through the context error callback, while the public error
+callback documentation says that after a returning internal-error callback
+anything may happen, including a crash. The follow-up
+`secp256k1_context_preallocated_clone(ctx, NULL)` therefore cannot be used to
+claim a violated return-value contract or a memory-safety defect. The exact
+mutation also bypasses the allocator itself; it proves callback sequencing,
+not an allocator implementation failure. No production or fuzzer change is
+justified by this path, and existing master-relative severities remain
+unchanged. A public or non-cryptographic nonce buffer is not a Critical
+erasure finding.
