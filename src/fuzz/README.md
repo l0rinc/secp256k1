@@ -8433,3 +8433,31 @@ This longer Schnorr campaign found no new clean-master defect and no
 master-relative severity change. Existing findings remain rated against
 unmodified master; clearing a public or non-cryptographic nonce buffer is not
 a Critical erasure finding.
+
+## 2026-07-17 Schnorr Context-Routing Negative Control
+
+The `sign32-custom` corpus input (`schnorr sign32 sign_custom equivalence with
+fixed aux\n`, 54 bytes) was replayed against a detached build of this branch and
+against a one-line production mutation. The mutation changed the built-in
+Schnorr signing path in `src/modules/schnorrsig/main_impl.h` to call
+`nonce_function_bip340_impl` with `secp256k1_context_static` instead of the
+caller context. It therefore models a regression that silently ignores a
+caller-installed SHA compression backend while leaving the rest of signing
+functional.
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan mutant builds were
+configured with all modules and libFuzzer enabled, rebuilt from the detached
+worktree, and run with `-runs=1` on that exact seed. Both exited `77` after
+`FUZZ_CHECK` at `src/fuzz/schnorrsig.c:1073`, where the context hook must observe
+the BIP340 nonce hash. The unchanged audit binary accepted the identical seed
+with exit `0`; the native replay completed in 140 ms. This proves the assertion
+distinguishes the regression from ordinary signing success and works across
+both field representations. The mutation was restored outside the audit
+branch before this entry was recorded.
+
+This is **Informational oracle hardening**, not a clean-master production bug:
+the production mutation is required to create the failure, and the clean
+master branch already routes the nonce through the caller context. It does not
+change any master-relative severity rating. A nonce buffer with no standalone
+cryptographic meaning is not a Critical erasure finding; severity remains tied
+to the actual master-branch impact of a confirmed defect.
