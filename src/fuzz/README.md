@@ -13,7 +13,7 @@ Targets:
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication, a fixed generator-times-two known-answer vector, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
+- `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
@@ -7801,6 +7801,40 @@ unavailable. No clean-master production mismatch was confirmed. This is
 **Informational / oracle hardening**, with no production fix or severity
 change. Severity remains master-relative; clearing a public or
 non-cryptographic nonce buffer is not a Critical finding.
+
+## 2026-07-17 Zero-Scalar Infinity-Z Postcondition for `ecmult_const`
+
+The `ecmult_const/zero-scalar-infinity-z` fixture is the 36-byte ASCII
+transcript `ecmult const zero scalar infinity z` followed by a newline. It
+calls the direct internal `secp256k1_ecmult_const` path with the finite
+generator and the zero scalar, then requires both the existing infinity flag
+and the projective `Z` coordinate to represent zero modulo the field
+characteristic. It deliberately does not require byte-for-byte zero `X/Y/Z`
+storage: inverse addition sets the infinity flag and zero `Z` while retaining
+nonzero `X/Y` intermediates, which is a valid representation used by the
+group formulas.
+
+This closes a real oracle gap. The previous fuzzer check only tested
+`secp256k1_gej_is_infinity`, which reads the flag and does not independently
+validate the projective zero coordinate. The existing canonical-infinity
+fixture covers the separate finite-output early return for an infinity base;
+it does not exercise finite-base, zero-scalar cancellation.
+
+For causal proof, a temporary mutation in `src/ecmult_const_impl.h` changed
+`r->z` to one only when the base was finite and `q` was zero, leaving
+`r->infinity == 1` and all other output state intact. The focused seed aborted
+with status 134 on native 5x52 and forced-int64/10x26 ASan/UBSan builds. With
+only this new postcondition bypassed, all eight pre-existing `ecmult_const`
+seeds passed on both backends, proving that the old flag-only checks accepted
+the mutated state. The mutation and bypass were removed before restored
+replay.
+
+The restored nine-file corpus passed on both backends. A temporary matching
+`Z == 0 mod p` assertion in clean master `11dad6d`'s existing
+`ecmult_const_mult_zero_one` test also passed under the clean ASan/UBSan
+build, then was removed. This is **Informational / Low internal-oracle
+hardening**, not a clean-master production bug or severity change; no
+production code was changed.
 
 ## 2026-07-17 Fixed Generator Vector for Recoverable ECDSA
 
