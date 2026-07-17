@@ -7516,3 +7516,44 @@ on clean native and forced-int64. No clean-master arithmetic mismatch was
 found, so this is **Informational / oracle hardening**, with no production fix
 or severity change. A public or non-cryptographic nonce buffer is not a
 Critical erasure finding.
+
+## 2026-07-17 Independent Byte-Total and Affine Oracle for the Window-10 Boundary
+
+The existing gated `ecmult_multi/pippenger-window-4421` fixture uses 4,421
+copies of G with scalar `2^60 + 1` and generator scalar 17. Its prior expected
+point reduced the repeated sum with production scalar multiplication/addition
+and one production `ecmult_const` call. The oracle now recomputes
+`4421 * (2^60 + 1) + 17` with a standalone base-256 multiply-and-add, checks
+that byte result against the production scalar result, and multiplies G by the
+reference scalar with the independent affine model. The actual window-10
+Pippenger result is compared to those serialized affine coordinates before the
+older Jacobian/production-derived check, without performing 4,421 affine term
+multiplications.
+
+The existing seed is 22 bytes containing `pippenger window 4421` followed by a
+newline. Restored native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan
+replays passed all 24 `ecmult_multi` corpus files plus empty input: 25 runs in
+16 seconds and 27 seconds. Two-worker, two-job value-profiled campaigns used
+private corpora; all four jobs completed 25 runs and returned zero. No
+sanitizer diagnostic, assertion, timeout, OOM, or artifact was produced; the
+forced-int64 private logs only recorded the existing slow-unit marker for the
+window-9 seed.
+
+For the differential proof, `secp256k1_ecmult_pippenger_batch` was temporarily
+changed to flip `r->x.n[0]` only when `bucket_window == 10` and
+`n_points == 4421`, immediately after Pippenger accumulation. The exact 22-byte
+seed aborted with raw status 134 on native and forced-int64. The new byte-total
+and affine checks precede the old expected-result check. The mutation was
+removed and both binaries were rebuilt before the restored corpus replay.
+Existing tests and the prior window-10 oracle did not independently bind the
+repeated-term total or the curve result.
+
+The raw clean-master replay reproduced the existing **Medium confirmed internal
+memory-safety** scratch-constructor overflow on both backends. A disposable
+clean control skipped that and stopped after the successful window-10 result,
+isolating the new checks from the already-ledgered callback-failure
+partial-output state. The base-256 total, affine result, and callback-success
+transcript passed on clean native and forced-int64. No clean-master Pippenger
+or scalar-total mismatch was found, so this is **Informational / oracle
+hardening**, with no production fix or severity change. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
