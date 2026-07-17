@@ -12,7 +12,7 @@ Targets:
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
-- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
+- `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, a fixed generator-times-two known-answer vector, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
@@ -10107,3 +10107,30 @@ the existing severity ledger. In particular, the existing **Medium** findings
 remain rated against clean master, and the public, non-cryptographic MuSig
 nonce object remains outside a Critical erasure classification. No new
 production mutation, regression test, or bug claim is justified by this run.
+
+## 2026-07-17 All-Infinity Batch Conversion Oracle
+
+The `group/all-infinity-batch-conversion` fixture contains the 36-byte
+transcript `group all infinity batch conversion` followed by a newline. It
+constructs four canonical Jacobian infinity inputs, poisons the affine output
+array, and calls `secp256k1_ge_set_all_gej_var`. Every output must be affine
+infinity with canonical zero X and Y fields. Existing group seeds covered
+finite batches, mixed interior/trailing infinities, and the empty `(NULL, NULL,
+0)` no-op, but no deterministic input pinned the `last_i == SIZE_MAX` branch
+with a nonempty all-infinity array.
+
+For causal proof, a temporary production mutation in
+`src/group_impl.h` replaced the first output with valid `G` only when the
+all-infinity branch received exactly four entries. The dedicated seed aborted
+with status 134, while all 21 pre-existing group seeds completed with status
+0. The mutation was first scoped away from the empty-range path and then from
+the existing three-entry all-infinity state reached by `group/ge-clear`; those
+controls showed that the final mutation isolated the new four-entry contract
+rather than breaking an older boundary. The mutation was removed before
+restored replay.
+
+This is **Informational internal batch-conversion oracle hardening**, not a
+clean-master production finding or fix. It verifies a previously unpinned
+semantic state transition; existing master-relative Medium, Medium/latent,
+Low/latent, and cleanup ratings remain unchanged. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding.

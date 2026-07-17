@@ -928,6 +928,25 @@ static void secp256k1_fuzz_group_check_batch_conversion_boundaries(const secp256
     secp256k1_ge_set_all_gej_var(NULL, NULL, 0);
 }
 
+static void secp256k1_fuzz_group_check_all_infinity_batch_conversion(void) {
+    secp256k1_gej points[4];
+    secp256k1_ge affine[4];
+    secp256k1_fe zero;
+    size_t i;
+
+    secp256k1_fe_set_int(&zero, 0);
+    for (i = 0; i < 4; i++) {
+        secp256k1_gej_set_infinity(&points[i]);
+    }
+    memset(affine, 0xA5, sizeof(affine));
+    secp256k1_ge_set_all_gej_var(affine, points, 4);
+    for (i = 0; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_ge_is_infinity(&affine[i]));
+        FUZZ_CHECK(memcmp(&affine[i].x, &zero, sizeof(zero)) == 0);
+        FUZZ_CHECK(memcmp(&affine[i].y, &zero, sizeof(zero)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_group_check_ge_zinv(const unsigned char *input, size_t size) {
     secp256k1_gej projective;
     secp256k1_gej projective_copy;
@@ -1043,6 +1062,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char affine_addition_trigger[] = "group affine addition reference\n";
     static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
     static const unsigned char inverse_rzr_trigger[] = "group inverse rzr\n";
+    static const unsigned char all_infinity_batch_trigger[] = "group all infinity batch conversion\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
     secp256k1_scalar a_scalar;
@@ -1164,6 +1184,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     if (size == sizeof(inverse_rzr_trigger) - 1 && memcmp(input, inverse_rzr_trigger, sizeof(inverse_rzr_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_inverse_rzr();
+    }
+    if (size == sizeof(all_infinity_batch_trigger) - 1 && memcmp(input, all_infinity_batch_trigger, sizeof(all_infinity_batch_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_all_infinity_batch_conversion();
     }
     rescaled = a;
     secp256k1_gej_rescale(&rescaled, &scale);
