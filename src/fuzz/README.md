@@ -8799,3 +8799,35 @@ production fixes and deterministic tests remain the strongest proof for their
 respective findings; this replay is negative evidence for the current oracle
 set, not evidence that later fork patches can be used to validate clean
 master.
+
+## 2026-07-17 Direct Ecmult Domain and Release-Style Recheck
+
+The remote refresh was repeated with the correct remote names: both
+`origin/master` and `l0rinc/master` still resolve to
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. `git rebase origin/master`
+reported that `codex/fuzz-oracles` was already up to date. No fork commit was
+cherry-picked during this pass, because there was no ref movement and no new
+patch context to reconcile.
+
+A source-level audit then followed every production caller of
+`secp256k1_ecmult_multi_var` and the direct Strauss/Pippenger batch helpers.
+The public production path computes its batch size through
+`secp256k1_ecmult_multi_batch_size_helper`, which caps each batch at
+`ECMULT_MAX_POINTS_PER_BATCH` before the `2*n + 2` Pippenger entry arithmetic
+or the Strauss allocation products are evaluated. Its callback offset is the
+same bounded partition index. The only direct single-batch callers are the
+internal tests and benchmark/fuzzer surfaces; passing `SIZE_MAX` directly to
+those helpers is outside the production contract and would be an invalid
+internal caller domain, not a master-reachable input. No new production
+integer-overflow or callback-index finding was claimed from that domain.
+
+The ASan/UBSan `noverify_tests` target was rebuilt with `ninja` and its full
+default randomized suite completed with exit `0`. This supplies a release-style
+check of the production paths without VERIFY assertions; it did not change the
+negative multi-worker corpus result or any severity. The clean-master ledger is
+reiterated unchanged: **Medium** for internal scratch allocation overflow,
+malformed opaque public/MuSig state, callback-failure memory safety, and secret
+HMAC-state lifetime; **Medium/latent** for the forced-int64 field magnitude
+boundary; **Low/latent** for bounded scalar-shift behavior and documented tweak
+input aliasing; and **Informational** for oracle-only cleanup and model checks.
+A public or non-cryptographic nonce buffer is not a Critical erasure finding.
