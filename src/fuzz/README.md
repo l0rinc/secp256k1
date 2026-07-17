@@ -9348,3 +9348,18 @@ mutation was restored, the 49-file corpus including the new fixture passed
 50 executions per job in both worker jobs for every configuration. The
 mutation was restored before commit; no production behavior or severity
 rating changed.
+
+## 2026-07-17 MuSig Bounded Stateful Discovery
+
+The existing 70-file MuSig corpus was fuzzed in isolated disposable copies
+with `-workers=2 -jobs=2 -max_total_time=30 -timeout=60 -rss_limit_mb=0
+-handle_abrt=0`. Native Clang jobs completed 71 runs each in 85 seconds,
+external-callback Clang jobs completed 71 runs each in 85 seconds, and
+external-callback forced-int64/10x26 jobs completed 71 runs each in 146 and
+147 seconds. All six jobs exited zero with no sanitizer report, oracle
+failure, crash artifact, or command-level timeout. The longer forced-int64
+wall time was an expensive existing corpus/reference transition, not a
+production timeout or availability finding. Generated mutation units were
+discarded. No clean-master production finding or severity change was
+established; the existing Medium/Medium-latent, Low/latent, Informational,
+and non-Critical nonce-cleanup ratings remain in force.
