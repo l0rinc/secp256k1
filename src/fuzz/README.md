@@ -8126,3 +8126,50 @@ both backend managers and every logged job exited 0 with
 forced-int64 EC VERIFY and no-VERIFY slices also passed. Existing findings
 remain rated against unmodified master; a public or otherwise
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Exact Jacobi Reachability Probe and Full Corpus Recheck
+
+The remote refresh still resolves both `origin/master` and `l0rinc/master` to
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. That commit is an ancestor of
+`codex/fuzz-oracles`, so no rebase was required. The restored audit source was
+replayed through all 278 tracked inputs across the 14 current fuzz targets:
+`api_roundtrip` 47, `context` 11, `ecdh` 7, `ecmult_const` 8,
+`ecmult_multi` 24, `ellswift` 15, `field` 20, `group` 21, `hash` 10,
+`musig` 67, `recovery` 12, `scalar` 7, `schnorrsig` 15, and `xonly_tweak`
+14. Every non-libFuzzer replay returned zero. The merged public-library
+coverage reached 94.69% of `secp256k1.c` lines and 97.83% of its branches;
+ECDSA reached 100% of its 135 lines and 106 branches, while the remaining
+public-library misses were invalid-argument/error paths or internal code
+covered by the dedicated targets.
+
+The field-only coverage build reached 100% of the 265 `field_impl.h` lines
+and 295 `field_5x52_impl.h` lines. In
+`secp256k1_jacobi64_maybe_var`, the 20 tracked seeds caused 1,680 update
+iterations and reached `f.v[0] == 1` 44 times. Every one had already reduced
+`len` to 1, so the `for (j = 1; j < len; ++j)` body remained unexecuted;
+`modinv64_impl.h` nevertheless reached 98.07% of its lines and all 294
+instrumented branches.
+
+To test the exact gate rather than infer it from line coverage, two temporary
+abort probes were applied and restored. First, aborting when a low-limb-one
+state had a nonzero higher limb ran four native and four forced-int64 workers
+for 45 seconds each, with every job exiting 0 and no artifact. Second,
+aborting only when `f.v[0] == 1 && len > 1` ran four workers per backend for
+30 seconds each; all jobs again exited 0, with no sanitizer, assertion,
+timeout, OOM, or crash result. The 20 tracked seeds passed before each
+campaign. Neither probe, its generated corpus, nor a production mutation was
+committed.
+
+This is negative reachability evidence, not a new clean-master defect. The
+inner loop is an internal arithmetic convergence check with no independent
+public state transition, so adding a synthetic seed would duplicate the
+deterministic arbitrary-modulus Jacobi/inversion tests without strengthening
+bug discovery. Existing findings are reiterated and still rated against the
+unmodified master before later fork or audit changes: **Medium** for malformed
+opaque public/key-aggregation state and secret HMAC state lifetime; **Medium,
+low practical exploitability** for impossible SHA length handling;
+**Medium/latent** for valid-status 10x26 magnitude-32 arithmetic; and
+**Low/latent** for the internal scalar shift-over-width memory-safety edge,
+EllSwift zero-`u` encoding edge, and documented tweak-input overlap. Oracle-only
+and cleanup-only checks remain **Informational/Low**. A nonce or other public
+buffer without cryptographic meaning is not a Critical erasure finding.
