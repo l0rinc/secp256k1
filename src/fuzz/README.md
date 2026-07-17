@@ -9893,3 +9893,59 @@ and the branch's fix remain **Low/latent master-relative** because the path is
 internal and requires an invalid over-width shift; the `shift == 512` boundary
 is a distinct valid contract and is now shown to be protected by an
 independent oracle. No production change or severity adjustment is justified.
+
+## 2026-07-17 Current Clean-Master Recovery/Schnorr/API Reiteration
+
+The configured `origin/master` and `l0rinc/master` refs both remain at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already present in
+`codex/fuzz-oracles`; no rebase or additional cherry-pick was needed. For this
+pass, a disposable source worktree was detached at that exact master commit
+and received only the existing fuzzer/CMake projection, the baseline-only
+`SECP256K1_SHA256_MAX_SIZE` compatibility definition, and temporary
+file/line reporting for `FUZZ_CHECK`. No production file in that baseline was
+changed.
+
+The same focused inputs were replayed with Clang 22.1.7 ASan/UBSan binaries,
+`-runs=1 -handle_abrt=0`, against clean master and the fixed audit branch:
+
+- `context/sha256-impossible-lengths`: clean master timed out after an ASan
+  heap-buffer-overflow while the impossible tagged-SHA length was consumed;
+  the fixed branch exited zero. This reiterates the **Medium, low practical
+  exploitability** impossible-SHA-length contract finding from `ab36b78`/
+  `e5d3e19`, not a new remote-sized-input claim.
+- `schnorrsig/sign32-custom` and the dedicated
+  `schnorrsig/sha256-impossible-lengths` input: clean master reached UBSan's
+  non-zero offset from a null pointer at `src/util.h:438` and timed out;
+  the fixed branch exited zero. This is the Schnorr projection of the same
+  **Medium, low practical exploitability** length-boundary finding.
+- `api_roundtrip/privkey-der-export-failure`: clean master failed the output
+  oracle at `src/fuzz/api_roundtrip.c:2654`, showing stale bytes in the
+  documented 279-byte failed-export region; the fixed branch exited zero.
+  This remains **Low** (`36a009f`), because the return value is zero and the
+  bytes beyond the documented capacity are intentionally preserved.
+- `recovery/recoverable-compact` and `recovery/recovery-point-equation`: clean
+  master failed `src/fuzz/recovery.c:733`, where an explicitly exported
+  RFC6979 callback did not use the caller's SHA compression backend; the fixed
+  branch exited zero. This reiterates the **Low** dispatch/performance finding
+  in `c8870e5`; it does not imply nonce reuse, forgery, or a changed signature.
+- `recovery/opaque-recoverable-signature-state`: the normal clean-master run
+  hits the preceding callback assertion, so the disposable harness briefly
+  bypassed only all three callback-routing assertions to isolate the later
+  state barrier. With those assertions bypassed, clean master aborted at
+  `src/scalar_impl.h:43` while serializing an opaque signature whose `r` or
+  `s` bytes were replaced by `0xff`; the fixed branch exited zero. The
+  callback assertions were restored and the clean baseline rebuilt. This is
+  the existing **Medium** malformed opaque recoverable-signature state finding
+  fixed by `b76fd58`, not a second bug: the raw opaque object has no public
+  parser, but corrupted/directly constructed state must not reach scalar
+  invariants or trust a magic-free recovery-id byte.
+
+The isolation is important for severity: the callback-routing defect can mask
+the malformed-state defect in a combined fuzzer input, but fixing or
+cherry-picking the former does not make the latter disappear on clean master.
+All fixed-branch replays completed without sanitizer diagnostics, and no new
+production patch is justified by this reiteration. The exact production fixes,
+mutations, deterministic tests, and verifier commands remain in their commit
+messages; this entry records the current master-tip proof and the ordering
+dependency between the oracles. A public or non-cryptographic nonce buffer is
+not a Critical erasure finding.
