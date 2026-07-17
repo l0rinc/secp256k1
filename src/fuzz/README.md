@@ -7557,3 +7557,48 @@ transcript passed on clean native and forced-int64. No clean-master Pippenger
 or scalar-total mismatch was found, so this is **Informational / oracle
 hardening**, with no production fix or severity change. A public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Independent Affine Oracle for X-Only Tweak-by-2
+
+The `xonly_tweak/affine-reference` fixture adds a 29-byte gated transcript,
+`xonly tweak affine reference` followed by a newline. It reconstructs the
+even-Y point represented by the fuzzed x-only key with byte-level field
+multiply, reduction, and square-root helpers, doubles an explicit byte-level
+generator, and computes `P_even + 2G` with affine group addition. The
+compressed result is compared with both `secp256k1_xonly_pubkey_tweak_add` and
+`secp256k1_keypair_xonly_tweak_add` followed by public-key extraction.
+
+The byte subtraction, multiplication, square root, point doubling, and point
+addition are separate from the production group representation and bind the
+result to an explicit curve equation. To keep this one dedicated trigger
+bounded, its modular inverse uses `secp256k1_fe_inv_var`; this is an explicit
+model boundary, not a claim of an independently implemented field inverse.
+Routine inputs do not pay this cost. The oracle is therefore strongest against
+wrong-but-valid tweak results and cross-API inconsistencies, while sanitizer
+instrumentation remains responsible for memory and undefined-behavior bugs.
+
+The differential proof used a temporary mutation in
+`src/modules/extrakeys/main_impl.h`: for the exact 32-byte tweak `02`,
+`secp256k1_xonly_pubkey_tweak_add` was made to pass scalar `01` to its existing
+production helper. The exact command
+`fuzz_xonly_tweak -runs=1 -detect_leaks=0 -rss_limit_mb=0 -timeout=30
+src/fuzz/corpora/xonly_tweak/affine-reference` aborted with raw status 77 at
+the new `FUZZ_CHECK`, without an illegal-callback diagnostic. Thus the oracle
+detects a valid, serialized `P + G` result where the contract requires
+`P + 2G`; the mutation was removed before the restored replay. Existing tests
+and the prior fuzzer checks did not prove this because they did not bind this
+fixed scalar to an independent group equation and could share the production
+path.
+
+Restored Clang 22.1.7 ASan/UBSan replays passed the 14 existing x-only corpus
+files plus this fixture in 9.88 seconds on native 5x52 and 10.16 seconds on
+forced-int64/10x26. The focused native replay took 0.84 seconds. Branch
+`tests` and `noverify_tests` passed; clean-master `tests` also passed.
+
+The clean `origin/master` snapshot was `11dad6d`, but it predates the CMake
+fuzz-target wiring and has no `fuzz_xonly_tweak` binary; the fuzz options were
+reported unused, so a raw clean-master replay of this new harness is not
+possible. The clean test suite is the available control and found no
+production mismatch. This is **Informational / oracle hardening**, with no
+production fix and no severity finding. A public or non-cryptographic nonce
+buffer is not a Critical erasure finding.
