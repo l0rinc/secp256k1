@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -10263,3 +10263,37 @@ Clean master `11dad6d` passed the same transition in a temporary
 `-workers=2 -jobs=2 -runs=1` campaigns exited zero on each backend. This is
 **Informational / Low internal-oracle hardening**, not a clean-master
 production bug or severity change; no production code was changed.
+
+## 2026-07-17 Zero MuSig Nonce-Coefficient Oracle
+
+The `musig/zero-nonce-coefficient` fixture drives `secp256k1_musig_nonce_process`
+with a finite aggregate nonce `[R1, R2] = [G, 2G]`. The harness uses the existing
+SHA compression hook to force the `MuSig/noncecoef` transcript to the scalar zero,
+then requires the serialized session coefficient to be zero and the final nonce to
+remain exactly `G`. This pins the `0 * R2` transition: the second nonce component
+must not affect the effective nonce when `b == 0`. The challenge hash is also
+forced through the same hook, but is not used as evidence for the nonce equation.
+
+This is distinct from the existing mixed-infinity and all-infinity fixtures. Those
+exercise identity inputs and the BIP327 fallback when the effective nonce is
+infinity; they do not enter the finite `R1 + 0*R2` state. The `[G, 2G]` choice makes
+an accidental use of `R2` observable without relying on a random zero hash output.
+
+For causal proof, a disposable mutation in `src/modules/musig/session_impl.h`
+added `R2` instead of `R1` when `b` was zero. The focused input aborted with exit
+134 on native 5x52 and forced-int64/10x26 ASan/UBSan builds. All 68 pre-existing
+MuSig corpus files passed under that mutation on both backends. After restoring
+production, the 69-file corpus passed single-process replay and isolated
+`-workers=2 -jobs=2 -runs=1` campaigns on both backends.
+
+Clean master `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` passed an isolated replay
+of the same helper under ASan/UBSan. An initial full-target replay stopped at the
+already-known clean-master `field_5x52_impl.h:29` finding before reaching this
+helper; that run was discarded for this oracle's proof, and the narrowed replay
+executed only the valid one-key cache setup and the new transition.
+
+Master-relative severity is **Informational / Low internal-oracle hardening**:
+the clean production path is correct, no production fix is claimed, and the new
+fixture only makes a rare scalar state deterministic. Existing clean-master
+Medium and latent arithmetic findings remain separately rated; this result does
+not downgrade or mask them.

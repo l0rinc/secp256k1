@@ -1494,6 +1494,58 @@ static void secp256k1_fuzz_check_musig_effective_nonce(const secp256k1_context *
     FUZZ_CHECK(memcmp(session.data + 5, expected33 + 1, 32) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_zero_noncecoef(secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
+    static const unsigned char scalar_two[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+    };
+    unsigned char aggnonce66[66];
+    unsigned char expected33[33];
+    unsigned char zero32[32] = { 0 };
+    secp256k1_pubkey generator;
+    secp256k1_pubkey second;
+    secp256k1_musig_aggnonce aggnonce;
+    secp256k1_musig_session session;
+    size_t serialized_len;
+    size_t noncecoef_calls;
+    size_t challenge_calls;
+
+    /* With b == 0, the effective nonce is R1 regardless of R2. Using 2G for
+     * R2 makes accidentally evaluating the second component observable. */
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+    second = generator;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &second, scalar_two) == 1);
+    serialized_len = 33;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, aggnonce66, &serialized_len, &generator, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+    serialized_len = 33;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, aggnonce66 + 33, &serialized_len, &second, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+    FUZZ_CHECK(secp256k1_musig_aggnonce_parse(ctx, &aggnonce, aggnonce66) == 1);
+
+    secp256k1_fuzz_musig_force_zero_sha256_state = 0;
+    secp256k1_fuzz_musig_noncecoef_sha256_compression_calls = 0;
+    secp256k1_fuzz_musig_challenge_sha256_compression_calls = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_musig_sha256_compression);
+    secp256k1_fuzz_musig_force_zero_sha256_state = SECP256K1_FUZZ_MUSIG_FORCE_ZERO_ALL;
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session, &aggnonce, msg32, keyagg_cache) == 1);
+    noncecoef_calls = secp256k1_fuzz_musig_noncecoef_sha256_compression_calls;
+    challenge_calls = secp256k1_fuzz_musig_challenge_sha256_compression_calls;
+    secp256k1_fuzz_musig_force_zero_sha256_state = 0;
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+
+    FUZZ_CHECK(noncecoef_calls != 0);
+    FUZZ_CHECK(challenge_calls != 0);
+    FUZZ_CHECK(memcmp(session.data + 37, zero32, sizeof(zero32)) == 0);
+    serialized_len = 33;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected33, &serialized_len, &generator, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == 33);
+    FUZZ_CHECK(session.data[4] == (unsigned char)(expected33[0] == 0x03));
+    FUZZ_CHECK(memcmp(session.data + 5, expected33 + 1, 32) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_partial_sig_serialize_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_partial_sig *valid_sig) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     unsigned char serialized[32];
@@ -3888,6 +3940,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char zero_scalar_secnonce_trigger[] = "MuSig zero secnonce scalar\n";
     static const unsigned char overflow1_secnonce_trigger[] = "MuSig overflow secnonce scalar 1\n";
     static const unsigned char second_zero_nonce_trigger[] = "MuSig nonce second zero scalar\n";
+    static const unsigned char zero_noncecoef_trigger[] = "MuSig zero nonce coefficient\n";
     static const unsigned char session_random_alias_trigger[] = "MuSig nonce session-random input overlap\n";
     static const unsigned char keyagg_zero_coefficient_trigger[] = "MuSig keyagg zero coefficient\n";
     static const unsigned char keyagg_cancellation_trigger[] = "MuSig keyagg weighted cancellation\n";
@@ -4055,6 +4108,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_zero_counter_sign(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_nonce_scalar_barrier(ctx);
     secp256k1_fuzz_check_musig_partial_sign_nonce_parity(ctx);
+    if (size == sizeof(zero_noncecoef_trigger) - 1
+        && memcmp(input, zero_noncecoef_trigger, sizeof(zero_noncecoef_trigger) - 1) == 0) {
+        secp256k1_fuzz_check_musig_zero_noncecoef(ctx, tweak, &single_cache);
+    }
     secp256k1_fuzz_check_musig_infinity_nonce_process(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, n_pubkeys, tweak);
     secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(ctx, &pubkeys[0], seckey[0], tweak, &cache, tweak, session_rand);
