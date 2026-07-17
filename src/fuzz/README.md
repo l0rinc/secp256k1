@@ -8482,3 +8482,24 @@ cleanup. This adds negative evidence for the current oracles only: it found no
 new clean-master defect and no master-relative severity change. Existing
 findings remain rated against unmodified master; a public or non-cryptographic
 nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Recovery Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 12-file `recovery` corpus for 180 seconds per backend with four forked
+jobs and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 12 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 3111` with a maximum
+feature count of 7,115; forced-int64 workers reached `cov: 5073` with a
+maximum feature count of 14,898. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised recoverable-signature parsing and serialization, recid
+separation, high-S and zero-S rejection, recovery-point equations, verification
+infinity and finite-x mismatch barriers, valid and invalid nonce callback
+domains, nonce retries, and failure-output cleanup. This extends the prior
+30-second signature-domain check without finding a new clean-master defect or
+changing any master-relative severity. Existing findings remain rated against
+unmodified master; a public or non-cryptographic nonce buffer is not a Critical
+erasure finding.
