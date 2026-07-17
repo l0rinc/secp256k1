@@ -9090,3 +9090,19 @@ restoration. The full API-roundtrip corpus and deterministic API tests passed
 on native, forced-int64/10x26, and external-callback Clang ASan/UBSan builds.
 The mutations were restored before commit, and no production behavior or
 severity changed.
+
+## 2026-07-17 API Roundtrip Bounded Exploration
+
+After the static-context boundary oracle was restored, the existing
+`api_roundtrip` corpus was used as the seed corpus for bounded exploratory
+fuzzing. Each configuration used `-workers=2 -jobs=2 -max_total_time=45
+-timeout=60 -rss_limit_mb=0`; all four jobs per configuration completed with
+exit code `0` and produced no sanitizer report, oracle failure, or crash
+artifact. The ordinary newly discovered corpus units were removed after the
+run, leaving the original tracked corpus unchanged.
+The native 5x52 jobs completed 455 and 462 runs, forced-int64/10x26 completed
+281 and 285, and external-callback Clang ASan/UBSan completed 470 and 463.
+This was a negative exploration result: no clean-master production finding or
+severity change was established, and the existing Medium/Medium-latent,
+Low/latent, Informational, and non-Critical nonce-cleanup ratings remain in
+force.
