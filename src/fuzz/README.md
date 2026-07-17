@@ -17,7 +17,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
@@ -9024,4 +9024,37 @@ complete 15-file Schnorr corpus passed with two workers and two jobs on native
 5x52, forced-int64/10x26, and external-callback Clang ASan/UBSan builds.
 Schnorr unit and no-VERIFY tests passed on all three configurations. The
 mutation was restored before the tree was committed, and no production
+behavior or severity changed.
+
+## 2026-07-17 Static Context X-Only Public Tweak Barrier
+
+The existing `xonly tweak affine reference` seed now parses the x-only input,
+applies the public x-only tweak, serializes the resulting full public key, and
+checks the tweak witness through `secp256k1_context_static` as well as the
+randomized context. The expected point remains the independent byte-level
+affine result, and the static path reparses its own x-only input so no opaque
+key representation is treated as portable between contexts.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. `secp256k1_xonly_pubkey_tweak_add` and
+`secp256k1_xonly_pubkey_tweak_add_check` have no non-static context restriction;
+they operate on public points through the ordinary public tweak helper. The
+prior affine oracle covered the arithmetic independently but only used a
+randomized context, so a static-only rejection or accidental generator-table
+dependency could have escaped. The clean-master severity ledger is unchanged:
+malformed opaque state, callback-failure barriers, and the reachable
+forced-int64 arithmetic boundary remain **Medium** or **Medium/latent**;
+bounded/documented alias cases remain **Low/latent**; cleanup and model-only
+checks remain **Informational**. A public or non-cryptographic nonce buffer is
+not a Critical erasure finding.
+
+For causal proof, a disposable mutation added
+`ARG_CHECK(ctx != secp256k1_context_static);` immediately after the context
+check in `secp256k1_xonly_pubkey_tweak_add`. The existing
+`src/fuzz/corpora/xonly_tweak/affine-reference` input then exited
+`134` with `-handle_abrt=0`; the restored control exited `0`. The focused input
+and the complete 15-file x-only corpus passed with two workers and two jobs on
+native 5x52, forced-int64/10x26, and external-callback Clang ASan/UBSan builds.
+X-only extrakeys unit and no-VERIFY tests passed on all three configurations.
+The mutation was restored before the tree was committed, and no production
 behavior or severity changed.
