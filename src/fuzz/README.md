@@ -8461,3 +8461,24 @@ master branch already routes the nonce through the caller context. It does not
 change any master-relative severity rating. A nonce buffer with no standalone
 cryptographic meaning is not a Critical erasure finding; severity remains tied
 to the actual master-branch impact of a confirmed defect.
+
+## 2026-07-17 Long Context Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 11-file `context` corpus for 180 seconds per backend with four forked
+jobs and four workers:
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 11 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 3074` with a maximum
+feature count of 6,607; forced-int64 workers reached `cov: 5028` with a
+maximum feature count of 13,143. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised context randomization and clone/reset transitions, source
+and heap/preallocated clone paths, NULL-reset deterministic ECDSA and Schnorr
+signing, valid and invalid context flags, custom SHA compression routing, the
+standalone tagged-SHA reference, impossible SHA lengths, and secret-operation
+cleanup. This adds negative evidence for the current oracles only: it found no
+new clean-master defect and no master-relative severity change. Existing
+findings remain rated against unmodified master; a public or non-cryptographic
+nonce buffer is not a Critical erasure finding.
