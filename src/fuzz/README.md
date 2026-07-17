@@ -8567,3 +8567,25 @@ This extends the prior 30-second x-only module check without finding a new
 clean-master defect or changing any master-relative severity. Existing
 findings remain rated against unmodified master; a public or non-cryptographic
 nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Hash Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 7-file `hash` corpus for 180 seconds per backend with four forked jobs
+and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 7 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 511` and a maximum
+feature count of 1,376 after roughly 459k to 461k executions per worker;
+forced-int64 workers reached the same `cov: 511` and feature count after
+roughly 458k to 459k executions per worker. No sanitizer, assertion, or
+runtime-error diagnostic was emitted, and neither backend produced an
+artifact.
+
+The run exercised the standalone SHA-256 reference, raw-SHA256 HMAC, arbitrary
+multi-block midstates, full RFC6979 sequencing, chunking consistency, tagged
+hashing, and finalized-state cleanup. This extends the prior core-arithmetic
+recheck without finding a new clean-master defect or changing any
+master-relative severity. The existing clean-master consumed-HMAC state
+finding remains **Medium** for secret-state lifetime; a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
