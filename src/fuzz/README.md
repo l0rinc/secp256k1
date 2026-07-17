@@ -7397,3 +7397,44 @@ shift issue; they are not GLV findings and their severity is unchanged. This
 commit claims **Informational / oracle hardening**, no production fix, and no
 severity change. A public or non-cryptographic nonce buffer is not a Critical
 erasure finding.
+
+## 2026-07-17 Independent Arbitrary-Scalar `ecmult_const` Oracle
+
+`src/fuzz/ecmult_const.c` now feeds the affine reference model the complete
+canonical 256-bit scalar encoding and extracts bits directly from its bytes.
+The model remains independent of the production projective formulas, GLV
+split, signed-digit recoding, and x-only isomorphism code; it uses only the
+existing affine group formulas and field operations to compute a point by
+double-and-add. Both x-only input forms, the normal affine base and the
+`numerator/denominator` fraction, are checked against this reference before
+the older production-derived x-only comparisons. This replaces the former
+independent model coverage limited to scalars 1 through 16.
+
+The dedicated `ecmult_const/affine-arbitrary-scalar-reference` seed is 47
+bytes containing `ecmult const affine arbitrary scalar reference` followed by
+a newline. Native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan
+replays passed all seven tracked `ecmult_const` files plus empty-input
+execution (`Done 8` for each corpus directory and `Done 2` for each empty
+run). Two-worker, two-job value-profiled campaigns used private corpus copies:
+native workers completed 107 and 117 runs; forced-int64 workers completed 74
+and 78. No sanitizer diagnostic, assertion, timeout, OOM, or crash artifact
+was produced.
+
+The differential proof temporarily inserted `r->n[0] ^= 1` immediately after
+the final affine-map multiplication in production
+`secp256k1_ecmult_const_xonly`. The focused 47-byte seed aborted at the new
+independent comparison with raw status 134 on both backends; the old
+production-derived x-only checks were later in the harness and did not have a
+chance to be the first failure. The mutation was removed and both binaries
+were rebuilt before the passing replays. Existing fuzz coverage did not prove
+this because its independent affine check used only 1 through 16, while its
+arbitrary-scalar x-only checks derived the expected point from production
+implementations.
+
+The clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with the same harness overlay.
+The focused seed and all seven corpus files plus empty input passed on native
+and forced-int64 clean master. This is **Informational / oracle hardening**:
+no production mismatch was found, no fix is claimed, and master-side severity
+does not change. A public or non-cryptographic nonce buffer is not a Critical
+erasure finding.

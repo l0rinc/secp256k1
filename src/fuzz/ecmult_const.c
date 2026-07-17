@@ -17,10 +17,8 @@ static void secp256k1_fuzz_ecmult_const_scalar(secp256k1_scalar *scalar, const u
     }
 }
 
-/* Keep a small, affine model independent from the projective formulas and
- * scalar recoding used by the production multiplication paths. The caller
- * deliberately limits the model scalar to a few bits so the inversions do
- * not dominate the fuzzer's throughput. */
+/* Keep an affine model independent from the projective formulas and scalar
+ * recoding used by the production multiplication paths. */
 static void secp256k1_fuzz_ecmult_const_reference_double(secp256k1_ge *result, const secp256k1_ge *point) {
     secp256k1_fe x = point->x;
     secp256k1_fe y = point->y;
@@ -112,12 +110,17 @@ static void secp256k1_fuzz_ecmult_const_reference_add(secp256k1_ge *result, cons
     result->infinity = 0;
 }
 
-static void secp256k1_fuzz_ecmult_const_reference(secp256k1_ge *result, const secp256k1_ge *base, const secp256k1_scalar *scalar) {
+static unsigned int secp256k1_fuzz_ecmult_const_reference_bit(const unsigned char *scalar32, unsigned int bit) {
+    FUZZ_CHECK(bit < 256);
+    return (scalar32[31 - (bit >> 3)] >> (bit & 7u)) & 1u;
+}
+
+static void secp256k1_fuzz_ecmult_const_reference(secp256k1_ge *result, const secp256k1_ge *base, const unsigned char *scalar32) {
     secp256k1_ge accumulator;
     int bit = 255;
 
     secp256k1_ge_set_infinity(&accumulator);
-    while (bit > 0 && secp256k1_scalar_get_bits_limb32(scalar, (unsigned int)bit, 1) == 0) {
+    while (bit > 0 && secp256k1_fuzz_ecmult_const_reference_bit(scalar32, (unsigned int)bit) == 0) {
         bit--;
     }
     for (; bit >= 0; bit--) {
@@ -126,7 +129,7 @@ static void secp256k1_fuzz_ecmult_const_reference(secp256k1_ge *result, const se
 
         secp256k1_fuzz_ecmult_const_reference_double(&doubled, &accumulator);
         accumulator = doubled;
-        if (secp256k1_scalar_get_bits_limb32(scalar, (unsigned int)bit, 1) != 0) {
+        if (secp256k1_fuzz_ecmult_const_reference_bit(scalar32, (unsigned int)bit) != 0) {
             secp256k1_fuzz_ecmult_const_reference_add(&added, &accumulator, base);
             accumulator = added;
         }
@@ -199,13 +202,13 @@ static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context 
 static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, const secp256k1_gej *expected, const secp256k1_scalar *scalar, const unsigned char *input, size_t size) {
     secp256k1_ge expected_affine;
     secp256k1_ge reference;
-    secp256k1_scalar reference_scalar;
     secp256k1_fe result;
     secp256k1_fe result_known;
     secp256k1_fe numerator;
     secp256k1_fe denominator;
     secp256k1_fe invalid_x;
     secp256k1_fe reference_x;
+    unsigned char scalar32[32];
     unsigned char denominator32[32];
 
     {
@@ -213,13 +216,6 @@ static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, co
         secp256k1_ge_set_gej_var(&expected_affine, &copy);
     }
     FUZZ_CHECK(!secp256k1_ge_is_infinity(&expected_affine));
-    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &base->x, NULL, scalar, 0) == 1);
-    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &base->x, NULL, scalar, 1) == 1);
-    secp256k1_fe_normalize_var(&result);
-    secp256k1_fe_normalize_var(&result_known);
-    FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_affine.x));
-    FUZZ_CHECK(secp256k1_fe_equal(&result_known, &expected_affine.x));
-
     secp256k1_fuzz_derive(denominator32, sizeof(denominator32), input, size, 131);
     secp256k1_fe_set_b32_mod(&denominator, denominator32);
     secp256k1_fe_normalize_var(&denominator);
@@ -229,25 +225,31 @@ static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, co
     secp256k1_fe_mul(&numerator, &base->x, &denominator);
 
     /* Exercise both x-only input forms with an independent affine result for
-     * a small scalar. The regular checks below retain arbitrary scalar
-     * coverage through the production-derived cross-implementation result. */
-    secp256k1_scalar_set_int(&reference_scalar, 1u + (secp256k1_fuzz_byte(input, size, 149) & 15u));
-    secp256k1_fuzz_ecmult_const_reference(&reference, base, &reference_scalar);
+     * the full canonical scalar. */
+    secp256k1_scalar_get_b32(scalar32, scalar);
+    secp256k1_fuzz_ecmult_const_reference(&reference, base, scalar32);
     FUZZ_CHECK(!reference.infinity);
     reference_x = reference.x;
     secp256k1_fe_normalize_var(&reference_x);
-    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &base->x, NULL, &reference_scalar, 0) == 1);
-    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &base->x, NULL, &reference_scalar, 1) == 1);
+    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &base->x, NULL, scalar, 0) == 1);
+    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &base->x, NULL, scalar, 1) == 1);
     secp256k1_fe_normalize_var(&result);
     secp256k1_fe_normalize_var(&result_known);
     FUZZ_CHECK(secp256k1_fe_equal(&result, &reference_x));
     FUZZ_CHECK(secp256k1_fe_equal(&result_known, &reference_x));
-    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, &reference_scalar, 0) == 1);
-    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &numerator, &denominator, &reference_scalar, 1) == 1);
+    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 0) == 1);
+    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &numerator, &denominator, scalar, 1) == 1);
     secp256k1_fe_normalize_var(&result);
     secp256k1_fe_normalize_var(&result_known);
     FUZZ_CHECK(secp256k1_fe_equal(&result, &reference_x));
     FUZZ_CHECK(secp256k1_fe_equal(&result_known, &reference_x));
+
+    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &base->x, NULL, scalar, 0) == 1);
+    FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &base->x, NULL, scalar, 1) == 1);
+    secp256k1_fe_normalize_var(&result);
+    secp256k1_fe_normalize_var(&result_known);
+    FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_affine.x));
+    FUZZ_CHECK(secp256k1_fe_equal(&result_known, &expected_affine.x));
 
     FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 0) == 1);
     FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result_known, &numerator, &denominator, scalar, 1) == 1);
@@ -263,7 +265,6 @@ static void secp256k1_fuzz_ecmult_const_check_xonly(const secp256k1_ge *base, co
     secp256k1_fe_mul(&numerator, &invalid_x, &denominator);
     FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, scalar, 0) == 0);
 
-    secp256k1_scalar_clear(&reference_scalar);
 }
 
 static void secp256k1_fuzz_ecmult_const_check_nonnormalized_fraction(const secp256k1_ge *base, const secp256k1_gej *expected, const secp256k1_scalar *scalar) {
