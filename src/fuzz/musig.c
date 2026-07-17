@@ -11,6 +11,7 @@
 #include "../int128_impl.h"
 
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
+#include "pubkey_reference.h"
 #define SECP256K1_FUZZ_MUSIG_MAX_SIGNERS 16
 typedef int (*secp256k1_fuzz_musig_partial_sig_agg_fn)(const secp256k1_context *, unsigned char *, const secp256k1_musig_session *, const secp256k1_musig_partial_sig * const*, size_t);
 typedef int (*secp256k1_fuzz_musig_partial_sig_verify_fn)(const secp256k1_context *, const secp256k1_musig_partial_sig *, const secp256k1_musig_pubnonce *, const secp256k1_pubkey *, const secp256k1_musig_keyagg_cache *, const secp256k1_musig_session *);
@@ -172,6 +173,68 @@ static void secp256k1_fuzz_musig_scalar_add_mod_order(unsigned char out32[32], c
 }
 
 static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen);
+
+typedef struct {
+    unsigned char x[32];
+    unsigned char y[32];
+} secp256k1_fuzz_musig_byte_point;
+
+/* Keep this one-point aggregation model independent from the production
+ * Jacobian representation and batch callback. The inverse uses the same
+ * bounded field primitive as the other dedicated affine fuzz oracles; all
+ * surrounding byte arithmetic and the group equation remain separate. */
+static void secp256k1_fuzz_musig_byte_sub_mod(unsigned char out32[32], const unsigned char a32[32], const unsigned char b32[32]) {
+    unsigned char negated32[32];
+    unsigned int borrow = 0;
+    size_t i;
+
+    for (i = 32; i-- > 0;) {
+        int value = (int)secp256k1_fuzz_pubkey_field_prime[i] - b32[i] - borrow;
+        if (value < 0) {
+            value += 256;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        negated32[i] = (unsigned char)value;
+    }
+    FUZZ_CHECK(borrow == 0);
+    secp256k1_fuzz_pubkey_add_mod(out32, a32, negated32);
+}
+
+static void secp256k1_fuzz_musig_byte_inv_mod(unsigned char out32[32], const unsigned char input32[32]) {
+    secp256k1_fe input;
+    secp256k1_fe inverse;
+
+    FUZZ_CHECK(secp256k1_fe_set_b32_limit(&input, input32) == 1);
+    FUZZ_CHECK(!secp256k1_fe_normalizes_to_zero_var(&input));
+    secp256k1_fe_inv_var(&inverse, &input);
+    secp256k1_fe_normalize_var(&inverse);
+    secp256k1_fe_get_b32(out32, &inverse);
+}
+
+static void secp256k1_fuzz_musig_byte_point_add(secp256k1_fuzz_musig_byte_point *result, const secp256k1_fuzz_musig_byte_point *a, const secp256k1_fuzz_musig_byte_point *b) {
+    unsigned char x_difference32[32];
+    unsigned char y_difference32[32];
+    unsigned char inverse32[32];
+    unsigned char lambda32[32];
+    unsigned char lambda_squared32[32];
+    unsigned char x_sum32[32];
+    unsigned char x_difference_result32[32];
+    unsigned char y_difference_result32[32];
+
+    FUZZ_CHECK(memcmp(a->x, b->x, sizeof(a->x)) != 0);
+    secp256k1_fuzz_musig_byte_sub_mod(x_difference32, b->x, a->x);
+    secp256k1_fuzz_musig_byte_sub_mod(y_difference32, b->y, a->y);
+    secp256k1_fuzz_musig_byte_inv_mod(inverse32, x_difference32);
+    secp256k1_fuzz_pubkey_mul_mod(lambda32, y_difference32, inverse32);
+    secp256k1_fuzz_pubkey_mul_mod(lambda_squared32, lambda32, lambda32);
+    secp256k1_fuzz_musig_byte_sub_mod(x_sum32, lambda_squared32, a->x);
+    secp256k1_fuzz_musig_byte_sub_mod(result->x, x_sum32, b->x);
+    secp256k1_fuzz_musig_byte_sub_mod(x_difference_result32, a->x, result->x);
+    secp256k1_fuzz_pubkey_mul_mod(y_difference_result32, lambda32, x_difference_result32);
+    secp256k1_fuzz_musig_byte_sub_mod(result->y, y_difference_result32, a->y);
+}
 
 static void secp256k1_fuzz_musig_check_noncecoef_reference(const secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *msg32, const secp256k1_musig_session *session) {
     static const unsigned char noncecoef_tag[] = "MuSig/noncecoef";
@@ -602,6 +665,90 @@ static void secp256k1_fuzz_check_musig_keyagg_reference(const secp256k1_context 
     FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &actual_full, &expected_full) == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
+}
+
+static void secp256k1_fuzz_check_musig_keyagg_affine_reference(secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "MuSig keyagg affine reference\n";
+    static const unsigned char scalar_two[32] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2
+    };
+    static const secp256k1_fuzz_musig_byte_point generator = {
+        {
+            0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+            0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+            0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+            0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+        },
+        {
+            0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65,
+            0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
+            0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+            0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8
+        }
+    };
+    static const secp256k1_fuzz_musig_byte_point two_g = {
+        {
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
+            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
+            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
+            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
+        },
+        {
+            0x1A, 0xE1, 0x68, 0xFE, 0xA6, 0x3D, 0xC3, 0x39,
+            0xA3, 0xC5, 0x84, 0x19, 0x46, 0x6C, 0xEA, 0xEE,
+            0xF7, 0xF6, 0x32, 0x65, 0x32, 0x66, 0xD0, 0xE1,
+            0x23, 0x64, 0x31, 0xA9, 0x50, 0xCF, 0xE5, 0x2A
+        }
+    };
+    secp256k1_fuzz_musig_byte_point expected_point;
+    secp256k1_pubkey pubkeys[2];
+    secp256k1_pubkey actual_full;
+    secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_musig_keyagg_cache cache;
+    const secp256k1_pubkey *pubkey_ptrs[2];
+    unsigned char expected33[33];
+    unsigned char actual33[33];
+    unsigned char actual_xonly32[32];
+    size_t actual_len;
+    size_t coefficient_one_matches;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_fuzz_musig_byte_point_add(&expected_point, &generator, &two_g);
+    expected33[0] = (unsigned char)(SECP256K1_TAG_PUBKEY_EVEN + (expected_point.y[31] & 1u));
+    memcpy(expected33 + 1, expected_point.x, sizeof(expected_point.x));
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[0], secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[1], scalar_two) == 1);
+    pubkey_ptrs[0] = &pubkeys[0];
+    pubkey_ptrs[1] = &pubkeys[1];
+
+    /* Force the hashed first coefficient to one; the second distinct key is
+     * already assigned one by the MuSig rule. This makes the expected weighted
+     * sum exactly G + 2G without deriving any term through production scalar
+     * multiplication. */
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_musig_sha256_compression);
+    secp256k1_fuzz_musig_force_zero_sha256_state = SECP256K1_FUZZ_MUSIG_FORCE_KEYAGG_COEFFICIENT_ONE;
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly, &cache, pubkey_ptrs, 2) == 1);
+    coefficient_one_matches = secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches;
+    secp256k1_fuzz_musig_force_zero_sha256_state = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_pending = 0;
+    secp256k1_fuzz_musig_force_keyagg_coefficient_one_matches = 0;
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+    FUZZ_CHECK(coefficient_one_matches == 1);
+
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
+    actual_len = sizeof(actual33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, actual33, &actual_len, &actual_full, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(actual_len == sizeof(actual33));
+    FUZZ_CHECK(memcmp(actual33, expected33, sizeof(actual33)) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, actual_xonly32, &actual_xonly) == 1);
+    FUZZ_CHECK(memcmp(actual_xonly32, expected_point.x, sizeof(actual_xonly32)) == 0);
 }
 
 static void secp256k1_fuzz_check_musig_single_keyagg_reference(const secp256k1_context *ctx) {
@@ -3707,6 +3854,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_check_musig_noncanonical_duplicate(ctx);
     secp256k1_fuzz_check_musig_keyagg_reference(ctx);
+    secp256k1_fuzz_check_musig_keyagg_affine_reference(ctx, input, size);
     secp256k1_fuzz_check_musig_single_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_three_keyagg_reference(ctx);
     secp256k1_fuzz_check_musig_four_keyagg_reference(ctx);
