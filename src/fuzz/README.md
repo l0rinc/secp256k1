@@ -8749,3 +8749,53 @@ production defect was found, so this result is **Informational/oracle
 validation**, not a severity-rated vulnerability. Existing findings remain
 rated against unmodified master, and a public or non-cryptographic nonce
 buffer is not a Critical erasure finding.
+
+## 2026-07-17 Post-Rebase Complete Multi-Worker Corpus Replay
+
+`origin/master` and `l0rinc/master` were fetched before this replay and both
+remained at unmodified master `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`.
+`git rebase origin/master` reported that `codex/fuzz-oracles` was already up
+to date. The current Clang ASan/UBSan build was also current (`ninja: no work
+to do`), so no source or build artifact was silently substituted for the
+rebased tree.
+
+Fresh copies of all tracked corpora were replayed with two workers and two
+jobs per target, `-runs=1`, `-timeout=5`, and sanitizer options
+`ASAN_OPTIONS=detect_leaks=0:halt_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1`. The copied seed counts were:
+
+    api_roundtrip 47  context 11       hash 10        scalar 7
+    field 20        group 21            ecmult_const 8 ecmult_multi 24
+    ecdh 7          ellswift 15         xonly_tweak 14 recovery 12
+    schnorrsig 15   musig 67
+
+`api_roundtrip`, `context`, `hash`, `scalar`, `field`, `group`,
+`ecmult_const`, `ecdh`, `ellswift`, `xonly_tweak`, `recovery`, `schnorrsig`,
+and `musig` loaded every copied seed and had exit `0` in both jobs. The first
+`ecmult_multi` pass also loaded all 24 seeds, but both workers hit the
+command-level five-second libFuzzer timeout on the existing
+`pippenger window 1261` seed while executing the independent affine
+reference's modular inversion. The stacks contained no sanitizer diagnostic,
+production assertion, memory fault, or invalid result; this is an expensive
+oracle input, not a production finding or a claim that a timeout is safe to
+ignore generally.
+
+As the control for that runtime boundary, all 24 copied `ecmult_multi` seeds
+were rerun with the same `-workers=2 -jobs=2 -runs=1` configuration and
+`-timeout=60`. Both jobs exited `0`, no sanitizer or assertion diagnostic was
+emitted, and the artifact directory remained empty. This separates the
+known reference cost from a hang or availability defect in production code.
+No fuzzer source, production source, or tracked corpus file changed during
+the replay.
+
+This pass found no new master-relative bug and changes no severity. Existing
+findings remain rated against unmodified master: Medium for internal scratch
+allocation overflow and malformed opaque/MuSig state barriers, Medium/latent
+for the forced-int64 field magnitude boundary and secret HMAC-state lifetime,
+Low for bounded latent scalar-shift behavior and documented tweak-input
+aliasing, and Informational for oracle-only checks. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding. The prior
+production fixes and deterministic tests remain the strongest proof for their
+respective findings; this replay is negative evidence for the current oracle
+set, not evidence that later fork patches can be used to validate clean
+master.
