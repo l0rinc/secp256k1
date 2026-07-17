@@ -7438,3 +7438,42 @@ and forced-int64 clean master. This is **Informational / oracle hardening**:
 no production mismatch was found, no fix is claimed, and master-side severity
 does not change. A public or non-cryptographic nonce buffer is not a Critical
 erasure finding.
+
+## 2026-07-17 Independent Distinct-Batch Pippenger Affine Oracle
+
+The dedicated `ecmult_multi/distinct-pippenger-batches` fixture already forced
+three distinct 88-point Pippenger batches, but its expected result still
+multiplied each term with production `secp256k1_ecmult_const` and accumulated
+with production Jacobian addition. The affine double-and-add model is now
+reused for the same 264 scalar/point pairs and the complete result is compared
+as serialized affine coordinates before that older expected-result check. The
+reference therefore covers the batch dispatcher, callback offsets, Pippenger
+bucket accumulation, and term multiplication with a separate affine path.
+
+The existing seed is 34 bytes containing `distinct ecmult pippenger batches`
+followed by a newline. Native 5x52 and forced-int64/10x26 Clang 22.1.7
+ASan/UBSan replays passed all 24 tracked `ecmult_multi` files plus empty input:
+25 runs completed in 13 seconds on native and 22 seconds on forced-int64.
+Two-worker, two-job value-profiled campaigns used private corpus copies; all
+four jobs returned zero, with no sanitizer diagnostic, assertion, timeout, OOM,
+or artifact.
+
+For the differential proof, `secp256k1_ecmult_pippenger_batch` was temporarily
+changed to flip `r->x.n[0]` only after the third 88-point batch (`cb_offset ==
+176`). The existing repeated-batch and direct checks remained unaffected, and
+the new affine comparison precedes the production-derived comparison in the
+distinct fixture. The exact 34-byte seed aborted with raw status 134 on both
+backends. The mutation was removed and both branch binaries were rebuilt before
+the restored replays. Existing tests and the prior fuzzer oracle did not prove
+this because they either covered repeated points or used production
+`ecmult_const` for the expected terms.
+
+The raw clean-master replay reached the existing `SIZE_MAX` scratch-constructor
+heap overflow on both backends. A disposable compatibility/control harness
+then skipped that **Medium confirmed internal memory-safety** finding and the
+already-ledgered callback partial-result and audit-boundary checks; the new
+affine comparison, successful three-batch transcript, and callback stop trace
+passed on clean native and forced-int64. No clean-master Pippenger arithmetic
+mismatch was found, so this is **Informational / oracle hardening**, with no
+production fix and no severity change. A public or non-cryptographic nonce
+buffer is not a Critical erasure finding.
