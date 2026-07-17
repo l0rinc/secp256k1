@@ -10032,3 +10032,14 @@ It neither downgrades the existing Medium/latent 10x26 normalization finding
 nor claims that clean master is defect-free. The earlier cross-target log
 capture was excluded because concurrent libFuzzer job managers shared their
 worker-log names; only the isolated runs above are part of this record.
+
+## 2026-07-17 Full ASan/UBSan Test Verification
+
+After the worker campaigns, `ctest --test-dir /tmp/secp256k1-next-asan
+--output-on-failure -j2` completed all `224/224` registered tests. The final
+CTest log contains `224` `Test Passed.` records and no `Test Failed` or `Not
+Run` records; this includes both the ordinary and no-verify test executables.
+This verifies the current branch build and its deterministic regression suite
+at the same fixed Clang 22.1.7 ASan/UBSan configuration. It is build/test
+evidence only: it establishes no new production finding and does not alter
+the master-relative severity ledger.
