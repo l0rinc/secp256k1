@@ -1790,6 +1790,58 @@ static void secp256k1_fuzz_check_musig_nonce_agg_long(const secp256k1_context *c
     FUZZ_CHECK(memcmp(actual66, expected66, sizeof(actual66)) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_nonce_agg_intermediate_cancellation(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "MuSig intermediate nonce cancellation\n";
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char scalar_three[32] = { 0 };
+    unsigned char nonce66[3][66];
+    unsigned char expected66[66];
+    unsigned char actual66[66];
+    secp256k1_pubkey points[3][2];
+    secp256k1_musig_pubnonce pubnonces[3];
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[3];
+    secp256k1_musig_aggnonce aggnonce;
+    size_t serialized_len;
+    size_t i;
+    size_t j;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    scalar_two[31] = 2;
+    scalar_three[31] = 3;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &points[0][0], secp256k1_fuzz_scalar_one) == 1);
+    points[1][0] = points[0][0];
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &points[1][0]) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &points[2][0], scalar_two) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &points[0][1], scalar_two) == 1);
+    points[1][1] = points[0][1];
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &points[1][1]) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &points[2][1], scalar_three) == 1);
+
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 2; j++) {
+            serialized_len = 33;
+            FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, nonce66[i] + 33 * j, &serialized_len, &points[i][j], SECP256K1_EC_COMPRESSED) == 1);
+            FUZZ_CHECK(serialized_len == 33);
+        }
+        FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &pubnonces[i], nonce66[i]) == 1);
+        pubnonce_ptrs[i] = &pubnonces[i];
+    }
+    for (j = 0; j < 2; j++) {
+        serialized_len = 33;
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected66 + 33 * j, &serialized_len, &points[2][j], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+    }
+
+    /* The first two entries cancel in each component. The third entry must
+     * then be added to an infinity accumulator, not dropped or misread. */
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, 3) == 1);
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, actual66, &aggnonce) == 1);
+    FUZZ_CHECK(memcmp(actual66, expected66, sizeof(actual66)) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_nonce_process_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_aggnonce *aggnonce, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     unsigned char zero_session[sizeof(secp256k1_musig_session)] = { 0 };
@@ -4271,6 +4323,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(nonce66, sizeof(nonce66), input, size, 181);
     secp256k1_fuzz_check_musig_nonce_agg(ctx, valid_aggnonce66, fixed_pubnonce66);
     secp256k1_fuzz_check_musig_nonce_agg_long(ctx, input, size, valid_aggnonce66);
+    secp256k1_fuzz_check_musig_nonce_agg_intermediate_cancellation(ctx, input, size);
     secp256k1_fuzz_check_musig_nonce_agg_inverse(ctx, valid_aggnonce66);
     secp256k1_fuzz_check_musig_pubnonce_parse(ctx, zero66);
     secp256k1_fuzz_check_musig_pubnonce_parse(ctx, valid_aggnonce66);
