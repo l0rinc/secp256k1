@@ -9249,3 +9249,17 @@ corpus units were discarded after each run. This is a negative clean-master
 result: no production finding or severity change was established, and the
 existing Medium/Medium-latent, Low/latent, Informational, and non-Critical
 nonce-cleanup ratings remain in force.
+
+## 2026-07-17 API Roundtrip Post-Combine Discovery
+
+After adding the fixed-wire static-context combine oracle, the 48-file
+`api_roundtrip` corpus was fuzzed in disposable copies with
+`-workers=2 -jobs=2 -max_total_time=45 -timeout=60 -rss_limit_mb=0`.
+Native 5x52 jobs completed 468 and 469 executions, external-callback native
+jobs completed 475 and 476, and external-callback forced-int64/10x26 jobs
+completed 282 each. All six jobs exited zero with no sanitizer report, oracle
+failure, or crash artifact. Newly discovered mutation corpus units were
+discarded. This is a negative clean-master result: no production finding or
+severity change was established, and the existing Medium/Medium-latent,
+Low/latent, Informational, and non-Critical nonce-cleanup ratings remain in
+force.
