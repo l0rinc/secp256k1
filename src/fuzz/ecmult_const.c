@@ -174,6 +174,21 @@ static void secp256k1_fuzz_ecmult_const_check_canonical_infinity(const unsigned 
     secp256k1_fuzz_ecmult_const_check_canonical_infinity_result(&result);
 }
 
+static void secp256k1_fuzz_ecmult_const_check_zero_scalar_infinity_z(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult const zero scalar infinity z\n";
+    secp256k1_gej result;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memset(&result, 0xA5, sizeof(result));
+    secp256k1_ecmult_const(&result, &secp256k1_ge_const_g, &secp256k1_scalar_zero);
+    /* Inverse addition marks infinity with Z = 0 but may retain X/Y. */
+    FUZZ_CHECK(result.infinity == 1);
+    FUZZ_CHECK(secp256k1_fe_normalizes_to_zero_var(&result.z));
+}
+
 static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context *ctx, const secp256k1_scalar *scalar) {
     secp256k1_gej generated;
     secp256k1_ge generated_affine;
@@ -441,6 +456,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ge base;
     secp256k1_ge infinity;
 
+    secp256k1_fuzz_ecmult_const_check_zero_scalar_infinity_z(input, size);
     secp256k1_fuzz_ecmult_const_check_fixed_generator_two(input, size);
     secp256k1_fuzz_ecmult_const_scalar(&base_scalar, input, size, 101, 1);
     secp256k1_fuzz_ecmult_const_scalar(&scalar, input, size, 107, 1);
