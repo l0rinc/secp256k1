@@ -8246,3 +8246,35 @@ downgrades. The existing mutation-backed fix commits remain the strongest
 causal proof; a later minor fix or cherry-pick making a replay pass does not
 erase the baseline failure. No production mutation from this recheck was
 committed, and no fuzz process remained running.
+
+## 2026-07-17 State-Heavy Worker and Full-Test Recheck
+
+The remote refs were refreshed after the preceding audit commits. Both
+`origin/master` and `l0rinc/master` remain at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, which is an ancestor of
+`codex/fuzz-oracles`; no rebase was required. The audit worktree was clean
+before and after the campaign.
+
+The native ASan/UBSan build ran `fuzz_musig` and `fuzz_ecmult_multi` with
+`-fork=2 -jobs=2 -max_total_time=30 -timeout=60 -rss_limit_mb=0` against
+private copies of their complete tracked corpora. All four workers exited 0;
+the managers reported `oom/timeout/crash: 0/0/0`, and neither target created an
+artifact. The forced-int64/10x26 ASan/UBSan build ran `fuzz_ecmult_multi` with
+the same two-worker settings and the complete 88-input corpus; both workers
+exited 0 with no artifact. Its isolated forced-int64 Musig replay used
+`-fork=2 -jobs=2 -max_total_time=20` against 66 corpus inputs. Both workers
+also exited 0 after the approximately 158-second merge/fuzz interval, with
+no sanitizer report, timeout, OOM, crash, or artifact. The earlier 100-second
+wrapper was therefore an infrastructure budget miss during corpus merging,
+not a finding; the longer isolated run is the authoritative result.
+
+The production test matrix was also checked. Native `tests` (default 16
+iterations), native `noverify_tests`, and forced-int64 `noverify_tests` all
+returned 0. Forced-int64 `tests -i=1` returned 0 in 90 seconds. A default
+16-iteration forced-int64 `tests` invocation exceeded its 300-second wrapper
+without diagnostics; this is recorded as a runtime boundary rather than a
+pass claim, while the one-iteration run covered the same test registry with
+the suite's expected low-iteration skips. No new clean-master mismatch or
+master-relative severity change was found. Existing findings remain rated
+against unmodified master, and a public or non-cryptographic nonce buffer is
+not a Critical erasure finding.
