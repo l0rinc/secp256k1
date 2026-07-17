@@ -8525,3 +8525,24 @@ postconditions, and custom-hasher party-domain checks. This extends the prior
 or changing any master-relative severity. Existing findings remain rated
 against unmodified master; a public or non-cryptographic nonce buffer is not a
 Critical erasure finding.
+
+## 2026-07-17 Long ECDH Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 7-file `ecdh` corpus for 180 seconds per backend with four forked jobs
+and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 7 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 2601` with a maximum
+feature count of 5,140; forced-int64 workers reached `cov: 4430` with a
+maximum feature count of 11,950. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised shared-point symmetry, the fixed generator-times-two
+byte-equation reference, built-in and coordinate-passthrough hash callbacks,
+built-in NULL-input output cleanup, invalid-scalar callback point
+postconditions, and callback output-state transitions. This extends the prior
+30-second ECDH/EllSwift module check without finding a new clean-master defect
+or changing any master-relative severity. Existing findings remain rated
+against unmodified master; a public or non-cryptographic nonce buffer is not a
+Critical erasure finding.
