@@ -1641,6 +1641,71 @@ static void secp256k1_fuzz_check_static_pubkey_tweak(const secp256k1_context *ct
     FUZZ_CHECK(memcmp(actual33, expected33, sizeof(actual33)) == 0);
 }
 
+/* Check public-key combine on the read-only singleton without importing an
+ * opaque pubkey produced by a different context. Fixed SEC1 encodings keep
+ * the expected point independent of the fuzzer's scalar and generator paths. */
+static void secp256k1_fuzz_check_static_pubkey_combine(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "static context public combine\n";
+    static const unsigned char generator33[33] = {
+        0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+        0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
+        0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98
+    };
+    static const unsigned char two_g33[33] = {
+        0x02, 0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
+        0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b, 0x8c,
+        0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70, 0x9e, 0xe5
+    };
+    static const unsigned char three_g33[33] = {
+        0x02, 0xf9, 0x30, 0x8a, 0x01, 0x92, 0x58, 0xc3, 0x10, 0x49, 0x34,
+        0x4f, 0x85, 0xf8, 0x9d, 0x52, 0x29, 0xb5, 0x31, 0xc8, 0x45, 0x83,
+        0x6f, 0x99, 0xb0, 0x86, 0x01, 0xf1, 0x13, 0xbc, 0xe0, 0x36, 0xf9
+    };
+    static const unsigned char neg_generator33[33] = {
+        0x03, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+        0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
+        0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98
+    };
+    secp256k1_pubkey static_generator;
+    secp256k1_pubkey static_two_g;
+    secp256k1_pubkey static_neg_generator;
+    secp256k1_pubkey static_sum;
+    const secp256k1_pubkey *inputs[2];
+    unsigned char serialized[sizeof(three_g33)];
+    unsigned char zero_pubkey[sizeof(static_sum)] = { 0 };
+    size_t serialized_len;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_generator, generator33, sizeof(generator33)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_two_g, two_g33, sizeof(two_g33)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_neg_generator, neg_generator33, sizeof(neg_generator33)) == 1);
+
+    inputs[0] = &static_generator;
+    inputs[1] = &static_two_g;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(secp256k1_context_static, &static_sum, inputs, 2) == 1);
+    serialized_len = sizeof(serialized);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, serialized, &serialized_len, &static_sum, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == sizeof(three_g33));
+    FUZZ_CHECK(memcmp(serialized, three_g33, sizeof(three_g33)) == 0);
+
+    inputs[0] = &static_two_g;
+    inputs[1] = &static_generator;
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(secp256k1_context_static, &static_sum, inputs, 2) == 1);
+    serialized_len = sizeof(serialized);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, serialized, &serialized_len, &static_sum, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == sizeof(three_g33));
+    FUZZ_CHECK(memcmp(serialized, three_g33, sizeof(three_g33)) == 0);
+
+    inputs[0] = &static_generator;
+    inputs[1] = &static_neg_generator;
+    memset(&static_sum, 0xA5, sizeof(static_sum));
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(secp256k1_context_static, &static_sum, inputs, 2) == 0);
+    FUZZ_CHECK(memcmp(&static_sum, zero_pubkey, sizeof(static_sum)) == 0);
+}
+
 /* Check the order-minus-one boundary against byte arithmetic. The ordinary
  * tweak checks compare two production paths, so a shared scalar-conversion
  * regression could make both sides agree on the same wrong result. */
@@ -2885,6 +2950,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_pubkey_combine_invalid(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_null_member(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_combine_empty(ctx, &pubkey);
+    secp256k1_fuzz_check_static_pubkey_combine(input, size);
     secp256k1_fuzz_check_invalid_pubkey_sort(ctx, &pubkey);
     secp256k1_fuzz_check_empty_pubkey_sort(ctx);
     secp256k1_fuzz_check_null_pubkey_sort(ctx);
