@@ -1391,6 +1391,86 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(const secp256
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
+/* Keep Pippenger's generator contribution when its leading batch filters all
+ * callback terms before a later batch contributes finite points. */
+static void secp256k1_fuzz_ecmult_multi_leading_filtered_pippenger(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult multi leading filtered Pippenger batch\n";
+    const size_t n_points = 2 * ECMULT_PIPPENGER_THRESHOLD;
+    const size_t scratch_points = ECMULT_PIPPENGER_THRESHOLD;
+    secp256k1_fuzz_ecmult_multi_window_data data;
+    secp256k1_scalar generator_sc;
+    secp256k1_scalar expected_sc;
+    secp256k1_scratch *scratch;
+    secp256k1_gej actual;
+    secp256k1_gej expected;
+    size_t checkpoint;
+    size_t max_points;
+    size_t n_batches;
+    size_t n_batch_points;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memset(&data, 0, sizeof(data));
+    data.n_points = n_points;
+    data.sc = (secp256k1_scalar *)malloc(n_points * sizeof(*data.sc));
+    data.pt = (secp256k1_ge *)malloc(n_points * sizeof(*data.pt));
+    data.seen = (unsigned char *)calloc(n_points, sizeof(*data.seen));
+    FUZZ_CHECK(data.sc != NULL);
+    FUZZ_CHECK(data.pt != NULL);
+    FUZZ_CHECK(data.seen != NULL);
+    secp256k1_scalar_set_int(&generator_sc, 2);
+
+    scratch = secp256k1_scratch_create(&ctx->error_callback,
+        secp256k1_pippenger_scratch_size(scratch_points, secp256k1_pippenger_bucket_window(scratch_points))
+        + PIPPENGER_SCRATCH_OBJECTS * ALIGNMENT);
+    FUZZ_CHECK(scratch != NULL);
+    max_points = secp256k1_pippenger_max_points(&ctx->error_callback, scratch);
+    FUZZ_CHECK(max_points >= scratch_points);
+    FUZZ_CHECK(max_points < n_points);
+    FUZZ_CHECK(secp256k1_ecmult_multi_batch_size_helper(&n_batches, &n_batch_points, max_points, n_points) == 1);
+    FUZZ_CHECK(n_batches == 2);
+    FUZZ_CHECK(n_batch_points >= ECMULT_PIPPENGER_THRESHOLD);
+    FUZZ_CHECK(n_batch_points < n_points);
+
+    for (i = 0; i < n_points; i++) {
+        if (i < n_batch_points) {
+            if ((i & 1u) == 0) {
+                secp256k1_scalar_set_int(&data.sc[i], 0);
+                data.pt[i] = secp256k1_ge_const_g;
+            } else {
+                secp256k1_scalar_set_int(&data.sc[i], 1);
+                secp256k1_ge_set_infinity(&data.pt[i]);
+            }
+        } else {
+            secp256k1_scalar_set_int(&data.sc[i], 1);
+            data.pt[i] = secp256k1_ge_const_g;
+        }
+    }
+
+    checkpoint = scratch->alloc_size;
+    data.calls = 0;
+    memset(data.seen, 0, n_points * sizeof(*data.seen));
+    FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &generator_sc,
+        secp256k1_fuzz_ecmult_multi_window_callback, &data, n_points) == 1);
+    FUZZ_CHECK(scratch->alloc_size == checkpoint);
+    FUZZ_CHECK(data.calls == n_points);
+    for (i = 0; i < n_points; i++) {
+        FUZZ_CHECK(data.seen[i] != 0);
+    }
+
+    secp256k1_scalar_set_int(&expected_sc, (unsigned int)(2 + n_points - n_batch_points));
+    secp256k1_ecmult_const(&expected, &secp256k1_ge_const_g, &expected_sc);
+    secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+    free(data.seen);
+    free(data.pt);
+    free(data.sc);
+}
+
 /* Strauss also filters zero-scalar and infinity-point terms before building
  * its WNAF state. Keep its all-filtered identity return deterministic rather
  * than relying on a random scalar to happen to be zero. */
@@ -1723,6 +1803,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
     secp256k1_fuzz_ecmult_multi_all_filtered_pippenger(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(ctx, g_sc_ptr, input, size);
+    secp256k1_fuzz_ecmult_multi_leading_filtered_pippenger(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_pippenger_window_boundary(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_pippenger_window_10(ctx, input, size);
