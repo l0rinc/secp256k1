@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -7737,3 +7737,45 @@ No clean-master production mismatch was confirmed. This is **Informational /
 oracle hardening**, with no production fix or severity change. Severity remains
 master-relative; clearing a public or non-cryptographic nonce buffer is not a
 Critical finding.
+
+## 2026-07-17 Fixed Generator Vector for Recoverable ECDSA
+
+The `recovery/generator-vector` fixture adds a 26-byte transcript,
+`recovery-generator-vector` followed by a newline. It encodes the fixed
+recoverable signature `(r, s, recid) = (x(G), x(G), 0)` and a zero message
+hash, then requires recovery to serialize the known even-Y generator. The
+compact signature round trip is checked separately so the expected point
+comparison cannot be satisfied by a serialization-only mutation.
+
+The vector is valid by the recovery identity
+`Q = r^-1 (sR - zG) = x(G)^-1 (x(G)G - 0G) = G`: recid zero selects the
+generator's even-Y point, and `x(G)` is below the group order. The expected
+point is fixed compressed wire data; no production tweak multiplication,
+public-key combine, or recovery equation helper constructs it. This is
+complementary to the existing arbitrary recovery equation, whose expected
+terms still use production public-key operations.
+
+For causal proof, a temporary trigger-only return skipped the older random
+recovery checks. A temporary mutation in
+`src/modules/recovery/main_impl.h` set the recovered Jacobian point to
+infinity after `ecmult` only when `recid == 0`, the message scalar was zero,
+and `r == s`. With `-handle_abrt=0`, the exact seed aborted with status 134
+on native 5x52 and forced-int64/10x26, while all 11 pre-existing recovery
+corpus files completed 12 executions with status 0 on both backends. The
+mutation and isolation return were removed before restored replay.
+
+Restored Clang 22.1.7 ASan/UBSan replays passed all 12 corpus files plus the
+empty execution: 13 runs in 0.96 seconds on native 5x52 and 1.62 seconds on
+forced-int64/10x26. Four private `-fork=2` jobs, two per backend, completed
+with status 0 in about 4.6 seconds per native job and 5.3 seconds per
+forced-int64 job. No sanitizer diagnostic, assertion, timeout, OOM, or
+artifact was produced. Branch `tests` and `noverify_tests` passed the
+recovery subset.
+
+Clean `origin/master` was `11dad6d`; its older CMake fuzz configuration has
+no `fuzz_recovery` target, and the disposable clean build has no `recovery`
+test target because that module is disabled there. A raw clean-master fuzz or
+recovery-test replay was therefore unavailable. No clean-master production
+mismatch was confirmed. This is **Informational / oracle hardening**, with no
+production fix or severity change. Severity remains master-relative; clearing
+a public or non-cryptographic nonce buffer is not a Critical finding.
