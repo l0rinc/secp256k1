@@ -9949,3 +9949,49 @@ mutations, deterministic tests, and verifier commands remain in their commit
 messages; this entry records the current master-tip proof and the ordering
 dependency between the oracles. A public or non-cryptographic nonce buffer is
 not a Critical erasure finding.
+
+## 2026-07-17 Current Clean-Master MuSig State Ordering
+
+The five focused MuSig state inputs
+`opaque-nonce-state`, `noncanonical-nonce-storage`,
+`keyagg-cache-semantic-state`, `partial-keypair-nonce-counter-invalid`, and
+`overflow1-secnonce-scalar` all pass on the fixed Clang 22.1.7 ASan/UBSan
+branch. On the clean-master projection at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, the ordinary
+`opaque-nonce-state` replay first aborts in
+`src/field_5x52_impl.h:29`. This is the existing **Medium** noncanonical
+opaque-public-key/nonce-storage boundary, not evidence that the later nonce
+state is safe or unsafe by itself.
+
+To make the ordering explicit, disposable harness-only isolation bypassed
+each earlier helper one at a time and rebuilt after every change. The clean
+baseline then reached these existing master failures:
+
+- `fuzz_musig.c:1878` and `fuzz_musig.c:1909`: invalid and zero-sized
+  `musig_pubkey_agg` calls leave a poisoned keyagg-cache output nonzero. This
+  is the **Low to Medium** stale-state finding fixed by `5c0977c`; it requires
+  ignoring a failed return and is not a nonce-erasure issue.
+- `fuzz_musig.c:1969`: an invalid opaque cache/public point reaches public-key
+  serialization instead of a clean rejection. This is the **Medium** cache
+  point-boundary finding fixed by `f4ef1c0`.
+- `fuzz_musig.c:2047`: an invalid cache parity byte reaches public tweaking.
+  This is the **Medium** semantic-cache finding fixed by `645a3bd`.
+- `fuzz_musig.c:3384` (and the dedicated partial-keypair seed at
+  `fuzz_musig.c:3413`): a keypair with mismatched secret/public halves reaches
+  nonce generation. This is the **Medium** inconsistent opaque-keypair
+  finding fixed by `5f8416e`.
+- After those barriers were isolated, `fuzz_musig.c:3540` showed a malformed
+  opaque public-nonce point reaching serialization. This remains the
+  **Medium** opaque MuSig nonce-state finding fixed by `d4a62f0`/
+  `394cc5d`; the dedicated partial-keypair input still stopped at its earlier
+  cleanup assertion, so no stronger scalar claim is made from that input.
+
+The isolation bypassed only fuzzer helper calls and was fully restored; the
+clean projection was rebuilt and rerun, reproducing the first
+`field_5x52_impl.h:29` abort. This ordering matters for severity and proof:
+fixing a noncanonical point or stale cache output does not make a later
+secret-nonce or session transition valid on clean master. No new production
+bug is claimed in this pass, and no nonce cleanup is rated Critical merely
+because a public/non-cryptographic nonce object was invalidated. The existing
+production commit messages retain the deterministic tests, exact mutations,
+and verifier commands for each finding.
