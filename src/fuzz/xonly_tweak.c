@@ -175,11 +175,15 @@ static void secp256k1_fuzz_check_xonly_tweak_affine(const secp256k1_context *ctx
     secp256k1_fuzz_xonly_byte_point expected;
     secp256k1_fuzz_xonly_byte_point two_g;
     secp256k1_pubkey actual;
+    secp256k1_pubkey static_actual;
     secp256k1_pubkey keypair_actual;
+    secp256k1_xonly_pubkey static_xonly;
     unsigned char expected33[33];
     unsigned char actual33[33];
+    unsigned char static_actual33[33];
     unsigned char keypair_actual33[33];
     size_t actual_len;
+    size_t static_actual_len;
     size_t keypair_actual_len;
     secp256k1_keypair tweaked_keypair = *keypair;
 
@@ -195,6 +199,14 @@ static void secp256k1_fuzz_check_xonly_tweak_affine(const secp256k1_context *ctx
     FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, actual33, &actual_len, &actual, SECP256K1_EC_COMPRESSED) == 1);
     FUZZ_CHECK(actual_len == sizeof(actual33));
     FUZZ_CHECK(memcmp(actual33, expected33, sizeof(actual33)) == 0);
+
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(secp256k1_context_static, &static_xonly, xonly32) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(secp256k1_context_static, &static_actual, &static_xonly, two32) == 1);
+    static_actual_len = sizeof(static_actual33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, static_actual33, &static_actual_len, &static_actual, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(static_actual_len == sizeof(static_actual33));
+    FUZZ_CHECK(memcmp(static_actual33, expected33, sizeof(static_actual33)) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add_check(secp256k1_context_static, expected33 + 1, expected.y[31] & 1u, &static_xonly, two32) == 1);
 
     FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &tweaked_keypair, two32) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_actual, &tweaked_keypair) == 1);
