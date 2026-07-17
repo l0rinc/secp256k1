@@ -8800,6 +8800,46 @@ respective findings; this replay is negative evidence for the current oracle
 set, not evidence that later fork patches can be used to validate clean
 master.
 
+## 2026-07-17 Static Context Keypair Barrier
+
+The x-only target now has a gated 31-byte seed,
+`static context keypair barrier`. It uses a valid keypair with
+`secp256k1_context_static` and checks the documented split between a
+public-only operation and a secret-dependent mutation: `keypair_xonly_pub`
+must project the valid x-only key and parity successfully, while
+`keypair_xonly_tweak_add` must reject the same keypair because the static
+context has no generator precomputation. The rejection must invoke the
+default illegal callback and leave the keypair in the documented invalid
+(all-zero) state. The rejection half runs under the repository's
+`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON` fuzz build, whose non-aborting
+default callback exposes that otherwise fatal static-context path; the normal
+callback build still runs the public-only projection half.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. The general context contract says that operations consuming a
+secret key or keypair require a non-static context; the x-only projection is
+the deliberate public-only exception exercised here. The oracle prevents a
+future refactor from treating the static context as capable of secret
+generator multiplication, while avoiding the stale assumption that every
+keypair accessor needs signing state. It does not change any master-relative
+severity: malformed opaque state, callback-failure barriers, and the
+reachable forced-int64 arithmetic boundary remain **Medium** or
+**Medium/latent** as previously recorded; bounded/documented alias cases
+remain **Low/latent**; cleanup and model checks remain **Informational**. A
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, a disposable production mutation changed only the
+`ret = 0` assignment in the no-generator branch of
+`src/modules/extrakeys/main_impl.h` to `ret = 1`, leaving the callback and all
+other code unchanged. The external-callback focused replay used
+`-handle_abrt=0 -runs=1 -timeout=60 -rss_limit_mb=0` and exited `134`; the
+unmutated control with the same 31-byte seed exited `0`. Native 5x52,
+forced-int64/10x26, and external-callback focused controls all passed under
+Clang ASan/UBSan. The complete 15-file x-only corpus also passed with
+`-workers=2 -jobs=2 -runs=1 -timeout=60 -rss_limit_mb=0` on all three builds;
+each job exited `0` with no sanitizer report, output artifact, or assertion
+failure. The mutation was restored before the audit tree was verified.
+
 ## 2026-07-17 Direct Ecmult Domain and Release-Style Recheck
 
 The remote refresh was repeated with the correct remote names: both
