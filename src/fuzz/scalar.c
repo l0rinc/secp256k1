@@ -406,6 +406,34 @@ static void secp256k1_fuzz_scalar_reduce_product(unsigned char *out32, const uin
     secp256k1_fuzz_scalar_limbs_to_bytes(out32, remainder);
 }
 
+/* Compute a scalar inverse with Fermat's little theorem using only the
+ * standalone product and binary-reduction model above. */
+static void secp256k1_fuzz_scalar_inverse_reference(unsigned char *out32, const unsigned char *input32) {
+    unsigned char exponent[32];
+    unsigned char exponent_minus_one[32];
+    unsigned char result[32] = { 0 };
+    uint16_t product[SECP256K1_FUZZ_SCALAR_PRODUCT_LIMBS];
+    unsigned int bit;
+
+    if (memcmp(input32, secp256k1_fuzz_scalar_zero, sizeof(result)) == 0) {
+        memset(out32, 0, sizeof(result));
+        return;
+    }
+    memcpy(exponent, secp256k1_fuzz_scalar_order, sizeof(exponent));
+    secp256k1_fuzz_scalar_decrement(exponent_minus_one, exponent);
+    secp256k1_fuzz_scalar_decrement(exponent, exponent_minus_one);
+    result[31] = 1;
+    for (bit = 0; bit < 256; bit++) {
+        secp256k1_fuzz_scalar_product(product, result, result);
+        secp256k1_fuzz_scalar_reduce_product(result, product);
+        if ((exponent[bit >> 3] & (unsigned char)(0x80u >> (bit & 7u))) != 0) {
+            secp256k1_fuzz_scalar_product(product, result, input32);
+            secp256k1_fuzz_scalar_reduce_product(result, product);
+        }
+    }
+    memcpy(out32, result, sizeof(result));
+}
+
 static void secp256k1_fuzz_scalar_check_decode(secp256k1_scalar *scalar, unsigned char *canonical32, const unsigned char *input32) {
     secp256k1_scalar null_overflow_scalar;
     secp256k1_scalar seckey_scalar;
@@ -440,6 +468,7 @@ static void secp256k1_fuzz_scalar_check_modular_arithmetic(const secp256k1_scala
     secp256k1_scalar inverse_var;
     unsigned char actual32[32];
     unsigned char expected32[32];
+    unsigned char expected_inverse32[32];
     unsigned char inverse32[32];
     uint16_t inverse_product[SECP256K1_FUZZ_SCALAR_PRODUCT_LIMBS];
 
@@ -453,10 +482,14 @@ static void secp256k1_fuzz_scalar_check_modular_arithmetic(const secp256k1_scala
     secp256k1_scalar_get_b32(actual32, &actual_alias);
     FUZZ_CHECK(memcmp(actual32, expected32, sizeof(expected32)) == 0);
 
+    secp256k1_fuzz_scalar_inverse_reference(expected_inverse32, a32);
     secp256k1_scalar_inverse(&inverse, a);
     secp256k1_scalar_inverse_var(&inverse_var, a);
     FUZZ_CHECK(secp256k1_scalar_eq(&inverse, &inverse_var));
     secp256k1_scalar_get_b32(inverse32, &inverse);
+    FUZZ_CHECK(memcmp(inverse32, expected_inverse32, sizeof(inverse32)) == 0);
+    secp256k1_scalar_get_b32(actual32, &inverse_var);
+    FUZZ_CHECK(memcmp(actual32, expected_inverse32, sizeof(actual32)) == 0);
     secp256k1_fuzz_scalar_product(inverse_product, a32, inverse32);
     secp256k1_fuzz_scalar_reduce_product(actual32, inverse_product);
     if (memcmp(a32, secp256k1_fuzz_scalar_zero, sizeof(actual32)) == 0) {
