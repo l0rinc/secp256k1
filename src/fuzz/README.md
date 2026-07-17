@@ -7602,3 +7602,50 @@ possible. The clean test suite is the available control and found no
 production mismatch. This is **Informational / oracle hardening**, with no
 production fix and no severity finding. A public or non-cryptographic nonce
 buffer is not a Critical erasure finding.
+
+## 2026-07-17 Independent Affine Oracle for MuSig Key Aggregation
+
+The `musig/keyagg-affine-reference` fixture adds a 30-byte transcript,
+`MuSig keyagg affine reference` followed by a newline. It aggregates the
+explicit points G and 2G. The harness hook forces the hashed first KeyAgg
+coefficient to one, while MuSig's second-distinct-key rule supplies one for
+2G, making the expected weighted sum exactly `G + 2G`. A separate byte-level
+affine model computes that addition and compares both the full compressed
+point returned by `secp256k1_musig_pubkey_get` and the x-only aggregate.
+
+The byte subtraction, multiplication, and group equation are independent of
+the production Jacobian and `ecmult_multi` representations. As with the
+other bounded affine references, the one modular inverse uses
+`secp256k1_fe_inv_var` to keep the dedicated trigger fast; this is documented
+as a model boundary rather than an independently implemented inverse.
+
+The prior MuSig key-aggregation references independently recomputed the
+transcript and coefficient hashes, but built their expected weighted point
+with production `secp256k1_ec_pubkey_tweak_mul` and
+`secp256k1_ec_pubkey_combine`. They could therefore agree with a shared group
+or batch-accumulation error. The new postcondition binds the callback result
+to an independently computed affine point.
+
+For causal proof, a temporary mutation in
+`src/modules/musig/keyagg_impl.h` set `sc` to zero after the callback computed
+the coefficient when `idx == 1`. On the dedicated trigger this changes the
+aggregate from `G + 2G` to `G`. A temporary trigger-only early return skipped
+the older production-derived checks so the failure was attributable to the
+new oracle. Native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan
+replays both exited with raw libFuzzer status 77 at the new assertion, with
+no illegal-callback diagnostic. The mutation and isolation return were
+removed before restored replay.
+
+Restored native and forced-int64 focused replays passed in 1.15 and 1.95
+seconds. The 66-file corpus plus empty input completed 67 runs in 81.5 and
+140.7 seconds. Private two-job/two-worker campaigns completed two 67-run jobs
+per backend in about 82 and 140 seconds; all workers returned zero with no
+sanitizer diagnostic, assertion, timeout, OOM, or artifact. Clean-master
+MuSig tests (`tests -t=musig -i=1`) passed, but clean `origin/master`
+`11dad6d` has no `fuzz_musig` target because its fuzz CMake wiring predates
+this harness, so a raw clean-master fuzzer replay is unavailable.
+
+No clean-master production mismatch was confirmed. This is **Informational /
+oracle hardening**, with no production fix or severity finding. Severity
+continues to be rated against unmodified master; a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
