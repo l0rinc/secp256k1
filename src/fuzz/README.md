@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, a fixed ECDSA verification-infinity transition, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -8022,3 +8022,29 @@ behavioral context and add stronger proofs. These fork refs were compared as
 discovery-order evidence, not used to claim that clean master was safe. Any
 future fork fix that changes the triggering behavior must be recorded beside
 the affected finding and replayed with the original master-relative mutation.
+
+## 2026-07-17 ECDSA Finite X-Mismatch Oracle
+
+The new gated input `api_roundtrip/ecdsa-verification-x-mismatch` is the exact
+ASCII phrase `ecdsa verification x mismatch` followed by one LF byte. It uses
+the same parseable low-S compact signature `r = s = 1` as the identity vector,
+but sets `Q = G` and `z = 1`. The verifier consequently computes `R = 2G`.
+The fixed generator vector has `x(2G) =
+c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5`, which is
+neither `r` nor `r + n`; the public verifier must return zero after both
+finite x-coordinate comparisons fail. This is independent of the fuzzer's
+arbitrary-signature reference and reaches a different path from the
+infinity-rejection vector.
+
+For causal proof, the final `return 0` in `secp256k1_ecdsa_sig_verify` was
+temporarily changed to `return 1` only after the `x` and `x + n` comparisons.
+The exact seed aborted with status 134 on native 5x52 and forced-int64/10x26
+Clang 22 ASan/UBSan builds, while all 45 earlier API inputs stayed green under
+the same mutation on both backends. The mutation was restored before replay.
+The restored 46-input API corpus passed on both sanitizer backends, and the
+coverage report recorded the final mismatch return once.
+
+Clean `origin/master` already contains the same final rejection, so this is
+**Informational / Low master-relative oracle hardening**, not a production
+bug or fix. The existing severity ledger remains unchanged; a public or
+otherwise non-cryptographic nonce buffer is not a Critical erasure finding.

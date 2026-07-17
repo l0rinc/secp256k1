@@ -1402,6 +1402,20 @@ static void secp256k1_fuzz_check_ecdsa_verification_infinity(const secp256k1_con
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &generator) == 0);
 }
 
+static void secp256k1_fuzz_check_ecdsa_verification_x_mismatch(const secp256k1_context *ctx) {
+    secp256k1_ecdsa_signature sig;
+    secp256k1_pubkey generator;
+    unsigned char compact[64] = { 0 };
+
+    /* With Q = G, r = s = z = 1, verification computes R = 2G. Its
+     * x-coordinate is neither r nor r + n, so the signature is invalid. */
+    compact[31] = 1;
+    compact[63] = 1;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &sig, compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, secp256k1_fuzz_scalar_one, &generator) == 0);
+}
+
 static void secp256k1_fuzz_check_ecdsa_retry_after_zero_s(const secp256k1_context *ctx) {
     static const unsigned char one32[32] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -2917,6 +2931,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (size == sizeof("ecdsa verification infinity\n") - 1
         && memcmp(input, "ecdsa verification infinity\n", sizeof("ecdsa verification infinity\n") - 1) == 0) {
         secp256k1_fuzz_check_ecdsa_verification_infinity(ctx);
+    }
+    if (size == sizeof("ecdsa verification x mismatch\n") - 1
+        && memcmp(input, "ecdsa verification x mismatch\n", sizeof("ecdsa verification x mismatch\n") - 1) == 0) {
+        secp256k1_fuzz_check_ecdsa_verification_x_mismatch(ctx);
     }
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, zero_compact) == 1);
