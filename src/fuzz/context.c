@@ -445,6 +445,38 @@ static void secp256k1_fuzz_check_context_invalid_flags(void) {
 #endif
 }
 
+static void secp256k1_fuzz_check_static_context_lifecycle(const unsigned char *seed32) {
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    /* The singleton is const in the public API. Cast only to exercise APIs
+     * whose first contract check must reject it before any write. */
+    secp256k1_context *static_ctx = (secp256k1_context *)secp256k1_context_static;
+    unsigned int calls = secp256k1_fuzz_default_illegal_calls;
+    secp256k1_context *clone;
+
+    FUZZ_CHECK(secp256k1_context_randomize(static_ctx, seed32) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(secp256k1_context_randomize(static_ctx, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+
+    clone = secp256k1_context_clone(static_ctx);
+    FUZZ_CHECK(clone == NULL);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(secp256k1_context_preallocated_clone_size(static_ctx) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+
+    secp256k1_context_set_illegal_callback(static_ctx, NULL, NULL);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    secp256k1_context_set_error_callback(static_ctx, NULL, NULL);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    secp256k1_context_destroy(static_ctx);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    secp256k1_context_preallocated_destroy(static_ctx);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+#else
+    (void)seed32;
+#endif
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
@@ -480,6 +512,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(ctx != NULL);
     secp256k1_fuzz_derive(seed32, sizeof(seed32), input, size, 31);
     secp256k1_fuzz_derive(reset_seed32, sizeof(reset_seed32), input, size, 37);
+    if (size == sizeof("static context lifecycle\n") - 1
+            && memcmp(input, "static context lifecycle\n", sizeof("static context lifecycle\n") - 1) == 0) {
+        secp256k1_fuzz_check_static_context_lifecycle(seed32);
+    }
     FUZZ_CHECK(secp256k1_context_randomize(ctx, seed32) == 1);
     clone = secp256k1_context_clone(ctx);
     FUZZ_CHECK(clone != NULL);
