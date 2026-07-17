@@ -9810,3 +9810,30 @@ not an allocator implementation failure. No production or fuzzer change is
 justified by this path, and existing master-relative severities remain
 unchanged. A public or non-cryptographic nonce buffer is not a Critical
 erasure finding.
+
+## 2026-07-17 Parser Input/Output Alias Negative Control
+
+A clean-master public-API probe used a valid generator encoding as both the
+serialized input and the opaque output storage. On
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, both calls returned zero:
+
+    ec_pubkey_parse overlap ret=0 bytes_equal=0
+    xonly_pubkey_parse overlap ret=0 bytes_equal=0
+
+This is expected from the implementations: `secp256k1_ec_pubkey_parse` and
+`secp256k1_xonly_pubkey_parse` clear their `Out` object before reading the
+separate `In` byte sequence. The headers do not describe either object as
+`In/Out`; the full-key parser explicitly says failed output is undefined, and
+the x-only parser promises only an invalid output on failure. Therefore this
+is not a master-relative bug, and no parser alias oracle or production change
+is justified. Treating this as supported would turn an undocumented pure
+`Out` plus `In` overlap into a false positive, unlike the documented
+`In/Out` tweak and session-random cases already covered above. The same
+boundary applies to the counter-nonce path: its `Out` nonce objects and `In`
+keypair are separate roles, while its defined keypair-loading and failure
+cleanup transitions are already exercised by the existing corpus.
+
+The probe was linked against the clean-master ASan/UBSan shared library and
+ran with no sanitizer diagnostic. This negative control does not alter any
+existing severity rating. A public or non-cryptographic nonce buffer is not a
+Critical erasure finding.
