@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
+- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -9206,3 +9206,46 @@ external-callback forced-int64/10x26. The combine-focused deterministic test
 `ec_illegal_argument_tests` passed with one iteration on all three builds.
 The mutation was restored before commit and no production behavior or severity
 rating changed.
+
+## 2026-07-17 Tagged SHA Output Overlap Boundary
+
+The `context/tagged-sha256-output-overlap` fixture compares the public tagged
+hash API against the standalone SHA transcript reference while making the
+32-byte output exactly equal to the tag storage in one case and overlap the
+message storage at an interior offset in another. Guard bytes around the
+overlaps are checked as well. This exercises the natural read-before-finalize
+ordering that the existing disjoint-buffer checks could not observe.
+
+This is **Informational alias-contract hardening**, not a clean-master
+production finding. The public documentation does not state a non-overlap
+precondition for `hash32`, `tag`, or `msg`, and no failure or digest mismatch
+was found on master. The severity ledger is unchanged: malformed opaque state,
+callback-failure memory safety, and secret-state lifetime remain **Medium**
+where proven; the forced-int64 magnitude boundary remains
+**Medium/latent**; bounded/documented aliases remain **Low/latent**; cleanup
+and model checks remain **Informational**. A public or non-cryptographic nonce
+buffer is not a Critical erasure finding.
+
+For causal proof, a disposable `memset(hash32, 0, 32);` was inserted
+immediately after the output argument check in `secp256k1_tagged_sha256`. The
+new exact seed exited 134 under the external-callback Clang ASan/UBSan build
+with `-handle_abrt=0`, while the previous 12-file context corpus passed in
+both worker jobs under the same mutant. After restoration, the complete
+13-file corpus passed with `-workers=2 -jobs=2 -runs=1 -timeout=60
+-rss_limit_mb=0` on native 5x52, external-callback native, and
+external-callback forced-int64/10x26; `tagged_sha256_tests` also passed with
+one iteration on all three builds. The mutation was restored before commit
+and no production behavior or severity rating changed.
+
+## 2026-07-17 Context Bounded Discovery
+
+The expanded 13-file `context` corpus was then fuzzed in disposable copies
+with `-workers=2 -jobs=2 -max_total_time=45 -timeout=60 -rss_limit_mb=0`.
+The native 5x52 jobs completed 597 and 602 executions, the external-callback
+native jobs completed 595 and 598, and the external-callback
+forced-int64/10x26 jobs completed 358 and 360. Every job exited zero with no
+sanitizer report, oracle failure, or crash artifact. Newly discovered mutation
+corpus units were discarded after each run. This is a negative clean-master
+result: no production finding or severity change was established, and the
+existing Medium/Medium-latent, Low/latent, Informational, and non-Critical
+nonce-cleanup ratings remain in force.
