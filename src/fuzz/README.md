@@ -8278,3 +8278,22 @@ the suite's expected low-iteration skips. No new clean-master mismatch or
 master-relative severity change was found. Existing findings remain rated
 against unmodified master, and a public or non-cryptographic nonce buffer is
 not a Critical erasure finding.
+
+## 2026-07-17 Public API Error-State Worker Recheck
+
+The current native and forced-int64 ASan/UBSan builds replayed private copies
+of the complete `api_roundtrip` corpus (47 inputs) and `context` corpus (11
+inputs) with four libFuzzer workers per target:
+`-fork=4 -jobs=4 -max_total_time=30 -timeout=60 -rss_limit_mb=0`.
+All 16 workers exited 0. The API workers retained their parser, serializer,
+combine, sort, tweak, signature-state, callback, and output-cleanup oracles;
+the context workers retained their clone, SHA backend, impossible-length,
+callback, and deterministic-signing equivalence checks. Every logged worker
+reported `oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or artifact was
+created on either backend. The forced-int64 run is an independent arithmetic
+and state-transition check, not merely a repeat of native execution.
+
+This campaign found no new clean-master defect and no master-relative severity
+change. Existing findings continue to be rated against the unmodified master,
+even where current production fixes make the repaired replay pass. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
