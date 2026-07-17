@@ -2496,6 +2496,70 @@ static void secp256k1_fuzz_check_musig_nonce_gen_optional_seckey(const secp256k1
     }
 }
 
+static void secp256k1_fuzz_check_musig_nonce_gen_bip327_vector(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "MuSig BIP327 nonce-gen vector\n";
+    static const unsigned char session_secrand_template[32] = {
+        0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F,
+        0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F,
+        0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F,
+        0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F
+    };
+    static const unsigned char pubkey33[33] = {
+        0x02, 0xF9, 0x30, 0x8A, 0x01, 0x92, 0x58, 0xC3,
+        0x10, 0x49, 0x34, 0x4F, 0x85, 0xF8, 0x9D, 0x52,
+        0x29, 0xB5, 0x31, 0xC8, 0x45, 0x83, 0x6F, 0x99,
+        0xB0, 0x86, 0x01, 0xF1, 0x13, 0xBC, 0xE0, 0x36,
+        0xF9
+    };
+    static const unsigned char expected_k64[64] = {
+        0x89, 0xBD, 0xD7, 0x87, 0xD0, 0x28, 0x4E, 0x5E,
+        0x4D, 0x5F, 0xC5, 0x72, 0xE4, 0x9E, 0x31, 0x6B,
+        0xAB, 0x7E, 0x21, 0xE3, 0xB1, 0x83, 0x0D, 0xE3,
+        0x7D, 0xFE, 0x80, 0x15, 0x6F, 0xA4, 0x1A, 0x6D,
+        0x0B, 0x17, 0xAE, 0x8D, 0x02, 0x4C, 0x53, 0x67,
+        0x96, 0x99, 0xA6, 0xFD, 0x79, 0x44, 0xD9, 0xC4,
+        0xA3, 0x66, 0xB5, 0x14, 0xBA, 0xF4, 0x30, 0x88,
+        0xE0, 0x70, 0x8B, 0x10, 0x23, 0xDD, 0x28, 0x97
+    };
+    static const unsigned char expected_pubnonce66[66] = {
+        0x02, 0xC9, 0x6E, 0x7C, 0xB1, 0xE8, 0xAA, 0x5D,
+        0xAC, 0x64, 0xD8, 0x72, 0x94, 0x79, 0x14, 0x19,
+        0x8F, 0x60, 0x7D, 0x90, 0xEC, 0xDE, 0x52, 0x00,
+        0xDE, 0x52, 0x97, 0x8A, 0xD5, 0xDE, 0xD6, 0x3C,
+        0x00, 0x02, 0x99, 0xEC, 0x51, 0x17, 0xC2, 0xD2,
+        0x9E, 0xDE, 0xE8, 0xA2, 0x09, 0x25, 0x87, 0xC3,
+        0x90, 0x9B, 0xE6, 0x94, 0xD5, 0xCF, 0xF0, 0x66,
+        0x7D, 0x6C, 0x02, 0xEA, 0x40, 0x59, 0xF7, 0xCD,
+        0x97, 0x86
+    };
+    unsigned char session_secrand[32];
+    unsigned char serialized_pubnonce[66];
+    unsigned char zero32[32] = { 0 };
+    secp256k1_pubkey pubkey;
+    secp256k1_musig_secnonce secnonce;
+    secp256k1_musig_pubnonce pubnonce;
+    size_t pubkey_len = sizeof(pubkey33);
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memcpy(session_secrand, session_secrand_template, sizeof(session_secrand));
+    memset(&secnonce, 0xA5, sizeof(secnonce));
+    memset(&pubnonce, 0x5A, sizeof(pubnonce));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, pubkey33, sizeof(pubkey33)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized_pubnonce, &pubkey_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(pubkey_len == sizeof(pubkey33));
+    FUZZ_CHECK(memcmp(serialized_pubnonce, pubkey33, sizeof(pubkey33)) == 0);
+    FUZZ_CHECK(secp256k1_musig_nonce_gen(ctx, &secnonce, &pubnonce, session_secrand, NULL, &pubkey, NULL, NULL, NULL) == 1);
+    FUZZ_CHECK(memcmp(secnonce.data + 4, expected_k64, sizeof(expected_k64)) == 0);
+    FUZZ_CHECK(memcmp(session_secrand, zero32, sizeof(session_secrand)) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, serialized_pubnonce, &pubnonce) == 1);
+    FUZZ_CHECK(memcmp(serialized_pubnonce, expected_pubnonce66, sizeof(serialized_pubnonce)) == 0);
+    secp256k1_memclear_explicit(&secnonce, sizeof(secnonce));
+    secp256k1_memclear_explicit(&session_secrand, sizeof(session_secrand));
+}
+
 static void secp256k1_fuzz_check_musig_nonce_gen_session_random_alias_case(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey32, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, unsigned int alias) {
     unsigned char session_rand[32];
     unsigned char session_rand_before[32];
@@ -3835,6 +3899,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     int ret_no_output;
     size_t aggnonce_part_len;
 
+    secp256k1_fuzz_check_musig_nonce_gen_bip327_vector(ctx, input, size);
     if (secp256k1_fuzz_byte(input, size, 157) == (unsigned char)'8') {
         n_pubkeys = 8;
     } else {
