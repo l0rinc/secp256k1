@@ -395,10 +395,17 @@ static void secp256k1_fuzz_ecmult_const_check_fixed_generator_two(const unsigned
         0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
         0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
     };
+    static const unsigned char generator_two_y[32] = {
+        0x1A, 0xE1, 0x68, 0xFE, 0xA6, 0x3D, 0xC3, 0x39,
+        0xA3, 0xC5, 0x84, 0x19, 0x46, 0x6C, 0xEA, 0xEE,
+        0xF7, 0xF6, 0x32, 0x65, 0x32, 0x66, 0xD0, 0xE1,
+        0x23, 0x64, 0x31, 0xA9, 0x50, 0xCF, 0xE5, 0x2A
+    };
     secp256k1_scalar scalar;
     secp256k1_gej actual;
     secp256k1_ge actual_affine;
     unsigned char actual_x[32];
+    unsigned char actual_y[32];
 
     if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
         return;
@@ -415,6 +422,8 @@ static void secp256k1_fuzz_ecmult_const_check_fixed_generator_two(const unsigned
     secp256k1_fe_get_b32(actual_x, &actual_affine.x);
     FUZZ_CHECK(memcmp(actual_x, generator_two_x, sizeof(actual_x)) == 0);
     secp256k1_fe_normalize_var(&actual_affine.y);
+    secp256k1_fe_get_b32(actual_y, &actual_affine.y);
+    FUZZ_CHECK(memcmp(actual_y, generator_two_y, sizeof(actual_y)) == 0);
     FUZZ_CHECK(!secp256k1_fe_is_odd(&actual_affine.y));
     secp256k1_scalar_clear(&scalar);
 }

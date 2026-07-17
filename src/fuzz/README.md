@@ -7749,9 +7749,13 @@ internal `secp256k1_ecmult_const` entry point on the fixed generator with
 scalar two and compares the normalized result with the fixed canonical
 `2G` x-coordinate
 `c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5` and its
-even-Y parity. The expected point is fixed known-answer data; it is not
-constructed through `ecmult_gen`, `ecmult`, a public tweak operation, or the
-fuzzer's affine model.
+even-Y parity, plus the canonical Y-coordinate
+`1ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a`. The
+expected point is fixed known-answer data; it is not constructed through
+`ecmult_gen`, `ecmult`, a public tweak operation, or the fuzzer's affine
+model. Checking both coordinates matters: X and parity alone can accept a
+corrupted serialized Y value while still looking like the expected point to
+an x-only consumer.
 
 This is intentionally a separate internal-path check from the ECDH
 generator-two vector. The ECDH fixture validates the public ECDH callback and
@@ -7773,6 +7777,16 @@ The mutation and isolation return were removed before restored replay. An
 initial replay also caught and fixed a harness-side missing normalization
 before calling `secp256k1_fe_is_odd`; that precondition error was not used as
 proof.
+
+The added Y-coordinate assertion has its own differential proof. A temporary
+mutation in `src/field_impl.h` changed only the serialized bytes when
+`secp256k1_fe_get_b32` saw the exact canonical `2G` Y value, flipping its last
+byte while leaving the field object, X serialization, and parity unchanged.
+With the new Y comparison temporarily bypassed, all eight existing corpus
+files completed with status 0 under that mutation. Restoring the comparison
+made only the dedicated `generator-2g` seed abort with status 134. This shows
+that the new check catches a failure the previous X/parity oracle accepted;
+the mutation and bypass were removed before the final build.
 
 Restored Clang 22.1.7 ASan/UBSan replays passed all eight corpus files plus
 the empty execution: nine runs on each backend. Private `-fork=2` campaigns
