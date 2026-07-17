@@ -8696,3 +8696,24 @@ variants, arithmetic boundaries, public API error states, ECDSA/recovery,
 Schnorr, MuSig, EllSwift, and XDH. No sanitizer diagnostic or test artifact
 was produced. This verifies the complete build after the latest oracle
 ledger commits; it does not change any master-relative finding severity.
+
+## 2026-07-17 Validator Return Audit
+
+A source-level inventory reviewed every production call site of
+`secp256k1_pubkey_load`, `secp256k1_keypair_load`, the x-only public-key
+loader, `secp256k1_ge_set_xo_var`, and `secp256k1_ecmult_const_xonly`. The
+public API, ECDH, EllSwift, extrakeys, recovery, and MuSig paths either branch
+on the validator result, propagate it, or establish a documented internal
+invariant before using the result. The MuSig aggregation callback records the
+result and asserts the already-loaded-key invariant under VERIFY. The
+remaining intentionally ignored loader calls are in test/exhaustive-test
+code, not production transitions.
+
+This audit also rechecked l0rinc PR #11 (`d1dca5c`, `ecdh, ec: check
+pubkey_load return`). Its two relevant checks are already present at
+`src/modules/ecdh/main_impl.h` and `src/secp256k1.c`; cherry-picking the PR
+again would be redundant and would add no independent master-relative proof.
+No new clean-master finding or severity change resulted. The existing
+malformed opaque-state, callback-failure, and arithmetic findings remain
+rated against unmodified master. A public or non-cryptographic nonce buffer
+is not a Critical erasure finding.
