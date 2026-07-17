@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle
@@ -7779,3 +7779,45 @@ recovery-test replay was therefore unavailable. No clean-master production
 mismatch was confirmed. This is **Informational / oracle hardening**, with no
 production fix or severity change. Severity remains master-relative; clearing
 a public or non-cryptographic nonce buffer is not a Critical finding.
+
+## 2026-07-17 Fixed Decoded-Point XDH Vector for EllSwift
+
+The `ellswift/xdh-fixed-decode` fixture adds the 26-byte transcript,
+`ellswift-xdh-fixed-decode` followed by a newline. It reuses the independently
+known BIP324 ElligatorSwift wire value already checked by the fixed decode
+vector, passes that value as both parties' encoding, and uses scalar one with
+the passthrough X callback. The callback output must equal the fixed decoded
+point x-coordinate `948b40e7181713bc018ec1702d3d054d15746c59a7020730dd13ecf985a010d7`.
+The expected bytes come from fixed compressed wire data, not from
+`ec_pubkey_tweak_mul`, `ecmult`, or a production public-key comparison.
+
+This adds a distinct postcondition for `xswiftec_frac_var` plus the x-only
+multiplication path. The earlier raw-party oracle compared arbitrary XDH
+output with production public-key multiplication, and the earlier fixed
+vector checked decode serialization only; both could miss an XDH-only
+regression that agreed with a shared production reference or affected only
+the fraction loader.
+
+For causal proof, a temporary mutation flipped the final byte of the XDH
+coordinate after multiplication only when `party == 0`, the effective scalar
+was one, and the remote fixed encoding had prefix
+`c5981bae27fd8440` and final byte `78`. A trigger-only return skipped the
+older random checks. With `-handle_abrt=0`, the new seed aborted with status
+134 on native 5x52 and forced-int64/10x26, while the 14 pre-existing EllSwift
+seeds completed with status 0 on both backends. The mutation and isolation
+return were removed before restored replay.
+
+Restored Clang 22.1.7 ASan/UBSan replays passed all 15 EllSwift corpus files
+plus the empty execution: 16 runs in about 2 seconds on native 5x52 and 4
+seconds on forced-int64/10x26. Private `-fork=2` campaigns completed three
+jobs in about 13 seconds native and 14 seconds forced-int64, with zero
+OOM/timeout/crash counts and no artifact. Branch `tests`, `noverify_tests`,
+and the forced-int64 EllSwift test subset passed; clean-master EllSwift tests
+also passed.
+
+Clean `origin/master` was `11dad6d`; its older CMake fuzz configuration has
+no `fuzz_ellswift` target, so a raw clean-master fuzzer replay was unavailable.
+No clean-master production mismatch was confirmed. This is **Informational /
+oracle hardening**, with no production fix or severity change. Severity remains
+master-relative; clearing a public or non-cryptographic nonce buffer is not a
+Critical finding.
