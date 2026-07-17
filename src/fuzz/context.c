@@ -457,6 +457,8 @@ static void secp256k1_fuzz_check_static_context_lifecycle(const unsigned char *s
     FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
     FUZZ_CHECK(secp256k1_context_randomize(static_ctx, NULL) == 0);
     FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    secp256k1_context_set_sha256_compression(static_ctx, NULL);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
 
     clone = secp256k1_context_clone(static_ctx);
     FUZZ_CHECK(clone == NULL);
