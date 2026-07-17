@@ -8416,3 +8416,20 @@ This longer public-API campaign found no new clean-master defect and no
 master-relative severity change. Existing findings remain rated against
 unmodified master, and a public or non-cryptographic nonce buffer is not a
 Critical erasure finding.
+
+## 2026-07-17 Long Schnorr Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds ran
+`schnorrsig` for 180 seconds per backend against the complete 15-file corpus
+using `-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight worker processes exited 0, loaded all 15 seed inputs, and reported
+`oom/timeout/crash: 0/0/0`. The run exercised hardened custom nonce routing,
+BIP340 nonce/challenge hashing, x-only parity, infinity and overflow
+rejection, generator and signature equations, invalid opaque keypairs, and
+failure-output cleanup on both representations. No sanitizer diagnostic or
+artifact was produced.
+
+This longer Schnorr campaign found no new clean-master defect and no
+master-relative severity change. Existing findings remain rated against
+unmodified master; clearing a public or non-cryptographic nonce buffer is not
+a Critical erasure finding.
