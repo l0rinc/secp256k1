@@ -9867,3 +9867,29 @@ scratch-wraparound issue, malformed opaque-state and callback-contract
 findings, the Medium/latent 10x26 normalization defect, and the lower-severity
 arithmetic and cleanup findings remain separately tracked. A public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Scalar Rounded-Shift Boundary Mutation Recheck
+
+The current upstream refs remain aligned at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, and that commit is already an
+ancestor of this audit branch, so no rebase or cherry-pick was needed for this
+recheck. The fixed `fuzz_scalar` binary was first run against the exact
+39-byte corpus input `scalar/mul-shift-over-512`; both the native 5x52 ASan/
+UBSan build and the forced-int64 10x26 ASan/UBSan build exited zero.
+
+To test whether the boundary oracle is causal, a disposable production
+mutation changed `if (shift > 512)` to `if (shift >= 512)` in both
+`src/scalar_4x64_impl.h` and `src/scalar_8x32_impl.h`. The same corpus input
+then aborted both binaries at the fuzzer's independent base-2^16 product
+comparison: the reference retains the rounded `shift == 512` result, while
+the mutation returns zero before computing it. Neither run emitted an
+ASan/UBSan diagnostic; the failure was the intended `FUZZ_CHECK` abort. The
+mutation was restored, both targets were rebuilt, and the fixed input was
+replayed successfully on both backends.
+
+This is regression evidence for the existing scalar rounded-shift guard, not
+a new clean-master finding. The clean-master `shift > 512` memory-safety edge
+and the branch's fix remain **Low/latent master-relative** because the path is
+internal and requires an invalid over-width shift; the `shift == 512` boundary
+is a distinct valid contract and is now shown to be protected by an
+independent oracle. No production change or severity adjustment is justified.
