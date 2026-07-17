@@ -786,7 +786,7 @@ static void secp256k1_fuzz_ecmult_multi_affine_scalar_mul(secp256k1_ge *result, 
     secp256k1_memclear_explicit(scalar32, sizeof(scalar32));
 }
 
-static void secp256k1_fuzz_ecmult_multi_affine_reference(secp256k1_ge *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data) {
+static void secp256k1_fuzz_ecmult_multi_affine_reference_points(secp256k1_ge *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_scalar *sc, const secp256k1_ge *pt) {
     secp256k1_ge accumulator;
     secp256k1_ge term;
     size_t i;
@@ -797,10 +797,14 @@ static void secp256k1_fuzz_ecmult_multi_affine_reference(secp256k1_ge *expected,
         secp256k1_fuzz_ecmult_multi_affine_add(&accumulator, &accumulator, &term);
     }
     for (i = 0; i < n_points; i++) {
-        secp256k1_fuzz_ecmult_multi_affine_scalar_mul(&term, &data->pt[i], &data->sc[i]);
+        secp256k1_fuzz_ecmult_multi_affine_scalar_mul(&term, &pt[i], &sc[i]);
         secp256k1_fuzz_ecmult_multi_affine_add(&accumulator, &accumulator, &term);
     }
     *expected = accumulator;
+}
+
+static void secp256k1_fuzz_ecmult_multi_affine_reference(secp256k1_ge *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data) {
+    secp256k1_fuzz_ecmult_multi_affine_reference_points(expected, g_sc, n_points, data->sc, data->pt);
 }
 
 static void secp256k1_fuzz_ecmult_multi_check_affine_result(const secp256k1_gej *actual, const secp256k1_ge *expected) {
@@ -876,6 +880,10 @@ static void secp256k1_fuzz_ecmult_multi_distinct_batch_reference(secp256k1_gej *
     }
 }
 
+static void secp256k1_fuzz_ecmult_multi_distinct_batch_affine_reference(secp256k1_ge *expected, const secp256k1_scalar *g_sc, const secp256k1_fuzz_ecmult_multi_distinct_batch_data *data) {
+    secp256k1_fuzz_ecmult_multi_affine_reference_points(expected, g_sc, SECP256K1_FUZZ_ECMULT_MULTI_DISTINCT_BATCH_MAX_POINTS, data->sc, data->pt);
+}
+
 /* Exercise three Pippenger batches with distinct callback state. The existing
  * large-count fixtures repeat one point, so a batch-boundary bug that drops or
  * misroutes a distinct tail point could agree with their scalar-only model. */
@@ -889,6 +897,7 @@ static void secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(const secp256
     secp256k1_scratch *scratch;
     secp256k1_gej actual;
     secp256k1_gej expected;
+    secp256k1_ge affine_expected;
     size_t n_batches;
     size_t n_batch_points;
     size_t max_points;
@@ -921,11 +930,13 @@ static void secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(const secp256
     FUZZ_CHECK(n_batch_points < n_points);
 
     secp256k1_fuzz_ecmult_multi_distinct_batch_reference(&expected, &generator_sc, &data);
+    secp256k1_fuzz_ecmult_multi_distinct_batch_affine_reference(&affine_expected, &generator_sc, &data);
     checkpoint = scratch->alloc_size;
     secp256k1_fuzz_ecmult_multi_distinct_batch_reset_trace(&data);
     FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &generator_sc, secp256k1_fuzz_ecmult_multi_distinct_batch_callback, &data, n_points) == 1);
     FUZZ_CHECK(scratch->alloc_size == checkpoint);
     secp256k1_fuzz_ecmult_multi_distinct_batch_check_trace(&data, n_points);
+    secp256k1_fuzz_ecmult_multi_check_affine_result(&actual, &affine_expected);
     secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     failure_positions[0] = n_batch_points - 1;
