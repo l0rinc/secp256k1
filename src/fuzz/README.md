@@ -8400,3 +8400,19 @@ This longer callback, scratch, and allocation campaign found no new
 clean-master defect and no master-relative severity change. Existing findings
 remain rated against unmodified master, and a public or non-cryptographic
 nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Public API Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds ran
+`api_roundtrip` for 180 seconds per backend against the complete 47-file
+corpus using `-fork=4 -jobs=4 -max_total_time=180 -timeout=60
+-rss_limit_mb=0`. All eight worker processes exited 0, loaded all 47 seed
+inputs, and reported `oom/timeout/crash: 0/0/0`. The run expanded existing
+public error-state, callback-context, parser, tweak alias, sort/compare,
+ECDSA nonce-retry, and independent pubkey-equation coverage on both
+representations. No sanitizer diagnostic or artifact was produced.
+
+This longer public-API campaign found no new clean-master defect and no
+master-relative severity change. Existing findings remain rated against
+unmodified master, and a public or non-cryptographic nonce buffer is not a
+Critical erasure finding.
