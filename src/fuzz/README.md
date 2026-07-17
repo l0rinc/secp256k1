@@ -8546,3 +8546,24 @@ postconditions, and callback output-state transitions. This extends the prior
 or changing any master-relative severity. Existing findings remain rated
 against unmodified master; a public or non-cryptographic nonce buffer is not a
 Critical erasure finding.
+
+## 2026-07-17 Long X-only Tweak Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 13-file `xonly_tweak` corpus for 180 seconds per backend with four
+forked jobs and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 13 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 3037` with a maximum
+feature count of 7,575; forced-int64 workers reached `cov: 5011` with a
+maximum feature count of 14,602. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised x-only serialization and parity, independent curve
+membership parsing, ordinary and x-only tweaks, complete in/out overlap
+windows, invalid and partial opaque keypairs, invalid full-pubkey conversion,
+comparator ordering, tweak rejection, and keypair/public-key consistency.
+This extends the prior 30-second x-only module check without finding a new
+clean-master defect or changing any master-relative severity. Existing
+findings remain rated against unmodified master; a public or non-cryptographic
+nonce buffer is not a Critical erasure finding.
