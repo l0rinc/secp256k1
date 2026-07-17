@@ -681,6 +681,60 @@ static void secp256k1_fuzz_fe_check_add_reference(const unsigned char *input, si
     FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
 }
 
+static void secp256k1_fuzz_fe_check_square_reference(const unsigned char *input, size_t size) {
+    unsigned char x_input[32];
+    unsigned char x32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    uint32_t modulus[8];
+    uint32_t x_words[8];
+    uint32_t square_words[8];
+    secp256k1_fe x;
+    secp256k1_fe zero7;
+    secp256k1_fe raised_x;
+    secp256k1_fe square;
+    secp256k1_fe alias_square;
+
+    secp256k1_fuzz_derive(x_input, sizeof(x_input), input, size, 331);
+    secp256k1_fuzz_fe_reduce_reference(x32, x_input);
+    secp256k1_fe_set_b32_mod(&x, x_input);
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_get_b32(actual32, &x);
+    FUZZ_CHECK(memcmp(actual32, x32, sizeof(actual32)) == 0);
+
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(x_words, x32);
+    secp256k1_fuzz_ref_u32_mul_mod(square_words, x_words, x_words, modulus);
+    secp256k1_fuzz_ref_u32_to_be(expected32, square_words);
+
+    secp256k1_fe_sqr(&square, &x);
+    secp256k1_fe_normalize_var(&square);
+    secp256k1_fe_get_b32(actual32, &square);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* fe_sqr permits the output to alias its input. */
+    alias_square = x;
+    secp256k1_fe_sqr(&alias_square, &alias_square);
+    secp256k1_fe_normalize_var(&alias_square);
+    secp256k1_fe_get_b32(actual32, &alias_square);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* The square contract also accepts the largest nonnormalized input. */
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised_x = x;
+    secp256k1_fe_add(&raised_x, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_x.magnitude == 8);
+    FUZZ_CHECK(raised_x.normalized == 0);
+#endif
+    secp256k1_fe_sqr(&square, &raised_x);
+    secp256k1_fe_normalize_var(&square);
+    secp256k1_fe_get_b32(actual32, &square);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
+
 static void secp256k1_fuzz_ref_field_inverse(unsigned char out32[32], const unsigned char input32[32]) {
     uint32_t modulus[8];
     uint32_t base[8];
@@ -1385,6 +1439,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char limit_input[32];
     int i;
 
+    secp256k1_fuzz_fe_check_square_reference(input, size);
     secp256k1_fuzz_fe_check_add_reference(input, size);
     secp256k1_fuzz_derive(limit_input, sizeof(limit_input), input, size, 11);
     secp256k1_fuzz_fe_check_set_b32_limit(limit_input);

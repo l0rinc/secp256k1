@@ -7260,3 +7260,42 @@ severity. No public key or signature trigger has been demonstrated. This
 commit claims **Informational / oracle hardening**, no production fix, and no
 severity change. A public or non-cryptographic nonce buffer is not a Critical
 erasure finding.
+
+## 2026-07-17 Independent Field Square Oracle
+
+`src/fuzz/field.c` now checks direct `fe_sqr` output against the existing
+standalone 8x32 modular multiplication model with both operands set to the
+same independently reduced byte value. The oracle checks canonical input,
+`r == a` aliasing, and a magnitude-8 input obtained by adding `7p`; expected
+bytes never come from `fe_mul`, `fe_sqr`, square-root, or another production
+field operation. This closes the gap where the old square checks only compared
+implementation equivalences or checked a production-generated square.
+
+The dedicated `field/square-independent-reference` seed is 35 bytes containing
+`field square independent reference` followed by a newline. Native 5x52 and
+forced-int64/10x26 Clang 22.1.7 ASan/UBSan replays passed all 20 tracked field
+files plus the empty-input path (`Done 21` on each backend). Two-worker,
+two-job value-profiled campaigns used private corpus copies; native workers
+completed 144 and 138 units, while forced-int64 workers completed 136 and 131.
+The VERIFY and no-VERIFY `-t=field -i=4` slices passed in both backends. No
+sanitizer diagnostic, assertion, timeout, OOM, or crash artifact was produced.
+
+The differential proof used a temporary mutation immediately after
+`secp256k1_fe_impl_sqr`: `r->n[0] ^= 1`. The focused 35-byte seed aborted with
+raw status 134 on native and forced-int64. The mutation was removed and both
+binaries were rebuilt before the passing replay. Existing tests did not prove
+this independently because their square checks compared production `fe_sqr`
+to production multiplication or a production-derived square; they could not
+bind a corrupted square to a separately computed field residue.
+
+The clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with only the current fuzzer
+overlay. The focused square seed passed on native 5x52. Clean forced-int64/
+10x26 then stopped at the already-recorded magnitude-32 normalization
+assertion in `secp256k1_fuzz_fe_check_magnitude32_reference` (`field.c:83`),
+after the new square check and the new addition check had completed. This is
+the existing **Medium/latent internal field-correctness** master finding fixed
+on the audit branch by `0d03dda`, not a new square defect and not a severity
+downgrade. This commit claims **Informational / oracle hardening**, no
+production fix, and no severity change. A public or non-cryptographic nonce
+buffer is not a Critical erasure finding.
