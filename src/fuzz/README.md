@@ -8659,3 +8659,25 @@ master-relative severity. The existing clean-master over-512-bit shift
 finding remains **Low/latent internal memory safety** because current
 production callers use the bounded 384-bit shift; a public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Ecmult-Const Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 8-file `ecmult_const` corpus for 180 seconds per backend with four
+forked jobs and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 8 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 2642` with a maximum
+feature count of 7,400; forced-int64 workers reached `cov: 4525` with a
+maximum feature count of 14,406. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised independent affine double/addition and scalar-multiply
+references, NULL-generator equivalence, canonical infinity, generator
+agreement across generic/constant-time/precomputed paths, x-only numerator /
+denominator forms, invalid x rejection, nonnormalized fractions, odd-multiple
+table reconstruction, and the fixed generator-times-two equation. This
+extends the prior constant-multiplication campaign without finding a new
+clean-master defect or changing any master-relative severity. Existing
+findings remain rated against unmodified master; a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
