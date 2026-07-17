@@ -14,7 +14,7 @@ Targets:
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
-- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
+- `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
@@ -10201,3 +10201,34 @@ was checked with a temporary direct two-point Strauss assertion in
 64.9 seconds and verified the canonical identity. This is **Informational /
 Low internal-oracle hardening**, not a clean-master production bug or
 severity change; no production code was changed.
+
+## 2026-07-17 Leading Filtered Strauss Batch Oracle
+
+The `ecmult_multi/ecmult-multi-leading-filtered-strauss-batch` fixture drives
+`secp256k1_ecmult_multi_var` through two forced Strauss batches. The first
+batch contains a finite `G` with a zero scalar and an infinity point with a
+nonzero scalar, so every callback term is filtered while the nonzero generator
+scalar contributes `2G`. The second batch contains two `G` terms with scalar
+one. The final result must therefore be exactly `4G`; all four callbacks must
+run, and the scratch allocation must return to its checkpoint.
+
+This is distinct from the direct all-filtered oracle: it checks that a leading
+identity batch does not erase the generator contribution or corrupt the
+subsequent batch aggregation in `ecmult_multi_var`. Existing repeated Strauss
+coverage used a non-filtered first batch, while the direct empty test never
+entered the batch loop.
+
+For causal proof, a temporary mutation in `src/ecmult_impl.h` changed only the
+first batch's generator argument to `NULL` when `ecmult_multi_var` was handling
+four points in two-point Strauss batches and the generator scalar was exactly
+two. The focused input then aborted with status 134 on native 5x52 and
+forced-int64/10x26 ASan/UBSan builds. With only the new helper bypassed, all 25
+pre-existing `ecmult_multi` seeds passed on both backends. The mutation and
+bypass were removed before restored replay.
+
+Clean master `11dad6d` passed the same transition in a temporary
+`ecmult_multi_tests` assertion under ASan/UBSan in 64.84 seconds. The restored
+26-file corpus passed single-process replay on both backends, and isolated
+`-workers=2 -jobs=2 -runs=1` campaigns exited zero on each backend. This is
+**Informational / Low internal-oracle hardening**, not a clean-master
+production bug or severity change; no production code was changed.
