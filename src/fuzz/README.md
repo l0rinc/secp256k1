@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -9058,3 +9058,35 @@ native 5x52, forced-int64/10x26, and external-callback Clang ASan/UBSan builds.
 X-only extrakeys unit and no-VERIFY tests passed on all three configurations.
 The mutation was restored before the tree was committed, and no production
 behavior or severity changed.
+
+## 2026-07-17 Static Context Public Tweak Boundary
+
+The existing `api_roundtrip/independent-tweak-order-boundary` fixture now
+re-serializes the generated public key, reparses it through
+`secp256k1_context_static`, and applies both public add and public multiply
+tweaks there. Successful results are compared by compressed wire bytes with
+the independent order-minus-one scalar reference; invalid results must still
+zero the static output. This keeps the cross-context check at the public
+serialization boundary instead of treating an opaque `secp256k1_pubkey` as
+portable state.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. The deterministic suite already checks basic static-context public
+tweak acceptance, but it does not exercise this independent boundary equation
+or the static failure-zeroization path. The clean-master severity ledger is
+unchanged: malformed opaque state, callback-failure barriers, and reachable
+forced-int64 arithmetic boundaries remain **Medium** or **Medium/latent**;
+bounded/documented alias cases remain **Low/latent**; cleanup and model-only
+checks remain **Informational**. A public or non-cryptographic nonce buffer is
+not a Critical erasure finding.
+
+For causal proof, a disposable
+`ARG_CHECK(ctx != secp256k1_context_static);` was inserted immediately after
+the context check in `secp256k1_ec_pubkey_tweak_add` and, separately, in
+`secp256k1_ec_pubkey_tweak_mul` in `src/secp256k1.c`. The exact existing
+`src/fuzz/corpora/api_roundtrip/independent-tweak-order-boundary` input then
+exited `134` with `-handle_abrt=0` under each mutant and exited `0` after
+restoration. The full API-roundtrip corpus and deterministic API tests passed
+on native, forced-int64/10x26, and external-callback Clang ASan/UBSan builds.
+The mutations were restored before commit, and no production behavior or
+severity changed.
