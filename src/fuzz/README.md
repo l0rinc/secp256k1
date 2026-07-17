@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -8831,3 +8831,48 @@ HMAC-state lifetime; **Medium/latent** for the forced-int64 field magnitude
 boundary; **Low/latent** for bounded scalar-shift behavior and documented tweak
 input aliasing; and **Informational** for oracle-only cleanup and model checks.
 A public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 MuSig Session-Random/Cache Alias Oracle
+
+The MuSig target now has a gated 41-byte seed,
+`session-random-cache-overlap`. It copies a valid aggregate key cache, treats
+the first 32 bytes of that copy as the explicitly `In/Out`
+`session_secrand32` buffer, and passes the same cache as the optional aggregate
+cache. A separate cache snapshot feeds the independent BIP327 nonce
+transcript. The oracle compares the return value, both secret nonce scalars,
+and the serialized public nonce, then checks the exact documented side effect:
+the shared first 32 bytes are zero and the remaining cache bytes are unchanged.
+
+This is **Informational oracle hardening**, not a new clean-master finding.
+The public declaration marks `session_secrand32` as `In/Out`, but it does not
+promise arbitrary overlap with the cache's `In` object; this seed is a
+deliberate ordering stress case, not a supported caller pattern or a security
+rating. Unmodified master predates the session-random invalidation fix and
+therefore leaves this deliberate alias unchanged; the test is preserving the
+current branch's read-before-invalidation behavior rather than claiming that
+master corrupts a cache. A public nonce buffer has no standalone cryptographic
+meaning and is not a Critical cleanup finding.
+
+For causal proof, a disposable production mutation inserted
+`secp256k1_memczero(session_secrand32, 32, 1)` immediately before the internal
+nonce derivation, but only when the session-random pointer exactly equaled
+`keyagg_cache->data`. The focused seed then reached the invalid-cache barrier
+and aborted with the libFuzzer illegal-argument failure under
+`-handle_abrt=0`; all 67 pre-existing MuSig inputs remained green in a
+68-execution replay and exited 0. After restoring the source, the focused seed
+passed under Clang ASan/UBSan on both native 5x52 and forced-int64/10x26
+backends. The mutation was never committed, no production behavior changed,
+and no master-relative severity changed.
+
+After that focused proof, all 279 tracked corpus inputs were replayed from the
+current tree with `-workers=2 -jobs=2 -runs=1 -timeout=60 -rss_limit_mb=0`
+under native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds. Every target
+command returned zero, including the new 68-file MuSig corpus. The forced
+int64 `ecmult_multi` replay emitted one `slow-unit-*` file for the known
+`pippenger-window-1261` input; this is a harness-cost artifact, not a
+production timeout or sanitizer result. Isolated replays of that exact input
+returned zero in 7.2 seconds native and 11.8 seconds forced-int64, with empty
+artifact directories. No assertion, sanitizer diagnostic, OOM, or crash was
+observed. The campaign therefore adds negative evidence only: existing
+findings remain rated against unmodified master, and a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
