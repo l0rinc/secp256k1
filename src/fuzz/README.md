@@ -7299,3 +7299,48 @@ on the audit branch by `0d03dda`, not a new square defect and not a severity
 downgrade. This commit claims **Informational / oracle hardening**, no
 production fix, and no severity change. A public or non-cryptographic nonce
 buffer is not a Critical erasure finding.
+
+## 2026-07-17 Independent Scalar Inverse Oracle
+
+`src/fuzz/scalar.c` now computes the scalar inverse independently as
+`a^(n-2) mod n` using its standalone base-2^16 product and binary long-division
+reduction model. Zero is explicitly mapped to zero, matching the internal
+contract. The result is compared independently with both constant-time and
+variable-time production inverse implementations before the existing
+inverse-product and cross-implementation checks run, so a shared inversion
+mistake cannot satisfy the old `a * inverse == 1` oracle.
+
+The dedicated `scalar/inverse-independent-reference` seed is 37 bytes
+containing `scalar inverse independent reference` followed by a newline. Native
+5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan replays passed all six
+tracked scalar files plus the empty-input path (`Done 7` on each backend).
+Two-worker, two-job value-profiled campaigns used private corpus copies; native
+workers completed 123 and 118 units, while forced-int64 workers completed 90
+and 89. VERIFY and no-VERIFY `-t=wnaf -i=4` slices passed in both backends.
+No sanitizer diagnostic, assertion, timeout, OOM, or crash artifact was
+produced.
+
+The differential proof applied the same temporary low-limb mutation after
+`secp256k1_scalar_from_signed62`/`from_signed30` in both
+`secp256k1_scalar_inverse` and `_var`: `r->d[0] ^= 1`. The focused 37-byte
+seed aborted with raw status 134 on native and forced-int64. Mutating both
+implementations together deliberately leaves their old equality check
+consistent; the new exponentiation comparison rejects the shared wrong value
+before the existing product identity check. All mutations were removed and
+the restored binaries passed the corpus. Existing tests did not provide this
+proof because they compared the two inverse implementations and checked only
+the product identity, allowing a common algorithmic error to agree with both.
+
+The unmodified clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with the current scalar harness.
+Both native and forced-int64 runs stopped later at the existing generic-WNAF
+signed-width UB (`ecmult_impl.h:201`) and scalar rounded-shift stack
+out-of-bounds (`scalar_4x64_impl.h:910` / `scalar_8x32_impl.h:707`). These
+remain the previously recorded **Low** generic-WNAF issue and **Low/latent
+internal-memory-safety** shift issue, not inverse findings. A disposable
+harness-only control skipped WNAF window 31 and shifts above 512; all six
+corpus files plus the empty path then passed on both backends, confirming the
+new inverse oracle completed without a clean-master mismatch. This commit
+claims **Informational / oracle hardening**, no production fix, and no severity
+change. A public or non-cryptographic nonce buffer is not a Critical erasure
+finding.
