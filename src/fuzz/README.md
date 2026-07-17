@@ -7167,3 +7167,51 @@ a new production finding. The clean-master ledger remains authoritative:
 severity is rated against unmodified master and is not lowered by a later
 branch fix or by this campaign. A public or non-cryptographic nonce buffer is
 not a Critical erasure finding.
+
+## 2026-07-17 Independent Scalar WNAF Oracles
+
+`src/fuzz/scalar.c` now computes generic WNAF directly from canonical big-endian
+bytes, including the `n - scalar` high-bit normalization, window extraction,
+carry, signed digit, and returned-length rules. It does not use production
+scalar bit access, scalar multiplication, scalar addition, or another WNAF
+implementation to construct the expected array. The same byte model checks the
+129-entry `int8_t` Strauss wrapper after the low-128 split. A second model
+recomputes fixed WNAF from independent low-128 byte windows, including skew,
+the final short window, signed carry adjustment, and the adjacent `+/-1`
+normalization rule. The existing production-arithmetic reconstruction and
+digit-shape checks remain after these reference comparisons.
+
+The new `scalar/wnaf-independent-reference` seed is 27 bytes and is replayed
+alongside the four existing scalar seeds. Native 5x52 and forced-int64/10x26
+Clang 22.1.7 ASan/UBSan builds each passed all five tracked files plus the
+empty-input path (`Done 6 runs`). The final private-corpus worker campaign
+used value profiling, entropic scheduling, `-reduce_inputs=0`, two workers,
+two jobs, and a 10-second manager budget. Native jobs completed 320 and 321
+units; forced-int64 jobs completed 174 and 178 units. All four managers and
+workers exited 0 with no sanitizer diagnostic, assertion, timeout, OOM, or
+artifact. Native and forced-int64 `tests -t=wnaf -i=4` and their no-VERIFY
+counterparts also passed.
+
+Two disposable production mutations prove that the new assertions matter.
+First, `secp256k1_ecmult_wnaf` negated `wnaf[0]` for window 2 whenever a digit
+was present. This preserves oddness, range, and spacing, while changing the
+represented scalar. The old scalar-reconstruction equality was disabled only
+for isolation; the focused seed aborted with raw `run_rc=134` on both
+backends. Second, `secp256k1_wnaf_fixed` negated its first window for `w=2`,
+and the old fixed-WNAF reconstruction equality was similarly disabled. The
+same focused seed again aborted with `run_rc=134` on native and forced-int64.
+All mutations and isolation bypasses were restored before the passing replay.
+
+The clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with the current harness and no
+audit production fixes. The unmodified control first reproduced the existing
+generic-WNAF signed-shift UB at `ecmult_impl.h:201` and the existing scalar
+rounded-shift stack overflow at `scalar_4x64_impl.h:910` /
+`scalar_8x32_impl.h:707`. These remain the previously recorded **Low**
+generic-WNAF width issue and **Low/latent internal memory-safety** shift issue;
+they are not new findings from this oracle. A second disposable control skipped
+only WNAF window 31 and shifts above 512, allowing the five-file corpus to
+complete 6 runs on both backends with no additional failure. No clean-master
+production inconsistency or severity change was found. The existing findings
+remain rated against unmodified master, and a public or non-cryptographic
+nonce buffer is not a Critical erasure finding.

@@ -204,6 +204,107 @@ static void secp256k1_fuzz_scalar_negate_reference(unsigned char *out32, const u
     }
 }
 
+static unsigned int secp256k1_fuzz_scalar_byte_bit(const unsigned char *input32, unsigned int bit) {
+    FUZZ_CHECK(bit < 256);
+    return (input32[31 - (bit >> 3)] >> (bit & 7u)) & 1u;
+}
+
+static uint32_t secp256k1_fuzz_scalar_bytes_bits(const unsigned char *input32, unsigned int offset, unsigned int count) {
+    uint32_t result = 0;
+    unsigned int bit;
+
+    FUZZ_CHECK(count > 0 && count <= 32);
+    FUZZ_CHECK(offset <= 256 - count);
+    for (bit = 0; bit < count; bit++) {
+        result |= secp256k1_fuzz_scalar_byte_bit(input32, offset + bit) << bit;
+    }
+    return result;
+}
+
+/* Recompute WNAF from canonical bytes, without scalar bit access or scalar arithmetic. */
+static int secp256k1_fuzz_scalar_wnaf_reference(int *wnaf, int len, const unsigned char *input32, int w) {
+    unsigned char absolute32[32];
+    int sign = 1;
+    int carry = 0;
+    int last_set_bit = -1;
+    unsigned int bit = 0;
+
+    FUZZ_CHECK(len >= 0 && len <= 256);
+    FUZZ_CHECK(w >= 2 && w <= 31);
+    memcpy(absolute32, input32, sizeof(absolute32));
+    if (secp256k1_fuzz_scalar_byte_bit(absolute32, 255) != 0) {
+        secp256k1_fuzz_scalar_negate_reference(absolute32, absolute32);
+        sign = -1;
+    }
+    memset(wnaf, 0, (size_t)len * sizeof(*wnaf));
+    while (bit < (unsigned int)len) {
+        unsigned int now;
+        uint32_t word;
+
+        if (secp256k1_fuzz_scalar_byte_bit(absolute32, bit) == (unsigned int)carry) {
+            bit++;
+            continue;
+        }
+        now = (unsigned int)w;
+        if (now > (unsigned int)len - bit) {
+            now = (unsigned int)len - bit;
+        }
+        word = secp256k1_fuzz_scalar_bytes_bits(absolute32, bit, now) + (unsigned int)carry;
+        carry = (int)((word >> (w - 1)) & 1u);
+        word -= (uint32_t)carry << w;
+        wnaf[bit] = sign * (int)word;
+        last_set_bit = (int)bit;
+        bit += now;
+    }
+    return last_set_bit + 1;
+}
+
+/* Recompute the fixed-window representation from the low 128 input bits. */
+static int secp256k1_fuzz_scalar_fixed_wnaf_reference(int *wnaf, const unsigned char *input32, int w) {
+    int skew = 0;
+    int pos;
+    int max_pos;
+    int last_w;
+    const int size = WNAF_SIZE(w);
+
+    FUZZ_CHECK(w >= 2 && w <= PIPPENGER_MAX_BUCKET_WINDOW + 1);
+    FUZZ_CHECK(size > 1);
+    memset(wnaf, 0, (size_t)size * sizeof(*wnaf));
+    if (memcmp(input32, secp256k1_fuzz_scalar_zero, sizeof(secp256k1_fuzz_scalar_zero)) == 0) {
+        return 0;
+    }
+    if ((input32[31] & 1u) == 0) {
+        skew = 1;
+    }
+    wnaf[0] = (int)secp256k1_fuzz_scalar_bytes_bits(input32, 0, (unsigned int)w) + skew;
+    last_w = WNAF_BITS - (size - 1) * w;
+    for (pos = size - 1; pos > 0; pos--) {
+        int val = (int)secp256k1_fuzz_scalar_bytes_bits(input32, (unsigned int)(pos * w), (unsigned int)(pos == size - 1 ? last_w : w));
+        if (val != 0) {
+            break;
+        }
+    }
+    max_pos = pos;
+    for (pos = 1; pos <= max_pos; pos++) {
+        int val = (int)secp256k1_fuzz_scalar_bytes_bits(input32, (unsigned int)(pos * w), (unsigned int)(pos == size - 1 ? last_w : w));
+        if ((val & 1) == 0) {
+            wnaf[pos - 1] -= 1 << w;
+            wnaf[pos] = val + 1;
+        } else {
+            wnaf[pos] = val;
+        }
+        if (pos >= 2 && ((wnaf[pos - 1] == 1 && wnaf[pos - 2] < 0) || (wnaf[pos - 1] == -1 && wnaf[pos - 2] > 0))) {
+            if (wnaf[pos - 1] == 1) {
+                wnaf[pos - 2] += 1 << w;
+            } else {
+                wnaf[pos - 2] -= 1 << w;
+            }
+            wnaf[pos - 1] = 0;
+        }
+    }
+    return skew;
+}
+
 static void secp256k1_fuzz_scalar_half_reference(unsigned char *out32, const unsigned char *input32) {
     unsigned char sum[33] = { 0 };
     unsigned int carry = 0;
@@ -446,6 +547,23 @@ static void secp256k1_fuzz_scalar_check_linear_arithmetic(const secp256k1_scalar
     FUZZ_CHECK(secp256k1_fuzz_scalar_all_zero(&actual, sizeof(actual)));
 }
 
+static void secp256k1_fuzz_scalar_check_wnaf_reference(const secp256k1_scalar *number, const unsigned char *number32, int len, int max_w) {
+    int actual[256];
+    int expected[256];
+    int w;
+
+    for (w = 2; w <= max_w; w++) {
+        int actual_bits = secp256k1_ecmult_wnaf(actual, len, number, w);
+        int expected_bits = secp256k1_fuzz_scalar_wnaf_reference(expected, len, number32, w);
+        int i;
+
+        FUZZ_CHECK(actual_bits == expected_bits);
+        for (i = 0; i < len; i++) {
+            FUZZ_CHECK(actual[i] == expected[i]);
+        }
+    }
+}
+
 static void secp256k1_fuzz_scalar_check_wnaf(const secp256k1_scalar *number) {
     secp256k1_scalar reconstructed;
     secp256k1_scalar two;
@@ -484,7 +602,29 @@ static void secp256k1_fuzz_scalar_check_wnaf(const secp256k1_scalar *number) {
     }
 }
 
-static void secp256k1_fuzz_scalar_check_fixed_wnaf(const secp256k1_scalar *number) {
+static void secp256k1_fuzz_scalar_check_fixed_wnaf_reference(const secp256k1_scalar *number, const unsigned char *number32) {
+    secp256k1_scalar low;
+    secp256k1_scalar unused;
+    unsigned char low32[32] = { 0 };
+    int actual[WNAF_SIZE(2)];
+    int expected[WNAF_SIZE(2)];
+    int w;
+
+    secp256k1_scalar_split_128(&low, &unused, number);
+    memcpy(low32 + 16, number32 + 16, 16);
+    for (w = 2; w <= PIPPENGER_MAX_BUCKET_WINDOW + 1; w++) {
+        int actual_skew = secp256k1_wnaf_fixed(actual, &low, w);
+        int expected_skew = secp256k1_fuzz_scalar_fixed_wnaf_reference(expected, low32, w);
+        int i;
+
+        FUZZ_CHECK(actual_skew == expected_skew);
+        for (i = 0; i < WNAF_SIZE(w); i++) {
+            FUZZ_CHECK(actual[i] == expected[i]);
+        }
+    }
+}
+
+static void secp256k1_fuzz_scalar_check_fixed_wnaf(const secp256k1_scalar *number, const unsigned char *number32) {
     secp256k1_scalar num;
     secp256k1_scalar unused;
     secp256k1_scalar adjusted;
@@ -495,6 +635,7 @@ static void secp256k1_fuzz_scalar_check_fixed_wnaf(const secp256k1_scalar *numbe
 
     /* The fixed helper is defined for the low 128 bits of its input. */
     secp256k1_scalar_split_128(&num, &unused, number);
+    secp256k1_fuzz_scalar_check_fixed_wnaf_reference(number, number32);
     for (w = 2; w <= PIPPENGER_MAX_BUCKET_WINDOW + 1; w++) {
         int skew;
         int i;
@@ -522,9 +663,10 @@ static void secp256k1_fuzz_scalar_check_fixed_wnaf(const secp256k1_scalar *numbe
     }
 }
 
-static void secp256k1_fuzz_scalar_check_wnaf_small(const secp256k1_scalar *number) {
+static void secp256k1_fuzz_scalar_check_wnaf_small(const secp256k1_scalar *number, const unsigned char *number32) {
     secp256k1_scalar low;
     secp256k1_scalar unused;
+    unsigned char low32[32] = { 0 };
     int wnaf[129];
     int8_t wnaf_small[129];
     int w;
@@ -532,6 +674,8 @@ static void secp256k1_fuzz_scalar_check_wnaf_small(const secp256k1_scalar *numbe
     /* Strauss decomposes the lambda-split scalars into 129 entries and stores
      * the digits in int8_t. Check that narrowing preserves the generic output. */
     secp256k1_scalar_split_128(&low, &unused, number);
+    memcpy(low32 + 16, number32 + 16, 16);
+    secp256k1_fuzz_scalar_check_wnaf_reference(&low, low32, 129, 8);
     for (w = 2; w <= 8; w++) {
         int bits = secp256k1_ecmult_wnaf(wnaf, 129, &low, w);
         int small_bits = secp256k1_ecmult_wnaf_small(wnaf_small, 129, &low, w);
@@ -685,11 +829,13 @@ static void secp256k1_fuzz_scalar_check_pair(const unsigned char *a_input32, con
     secp256k1_fuzz_scalar_check_linear_arithmetic(&a, &b, a32, b32, input, size, salt + 17u);
     secp256k1_fuzz_scalar_check_splits(&a, a32);
     secp256k1_fuzz_scalar_check_endo_split(&a);
+    secp256k1_fuzz_scalar_check_wnaf_reference(&a, a32, 256, 31);
+    secp256k1_fuzz_scalar_check_wnaf_reference(&b, b32, 256, 31);
     secp256k1_fuzz_scalar_check_wnaf(&a);
     secp256k1_fuzz_scalar_check_wnaf(&b);
-    secp256k1_fuzz_scalar_check_wnaf_small(&a);
-    secp256k1_fuzz_scalar_check_wnaf_small(&b);
-    secp256k1_fuzz_scalar_check_fixed_wnaf(&a);
+    secp256k1_fuzz_scalar_check_wnaf_small(&a, a32);
+    secp256k1_fuzz_scalar_check_wnaf_small(&b, b32);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&a, a32);
 
     for (i = 0; i < sizeof(boundary_shifts) / sizeof(boundary_shifts[0]); i++) {
         secp256k1_fuzz_scalar_check_shift(&a, &b, product, boundary_shifts[i]);
@@ -748,6 +894,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char a32[32];
     unsigned char b32[32];
     unsigned char order_minus_one32[32];
+    unsigned char wnaf_boundary32[32] = { 0 };
     secp256k1_scalar wnaf_boundary;
 
     secp256k1_fuzz_derive(a32, sizeof(a32), input, size, 31);
@@ -756,10 +903,17 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_scalar_set_b32(&wnaf_boundary, a32, NULL);
     secp256k1_fuzz_scalar_check_bits_boundaries(&wnaf_boundary, a32);
     secp256k1_scalar_set_int(&wnaf_boundary, 0);
-    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary, secp256k1_fuzz_scalar_zero);
+    secp256k1_scalar_set_int(&wnaf_boundary, 1);
+    secp256k1_fuzz_scalar_check_wnaf_reference(&wnaf_boundary, secp256k1_fuzz_scalar_one, 256, 31);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary, secp256k1_fuzz_scalar_one);
+    wnaf_boundary32[28] = 0x7f;
+    wnaf_boundary32[29] = 0xff;
+    wnaf_boundary32[30] = 0xff;
+    wnaf_boundary32[31] = 0xff;
     secp256k1_scalar_set_int(&wnaf_boundary, 0x7fffffffU);
     secp256k1_fuzz_scalar_check_wnaf(&wnaf_boundary);
-    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary);
+    secp256k1_fuzz_scalar_check_fixed_wnaf(&wnaf_boundary, wnaf_boundary32);
 
     secp256k1_fuzz_scalar_decrement(order_minus_one32, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
