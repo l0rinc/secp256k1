@@ -10069,3 +10069,27 @@ is not standalone proof for the later **Medium** inconsistent opaque-keypair
 finding in `5f8416e`: its strongest proof remains that commit's minimal
 production mutation and deterministic tests. No new production bug or
 severity change is claimed.
+
+## 2026-07-17 Focused Public-State Worker Recheck
+
+The current branch was rechecked after confirming that `HEAD` is already based
+on both `origin/master` and `l0rinc/master` at
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; no rebase or additional fork
+cherry-pick was needed. The Clang 22.1.7 ASan/UBSan build ran private copies
+of the tracked `api_roundtrip` (`49` files), `context` (`13`), `ecmult_multi`
+(`24`), and `musig` (`68`) corpora with
+`-workers=2 -jobs=2 -max_total_time=45` for the first two targets and
+`-max_total_time=60` for the latter two, plus `-timeout=60
+-rss_limit_mb=0 -handle_abrt=0`. Each manager completed with exit status
+zero; the worker logs showed no ASan/UBSan report, `FUZZ_CHECK` failure,
+crash artifact, timeout, or OOM. The mutation phase expanded the target
+corpora during the runs, but no generated input was retained.
+
+This is fresh negative evidence for public API state transitions, context
+lifecycle/reset paths, batch multiplication failure-state handling, and MuSig
+nonce/cache/session transitions on the fixed branch. It is not a clean-master
+replay and therefore does not establish that master is defect-free or change
+the existing severity ledger. In particular, the existing **Medium** findings
+remain rated against clean master, and the public, non-cryptographic MuSig
+nonce object remains outside a Critical erasure classification. No new
+production mutation, regression test, or bug claim is justified by this run.
