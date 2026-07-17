@@ -968,6 +968,7 @@ static void secp256k1_fuzz_ecmult_multi_pippenger_window_boundary(const secp256k
     secp256k1_scratch *scratch;
     secp256k1_gej actual;
     secp256k1_gej expected;
+    secp256k1_ge affine_expected;
     size_t scratch_size;
     size_t checkpoint;
     size_t i;
@@ -1011,6 +1012,7 @@ static void secp256k1_fuzz_ecmult_multi_pippenger_window_boundary(const secp256k
         secp256k1_ecmult_const(&term, &data.pt[i], &data.sc[i]);
         secp256k1_gej_add_var(&expected, &expected, &term, NULL);
     }
+    secp256k1_fuzz_ecmult_multi_affine_reference_points(&affine_expected, &generator_sc, n_points, data.sc, data.pt);
 
     FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &actual, &generator_sc,
         secp256k1_fuzz_ecmult_multi_window_callback, &data, n_points) == 1);
@@ -1019,6 +1021,7 @@ static void secp256k1_fuzz_ecmult_multi_pippenger_window_boundary(const secp256k
     for (i = 0; i < n_points; i++) {
         FUZZ_CHECK(data.seen[i] != 0);
     }
+    secp256k1_fuzz_ecmult_multi_check_affine_result(&actual, &affine_expected);
     secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     data.fail = 1;
