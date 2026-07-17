@@ -8589,3 +8589,28 @@ recheck without finding a new clean-master defect or changing any
 master-relative severity. The existing clean-master consumed-HMAC state
 finding remains **Medium** for secret-state lifetime; a public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Field Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete tracked 20-file `field` corpus for 180 seconds per backend with four
+forked jobs and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers exited `0` and reported `oom/timeout/crash: 0/0/0`.
+Native workers reached `cov: 1596` with a maximum feature count of 2,253;
+forced-int64 workers reached `cov: 2806` with a maximum feature count of
+4,044. No sanitizer, assertion, or runtime-error diagnostic was emitted, and
+neither backend produced an artifact. All 20 tracked seed filenames remained
+present in both disposable corpus directories; the fork-manager startup lines
+reported 19 native and 17 forced-int64 unique seed entries while the shared
+disposable corpora were being managed, so those manager counts are not treated
+as tracked-input counts.
+
+The run exercised field normalization and magnitude bounds, nonnormalized and
+aliased arithmetic, byte-level add/negate/product/square-root references,
+maximum-magnitude inversion, strict parsing limits, zero-predicate slow and
+false-positive barriers, and cleanup. This extends the prior arithmetic
+recheck without finding a new clean-master defect or changing any
+master-relative severity. The existing clean-master forced-int64 magnitude-32
+issue remains **Medium/latent internal correctness**; a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
