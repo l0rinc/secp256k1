@@ -1386,6 +1386,22 @@ static void secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(const secp256k1_cont
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, one32, &pubkey) == 1);
 }
 
+static void secp256k1_fuzz_check_ecdsa_verification_infinity(const secp256k1_context *ctx) {
+    secp256k1_ecdsa_signature sig;
+    secp256k1_pubkey generator;
+    unsigned char compact[64] = { 0 };
+    unsigned char msg32[32];
+
+    /* With Q = G, r = s = 1, and z = n - 1, verification computes
+     * u1*G + u2*Q = (-1)*G + 1*G = infinity. */
+    memcpy(msg32, secp256k1_fuzz_scalar_order_minus_one, sizeof(msg32));
+    compact[31] = 1;
+    compact[63] = 1;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &sig, compact) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, msg32, &generator) == 0);
+}
+
 static void secp256k1_fuzz_check_ecdsa_retry_after_zero_s(const secp256k1_context *ctx) {
     static const unsigned char one32[32] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -2898,6 +2914,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(ctx);
     secp256k1_fuzz_check_ecdsa_variable_nonce_equation(ctx, msg32, seckey, equation_nonce32);
     secp256k1_fuzz_check_ecdsa_retry_after_zero_s(ctx);
+    if (size == sizeof("ecdsa verification infinity\n") - 1
+        && memcmp(input, "ecdsa verification infinity\n", sizeof("ecdsa verification infinity\n") - 1) == 0) {
+        secp256k1_fuzz_check_ecdsa_verification_infinity(ctx);
+    }
 
     FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &parsed_sig, zero_compact) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, zero_compact, &parsed_sig) == 1);
