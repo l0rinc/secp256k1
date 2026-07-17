@@ -434,6 +434,59 @@ static void secp256k1_fuzz_scalar_inverse_reference(unsigned char *out32, const 
     memcpy(out32, result, sizeof(result));
 }
 
+/* Recompute the GLV scalar split from its fixed constants and rounded products. */
+static void secp256k1_fuzz_scalar_split_lambda_reference(unsigned char *split1_32, unsigned char *split2_32, const unsigned char *input32) {
+    static const unsigned char minus_b1[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xE4, 0x43, 0x7E, 0xD6, 0x01, 0x0E, 0x88, 0x28,
+        0x6F, 0x54, 0x7F, 0xA9, 0x0A, 0xBF, 0xE4, 0xC3
+    };
+    static const unsigned char minus_b2[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+        0x8A, 0x28, 0x0A, 0xC5, 0x07, 0x74, 0x34, 0x6D,
+        0xD7, 0x65, 0xCD, 0xA8, 0x3D, 0xB1, 0x56, 0x2C
+    };
+    static const unsigned char g1[32] = {
+        0x30, 0x86, 0xD2, 0x21, 0xA7, 0xD4, 0x6B, 0xCD,
+        0xE8, 0x6C, 0x90, 0xE4, 0x92, 0x84, 0xEB, 0x15,
+        0x3D, 0xAA, 0x8A, 0x14, 0x71, 0xE8, 0xCA, 0x7F,
+        0xE8, 0x93, 0x20, 0x9A, 0x45, 0xDB, 0xB0, 0x31
+    };
+    static const unsigned char g2[32] = {
+        0xE4, 0x43, 0x7E, 0xD6, 0x01, 0x0E, 0x88, 0x28,
+        0x6F, 0x54, 0x7F, 0xA9, 0x0A, 0xBF, 0xE4, 0xC4,
+        0x22, 0x12, 0x08, 0xAC, 0x9D, 0xF5, 0x06, 0xC6,
+        0x15, 0x71, 0xB4, 0xAE, 0x8A, 0xC4, 0x7F, 0x71
+    };
+    static const unsigned char lambda[32] = {
+        0x53, 0x63, 0xAD, 0x4C, 0xC0, 0x5C, 0x30, 0xE0,
+        0xA5, 0x26, 0x1C, 0x02, 0x88, 0x12, 0x64, 0x5A,
+        0x12, 0x2E, 0x22, 0xEA, 0x20, 0x81, 0x66, 0x78,
+        0xDF, 0x02, 0x96, 0x7C, 0x1B, 0x23, 0xBD, 0x72
+    };
+    unsigned char c1[32];
+    unsigned char c2[32];
+    unsigned char lambda_r2[32];
+    unsigned char negated[32];
+    uint16_t product[SECP256K1_FUZZ_SCALAR_PRODUCT_LIMBS];
+
+    secp256k1_fuzz_scalar_product(product, input32, g1);
+    secp256k1_fuzz_scalar_shift_reference(c1, product, 384);
+    secp256k1_fuzz_scalar_product(product, input32, g2);
+    secp256k1_fuzz_scalar_shift_reference(c2, product, 384);
+    secp256k1_fuzz_scalar_product(product, c1, minus_b1);
+    secp256k1_fuzz_scalar_reduce_product(c1, product);
+    secp256k1_fuzz_scalar_product(product, c2, minus_b2);
+    secp256k1_fuzz_scalar_reduce_product(c2, product);
+    (void)secp256k1_fuzz_scalar_add_reference(split2_32, c1, c2);
+    secp256k1_fuzz_scalar_product(product, split2_32, lambda);
+    secp256k1_fuzz_scalar_reduce_product(lambda_r2, product);
+    secp256k1_fuzz_scalar_negate_reference(negated, lambda_r2);
+    (void)secp256k1_fuzz_scalar_add_reference(split1_32, negated, input32);
+}
+
 static void secp256k1_fuzz_scalar_check_decode(secp256k1_scalar *scalar, unsigned char *canonical32, const unsigned char *input32) {
     secp256k1_scalar null_overflow_scalar;
     secp256k1_scalar seckey_scalar;
@@ -744,6 +797,8 @@ static void secp256k1_fuzz_scalar_check_splits(const secp256k1_scalar *a, const 
     unsigned char lambda32[32];
     unsigned char two128_32[32] = { 0 };
     unsigned char expected32[32];
+    unsigned char expected_split1_32[32];
+    unsigned char expected_split2_32[32];
     unsigned char negated32[32];
     uint16_t product[SECP256K1_FUZZ_SCALAR_PRODUCT_LIMBS];
 
@@ -762,9 +817,12 @@ static void secp256k1_fuzz_scalar_check_splits(const secp256k1_scalar *a, const 
     (void)secp256k1_fuzz_scalar_add_reference(expected32, expected32, low32);
     FUZZ_CHECK(memcmp(expected32, a32, sizeof(expected32)) == 0);
 
+    secp256k1_fuzz_scalar_split_lambda_reference(expected_split1_32, expected_split2_32, a32);
     secp256k1_scalar_split_lambda(&split1, &split2, a);
     secp256k1_scalar_get_b32(split1_32, &split1);
     secp256k1_scalar_get_b32(split2_32, &split2);
+    FUZZ_CHECK(memcmp(split1_32, expected_split1_32, sizeof(split1_32)) == 0);
+    FUZZ_CHECK(memcmp(split2_32, expected_split2_32, sizeof(split2_32)) == 0);
     secp256k1_scalar_get_b32(lambda32, &secp256k1_const_lambda);
     secp256k1_fuzz_scalar_product(product, lambda32, split2_32);
     secp256k1_fuzz_scalar_reduce_product(expected32, product);
