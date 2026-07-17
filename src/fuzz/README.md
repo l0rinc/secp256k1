@@ -8365,3 +8365,20 @@ already present in the targets. Every worker reported
 This campaign found no new clean-master defect and no master-relative severity
 change. Existing findings remain rated against unmodified master, and a public
 or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long MuSig Stateful Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds ran the MuSig
+target for three minutes per backend with the complete 67-file corpus and
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`. All eight
+worker processes exited 0. Native workers accepted 67 seed inputs; the
+forced-int64 workers accepted 66 from the same 67 tracked files, with no
+corpus rejection or diagnostic. The workers reached the existing key
+aggregation, nonce, session, partial-signature, callback, rollback, cleanup,
+and independent equation oracles. Every worker reported
+`oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or artifact was produced.
+
+This longer stateful campaign found no new clean-master defect and no
+master-relative severity change. Existing findings remain rated against
+unmodified master, and a public or non-cryptographic nonce buffer is not a
+Critical erasure finding.
