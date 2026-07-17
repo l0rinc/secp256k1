@@ -8614,3 +8614,27 @@ recheck without finding a new clean-master defect or changing any
 master-relative severity. The existing clean-master forced-int64 magnitude-32
 issue remains **Medium/latent internal correctness**; a public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Group Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 21-file `group` corpus for 180 seconds per backend with four forked
+jobs and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 21 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 2868` with a maximum
+feature count of 5,278; forced-int64 workers reached `cov: 4642` with a
+maximum feature count of 9,365. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised Jacobian/affine agreement, canonical-coordinate equality,
+positive and negative addition, affine infinity, fractional curve
+membership, finite and mixed-infinity batch conversion, inverse-Z conversion,
+inverse-point cancellation, nonnormalized storage conversion, rescaling and
+aliasing, lambda-degenerate addition, cleanup, and invalid opaque public-key
+barriers. It extends the prior group campaign without finding a new
+clean-master defect or changing any master-relative severity. The existing
+clean-master off-curve opaque-public-key barrier remains **Medium/opaque
+state integrity**: it protects malformed internal opaque state and direct
+misuse, not a wire-format point accepted by the public parser. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
