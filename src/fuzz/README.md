@@ -9207,6 +9207,19 @@ external-callback forced-int64/10x26. The combine-focused deterministic test
 The mutation was restored before commit and no production behavior or severity
 rating changed.
 
+## 2026-07-17 Schnorrsig Bounded Discovery
+
+The existing 15-file `schnorrsig` corpus was fuzzed in isolated disposable
+copies with `-workers=2 -jobs=2 -max_total_time=30 -timeout=60
+-rss_limit_mb=0 -handle_abrt=0`. Native Clang jobs completed 237 and 243
+executions, external-callback Clang jobs completed 240 and 237, and
+external-callback forced-int64/10x26 jobs completed 139 and 138. All six
+jobs exited zero with no sanitizer report, oracle failure, crash artifact, or
+timeout. Generated mutation units were discarded. This is negative
+clean-master evidence: no production finding or severity change was
+established, and the existing Medium/Medium-latent, Low/latent,
+Informational, and non-Critical nonce-cleanup ratings remain in force.
+
 ## 2026-07-17 Recoverable ECDSA Signing Alias Boundary
 
 The `recovery/recoverable-sign-input-output-overlap` fixture checks exact
