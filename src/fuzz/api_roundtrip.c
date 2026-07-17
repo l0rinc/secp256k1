@@ -2453,6 +2453,40 @@ static void secp256k1_fuzz_check_signature_parse_der_scalar_overflow(const secp2
     }
 }
 
+static void secp256k1_fuzz_check_signature_parse_der_long_form(const secp256k1_context *ctx, const unsigned char *msg32, const secp256k1_pubkey *pubkey) {
+    unsigned char der[132] = { 0 };
+    unsigned char compact[64];
+    unsigned char expected[64] = { 0 };
+    secp256k1_ecdsa_signature parsed_sig;
+    size_t pos = 0;
+
+    if (msg32 == NULL || pubkey == NULL) {
+        return;
+    }
+
+    /* The outer sequence uses a canonical long-form length of 129 bytes.
+     * Its positive 124-byte r INTEGER is valid DER but overflows a scalar;
+     * the public parser deliberately maps that value to zero and continues. */
+    der[pos++] = 0x30;
+    der[pos++] = 0x81;
+    der[pos++] = 129;
+    der[pos++] = 0x02;
+    der[pos++] = 124;
+    der[pos++] = 1;
+    pos += 123;
+    der[pos++] = 0x02;
+    der[pos++] = 1;
+    der[pos++] = 1;
+    FUZZ_CHECK(pos == sizeof(der));
+
+    expected[63] = 1;
+    memset(&parsed_sig, 0xA5, sizeof(parsed_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &parsed_sig, der, sizeof(der)) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &parsed_sig) == 1);
+    FUZZ_CHECK(memcmp(compact, expected, sizeof(compact)) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &parsed_sig, msg32, pubkey) == 0);
+}
+
 static void secp256k1_fuzz_check_signature_parse_der_malformed(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
     static const unsigned char trigger[] = "ecdsa DER parser boundaries\n";
     static const unsigned char no_length[] = { 0x30 };
@@ -2974,6 +3008,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     if (size == sizeof("ecdsa DER scalar overflow\n") - 1
         && memcmp(input, "ecdsa DER scalar overflow\n", sizeof("ecdsa DER scalar overflow\n") - 1) == 0) {
         secp256k1_fuzz_check_signature_parse_der_scalar_overflow(ctx, msg32, &pubkey);
+    }
+    if (size == sizeof("ecdsa DER long-form success\n") - 1
+        && memcmp(input, "ecdsa DER long-form success\n", sizeof("ecdsa DER long-form success\n") - 1) == 0) {
+        secp256k1_fuzz_check_signature_parse_der_long_form(ctx, msg32, &pubkey);
     }
     secp256k1_fuzz_check_signature_parse_der_malformed(ctx, input, size);
     secp256k1_fuzz_check_signature_parse_der_input(ctx, canonical_32_der, sizeof(canonical_32_der), msg32, &pubkey);
