@@ -10043,3 +10043,29 @@ This verifies the current branch build and its deterministic regression suite
 at the same fixed Clang 22.1.7 ASan/UBSan configuration. It is build/test
 evidence only: it establishes no new production finding and does not alter
 the master-relative severity ledger.
+
+## 2026-07-17 Current Clean-Master Keypair Replay Ordering
+
+The tracked 51-byte input
+`src/fuzz/corpora/schnorrsig/opaque-keypair-consistency` (the literal
+`opaque keypair secret and public state consistency\n`) was replayed once
+against a freshly rebuilt ASan/UBSan projection of clean master
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` and once against the fixed branch.
+The clean command was `fuzz_schnorrsig -runs=1 -timeout=60 <input>`; it
+reported UBSan's `src/util.h:438` null-output-pointer failure and stopped in
+`nonce_function_bip340_impl` while the harness intentionally exercised
+`secp256k1_fuzz_check_bip340_nonce_failure_cleanup` at
+`src/fuzz/schnorrsig.c:390`. The branch replay executed the same input to
+completion with no sanitizer or `FUZZ_CHECK` failure.
+
+This reiterates the existing **Medium** `e789b5e` finding: exported built-in
+BIP340/RFC6979 nonce callbacks must reject invalid direct arguments rather
+than dereference a NULL output buffer. It is a direct callback crash, not a
+Critical nonce-erasure finding; the nonce object in this replay is public and
+non-cryptographic. A disposable attempt to bypass only the earlier
+`impossible_msglen` helper did not change the result, so that harness change
+was restored and the clean projection was rebuilt. Consequently this replay
+is not standalone proof for the later **Medium** inconsistent opaque-keypair
+finding in `5f8416e`: its strongest proof remains that commit's minimal
+production mutation and deterministic tests. No new production bug or
+severity change is claimed.
