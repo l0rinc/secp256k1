@@ -8173,3 +8173,76 @@ low practical exploitability** for impossible SHA length handling;
 EllSwift zero-`u` encoding edge, and documented tweak-input overlap. Oracle-only
 and cleanup-only checks remain **Informational/Low**. A nonce or other public
 buffer without cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-17 Fresh Clean-Master Finding Reiteration
+
+The focused baseline recheck used clean production master
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with only the current fuzzer
+sources and CMake wiring overlaid. No audit production fix was copied into the
+baseline. The group barrier's disposable skip was removed only for its
+focused baseline input and restored immediately afterward; the scalar target
+was rebuilt after its current shift-boundary source was installed. The repaired
+branch then replayed the same inputs on native 5x52 and forced-int64/10x26
+Clang ASan/UBSan builds. Its `tests` and `noverify_tests` `ec`, `ecdsa`, and
+`musig` slices all returned zero on both backends.
+
+The exact baseline conditions and outcomes were:
+
+- `group/off-curve-opaque-pubkey` (`off-curve opaque pubkey barrier\n`) exits
+  134 on both backends. Clean master loads the opaque storage encoding of
+  `x = 1, y = 1` because `secp256k1_pubkey_load` checks only nonzero `x`, even
+  though the point is off curve. The repaired branch invokes the illegal
+  callback, clears the failed output, and returns zero. This remains
+  **Medium opaque-state integrity**: it requires malformed local opaque state
+  or direct API misuse, not a serialized wire point.
+- `field/magnitude32-normalize` (`field normalize magnitude32 bounds split
+  zero raise seed\n`) passes native but exits 134 on clean forced-int64/10x26
+  at the independent magnitude-32 reference. The old carry chain loses valid
+  maximum-magnitude contributions during normalization. Both repaired
+  backends pass. This remains **Medium/latent correctness** because a valid
+  internal representation is affected, but no public path making that exact
+  10x26 state reachable has been demonstrated.
+- `scalar/mul-shift-over-512` (`scalar multiply shift 513 and UINT_MAX\n`)
+  exits 134 on both clean backends. The shift-513 boundary reports the
+  unrelated WNAF signed-integer diagnostics and then reads `l[8]` in native
+  `scalar_4x64_impl.h:910` or `l[16]` in forced-int64
+  `scalar_8x32_impl.h:707`; ASan classifies both as stack-buffer-overflow.
+  Both repaired backends pass. This remains **Low/latent internal memory
+  safety**, since current production callers use shift 384 and no public
+  caller controls this helper domain.
+- `hash/hmac-independent-reference` (`abc1234hij0\n`) reaches the clean
+  independent output check and exits 134 because
+  `secp256k1_hmac_sha256_finalize` leaves the consumed HMAC state live. Both
+  repaired backends pass. This remains **Medium secret-state lifetime**; it
+  does not claim a disclosure, and a public or non-cryptographic nonce is not
+  a Critical erasure issue.
+- `ecmult_multi/callback-failure-output-state`
+  (`ecmult multi callback failure output state\n`) produces a clean-master
+  ASan heap-buffer-overflow while a callback failure writes the 32-byte
+  result through an undersized output state. Both repaired backends pass.
+  This remains **Medium callback-failure memory safety** for the internal
+  failure-state contract; its public reachability is separately limited by
+  the callback and scratch domain.
+- `context/sha256-impossible-lengths`
+  (`context tagged sha256 impossible length seed\n`) in the
+  macro-compatible clean build produces an ASan heap-buffer-overflow while
+  hashing a `2^61`-byte tag from the fuzzer's short fallback pointer. Both
+  repaired backends pass. This remains **Medium, low practical
+  exploitability**: it is an invalid pointer/length pair, not a demonstrated
+  remote cryptographic attack.
+- `musig/off-curve-keyagg-cache`
+  (`off-curve MuSig key aggregation cache\n`) reaches clean master's
+  noncanonical field state and aborts its verification barrier. Both repaired
+  backends pass. This remains **Medium opaque MuSig state**.
+- `schnorrsig/opaque-keypair-consistency`
+  (`opaque keypair secret and public state consistency\n`) reaches clean
+  master's NULL-data nonce callback, with UBSan's null-pointer offset report
+  followed by an ASan write fault. Both repaired backends pass. This remains
+  **Medium inconsistent opaque keypair/callback state**, not a wire-format
+  signature finding.
+
+These are reiterated clean-master findings, not new defects and not severity
+downgrades. The existing mutation-backed fix commits remain the strongest
+causal proof; a later minor fix or cherry-pick making a replay pass does not
+erase the baseline failure. No production mutation from this recheck was
+committed, and no fuzz process remained running.
