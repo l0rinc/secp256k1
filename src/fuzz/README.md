@@ -7344,3 +7344,56 @@ new inverse oracle completed without a clean-master mismatch. This commit
 claims **Informational / oracle hardening**, no production fix, and no severity
 change. A public or non-cryptographic nonce buffer is not a Critical erasure
 finding.
+
+## 2026-07-17 Independent GLV Scalar-Split Oracle
+
+`src/fuzz/scalar.c` now recomputes `secp256k1_scalar_split_lambda` from the
+documented GLV constants rather than deriving only the relation
+`split1 + lambda * split2 == k`. The reference independently computes both
+rounded products at shift 384, multiplies by `minus_b1` and `minus_b2`, adds
+the two residues for `split2`, then computes `split1 = k - lambda * split2`
+with the standalone base-2^16 product and binary-reduction model. Both
+production outputs are compared to this reference before the existing
+relation and signed-128-bit size checks. This prevents a shared wrong split,
+wrong rounding boundary, swapped constant, or incorrect recombination from
+agreeing with its own algebraic checks.
+
+The dedicated `scalar/split-lambda-independent-reference` seed is 42 bytes
+containing `scalar split lambda independent reference` followed by a newline.
+Native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan replays passed the
+focused seed and all seven tracked scalar files plus the empty-input path
+(`Done 8` for each corpus directory, and `Done 2` for each empty run). Two
+worker, two-job value-profiled campaigns used private corpus copies. Native
+workers completed 117 and 118 runs; forced-int64 workers completed 89 and 89.
+The full VERIFY and no-VERIFY test suites also passed in both backends: native
+VERIFY 283.047 seconds, native no-VERIFY 90.097 seconds, forced-int64 VERIFY
+405.141 seconds, and forced-int64 no-VERIFY 193.475 seconds. No sanitizer
+diagnostic, assertion, timeout, OOM, or crash artifact was produced.
+
+The differential proof inserted `r1->d[0] ^= 1` in the production
+`secp256k1_scalar_split_lambda` path after its internal VERIFY relation check
+and immediately before return. This models a corrupted returned split while
+leaving the production self-check, old relation check, and signed-128-bit
+size checks intact. The exact 42-byte seed aborted at the new exact-output
+comparison with raw status 134 on both native and forced-int64. A first
+placement before the production VERIFY check was rejected by that internal
+check, so it was discarded and is not the recorded proof. The mutation was
+removed and both branch binaries were rebuilt before the passing replays.
+Existing tests did not provide this proof because they checked the split
+relation and bounds, but did not independently bind the rounded GLV constants
+or either exact output; a shared wrong split could satisfy those checks.
+
+The clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with the current scalar harness.
+The focused seed reached the new split checks and then reconfirmed the
+existing generic-WNAF signed-width UB at `ecmult_impl.h:201` and scalar
+rounded-shift stack reads at `scalar_4x64_impl.h:910` /
+`scalar_8x32_impl.h:707`. A disposable harness-only control skipped WNAF
+window 31 and shifts above 512; all seven scalar files plus the empty path
+then passed on both backends, proving no clean-master split mismatch was
+hidden behind those later failures. These remain the previously recorded
+**Low** generic-WNAF issue and **Low/latent internal-memory-safety** scalar
+shift issue; they are not GLV findings and their severity is unchanged. This
+commit claims **Informational / oracle hardening**, no production fix, and no
+severity change. A public or non-cryptographic nonce buffer is not a Critical
+erasure finding.
