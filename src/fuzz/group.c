@@ -612,6 +612,26 @@ static void secp256k1_fuzz_group_check_inverse_rzr(void) {
     FUZZ_CHECK(secp256k1_fe_is_zero(&rzr));
 }
 
+/* Pin the documented ratio value on the infinity-double fast path. The
+ * ordinary adders already check their right-infinity ratio in the randomized
+ * group-law oracle, so keep this fixture focused on the uncovered branch. */
+static void secp256k1_fuzz_group_check_double_infinity_rzr(void) {
+    secp256k1_gej infinity;
+    secp256k1_gej result;
+    secp256k1_fe rzr;
+
+    secp256k1_gej_set_infinity(&infinity);
+
+    memset(&result, 0xA5, sizeof(result));
+    memset(&rzr, 0xA5, sizeof(rzr));
+    secp256k1_gej_double_var(&result, &infinity, &rzr);
+    FUZZ_CHECK(secp256k1_gej_is_infinity(&result));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.x));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.y));
+    FUZZ_CHECK(secp256k1_fe_is_zero(&result.z));
+    FUZZ_CHECK(secp256k1_fe_equal(&rzr, &secp256k1_fe_one));
+}
+
 static void secp256k1_fuzz_group_check_zinv_in_place(const secp256k1_gej *a, const secp256k1_ge *b) {
     secp256k1_ge b_scaled;
     secp256k1_gej expected;
@@ -1063,6 +1083,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     static const unsigned char zinv_inverse_trigger[] = "group zinv inverse\n";
     static const unsigned char inverse_rzr_trigger[] = "group inverse rzr\n";
     static const unsigned char all_infinity_batch_trigger[] = "group all infinity batch conversion\n";
+    static const unsigned char double_infinity_rzr_trigger[] = "group double infinity rzr\n";
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 71);
     secp256k1_scalar a_scalar;
@@ -1184,6 +1205,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     if (size == sizeof(inverse_rzr_trigger) - 1 && memcmp(input, inverse_rzr_trigger, sizeof(inverse_rzr_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_inverse_rzr();
+    }
+    if (size == sizeof(double_infinity_rzr_trigger) - 1 && memcmp(input, double_infinity_rzr_trigger, sizeof(double_infinity_rzr_trigger) - 1) == 0) {
+        secp256k1_fuzz_group_check_double_infinity_rzr();
     }
     if (size == sizeof(all_infinity_batch_trigger) - 1 && memcmp(input, all_infinity_batch_trigger, sizeof(all_infinity_batch_trigger) - 1) == 0) {
         secp256k1_fuzz_group_check_all_infinity_batch_conversion();

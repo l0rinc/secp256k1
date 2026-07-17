@@ -10444,3 +10444,36 @@ with a clean-master or minimal-production mutation. No new production bug,
 oracle change, or master-relative severity change is justified by this pass;
 the existing findings remain rated against unmodified master. Public or
 non-cryptographic nonce data is not a Critical erasure finding.
+
+## 2026-07-17 Group Infinity-Double Z-Ratio Oracle
+
+The `group/double-infinity-rzr` fixture contains exactly
+`group double infinity rzr\n`. It poisons the output objects, doubles a
+canonical Jacobian infinity with `secp256k1_gej_double_var`, and requires the
+documented postcondition: canonical infinity coordinates and `rzr == 1`.
+The result and ratio are initialized to nonzero bytes so an omitted write is
+also caught.
+
+This closes a narrow oracle gap. The existing randomized group-law check
+already exercises the right-infinity ratio returned by `gej_add_var` and
+`gej_add_ge_var`; mutations of those writes fail pre-existing controls, so
+this fixture does not duplicate them. The older double check only compared
+`a.z * rzr` with the result Z coordinate. For infinity, `a.z` is zero, so a
+wrong ratio can be masked by that product.
+
+The causal mutation changed only the infinity fast path in
+`src/group_impl.h`, from `secp256k1_fe_set_int(rzr, 1)` to `0`. The new seed
+then aborted with status 134, while all 22 pre-existing group inputs passed.
+After restoration, the focused and complete 23-file corpus passed on native
+5x52 and forced-int64/10x26 Clang ASan/UBSan builds. Two-worker/two-job
+replays of the copied corpus also exited zero on both backends with no
+diagnostic or artifact. The relevant `ge`, `gej`, rescale-alias,
+`gej_zinv_in_place`, and decompression slices passed in both normal and
+no-verify test binaries.
+
+Master-relative severity is **Informational / Low internal-oracle
+hardening**. Clean master `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` already
+contains the correct `rzr == 1` write, so this commit claims no production
+bug or fix and no cryptographic impact. It records a deterministic guard for
+a documented internal transition whose failure would otherwise be silently
+masked.
