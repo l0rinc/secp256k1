@@ -8334,3 +8334,18 @@ on either backend.
 This campaign found no new clean-master defect or master-relative severity
 change. Existing findings remain rated against unmodified master, and a public
 or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 X-only Tweak Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds replayed the
+complete `xonly_tweak` corpus (14 inputs) with four workers using
+`-fork=4 -jobs=4 -max_total_time=30 -timeout=60 -rss_limit_mb=0` on each
+backend. All 16 workers exited 0. The campaign exercised the independent
+affine/group reference for two-G tweaking, x-only parse equivalence, parity
+negation, invalid and partial opaque keypairs, input/output alias windows,
+null-tweak cleanup, and keypair/public-key consistency. Every worker reported
+`oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or artifact was produced.
+
+This campaign found no new clean-master defect and no master-relative severity
+change. Existing findings remain rated against unmodified master, and a public
+or non-cryptographic nonce buffer is not a Critical erasure finding.
