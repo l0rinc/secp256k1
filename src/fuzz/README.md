@@ -8681,3 +8681,18 @@ extends the prior constant-multiplication campaign without finding a new
 clean-master defect or changing any master-relative severity. Existing
 findings remain rated against unmodified master; a public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Final ASan Build and Test Verification
+
+The current audit worktree rebuilt the Clang ASan/UBSan library, tests, and all
+14 fuzz binaries with `cmake --build /tmp/secp256k1-oracles-clang -j2`;
+all 34 build steps completed successfully. The only compiler diagnostic was
+the pre-existing deprecation warning for the compatibility
+`secp256k1_schnorrsig_sign` API.
+
+`ctest --test-dir /tmp/secp256k1-oracles-clang --output-on-failure` then passed
+all 224 tests with zero failures, including both VERIFY and no-VERIFY test
+variants, arithmetic boundaries, public API error states, ECDSA/recovery,
+Schnorr, MuSig, EllSwift, and XDH. No sanitizer diagnostic or test artifact
+was produced. This verifies the complete build after the latest oracle
+ledger commits; it does not change any master-relative finding severity.
