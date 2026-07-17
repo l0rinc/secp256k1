@@ -7215,3 +7215,48 @@ complete 6 runs on both backends with no additional failure. No clean-master
 production inconsistency or severity change was found. The existing findings
 remain rated against unmodified master, and a public or non-cryptographic
 nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Independent Field Addition Oracle
+
+`src/fuzz/field.c` now checks arbitrary `fe_add` results against an independent
+8x32-bit byte model. The model reduces two fuzz-derived 32-byte values with
+standalone byte arithmetic, adds their little-endian words with carry, performs
+the conditional modulus subtraction, and compares the normalized production
+result. It also checks first-operand aliasing and adds two maximum-valid
+magnitude-8 operands (representing `x + 7p` and `y + 7p`) before normalization,
+so the postcondition covers the real `fe_add` magnitude contract rather than
+only canonical inputs or production-derived equivalences.
+
+The dedicated `field/add-independent-reference` seed is 32 bytes containing
+`field add independent reference` followed by a newline. Native 5x52 and
+forced-int64/10x26 Clang 22.1.7 ASan/UBSan replays passed all 19 tracked field
+files plus the empty-input path (`Done 20` on each backend). Two-worker,
+two-job value-profiled campaigns used private corpus copies; native workers
+completed 139 and 141 units, while forced-int64 workers completed 131 and 139.
+The field `tests` and `noverify_tests` slices both passed with `-i=4` in both
+backends. No sanitizer diagnostic, assertion, timeout, OOM, or crash artifact
+was produced.
+
+The oracle's differential proof used a temporary production mutation directly
+after `secp256k1_fe_impl_add`: `r->n[0] ^= 1`. The focused 32-byte seed aborted
+with raw status 134 on both backends. Because the new reference is the first
+operation in the harness, this proves the independent postcondition detects a
+representation-valid but wrong field residue before later checks can mask it.
+The mutation was removed and both binaries were rebuilt before the passing
+replay. Existing tests did not provide this proof because their arbitrary-add
+expectations were production-derived or metadata-focused; no separate modular
+addition model bound the result to the field characteristic.
+
+The clean-master control used `origin/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with only the current fuzzer
+overlay. The focused seed passed the new add oracle on native 5x52. On clean
+forced-int64/10x26, execution then stopped at the already-recorded
+`secp256k1_fuzz_fe_check_magnitude32_reference` assertion in `field.c:83`,
+called by the unconditional `(16, 16)` magnitude-boundary check. This is a
+reconfirmation of the existing **Medium/latent internal field-correctness**
+bug in clean-master 10x26 normalization, fixed on the audit branch by
+`0d03dda`; it is not a new `fe_add` finding and does not lower its master-side
+severity. No public key or signature trigger has been demonstrated. This
+commit claims **Informational / oracle hardening**, no production fix, and no
+severity change. A public or non-cryptographic nonce buffer is not a Critical
+erasure finding.

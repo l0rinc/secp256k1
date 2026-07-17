@@ -465,6 +465,27 @@ static int secp256k1_fuzz_ref_u32_ge_modulus(const uint32_t a[8], const uint32_t
     return 1;
 }
 
+static void secp256k1_fuzz_ref_u32_add_mod(uint32_t out[8], const uint32_t a[8], const uint32_t b[8], const uint32_t modulus[8]) {
+    uint32_t carry = 0;
+    size_t i;
+
+    for (i = 0; i < 8; i++) {
+        uint64_t value = (uint64_t)a[i] + b[i] + carry;
+        out[i] = (uint32_t)value;
+        carry = (uint32_t)(value >> 32);
+    }
+    if (carry != 0 || secp256k1_fuzz_ref_u32_ge_modulus(out, modulus)) {
+        uint32_t borrow = 0;
+        for (i = 0; i < 8; i++) {
+            uint64_t subtrahend = (uint64_t)modulus[i] + borrow;
+            uint32_t minuend = out[i];
+            out[i] = (uint32_t)((uint64_t)minuend - subtrahend);
+            borrow = (uint32_t)((uint64_t)minuend < subtrahend);
+        }
+        FUZZ_CHECK(borrow == carry);
+    }
+}
+
 static void secp256k1_fuzz_ref_u32_mul_mod(uint32_t out[8], const uint32_t a[8], const uint32_t b[8], const uint32_t modulus[8]) {
     uint32_t product[16] = { 0 };
     uint32_t remainder[9] = { 0 };
@@ -584,6 +605,79 @@ static void secp256k1_fuzz_fe_check_product_reference(const unsigned char *input
     secp256k1_fe_mul(&alias_product, &alias_product, &raised_y);
     secp256k1_fe_normalize_var(&alias_product);
     secp256k1_fe_get_b32(actual32, &alias_product);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+}
+
+static void secp256k1_fuzz_fe_check_add_reference(const unsigned char *input, size_t size) {
+    unsigned char x_input[32];
+    unsigned char y_input[32];
+    unsigned char x32[32];
+    unsigned char y32[32];
+    unsigned char expected32[32];
+    unsigned char actual32[32];
+    uint32_t modulus[8];
+    uint32_t x_words[8];
+    uint32_t y_words[8];
+    uint32_t sum_words[8];
+    secp256k1_fe x;
+    secp256k1_fe y;
+    secp256k1_fe zero7;
+    secp256k1_fe raised_x;
+    secp256k1_fe raised_y;
+    secp256k1_fe sum;
+    secp256k1_fe alias_sum;
+
+    secp256k1_fuzz_derive(x_input, sizeof(x_input), input, size, 313);
+    secp256k1_fuzz_derive(y_input, sizeof(y_input), input, size, 317);
+    secp256k1_fuzz_fe_reduce_reference(x32, x_input);
+    secp256k1_fuzz_fe_reduce_reference(y32, y_input);
+
+    secp256k1_fe_set_b32_mod(&x, x_input);
+    secp256k1_fe_set_b32_mod(&y, y_input);
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_normalize_var(&y);
+    secp256k1_fe_get_b32(actual32, &x);
+    FUZZ_CHECK(memcmp(actual32, x32, sizeof(actual32)) == 0);
+    secp256k1_fe_get_b32(actual32, &y);
+    FUZZ_CHECK(memcmp(actual32, y32, sizeof(actual32)) == 0);
+
+    secp256k1_fuzz_ref_u32_from_be(modulus, secp256k1_fuzz_field_prime);
+    secp256k1_fuzz_ref_u32_from_be(x_words, x32);
+    secp256k1_fuzz_ref_u32_from_be(y_words, y32);
+    secp256k1_fuzz_ref_u32_add_mod(sum_words, x_words, y_words, modulus);
+    secp256k1_fuzz_ref_u32_to_be(expected32, sum_words);
+
+    sum = x;
+    secp256k1_fe_add(&sum, &y);
+    secp256k1_fe_normalize_var(&sum);
+    secp256k1_fe_get_b32(actual32, &sum);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* fe_add permits the output to alias its first operand. */
+    alias_sum = x;
+    secp256k1_fe_add(&alias_sum, &y);
+    secp256k1_fe_normalize_var(&alias_sum);
+    secp256k1_fe_get_b32(actual32, &alias_sum);
+    FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
+
+    /* Adding a raised representation exercises the largest fe_add input sum. */
+    secp256k1_fe_set_int(&zero7, 0);
+    secp256k1_fe_negate(&zero7, &zero7, 0);
+    secp256k1_fe_mul_int_unchecked(&zero7, 7);
+    raised_x = x;
+    raised_y = y;
+    secp256k1_fe_add(&raised_x, &zero7);
+    secp256k1_fe_add(&raised_y, &zero7);
+#ifdef VERIFY
+    FUZZ_CHECK(raised_x.magnitude == 8);
+    FUZZ_CHECK(raised_y.magnitude == 8);
+    FUZZ_CHECK(raised_x.normalized == 0);
+    FUZZ_CHECK(raised_y.normalized == 0);
+#endif
+    sum = raised_x;
+    secp256k1_fe_add(&sum, &raised_y);
+    secp256k1_fe_normalize_var(&sum);
+    secp256k1_fe_get_b32(actual32, &sum);
     FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
 }
 
@@ -1291,6 +1385,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     unsigned char limit_input[32];
     int i;
 
+    secp256k1_fuzz_fe_check_add_reference(input, size);
     secp256k1_fuzz_derive(limit_input, sizeof(limit_input), input, size, 11);
     secp256k1_fuzz_fe_check_set_b32_limit(limit_input);
     memcpy(boundary, secp256k1_fuzz_field_prime, sizeof(boundary));
