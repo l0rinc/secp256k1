@@ -381,6 +381,44 @@ static void secp256k1_fuzz_ecmult_const_check_odd_multiples_table(const secp256k
     }
 }
 
+static void secp256k1_fuzz_ecmult_const_check_fixed_generator_two(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult-const-generator-2g\n";
+    static const unsigned char scalar_two32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
+    };
+    static const unsigned char generator_two_x[32] = {
+        0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
+        0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
+        0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
+        0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
+    };
+    secp256k1_scalar scalar;
+    secp256k1_gej actual;
+    secp256k1_ge actual_affine;
+    unsigned char actual_x[32];
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_scalar_set_b32(&scalar, scalar_two32, NULL);
+    secp256k1_ecmult_const(&actual, &secp256k1_ge_const_g, &scalar);
+    {
+        secp256k1_gej actual_copy = actual;
+        secp256k1_ge_set_gej_var(&actual_affine, &actual_copy);
+    }
+    FUZZ_CHECK(!secp256k1_ge_is_infinity(&actual_affine));
+    secp256k1_fe_normalize_var(&actual_affine.x);
+    secp256k1_fe_get_b32(actual_x, &actual_affine.x);
+    FUZZ_CHECK(memcmp(actual_x, generator_two_x, sizeof(actual_x)) == 0);
+    secp256k1_fe_normalize_var(&actual_affine.y);
+    FUZZ_CHECK(!secp256k1_fe_is_odd(&actual_affine.y));
+    secp256k1_scalar_clear(&scalar);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 97);
@@ -394,6 +432,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ge base;
     secp256k1_ge infinity;
 
+    secp256k1_fuzz_ecmult_const_check_fixed_generator_two(input, size);
     secp256k1_fuzz_ecmult_const_scalar(&base_scalar, input, size, 101, 1);
     secp256k1_fuzz_ecmult_const_scalar(&scalar, input, size, 107, 1);
     secp256k1_fuzz_ecmult_const_check_generator(ctx, &secp256k1_scalar_one);
