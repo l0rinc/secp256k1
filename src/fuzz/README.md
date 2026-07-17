@@ -9837,3 +9837,33 @@ The probe was linked against the clean-master ASan/UBSan shared library and
 ran with no sanitizer diagnostic. This negative control does not alter any
 existing severity rating. A public or non-cryptographic nonce buffer is not a
 Critical erasure finding.
+
+## 2026-07-17 Rebase Check and ASan/UBSan State Recheck
+
+The audit branch `codex/fuzz-oracles` was checked against both configured
+remotes before this run. `origin/master` and `l0rinc/master` were both
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, and that commit was already an
+ancestor of audit HEAD `e13cbec`. No rebase or cherry-pick was needed, so the
+existing l0rinc reconciliation and its context notes remain in their original
+commits.
+
+The current Clang ASan/UBSan fuzz build replayed isolated copies of the
+repository corpora with two workers and two jobs per target:
+
+- `fuzz_api_roundtrip`: 49 seeds, 2,497 bytes; jobs completed 312 and 315
+  executions and reached 4,004 coverage edges.
+- `fuzz_musig`: 68 seeds, 2,673 bytes; both jobs completed 69 executions and
+  reached 4,460 coverage edges. MuSig's state-heavy setup made the jobs take
+  83 and 84 seconds despite the 30-second per-job fuzzing budget.
+- `fuzz_ecmult_multi`: 24 seeds, 857 bytes; jobs completed 84 and 85
+  executions and reached 3,649 coverage edges.
+
+All six workers exited zero. There was no ASan/UBSan diagnostic, assertion
+failure, timeout, OOM, crash artifact, or corpus artifact left in the
+repository. These are negative sanitizer and worker results, not proof that
+clean master is defect-free. They found no new clean-master production bug and
+do not change the existing master-relative ratings: the confirmed Medium
+scratch-wraparound issue, malformed opaque-state and callback-contract
+findings, the Medium/latent 10x26 normalization defect, and the lower-severity
+arithmetic and cleanup findings remain separately tracked. A public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
