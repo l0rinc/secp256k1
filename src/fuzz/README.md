@@ -8088,3 +8088,41 @@ and no master-relative severity change. Existing mutation-backed findings
 remain rated against unmodified master even where a later branch change masks
 their trigger. A public or otherwise non-cryptographic nonce buffer does not
 make a clearing issue Critical.
+
+## 2026-07-17 ECDSA DER Long-Form Success Oracle
+
+The `api_roundtrip` target now has the gated
+`api_roundtrip/ecdsa-der-long-form-success` input, whose exact bytes are the
+ASCII phrase `ecdsa DER long-form success` followed by one LF byte. The helper
+constructs a 132-byte DER sequence `30 81 81`: its 129-byte payload contains a
+positive 124-byte `r` INTEGER and the one-byte `s = 1` INTEGER. The outer
+length encoding is therefore canonical long form and reaches the successful
+return at `src/ecdsa_impl.h:88`; the oversized positive integer is deliberately
+accepted by the parser and mapped to scalar zero. The oracle independently
+requires parse success, compact `r = 0, s = 1`, and verification failure.
+
+The earlier 46-file API corpus exercised malformed, truncated, non-shortest,
+and short long-form lengths, but never a valid long-form length of at least
+128 bytes. Normal builds and tests consequently did not bind this public
+parser postcondition. This is **Informational / Low oracle hardening**, not a
+clean-master production vulnerability or fix: the parser's existing behavior
+is intentionally preserved and no severity rating changes.
+
+For causal proof, a temporary clean-master-equivalent mutation changed only
+`if (*len < 128)` to `if (*len < 128 || *len == 129)`. All 46 pre-existing API
+inputs remained green on native 5x52 and forced-int64/10x26 Clang 22.1.7
+ASan/UBSan builds, while the exact new seed aborted with status 134 on both.
+The broader mutation that disabled the entire `< 128` check was rejected as
+too coarse because it also changes the already-covered BER rejection control;
+the length-129 mutation isolates the new successful-return contract. The
+mutation was restored before replay and was never committed.
+
+The restored 47-file API replay exited 0 on both sanitizer backends. GCC
+coverage recorded the successful long-form return once, with `ecdsa_impl.h`
+at 98.52% of lines and 100% of production branches. Private worker copies
+ran with `-fork=2 -jobs=2 -max_total_time=10 -timeout=60 -rss_limit_mb=0`;
+both backend managers and every logged job exited 0 with
+`oom/timeout/crash: 0/0/0` and no sanitizer or crash artifact. Native and
+forced-int64 EC VERIFY and no-VERIFY slices also passed. Existing findings
+remain rated against unmodified master; a public or otherwise
+non-cryptographic nonce buffer is not a Critical erasure finding.
