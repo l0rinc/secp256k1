@@ -8349,3 +8349,19 @@ null-tweak cleanup, and keypair/public-key consistency. Every worker reported
 This campaign found no new clean-master defect and no master-relative severity
 change. Existing findings remain rated against unmodified master, and a public
 or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Core Arithmetic Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds replayed the
+complete `ecmult_const` (8 inputs), `field` (20), `group` (21), `hash` (10),
+and `scalar` (7) corpora. Each target/backend pair used four workers with
+`-fork=4 -jobs=4 -max_total_time=30 -timeout=60 -rss_limit_mb=0`, for 40
+worker jobs total. All 40 jobs exited 0. The run retained the independent
+affine multiplication, field normalization/Jacobi, group equation, hash
+state, scalar arithmetic, infinity, aliasing, and failure-state oracles
+already present in the targets. Every worker reported
+`oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or artifact was produced.
+
+This campaign found no new clean-master defect and no master-relative severity
+change. Existing findings remain rated against unmodified master, and a public
+or non-cryptographic nonce buffer is not a Critical erasure finding.
