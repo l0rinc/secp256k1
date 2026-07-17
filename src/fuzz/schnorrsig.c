@@ -651,6 +651,46 @@ static void secp256k1_fuzz_check_schnorrsig_infinity_rejection(const secp256k1_c
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 0);
 }
 
+/* Use P = R = G and s = e + 1 to make the BIP340 equation reduce to
+ * s*G - e*P = G. The challenge and scalar addition are byte-level references,
+ * so the expected validity does not depend on the signing path or production
+ * point arithmetic. */
+static void secp256k1_fuzz_check_schnorrsig_generator_equation(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "schnorrsig-generator-equation\n";
+    static const unsigned char generator_x[32] = {
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char challenge_tag[] = "BIP0340/challenge";
+    static const unsigned char msg32[32] = { 0 };
+    unsigned char challenge32[32];
+    unsigned char reduced_challenge32[32];
+    unsigned char sig64[64];
+    secp256k1_xonly_pubkey xonly;
+    size_t i;
+    unsigned int carry = 1;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &xonly, generator_x) == 1);
+    memcpy(sig64, generator_x, sizeof(generator_x));
+    secp256k1_fuzz_schnorrsig_tagged_hash_reference(challenge32, challenge_tag, sizeof(challenge_tag) - 1, generator_x, sizeof(generator_x), generator_x, sizeof(generator_x), msg32, sizeof(msg32));
+    secp256k1_fuzz_schnorrsig_reduce_scalar(reduced_challenge32, challenge32);
+    memcpy(sig64 + 32, reduced_challenge32, sizeof(reduced_challenge32));
+    for (i = sizeof(reduced_challenge32); i != 0; i--) {
+        unsigned int sum = (unsigned int)sig64[32 + i - 1] + carry;
+        sig64[32 + i - 1] = (unsigned char)sum;
+        carry = sum >> 8;
+    }
+    FUZZ_CHECK(carry == 0);
+    secp256k1_fuzz_schnorrsig_reduce_scalar(sig64 + 32, sig64 + 32);
+    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
+}
+
 /* Check a generated signature against BIP340's public point equation without
  * calling the library verifier. This catches shared challenge/signing changes
  * that would otherwise make signing and verification agree on the same error. */
@@ -1059,6 +1099,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         && memcmp(input, "schnorrsig-infinity-rejection\n", sizeof("schnorrsig-infinity-rejection\n") - 1) == 0) {
         secp256k1_fuzz_check_schnorrsig_infinity_rejection(ctx);
     }
+    secp256k1_fuzz_check_schnorrsig_generator_equation(ctx, input, size);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);

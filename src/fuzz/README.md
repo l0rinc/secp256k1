@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, and an independent BIP340 point-equation model
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -7649,3 +7649,49 @@ No clean-master production mismatch was confirmed. This is **Informational /
 oracle hardening**, with no production fix or severity finding. Severity
 continues to be rated against unmodified master; a public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Fixed Generator Algebraic Oracle for Schnorr Verification
+
+The `schnorrsig/generator-equation` fixture adds a 30-byte transcript,
+`schnorrsig-generator-equation` followed by a newline. It uses the known
+compressed-even generator x-coordinate as both the signature's `r_x` and the
+x-only public key, with a fixed 32-byte zero message. The standalone BIP340
+tagged-hash reference computes `e = H_challenge(r_x || P_x || m) mod n`, and a
+byte-level scalar add-one reference constructs `s = (e + 1) mod n`.
+
+This is a valid signature by the algebraic identity `sG - eP = (e + 1)G -
+eG = G`: the reconstructed nonce is exactly the even-Y generator, so its
+x-coordinate is `r_x`. The expected validity therefore does not come from
+the signing implementation, a production scalar tweak, or a production
+point-combine result. The x-only parse remains a public API setup boundary;
+the oracle's independent contract is the challenge reduction, scalar
+addition, and equation. It complements the existing arbitrary and generated
+signature references, whose expected public points still use production
+public-key operations.
+
+For causal proof, a temporary trigger-only early return skipped the older
+production-derived checks. A temporary mutation in
+`src/modules/schnorrsig/main_impl.h` then returned zero after argument checks
+only when `sig64[0..7]` equaled `79be667ef9dcbbac`, `msglen` was 32, and all
+32 message bytes were zero. With `-handle_abrt=0`, the exact new seed aborted
+with status 134 on native 5x52 and forced-int64/10x26, while a control corpus
+containing all 14 pre-existing Schnorr files completed 15 executions with
+status 0 on both backends. An initial two-byte prefix mutation also matched
+the pre-existing fixed-nonce path; it was discarded before this final
+measurement. No illegal-callback diagnostic was produced. The mutation and
+isolation return were removed before the restored replay.
+
+Restored Clang 22.1.7 ASan/UBSan replays passed all 15 corpus files plus the
+empty execution: 16 runs in 2.17 seconds on native 5x52 and 3.73 seconds on
+forced-int64/10x26. Four private `-fork=2` jobs, two per backend, loaded the
+15 corpus files and exited 0 in about 5.5 seconds per native job and 6.8
+seconds per forced-int64 job. No sanitizer diagnostic, assertion, timeout,
+OOM, or artifact was produced. Branch `tests` and `noverify_tests` passed the
+Schnorr subset, as did clean-master `tests`.
+
+Clean `origin/master` was `11dad6d`; it predates the CMake fuzz-target wiring,
+so the disposable clean build had no `fuzz_schnorrsig` target and could not
+replay this harness. No clean-master production mismatch was confirmed. This
+is **Informational / oracle hardening**, with no production fix or severity
+change. Severity remains master-relative; clearing a public or
+non-cryptographic nonce buffer is not a Critical finding.
