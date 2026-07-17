@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -9263,3 +9263,33 @@ discarded. This is a negative clean-master result: no production finding or
 severity change was established, and the existing Medium/Medium-latent,
 Low/latent, Informational, and non-Critical nonce-cleanup ratings remain in
 force.
+
+## 2026-07-17 ECDSA Signing Alias Boundary
+
+The `api_roundtrip/ecdsa-sign-input-output-overlap` fixture checks exact
+aliasing of the `secp256k1_ecdsa_sign` output with each 32-byte input. It uses
+the independent `d = z = k = 1` equation vector, so the expected compact
+signature is fixed rather than copied from a disjoint signing call. The
+message/output and seckey/output cases both pass on master in native Clang,
+external-callback Clang, and external-callback forced-int64/10x26 Clang
+ASan/UBSan builds.
+
+This is **Informational alias-contract hardening**, not a clean-master
+production finding. The public header specifies the input and output roles
+but does not state a non-overlap precondition; no master failure, sanitizer
+report, or inconsistent signature was observed. The severity ledger is
+unchanged: malformed opaque state, callback-failure memory safety, and
+secret-state lifetime remain **Medium** where proven; the forced-int64
+magnitude boundary remains **Medium/latent**; bounded/documented aliases
+remain **Low/latent**; cleanup and model checks remain **Informational**. A
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, a disposable `memset(signature, 0, sizeof(*signature));`
+was inserted immediately after the output argument check in
+`secp256k1_ecdsa_sign`. The exact fixture exited 134 under all three builds
+with `-handle_abrt=0`, while the previous 48-file API corpus passed 49
+executions per job in both worker jobs for every configuration. After the
+mutation was restored, the 49-file corpus including the new fixture passed
+50 executions per job in both worker jobs for every configuration. The
+mutation was restored before commit; no production behavior or severity
+rating changed.
