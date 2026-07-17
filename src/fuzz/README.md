@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -8959,3 +8959,35 @@ external-callback Clang ASan/UBSan builds after restoration. The complete
 two jobs on all three builds, with no sanitizer report, timeout, assertion,
 OOM, or output artifact. Neither mutation was committed, and no production
 behavior changed.
+
+## 2026-07-17 Static Context Recovery Barrier
+
+The recovery target now has a gated `static context recovery barrier` seed.
+It feeds a fixed-wire `(r, s, recid)` vector through recoverable-signature
+parse/serialize, conversion, public-key recovery, compressed public-key
+serialization, and ECDSA verification using both the randomized context and
+`secp256k1_context_static`. The generator encoding is an independent expected
+value, so the comparison does not merely prove that two context paths share a
+bad result.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. The recovery headers do not restrict these operations to a proper
+context, and their implementation performs no generator-table operation for
+the recovery equation. Existing recovery tests and the fuzzer exercised the
+same contracts through a randomized context only, so a static-only rejection
+or accidental dependency on generator precomputation could have passed. The
+standing clean-master ratings are unchanged: malformed opaque state,
+callback-failure barriers, and the reachable forced-int64 arithmetic boundary
+remain **Medium** or **Medium/latent**; bounded/documented alias cases remain
+**Low/latent**; cleanup and model-only checks remain **Informational**. A
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, a disposable mutation added an illegal-argument check for
+`secp256k1_context_static` immediately after the context check in
+`secp256k1_ecdsa_recoverable_signature_parse_compact`. The focused seed then
+reached the new assertion and exited `134` with `-handle_abrt=0`; the restored
+control exited `0`. The focused seed and the complete 13-file recovery corpus
+passed with two workers and two jobs on native 5x52, forced-int64/10x26, and
+external-callback Clang ASan/UBSan builds. Recovery unit and no-VERIFY tests
+also passed on all three configurations. The mutation was restored before
+the tree was committed, and no production behavior or severity changed.
