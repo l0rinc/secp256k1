@@ -9106,3 +9106,37 @@ This was a negative exploration result: no clean-master production finding or
 severity change was established, and the existing Medium/Medium-latent,
 Low/latent, Informational, and non-Critical nonce-cleanup ratings remain in
 force.
+
+## 2026-07-17 Static Context Lifecycle Barrier
+
+The `context` target now has a gated 25-byte
+`static context lifecycle` input. In the external-default-callback build it
+passes the actual `secp256k1_context_static` singleton through randomization
+with and without a seed, heap cloning, preallocated clone-size reporting,
+both callback setters, and both destroy APIs. Every unsupported operation must
+return its documented failure result, invoke the default illegal callback once,
+and leave the singleton untouched. The helper is compiled as a no-op in the
+ordinary callback build because the default callback aborts by design.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. The deterministic suite already checks much of the same policy using
+a writable copy of the static context; the fuzzer previously did not bind the
+actual singleton and count the public callback routing across all lifecycle
+entry points. The clean-master severity ledger is unchanged: malformed opaque
+state, callback-failure memory safety, and secret-state lifetime remain
+**Medium** where previously proven; the reachable forced-int64 magnitude
+boundary remains **Medium/latent**; bounded internal arithmetic and documented
+tweak-input overlap remain **Low/latent**; and a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, a disposable production mutation changed only the
+`ARG_CHECK(secp256k1_context_is_proper(ctx))` guard in
+`secp256k1_context_randomize` to `ARG_CHECK(1)`. The exact
+`src/fuzz/corpora/context/static-context-lifecycle` input exited 134 under
+the external Clang 22.1.7 ASan/UBSan build with `-handle_abrt=0`; the restored
+control exited 0. The restored 12-file context corpus passed with
+`-workers=2 -jobs=2 -runs=1 -timeout=60 -rss_limit_mb=0` under native
+5x52, external-callback native, and external-callback forced-int64/10x26
+Clang ASan/UBSan builds. The static-context unit and no-VERIFY slices also
+passed. The mutation was restored before this commit and no production
+behavior changed.
