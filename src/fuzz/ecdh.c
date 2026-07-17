@@ -302,6 +302,29 @@ static void secp256k1_fuzz_check_ecdh_order_plus_one(const secp256k1_context *ct
     FUZZ_CHECK(memcmp(default_output, zero32, sizeof(default_output)) == 0);
 }
 
+static void secp256k1_fuzz_check_ecdh_static_context(const secp256k1_context *ctx, const secp256k1_pubkey *point, const unsigned char *scalar) {
+    unsigned char dynamic_custom[64];
+    unsigned char static_custom[64];
+    unsigned char static_default[32];
+    unsigned char static_explicit[32];
+    secp256k1_pubkey shared_pubkey;
+
+    /* ECDH is the documented exception to the static-context restriction.
+     * Keep a context-independent callback beside the built-in hash path so a
+     * mistaken generator-context check cannot hide behind hash routing. */
+    FUZZ_CHECK(secp256k1_ecdh(ctx, dynamic_custom, point, scalar, fuzz_ecdh_hash_passthrough, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdh(secp256k1_context_static, static_custom, point, scalar, fuzz_ecdh_hash_passthrough, NULL) == 1);
+    FUZZ_CHECK(memcmp(static_custom, dynamic_custom, sizeof(static_custom)) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdh(secp256k1_context_static, static_default, point, scalar, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdh(secp256k1_context_static, static_explicit, point, scalar, secp256k1_ecdh_hash_function_default, NULL) == 1);
+    FUZZ_CHECK(memcmp(static_default, static_explicit, sizeof(static_default)) == 0);
+
+    shared_pubkey = *point;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &shared_pubkey, scalar) == 1);
+    secp256k1_fuzz_check_ecdh_default_hash(secp256k1_context_static, &shared_pubkey, static_default);
+}
+
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -339,6 +362,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     hash_data.calls = 0;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
+    if (size == sizeof("static context ecdh barrier\n") - 1
+        && memcmp(input, "static context ecdh barrier\n", sizeof("static context ecdh barrier\n") - 1) == 0) {
+        secp256k1_fuzz_check_ecdh_static_context(ctx, &pubkey_b, seckey_a);
+    }
     secp256k1_fuzz_check_ecdh_generator_two(ctx, input, size);
     secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
     secp256k1_fuzz_check_ecdh_order_plus_one(ctx, &pubkey_b, hash_data.mask32);

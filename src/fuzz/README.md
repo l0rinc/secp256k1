@@ -8916,3 +8916,46 @@ artifact directories. No assertion, sanitizer diagnostic, OOM, or crash was
 observed. The campaign therefore adds negative evidence only: existing
 findings remain rated against unmodified master, and a public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Static Context ECDH and EllSwift Barriers
+
+The ECDH and EllSwift targets now include focused static-context seeds:
+`static context ecdh barrier` and `static context ellswift barrier`. These
+exercise the part of the context contract that ordinary randomized contexts
+cannot reach. ECDH is the documented exception to the general static-context
+restriction. EllSwift decode, encode, and x-only XDH likewise use only public
+operations or constant-time point multiplication; EllSwift create remains
+excluded because its header explicitly requires a non-static context.
+
+The ECDH oracle compares a context-independent callback result between the
+dynamic and static contexts, checks that NULL and the explicit default hash
+function agree under the static context, and verifies the static result
+against a compressed-public-key SHA256 reference. The EllSwift oracle checks
+static decode and encode round trips, compares custom-callback XDH between
+dynamic and static contexts, compares BIP324 XDH outputs, and invokes the
+standalone BIP324 transcript model with the static context.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. Unmodified master passed the new seeds; no severity is raised. The
+existing ECDH module tests and fuzzer used dynamically allocated contexts,
+and the EllSwift tests did not exercise these allowed operations with
+`secp256k1_context_static`, so a regression limited to the static object
+could pass both the normal unit suite and the prior fuzz corpus. This does
+not alter the standing ratings: malformed opaque state, callback-failure
+barriers, and the reachable forced-int64 arithmetic boundary remain
+**Medium** or **Medium/latent**; bounded/documented alias cases remain
+**Low/latent**; cleanup and model-only checks remain **Informational**. A
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, two disposable production mutations were tested separately:
+`if (ctx == secp256k1_context_static) return 0;` was inserted immediately
+after the context check in `src/modules/ecdh/main_impl.h`, and the same
+mutation was inserted in `secp256k1_ellswift_xdh` in
+`src/modules/ellswift/main_impl.h`. The matching focused seed reached the
+new assertion and exited `134` with `-handle_abrt=0`; the unmutated control
+exited `0`. The focused seeds passed on native 5x52, forced-int64/10x26, and
+external-callback Clang ASan/UBSan builds after restoration. The complete
+8-file ECDH and 16-file EllSwift corpora were replayed with two workers and
+two jobs on all three builds, with no sanitizer report, timeout, assertion,
+OOM, or output artifact. Neither mutation was committed, and no production
+behavior changed.

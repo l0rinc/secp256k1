@@ -652,6 +652,33 @@ static void secp256k1_fuzz_check_ellswift_ctx_hash(secp256k1_context *ctx, const
 
     secp256k1_context_set_sha256_compression(ctx, NULL);
 }
+
+static void secp256k1_fuzz_check_ellswift_static_context(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, const unsigned char *rnd32, const secp256k1_pubkey *pubkey) {
+    unsigned char dynamic_x32[32];
+    unsigned char static_x32[32];
+    unsigned char static_bip324[32];
+    unsigned char dynamic_bip324[32];
+    unsigned char static_encoded[64];
+    secp256k1_pubkey static_decoded;
+    secp256k1_pubkey static_encoded_decoded;
+
+    /* Decode, encode, and x-only ECDH are public-data paths and do not need
+     * generator precomputation. Exercise all three with the static context;
+     * compare XDH against both a dynamic context and the transcript model. */
+    FUZZ_CHECK(secp256k1_ellswift_decode(secp256k1_context_static, &static_decoded, ell_a64) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_decoded, pubkey) == 0);
+    FUZZ_CHECK(secp256k1_ellswift_encode(secp256k1_context_static, static_encoded, pubkey, rnd32) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_decode(secp256k1_context_static, &static_encoded_decoded, static_encoded) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_encoded_decoded, pubkey) == 0);
+
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, dynamic_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(secp256k1_context_static, static_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(memcmp(static_x32, dynamic_x32, sizeof(static_x32)) == 0);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, dynamic_bip324, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(secp256k1_context_static, static_bip324, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+    FUZZ_CHECK(memcmp(static_bip324, dynamic_bip324, sizeof(static_bip324)) == 0);
+    secp256k1_fuzz_check_ellswift_bip324_hash_reference(secp256k1_context_static, ell_a64, ell_b64, seckey32);
+}
 #endif
 
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
@@ -703,6 +730,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_b64, &pubkey_b);
     FUZZ_CHECK(secp256k1_ellswift_create(ctx, ell_no_aux64, seckey_a32, NULL) == 1);
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_no_aux64, &pubkey_a);
+    if (size == sizeof("static context ellswift barrier\n") - 1
+        && memcmp(input, "static context ellswift barrier\n", sizeof("static context ellswift barrier\n") - 1) == 0) {
+        secp256k1_fuzz_check_ellswift_static_context(ctx, ell_a64, ell_b64, seckey_a32, rnd32, &pubkey_a);
+    }
     secp256k1_fuzz_check_ellswift_zero_t_parity(ctx);
     secp256k1_fuzz_check_ellswift_zero_u_barrier(ctx);
 
