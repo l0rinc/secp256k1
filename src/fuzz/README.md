@@ -8638,3 +8638,24 @@ clean-master off-curve opaque-public-key barrier remains **Medium/opaque
 state integrity**: it protects malformed internal opaque state and direct
 misuse, not a wire-format point accepted by the public parser. A public or
 non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Long Scalar Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries replayed the
+complete 7-file `scalar` corpus for 180 seconds per backend with four forked
+jobs and four workers using
+`-fork=4 -jobs=4 -max_total_time=180 -timeout=60 -rss_limit_mb=0`.
+All eight workers loaded all 7 seed inputs, exited `0`, and reported
+`oom/timeout/crash: 0/0/0`. Native workers reached `cov: 2085` with a maximum
+feature count of 5,957; forced-int64 workers reached `cov: 3716` with a
+maximum feature count of 13,918. No sanitizer, assertion, or runtime-error
+diagnostic was emitted, and neither backend produced an artifact.
+
+The run exercised independent scalar reduction, addition and negation,
+variable bit extraction boundaries, inversion, GLV lambda splitting, WNAF,
+carry/zero boundaries, and product-shift references. This extends the prior
+scalar campaign without finding a new clean-master defect or changing any
+master-relative severity. The existing clean-master over-512-bit shift
+finding remains **Low/latent internal memory safety** because current
+production callers use the bounded 384-bit shift; a public or
+non-cryptographic nonce buffer is not a Critical erasure finding.
