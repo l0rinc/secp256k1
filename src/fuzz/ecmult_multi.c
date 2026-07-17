@@ -1054,12 +1054,17 @@ static void secp256k1_fuzz_ecmult_multi_pippenger_window_10(const secp256k1_cont
     secp256k1_scratch *scratch;
     secp256k1_gej actual;
     secp256k1_gej expected;
+    secp256k1_ge affine_expected;
+    secp256k1_scalar reference_total_sc;
     size_t scratch_size;
     size_t checkpoint;
     size_t i;
     int overflow;
     int bucket_window;
     unsigned char point_scalar32[32] = { 0 };
+    unsigned char reference_total32[32];
+    unsigned char production_total32[32];
+    uint64_t carry;
 
     if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
         return;
@@ -1088,6 +1093,22 @@ static void secp256k1_fuzz_ecmult_multi_pippenger_window_10(const secp256k1_cont
     secp256k1_scalar_add(&total_sc, &total_sc, &generator_sc);
     secp256k1_ecmult_const(&expected, &secp256k1_ge_const_g, &total_sc);
 
+    /* Recompute n * point_scalar + generator_scalar in base 256 instead of
+     * reusing the production scalar multiplication and addition. */
+    memset(reference_total32, 0, sizeof(reference_total32));
+    carry = 17;
+    for (i = sizeof(reference_total32); i != 0; i--) {
+        uint64_t product = (uint64_t)point_scalar32[i - 1] * n_points + carry;
+        reference_total32[i - 1] = (unsigned char)product;
+        carry = product >> 8;
+    }
+    FUZZ_CHECK(carry == 0);
+    secp256k1_scalar_set_b32(&reference_total_sc, reference_total32, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    secp256k1_scalar_get_b32(production_total32, &total_sc);
+    FUZZ_CHECK(memcmp(reference_total32, production_total32, sizeof(reference_total32)) == 0);
+    secp256k1_fuzz_ecmult_multi_affine_scalar_mul(&affine_expected, &secp256k1_ge_const_g, &reference_total_sc);
+
     bucket_window = secp256k1_pippenger_bucket_window(n_points);
     FUZZ_CHECK(bucket_window == 10);
     FUZZ_CHECK(secp256k1_pippenger_bucket_window(n_points - 1) == 9);
@@ -1106,6 +1127,7 @@ static void secp256k1_fuzz_ecmult_multi_pippenger_window_10(const secp256k1_cont
     for (i = 0; i < n_points; i++) {
         FUZZ_CHECK(data.seen[i] != 0);
     }
+    secp256k1_fuzz_ecmult_multi_check_affine_result(&actual, &affine_expected);
     secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
 
     data.fail = 1;
