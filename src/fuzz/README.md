@@ -8048,3 +8048,43 @@ Clean `origin/master` already contains the same final rejection, so this is
 **Informational / Low master-relative oracle hardening**, not a production
 bug or fix. The existing severity ledger remains unchanged; a public or
 otherwise non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 Full 277-Input Corpus and Worker Recheck
+
+At `f275f89b824c17bf11c047205299efd49d1dfd7e`, `origin/master` was still
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; `git rev-list --left-right
+--count origin/master...HEAD` was `0 583`, so no rebase was needed. The latest
+fetched `l0rinc/master` and pull-request heads still contain no unrepresented
+commit requiring another cherry-pick.
+
+The current Clang 22.1.7 ASan/UBSan builds replayed every tracked corpus file
+once on both native 5x52 and forced-int64/10x26. The 277-file inventory was:
+`api_roundtrip` 46, `context` 11, `hash` 10, `scalar` 7, `field` 20,
+`group` 21, `ecmult_const` 8, `ecmult_multi` 24, `ecdh` 7, `ellswift` 15,
+`xonly_tweak` 14, `recovery` 12, `schnorrsig` 15, and `musig` 67. Every
+file-level replay exited 0 without an assertion, sanitizer diagnostic, OOM,
+or crash artifact.
+
+The worker campaign used private corpus copies and
+`-fork=2 -jobs=2 -max_total_time=5 -timeout=15 -rss_limit_mb=0` for all 14
+targets on both backends. Twenty-seven managers completed in the concurrent
+matrix. Forced-int64 MuSig was rerun alone after the first 180-second outer
+wall bound expired under CPU contention; both workers then exited 0 after 158
+and 160 seconds, with `oom/timeout/crash: 0/0/0` and no sanitizer diagnostic
+or artifact. The completed matrix plus that isolated rerun is 28 managers
+and 56 workers with zero worker failures.
+
+The concurrent run's default artifact path was shared by all managers and
+left one `timeout-*` file containing the existing `pippenger window 1261`
+seed. Direct `-runs=1` replays of that exact seed exited 0 in 7.456 seconds
+native and 11.740 seconds forced-int64 under the same 15-second input limit,
+with no artifact. The file was therefore a run-directory collision, not a
+reproducible library timeout or production finding, and was removed before
+committing this record.
+
+Native and forced-int64 `tests` and `noverify_tests` all passed the `-t=ec
+-i=1` and `-t=musig -i=1` slices. This recheck found no new production defect
+and no master-relative severity change. Existing mutation-backed findings
+remain rated against unmodified master even where a later branch change masks
+their trigger. A public or otherwise non-cryptographic nonce buffer does not
+make a clearing issue Critical.
