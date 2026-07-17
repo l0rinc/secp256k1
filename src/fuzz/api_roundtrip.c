@@ -1612,6 +1612,35 @@ static void secp256k1_fuzz_check_seckey_tweak_input_output_alias(const secp256k1
     FUZZ_CHECK(memcmp(actual, expected_mul, sizeof(actual)) == 0);
 }
 
+/* Reparse a public key into the static context before applying a public tweak.
+ * The result is compared through serialization, not by crossing opaque state
+ * between contexts. */
+static void secp256k1_fuzz_check_static_pubkey_tweak(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *tweak32, int expected_ret, const secp256k1_pubkey *expected_pubkey, secp256k1_fuzz_ec_pubkey_tweak_fn tweak) {
+    unsigned char input33[33];
+    unsigned char expected33[33];
+    unsigned char actual33[33];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_pubkey static_pubkey;
+    size_t input_len = sizeof(input33);
+    size_t expected_len = sizeof(expected33);
+    size_t actual_len = sizeof(actual33);
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, input33, &input_len, pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(input_len == sizeof(input33));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_pubkey, input33, input_len) == 1);
+    FUZZ_CHECK(tweak(secp256k1_context_static, &static_pubkey, tweak32) == expected_ret);
+    if (!expected_ret) {
+        FUZZ_CHECK(memcmp(&static_pubkey, zero_pubkey, sizeof(static_pubkey)) == 0);
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected33, &expected_len, expected_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(expected_len == sizeof(expected33));
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, actual33, &actual_len, &static_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(actual_len == sizeof(actual33));
+    FUZZ_CHECK(memcmp(actual33, expected33, sizeof(actual33)) == 0);
+}
+
 /* Check the order-minus-one boundary against byte arithmetic. The ordinary
  * tweak checks compare two production paths, so a shared scalar-conversion
  * regression could make both sides agree on the same wrong result. */
@@ -1642,6 +1671,7 @@ static void secp256k1_fuzz_check_tweak_order_minus_one(const secp256k1_context *
         FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
         FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
     }
+    secp256k1_fuzz_check_static_pubkey_tweak(ctx, pubkey, tweak32, expected_ret, &expected_pubkey, secp256k1_ec_pubkey_tweak_add);
 
     secp256k1_fuzz_scalar32_mul_mod_order(expected_seckey, seckey, tweak32);
     expected_ret = memcmp(expected_seckey, secp256k1_fuzz_scalar_zero, 32) != 0;
@@ -1659,6 +1689,7 @@ static void secp256k1_fuzz_check_tweak_order_minus_one(const secp256k1_context *
         FUZZ_CHECK(memcmp(tweaked_seckey, secp256k1_fuzz_scalar_zero, sizeof(tweaked_seckey)) == 0);
         FUZZ_CHECK(memcmp(&tweaked_pubkey, zero_pubkey, sizeof(tweaked_pubkey)) == 0);
     }
+    secp256k1_fuzz_check_static_pubkey_tweak(ctx, pubkey, tweak32, expected_ret, &expected_pubkey, secp256k1_ec_pubkey_tweak_mul);
 }
 
 /* Check a three-term public-key sum against independently computed scalar
