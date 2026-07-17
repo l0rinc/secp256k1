@@ -15,7 +15,7 @@ Targets:
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
-- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
+- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, independent recovery point equations, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
@@ -7695,3 +7695,45 @@ replay this harness. No clean-master production mismatch was confirmed. This
 is **Informational / oracle hardening**, with no production fix or severity
 change. Severity remains master-relative; clearing a public or
 non-cryptographic nonce buffer is not a Critical finding.
+
+## 2026-07-17 Independent ECDH Generator-Two Oracle
+
+The `ecdh/generator-2g` fixture adds an 18-byte transcript,
+`ecdh-generator-2g` followed by a newline. It creates the public generator
+with scalar one, invokes ECDH with scalar two and a coordinate passthrough
+callback, and checks the returned x-coordinate against the fixed canonical
+`2G` x-coordinate. It then checks the returned y-coordinate's even parity and
+the independent byte-field equation `y^2 = x^3 + 7`. The default ECDH output
+is separately checked against a standalone SHA-256 reference over the fixed
+compressed-even `2G` encoding.
+
+The prior ECDH oracle compared the arbitrary shared point against
+`secp256k1_ec_pubkey_tweak_mul`, so a shared constant-time multiplication bug
+could have made both sides agree. The new fixed postcondition does not obtain
+the expected point from that API or from a production group representation.
+Its byte-field model uses the existing standalone modular add/multiply helper;
+the fixed x-coordinate and even root contract make the expected point
+unambiguous without copying the production y-coordinate.
+
+For causal proof, a temporary trigger-only return skipped the older random
+ECDH checks. A temporary mutation in `src/modules/ecdh/main_impl.h` replaced
+the exact scalar-two state with scalar one after scalar parsing. With
+`-handle_abrt=0`, the dedicated seed aborted with status 134 on native 5x52
+and forced-int64/10x26, while all six pre-existing ECDH corpus files completed
+seven executions with status 0 on both backends. The mutation and isolation
+return were removed before restored replay.
+
+Restored Clang 22.1.7 ASan/UBSan replays passed all seven corpus files plus
+the empty execution: eight runs in 0.61 seconds on native 5x52 and 1.06
+seconds on forced-int64/10x26. Four private `-fork=2` jobs, two per backend,
+completed with status 0 in about 4.3 seconds per native job and 4.6 seconds
+per forced-int64 job. No sanitizer diagnostic, assertion, timeout, OOM, or
+artifact was produced. Branch `tests` and `noverify_tests` passed the ECDH
+subset, as did clean-master `tests`.
+
+Clean `origin/master` was `11dad6d`; its older CMake fuzz configuration has
+no `fuzz_ecdh` target, so a raw clean-master fuzzer replay was unavailable.
+No clean-master production mismatch was confirmed. This is **Informational /
+oracle hardening**, with no production fix or severity change. Severity remains
+master-relative; clearing a public or non-cryptographic nonce buffer is not a
+Critical finding.

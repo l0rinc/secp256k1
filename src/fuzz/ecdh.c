@@ -5,6 +5,7 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "pubkey_reference.h"
 #include "../hash_impl.h"
 #include "sha256_reference.h"
 
@@ -53,6 +54,61 @@ static int fuzz_ecdh_hash_passthrough(unsigned char *output, const unsigned char
     memcpy(output, x32, 32);
     memcpy(output + 32, y32, 32);
     return 1;
+}
+
+/* The existing ECDH comparison derives its expected shared point through the
+ * public tweak-multiply API. Bind one fixed scalar multiplication to the curve
+ * equation instead, keeping the expected coordinates outside that path. */
+static void secp256k1_fuzz_check_ecdh_generator_two(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecdh-generator-2g\n";
+    static const unsigned char generator_two_x[32] = {
+        0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
+        0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
+        0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
+        0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
+    };
+    static const unsigned char scalar_one[32] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+    };
+    static const unsigned char scalar_two[32] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2
+    };
+    secp256k1_pubkey generator;
+    unsigned char actual64[64];
+    unsigned char actual_hash[32];
+    unsigned char expected_hash[32];
+    unsigned char compressed[33];
+    unsigned char x_squared[32];
+    unsigned char x_cubed[32];
+    unsigned char y_squared[32];
+    unsigned char curve_rhs[32];
+    unsigned char seven[32] = { 0 };
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    seven[31] = 7;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ecdh(ctx, actual64, &generator, scalar_two, fuzz_ecdh_hash_passthrough, NULL) == 1);
+    FUZZ_CHECK(memcmp(actual64, generator_two_x, sizeof(generator_two_x)) == 0);
+    FUZZ_CHECK((actual64[63] & 1u) == 0);
+
+    /* Check y^2 = x^3 + 7 with standalone byte-field arithmetic. The fixed
+     * even parity selects the same root as the compressed 2G encoding. */
+    secp256k1_fuzz_pubkey_mul_mod(x_squared, actual64, actual64);
+    secp256k1_fuzz_pubkey_mul_mod(x_cubed, x_squared, actual64);
+    secp256k1_fuzz_pubkey_add_mod(curve_rhs, x_cubed, seven);
+    secp256k1_fuzz_pubkey_mul_mod(y_squared, actual64 + 32, actual64 + 32);
+    FUZZ_CHECK(memcmp(y_squared, curve_rhs, sizeof(y_squared)) == 0);
+
+    compressed[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(compressed + 1, generator_two_x, sizeof(generator_two_x));
+    secp256k1_fuzz_sha256_standalone(expected_hash, compressed, sizeof(compressed));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, actual_hash, &generator, scalar_two, NULL, NULL) == 1);
+    FUZZ_CHECK(memcmp(actual_hash, expected_hash, sizeof(actual_hash)) == 0);
 }
 
 static int fuzz_ecdh_hash_fail(unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
@@ -283,6 +339,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     hash_data.calls = 0;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b) == 1);
+    secp256k1_fuzz_check_ecdh_generator_two(ctx, input, size);
     secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
     secp256k1_fuzz_check_ecdh_order_plus_one(ctx, &pubkey_b, hash_data.mask32);
     secp256k1_fuzz_check_ecdh_invalid_scalar_callback_point(ctx, &pubkey_b, hash_data.mask32);
