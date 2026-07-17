@@ -668,7 +668,9 @@ static void secp256k1_fuzz_check_schnorrsig_generator_equation(const secp256k1_c
     unsigned char challenge32[32];
     unsigned char reduced_challenge32[32];
     unsigned char sig64[64];
-    secp256k1_xonly_pubkey xonly;
+    unsigned char serialized_xonly[32];
+    const secp256k1_context *contexts[2];
+    secp256k1_xonly_pubkey xonly[2];
     size_t i;
     unsigned int carry = 1;
 
@@ -676,7 +678,8 @@ static void secp256k1_fuzz_check_schnorrsig_generator_equation(const secp256k1_c
         return;
     }
 
-    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &xonly, generator_x) == 1);
+    contexts[0] = ctx;
+    contexts[1] = secp256k1_context_static;
     memcpy(sig64, generator_x, sizeof(generator_x));
     secp256k1_fuzz_schnorrsig_tagged_hash_reference(challenge32, challenge_tag, sizeof(challenge_tag) - 1, generator_x, sizeof(generator_x), generator_x, sizeof(generator_x), msg32, sizeof(msg32));
     secp256k1_fuzz_schnorrsig_reduce_scalar(reduced_challenge32, challenge32);
@@ -688,7 +691,12 @@ static void secp256k1_fuzz_check_schnorrsig_generator_equation(const secp256k1_c
     }
     FUZZ_CHECK(carry == 0);
     secp256k1_fuzz_schnorrsig_reduce_scalar(sig64 + 32, sig64 + 32);
-    FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
+    for (i = 0; i < sizeof(contexts) / sizeof(contexts[0]); i++) {
+        FUZZ_CHECK(secp256k1_xonly_pubkey_parse(contexts[i], &xonly[i], generator_x) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(contexts[i], serialized_xonly, &xonly[i]) == 1);
+        FUZZ_CHECK(memcmp(serialized_xonly, generator_x, sizeof(serialized_xonly)) == 0);
+        FUZZ_CHECK(secp256k1_schnorrsig_verify(contexts[i], sig64, msg32, sizeof(msg32), &xonly[i]) == 1);
+    }
 }
 
 /* Check a generated signature against BIP340's public point equation without
