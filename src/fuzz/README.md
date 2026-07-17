@@ -9465,6 +9465,31 @@ Medium, Medium/latent, Low/latent, and Informational ratings remain
 unchanged. A public or non-cryptographic nonce buffer is not a Critical
 erasure finding.
 
+## 2026-07-17 ECDH MemorySanitizer Worker Campaign
+
+The current audit tree's `fuzz_ecdh` was run from the Clang 22.1.7
+MemorySanitizer build with origin tracking, assembly disabled, and the
+libFuzzer runtime enabled. A fixed-input replay of all 8 tracked ECDH seeds
+completed with exit zero under
+`MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86` and
+`UBSAN_OPTIONS=halt_on_error=1`; libFuzzer completed its 9 total runs
+including initialization.
+
+The same isolated corpus then ran with
+`-verbosity=0 -workers=2 -jobs=2 -max_total_time=30 -timeout=60
+-rss_limit_mb=0 -handle_abrt=0`. Both jobs loaded all 8 seeds and exited
+zero. No MSan/UBSan diagnostic, assertion, crash, command timeout, OOM, or
+artifact was produced. The replay covered custom callback failure, invalid
+secret fallback, static-context ECDH, and built-in hash cleanup. Temporary
+corpus and artifact directories were outside the repository and were
+removed.
+
+This is negative sanitizer evidence, not proof that clean master is
+defect-free and not a new production finding. The existing master-relative
+Medium, Medium/latent, Low/latent, and Informational ratings remain
+unchanged. A public or non-cryptographic nonce buffer is not a Critical
+erasure finding.
+
 ## 2026-07-17 Schnorrsig MemorySanitizer Worker Campaign
 
 The current audit tree's `fuzz_schnorrsig` was run from the Clang 22.1.7
