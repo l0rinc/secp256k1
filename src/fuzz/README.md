@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -10377,3 +10377,42 @@ clean production is correct, no production fix is claimed, and the existing
 build/tests did not deterministically reach an intermediate infinity followed
 by a finite recovery in the two-component MuSig aggregation loop. No
 cryptographic vulnerability or public nonce-cleanup issue is inferred.
+
+## 2026-07-17 First MuSig Nonce-Scalar Zero Oracle
+
+The `musig/first-zero-nonce-scalar` fixture drives nonce generation with a
+compression hook that forces only the first derived nonce scalar `k[0]` to
+zero. The second scalar transcript remains untouched. The call must reject,
+leave both opaque outputs zeroed, preserve the caller's session-random input,
+and match exactly one first-loop-index padding block. This pins the first side
+of the production `k[0] == 0 || k[1] == 0` precondition instead of only
+testing both-zero and second-only failures.
+
+This is distinct from `nonce-zero-scalar-failure`, which forces both derived
+scalars to zero, and `nonce-second-zero-scalar-failure`, which reaches the
+other operand of the OR condition. It also checks that a partial hash-hook
+match cannot accidentally force a later transcript or consume the caller's
+randomness on a rejected call.
+
+For causal proof, a disposable mutation in
+`src/modules/musig/session_impl.h` removed only the `k[0]` zero test from the
+invalid-nonce predicate. The focused seed aborted at the resulting
+`VERIFY_CHECK` on native 5x52 and forced-int64/10x26 ASan/UBSan builds, while
+all 71 pre-existing MuSig inputs, including the both-zero and second-only
+seeds, passed under the mutation on both backends. The mutation was removed
+before restored replay.
+
+Clean master `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` lacks the
+`invalid_nonce` rejection and aborted at its first-scalar `VERIFY_CHECK` under
+the isolated ASan/UBSan projection. The existing branch commit `8da14d1`
+(`musig: reject zero nonce scalars`) already fixes this clean-master finding
+and has a reduced-order exhaustive regression for the second-scalar case; the
+new oracle covers the symmetric first-scalar side. The existing finding is
+**Low / informational hardening**: the normal-order zero relation is about
+`2^-255` per scalar, and no practical remote key-recovery claim follows.
+After restoring production, native 5x52 and forced-int64/10x26 ASan/UBSan
+two-worker/two-job replays saw 72 files and completed 73 runs per job with no
+diagnostics; the native jobs took about 89 seconds each and the int64 jobs
+about 153 seconds each. The restored MuSig ctest selection passed all 22 tests.
+There is no new production change in this commit, and no claim about clearing
+public or non-cryptographic nonce data.
