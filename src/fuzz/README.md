@@ -10416,3 +10416,31 @@ diagnostics; the native jobs took about 89 seconds each and the int64 jobs
 about 153 seconds each. The restored MuSig ctest selection passed all 22 tests.
 There is no new production change in this commit, and no claim about clearing
 public or non-cryptographic nonce data.
+
+## 2026-07-17 Complete ASan/UBSan Worker Recheck
+
+The current audit branch was replayed with the native 5x52 Clang ASan/UBSan
+fuzz binaries using two workers and two jobs per target. The corrected
+`api_roundtrip` run used `-max_total_time=60`; `musig` used 30 seconds; the
+remaining `context`, `ecdh`, `ecmult_const`, `ecmult_multi`, `ellswift`,
+`field`, `group`, `hash`, `recovery`, `scalar`, `schnorrsig`, and
+`xonly_tweak` runs used 45 seconds. Every corrected job exited zero. No run
+reported an oracle failure, sanitizer diagnostic, timeout, OOM, crash, or
+artifact, and the isolated corpora were kept under `/tmp`.
+
+The first API invocation was discarded because its externally supplied
+artifact directory had not yet been created; both workers exited before
+executing a corpus input. After creating that directory, the exact same
+command completed successfully for both jobs. The MuSig replay loaded all 72
+current files, including `first-zero-nonce-scalar`, and completed 73 runs per
+job with exit zero. The other targets were also rerun with unique log files
+after the initial combined-output pass so their exit status was attributable
+per target. No fuzz or test process remains running.
+
+This is negative clean-master/branch evidence, not proof that production is
+defect-free. The full API-symbol inventory and internal-contract review still
+found no additional documented invariant whose absence can be demonstrated
+with a clean-master or minimal-production mutation. No new production bug,
+oracle change, or master-relative severity change is justified by this pass;
+the existing findings remain rated against unmodified master. Public or
+non-cryptographic nonce data is not a Critical erasure finding.
