@@ -675,8 +675,11 @@ domain construction, sanitizer-only issue, or already-covered behavior.
 
 ## Current-Master Finding Ledger
 
-The following severities describe the exact `origin/master` audit baseline
-(`ebf5943` when recorded), before the corresponding branch fixes. A later
+The entries below preserve the severities recorded against their historical
+clean-master snapshots. For current decisions, the authoritative baseline is
+`origin/master` at `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, which is also the
+current `l0rinc/master` as of 2026-07-17. The current-master replays and
+follow-up sections below reassess findings against that revision. A later
 minor fix must not be allowed to hide a more serious master failure. Every
 production finding has a focused corpus and a mutation or deterministic proof
 documented in its commit message.
@@ -9733,3 +9736,54 @@ defect-free and not a new production finding. The existing master-relative
 Medium, Medium/latent, Low/latent, and Informational ratings remain
 unchanged. A public or non-cryptographic nonce buffer is not a Critical
 erasure finding.
+
+## 2026-07-17 Forced-Int64 External-Callback MemorySanitizer Campaign
+
+The current audit tree was also configured in `/tmp/secp256k1-msan-int64-ext2`
+with Clang 22.1.7, assembly disabled, MemorySanitizer origin tracking,
+recovery enabled, `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`, and
+`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON`. The configuration used the
+following relevant options:
+
+```
+CC=clang CXX=clang++ cmake -S . -B /tmp/secp256k1-msan-int64-ext2 \
+  -DSECP256K1_ENABLE_MODULE_RECOVERY=ON \
+  -DSECP256K1_BUILD_TESTS=OFF \
+  -DSECP256K1_BUILD_BENCHMARK=OFF \
+  -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
+  -DSECP256K1_BUILD_CTIME_TESTS=OFF \
+  -DSECP256K1_BUILD_EXAMPLES=OFF \
+  -DSECP256K1_BUILD_FUZZ=ON \
+  -DSECP256K1_FUZZ_USE_LIBFUZZER=ON \
+  -DSECP256K1_ASM=OFF \
+  -DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64 \
+  -DSECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_C_FLAGS='-O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=memory'
+```
+
+The complete corpus matrix covered all 14 enabled fuzz targets:
+`fuzz_api_roundtrip` (49 seeds), `fuzz_context` (13), `fuzz_hash` (10),
+`fuzz_scalar` (7), `fuzz_field` (20), `fuzz_group` (21),
+`fuzz_ecmult_const` (8), `fuzz_ecmult_multi` (24), `fuzz_ecdh` (8),
+`fuzz_ellswift` (16), `fuzz_xonly_tweak` (15), `fuzz_recovery` (14),
+`fuzz_schnorrsig` (15), and `fuzz_musig` (68). Fixed-input replays for
+every target exited zero under
+`MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86` and
+`UBSAN_OPTIONS=halt_on_error=1`. Each target then ran with the same private
+corpus and
+`-verbosity=0 -workers=2 -jobs=2 -max_total_time=30 -timeout=60
+-rss_limit_mb=0 -handle_abrt=0`; both workers/jobs for every target exited
+zero and produced no artifact. A post-run log scan found no MSan/UBSan
+diagnostic, assertion, crash, command timeout, or OOM. The int64 MuSig
+replay was slower because of its arithmetic backend, but it completed
+without a production-availability failure.
+
+This cross-configuration campaign is negative sanitizer evidence, not proof
+that clean master is defect-free and not a new finding. It exercises the
+existing API round-trip, MuSig state, and field oracles under a different
+wide-multiply implementation and external callback projection. The
+master-relative Medium, Medium/latent, Low/latent, and Informational ratings
+remain unchanged. In particular, a public or non-cryptographic nonce buffer
+is not a Critical erasure finding.
