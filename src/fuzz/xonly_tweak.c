@@ -5,6 +5,8 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "../int128_impl.h"
+#include "../field_impl.h"
 
 #ifdef ENABLE_MODULE_EXTRAKEYS
 #include "pubkey_reference.h"
@@ -15,6 +17,192 @@ static const unsigned char secp256k1_fuzz_xonly_two_g_x[32] = {
     0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
     0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
 };
+
+typedef struct {
+    unsigned char x[32];
+    unsigned char y[32];
+    int infinity;
+} secp256k1_fuzz_xonly_byte_point;
+
+/* These byte operations intentionally avoid the production field and group
+ * representations. The affine model uses the production field inverse only
+ * for the one gated trigger, keeping its byte arithmetic and group equation
+ * independent without making routine fuzz iterations prohibitively costly. */
+static void secp256k1_fuzz_xonly_byte_sub_mod(unsigned char out32[32], const unsigned char a32[32], const unsigned char b32[32]) {
+    unsigned char negated32[32];
+    unsigned int borrow = 0;
+    size_t i;
+
+    for (i = 32; i-- > 0;) {
+        int value = (int)secp256k1_fuzz_pubkey_field_prime[i] - b32[i] - borrow;
+        if (value < 0) {
+            value += 256;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        negated32[i] = (unsigned char)value;
+    }
+    FUZZ_CHECK(borrow == 0);
+    secp256k1_fuzz_pubkey_add_mod(out32, a32, negated32);
+}
+
+static void secp256k1_fuzz_xonly_byte_neg_mod(unsigned char out32[32], const unsigned char input32[32]) {
+    unsigned char zero32[32] = { 0 };
+
+    secp256k1_fuzz_xonly_byte_sub_mod(out32, zero32, input32);
+}
+
+static void secp256k1_fuzz_xonly_byte_inv_mod(unsigned char out32[32], const unsigned char input32[32]) {
+    secp256k1_fe input;
+    secp256k1_fe inverse;
+
+    FUZZ_CHECK(secp256k1_fe_set_b32_limit(&input, input32) == 1);
+    FUZZ_CHECK(!secp256k1_fe_normalizes_to_zero_var(&input));
+    secp256k1_fe_inv_var(&inverse, &input);
+    secp256k1_fe_normalize_var(&inverse);
+    secp256k1_fe_get_b32(out32, &inverse);
+}
+
+static void secp256k1_fuzz_xonly_byte_point_double(secp256k1_fuzz_xonly_byte_point *result, const secp256k1_fuzz_xonly_byte_point *point) {
+    unsigned char x_squared32[32];
+    unsigned char three_x_squared32[32];
+    unsigned char two_y32[32];
+    unsigned char inverse32[32];
+    unsigned char lambda32[32];
+    unsigned char lambda_squared32[32];
+    unsigned char x_difference32[32];
+    unsigned char y_difference32[32];
+
+    if (point->infinity || memcmp(point->y, secp256k1_fuzz_scalar_zero, 32) == 0) {
+        memset(result, 0, sizeof(*result));
+        result->infinity = 1;
+        return;
+    }
+    secp256k1_fuzz_pubkey_mul_mod(x_squared32, point->x, point->x);
+    secp256k1_fuzz_pubkey_add_mod(three_x_squared32, x_squared32, x_squared32);
+    secp256k1_fuzz_pubkey_add_mod(three_x_squared32, three_x_squared32, x_squared32);
+    secp256k1_fuzz_pubkey_add_mod(two_y32, point->y, point->y);
+    secp256k1_fuzz_xonly_byte_inv_mod(inverse32, two_y32);
+    secp256k1_fuzz_pubkey_mul_mod(lambda32, three_x_squared32, inverse32);
+    secp256k1_fuzz_pubkey_mul_mod(lambda_squared32, lambda32, lambda32);
+    secp256k1_fuzz_xonly_byte_sub_mod(x_difference32, lambda_squared32, point->x);
+    secp256k1_fuzz_xonly_byte_sub_mod(result->x, x_difference32, point->x);
+    secp256k1_fuzz_xonly_byte_sub_mod(x_difference32, point->x, result->x);
+    secp256k1_fuzz_pubkey_mul_mod(y_difference32, lambda32, x_difference32);
+    secp256k1_fuzz_xonly_byte_sub_mod(result->y, y_difference32, point->y);
+    result->infinity = 0;
+}
+
+static void secp256k1_fuzz_xonly_byte_point_add(secp256k1_fuzz_xonly_byte_point *result, const secp256k1_fuzz_xonly_byte_point *a, const secp256k1_fuzz_xonly_byte_point *b) {
+    unsigned char x_difference32[32];
+    unsigned char y_difference32[32];
+    unsigned char inverse32[32];
+    unsigned char lambda32[32];
+    unsigned char lambda_squared32[32];
+    unsigned char x_sum32[32];
+    unsigned char x_difference_result32[32];
+    unsigned char y_difference_result32[32];
+
+    if (a->infinity) {
+        *result = *b;
+        return;
+    }
+    if (b->infinity) {
+        *result = *a;
+        return;
+    }
+    if (memcmp(a->x, b->x, 32) == 0) {
+        if (memcmp(a->y, b->y, 32) == 0) {
+            secp256k1_fuzz_xonly_byte_point_double(result, a);
+        } else {
+            memset(result, 0, sizeof(*result));
+            result->infinity = 1;
+        }
+        return;
+    }
+    secp256k1_fuzz_xonly_byte_sub_mod(x_difference32, b->x, a->x);
+    secp256k1_fuzz_xonly_byte_sub_mod(y_difference32, b->y, a->y);
+    secp256k1_fuzz_xonly_byte_inv_mod(inverse32, x_difference32);
+    secp256k1_fuzz_pubkey_mul_mod(lambda32, y_difference32, inverse32);
+    secp256k1_fuzz_pubkey_mul_mod(lambda_squared32, lambda32, lambda32);
+    secp256k1_fuzz_xonly_byte_sub_mod(x_sum32, lambda_squared32, a->x);
+    secp256k1_fuzz_xonly_byte_sub_mod(result->x, x_sum32, b->x);
+    secp256k1_fuzz_xonly_byte_sub_mod(x_difference_result32, a->x, result->x);
+    secp256k1_fuzz_pubkey_mul_mod(y_difference_result32, lambda32, x_difference_result32);
+    secp256k1_fuzz_xonly_byte_sub_mod(result->y, y_difference_result32, a->y);
+    result->infinity = 0;
+}
+
+static void secp256k1_fuzz_xonly_byte_point_from_xonly(secp256k1_fuzz_xonly_byte_point *point, const unsigned char x32[32]) {
+    unsigned char x_squared32[32];
+    unsigned char rhs32[32];
+    unsigned char seven32[32] = { 0 };
+
+    memcpy(point->x, x32, sizeof(point->x));
+    seven32[31] = 7;
+    secp256k1_fuzz_pubkey_mul_mod(x_squared32, x32, x32);
+    secp256k1_fuzz_pubkey_mul_mod(rhs32, x_squared32, x32);
+    secp256k1_fuzz_pubkey_add_mod(rhs32, rhs32, seven32);
+    secp256k1_fuzz_pubkey_sqrt_mod(point->y, rhs32);
+    if ((point->y[31] & 1u) != 0) {
+        secp256k1_fuzz_xonly_byte_neg_mod(point->y, point->y);
+    }
+    point->infinity = 0;
+}
+
+static void secp256k1_fuzz_check_xonly_tweak_affine(const secp256k1_context *ctx, const secp256k1_xonly_pubkey *xonly, const unsigned char *xonly32, const secp256k1_keypair *keypair) {
+    static const unsigned char two32[32] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2
+    };
+    static const secp256k1_fuzz_xonly_byte_point generator = {
+        {
+            0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+            0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+            0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+            0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+        },
+        {
+            0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65,
+            0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
+            0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+            0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8
+        },
+        0
+    };
+    secp256k1_fuzz_xonly_byte_point base;
+    secp256k1_fuzz_xonly_byte_point expected;
+    secp256k1_fuzz_xonly_byte_point two_g;
+    secp256k1_pubkey actual;
+    secp256k1_pubkey keypair_actual;
+    unsigned char expected33[33];
+    unsigned char actual33[33];
+    unsigned char keypair_actual33[33];
+    size_t actual_len;
+    size_t keypair_actual_len;
+    secp256k1_keypair tweaked_keypair = *keypair;
+
+    secp256k1_fuzz_xonly_byte_point_from_xonly(&base, xonly32);
+    secp256k1_fuzz_xonly_byte_point_double(&two_g, &generator);
+    secp256k1_fuzz_xonly_byte_point_add(&expected, &base, &two_g);
+    FUZZ_CHECK(!expected.infinity);
+    expected33[0] = (unsigned char)(SECP256K1_TAG_PUBKEY_EVEN + (expected.y[31] & 1u));
+    memcpy(expected33 + 1, expected.x, 32);
+
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &actual, xonly, two32) == 1);
+    actual_len = sizeof(actual33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, actual33, &actual_len, &actual, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(actual_len == sizeof(actual33));
+    FUZZ_CHECK(memcmp(actual33, expected33, sizeof(actual33)) == 0);
+
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &tweaked_keypair, two32) == 1);
+    FUZZ_CHECK(secp256k1_keypair_pub(ctx, &keypair_actual, &tweaked_keypair) == 1);
+    keypair_actual_len = sizeof(keypair_actual33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, keypair_actual33, &keypair_actual_len, &keypair_actual, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(keypair_actual_len == sizeof(keypair_actual33));
+    FUZZ_CHECK(memcmp(keypair_actual33, expected33, sizeof(keypair_actual33)) == 0);
+}
 
 static void secp256k1_fuzz_check_tweak_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
     static const unsigned char trigger[] = "tweak input-output overlap\n";
@@ -646,6 +834,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &reparsed) == 0);
+    if (size == sizeof("xonly tweak affine reference\n") - 1
+        && memcmp(input, "xonly tweak affine reference\n", sizeof("xonly tweak affine reference\n") - 1) == 0) {
+        secp256k1_fuzz_check_xonly_tweak_affine(ctx, &xonly, xonly32, &keypair);
+    }
     secp256k1_fuzz_check_xonly_invalid_tweak(ctx, xonly32, keypair_parity, tweak);
     secp256k1_fuzz_check_keypair_null_tweak(ctx, &keypair, tweak);
     secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
