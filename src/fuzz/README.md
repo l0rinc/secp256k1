@@ -8717,3 +8717,35 @@ No new clean-master finding or severity change resulted. The existing
 malformed opaque-state, callback-failure, and arithmetic findings remain
 rated against unmodified master. A public or non-cryptographic nonce buffer
 is not a Critical erasure finding.
+
+## 2026-07-17 Exhaustive Model and Oracle Check
+
+The exhaustive-test surface was rebuilt in isolated Clang ASan/UBSan
+configurations from unmodified master `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`
+and from this audit branch. The order-13 binary was run with the same seed and
+`./bin/exhaustive_tests 2 0x5eed1234`; both completed with `no problems found`,
+exit `0`, and no sanitizer diagnostics. After strengthening the harness, the
+audit binary was rebuilt and rerun with
+`./bin/exhaustive_tests 1 0x5eed1234`; it again completed with `no problems
+found` and exit `0`.
+
+Two previously unchecked test contracts now fail at the operation boundary:
+the exhaustive `ecmult_multi` matrix requires a return value of `1` before
+consuming its Jacobian output, and the EllSwift create/decode round trip
+requires `secp256k1_pubkey_load` to accept the decoded public key before the
+group comparison. These are test-only oracle changes; they do not alter the
+library ABI or production behavior. They prevent a future failure return or
+malformed decoded object from being silently compared as if it were valid.
+
+The oracle was independently mutation-tested in a disposable clean-master
+worktree. Removing the second `secp256k1_fe_add(&r->x, &t)` term from the
+production `secp256k1_gej_double` formula, then building the same sanitized
+`exhaustive_tests` target, caused
+`./bin/exhaustive_tests 1 0x5eed1234` to abort with exit `134` at
+`src/ecmult_gen_compute_table_impl.h:45` (`double_u` must equal the generator).
+This proves the model catches a one-line group-arithmetic regression before
+the broader matrix; the mutation was not committed. No new clean-master
+production defect was found, so this result is **Informational/oracle
+validation**, not a severity-rated vulnerability. Existing findings remain
+rated against unmodified master, and a public or non-cryptographic nonce
+buffer is not a Critical erasure finding.
