@@ -13,7 +13,7 @@ Targets:
   boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite and mixed-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
+- `fuzz_ecmult_const`: constant-time multiplication, a fixed generator-times-two known-answer vector, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including a fixed sixteen-point direct batch and distinct three-batch Pippenger transcripts, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
@@ -7737,6 +7737,53 @@ No clean-master production mismatch was confirmed. This is **Informational /
 oracle hardening**, with no production fix or severity change. Severity remains
 master-relative; clearing a public or non-cryptographic nonce buffer is not a
 Critical finding.
+
+## 2026-07-17 Fixed Generator-Two Known-Answer Vector for `ecmult_const`
+
+The `ecmult_const/generator-2g` fixture adds the 26-byte transcript,
+`ecmult-const-generator-2g` followed by a newline. It invokes the direct
+internal `secp256k1_ecmult_const` entry point on the fixed generator with
+scalar two and compares the normalized result with the fixed canonical
+`2G` x-coordinate
+`c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5` and its
+even-Y parity. The expected point is fixed known-answer data; it is not
+constructed through `ecmult_gen`, `ecmult`, a public tweak operation, or the
+fuzzer's affine model.
+
+This is intentionally a separate internal-path check from the ECDH
+generator-two vector. The ECDH fixture validates the public ECDH callback and
+hash boundary; this fixture binds the constant-time multiplication
+implementation itself. The existing affine oracle uses a production
+generator-derived base for its arbitrary scalar, so a shared generator-output
+mistake could otherwise make that model agree with the multiplication under
+test.
+
+For causal proof, a temporary mutation in `src/ecmult_const_impl.h` replaced
+the result with valid point `G` only when the exact base pointer was
+`&secp256k1_ge_const_g` and the scalar equaled two. A trigger-only return
+skipped the older random checks. The new seed aborted with status 134 on
+native 5x52 and forced-int64/10x26, while all seven pre-existing
+`ecmult_const` seeds completed with status 0 on both backends. Because the
+replacement remains a valid curve point, the failure is attributable to the
+fixed coordinate/parity postcondition rather than an internal validity check.
+The mutation and isolation return were removed before restored replay. An
+initial replay also caught and fixed a harness-side missing normalization
+before calling `secp256k1_fe_is_odd`; that precondition error was not used as
+proof.
+
+Restored Clang 22.1.7 ASan/UBSan replays passed all eight corpus files plus
+the empty execution: nine runs on each backend. Private `-fork=2` campaigns
+completed three jobs in about 11 seconds on native and forced-int64, with zero
+OOM/timeout/crash counts and no artifact. Branch `tests`, `noverify_tests`,
+and the forced-int64 EC test slice passed; clean-master `tests -t=ec -i=1`
+also passed.
+
+Clean `origin/master` was `11dad6d`; its older CMake fuzz configuration has
+no `fuzz_ecmult_const` target, so a raw clean-master fuzzer replay was
+unavailable. No clean-master production mismatch was confirmed. This is
+**Informational / oracle hardening**, with no production fix or severity
+change. Severity remains master-relative; clearing a public or
+non-cryptographic nonce buffer is not a Critical finding.
 
 ## 2026-07-17 Fixed Generator Vector for Recoverable ECDSA
 
