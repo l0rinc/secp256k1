@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -9174,3 +9174,35 @@ external-callback native, and external-callback forced-int64/10x26 Clang
 ASan/UBSan builds. The static-context unit and no-VERIFY slices passed as
 well. The mutation was restored before commit and no production behavior
 changed.
+
+## 2026-07-17 Static Context Public Combine Boundary
+
+The `api_roundtrip/static-context-public-combine` fixture now parses fixed
+compressed SEC1 encodings for `G`, `2G`, and `-G` through
+`secp256k1_context_static`. It checks `G + 2G = 3G` against the fixed
+compressed `3G` wire vector in both operand orders, then checks that `G + -G`
+returns failure and zeroes the opaque output. The expected result is therefore
+independent of the fuzzer's generated secret keys and of a dynamic-context
+combine call.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. The public header does not restrict `secp256k1_ec_pubkey_combine` to
+proper writable contexts, and the deterministic suite covered the operation
+only with its writable test context. No master-relative severity changes: the
+existing malformed opaque state, callback-failure memory-safety, and secret
+state lifetime findings remain **Medium** where proven; the forced-int64
+magnitude boundary remains **Medium/latent**; bounded/documented alias cases
+remain **Low/latent**; cleanup and model checks remain **Informational**. A
+public or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+For causal proof, a disposable
+`ARG_CHECK(ctx != secp256k1_context_static);` was inserted immediately after
+the context check in `secp256k1_ec_pubkey_combine`. The exact fixture exited
+134 under the external-callback Clang ASan/UBSan build with `-handle_abrt=0`.
+After restoring the production code, the complete 48-file API-roundtrip
+corpus passed with `-workers=2 -jobs=2 -runs=1 -timeout=60
+-rss_limit_mb=0` on native 5x52, external-callback native, and
+external-callback forced-int64/10x26. The combine-focused deterministic test
+`ec_illegal_argument_tests` passed with one iteration on all three builds.
+The mutation was restored before commit and no production behavior or severity
+rating changed.
