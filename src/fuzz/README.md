@@ -9419,3 +9419,23 @@ the documented magnitude-32 state is reached; it is not a demonstrated
 remote key or signature vulnerability. The fork follow-up therefore adds no
 new finding and does not reduce the original severity or hide the zero-
 predicate bug behind its normalize repair.
+
+## 2026-07-17 MuSig MemorySanitizer Worker Campaign
+
+The current audit tree was built with Clang 22.1.7 MemorySanitizer and origin
+tracking using `-fsanitize=memory -fsanitize-memory-track-origins=2` and
+`-fno-omit-frame-pointer`, with assembly disabled and the libFuzzer runtime
+enabled. The complete 68-file MuSig corpus was copied to a disposable
+directory and replayed with `-runs=1 -timeout=60 -rss_limit_mb=0`. Every seed
+completed with exit zero under `MSAN_OPTIONS=halt_on_error=1:abort_on_error=1`
+and `UBSAN_OPTIONS=halt_on_error=1`.
+
+The same corpus then ran with `-verbosity=0 -workers=2 -jobs=2
+-max_total_time=30 -timeout=60 -rss_limit_mb=0 -handle_abrt=0`. Both jobs
+loaded all 68 seeds and exited zero; no MSan/UBSan diagnostic, assertion,
+timeout, OOM, or crash artifact was produced. Temporary corpus and artifact
+directories were kept outside the repository. This is negative sanitizer
+evidence, not proof that clean master is defect-free and not a new production
+finding; the existing master-relative Medium, Medium/latent, Low/latent, and
+Informational ratings remain unchanged. A public or non-cryptographic nonce
+buffer is not a Critical erasure finding.
