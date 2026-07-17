@@ -7147,3 +7147,23 @@ inputs to pass on native and forced-int64 ASan/UBSan. No new clean-master
 production defect or severity change was found. Existing findings remain
 rated against unmodified master, and a nonce without cryptographic meaning is
 not a Critical erasure finding.
+
+## 2026-07-17 Public-Module Worker Recheck
+
+The refreshed native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan
+binaries ran `fuzz_api_roundtrip`, `fuzz_ecdh`, `fuzz_recovery`, and
+`fuzz_schnorrsig` with two workers, value profiling, entropic scheduling,
+`-reduce_inputs=0`, `-rss_limit_mb=0`, and a 25-second manager budget. Each
+manager used a private copy of its tracked corpus: 44 API, 6 ECDH, 11
+recovery, and 14 Schnorr inputs per backend. All eight managers exited 0 with
+no sanitizer diagnostic, fuzzer assertion, timeout, OOM, or crash artifact;
+the resulting corpus growth stayed outside the repository. The native and
+forced-int64 `tests -t=ecdh -t=recovery -t=schnorrsig -i=4` subsets also
+passed.
+
+This is a negative recheck of the existing independent ECDSA, recovery,
+ECDH-hash, Schnorr-equation, callback, parser, and state-cleanup oracles, not
+a new production finding. The clean-master ledger remains authoritative:
+severity is rated against unmodified master and is not lowered by a later
+branch fix or by this campaign. A public or non-cryptographic nonce buffer is
+not a Critical erasure finding.
