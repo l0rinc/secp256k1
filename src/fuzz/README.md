@@ -9384,3 +9384,38 @@ finding or master-relative severity change was established. Existing
 malformed-state, callback-failure, secret-state-lifetime, and forced-int64
 arithmetic findings retain their recorded ratings; public or
 non-cryptographic nonce material is not a Critical erasure finding.
+
+## 2026-07-17 l0rinc 10x26 Follow-up Reconciliation
+
+The fetched fork branch `l0rinc/l0rinc/field-10x26-normalize-overflow`
+points to `b938a5d` (`field_10x26: avoid normalize overflow`). It was reviewed
+against the current audit branch and deliberately not cherry-picked: the
+branch already contains the same production behavior in two independently
+documented commits. `0d03dda` repairs the first-pass carry in
+`normalize`, `normalize_var`, and `normalize_weak`; `0346c09` separately
+repairs both `normalizes_to_zero` predicates, adds the exact false-zero corpus
+unit, and keeps an independent canonical-byte oracle. The current source also
+contains the later word-serialization change, so applying `b938a5d` directly
+would conflict with unrelated edits and replace stronger split regression
+coverage with an alternate formulation.
+
+The arithmetic formulations are equivalent: the fork's
+`x * 0x1000003D1ULL` combines the current implementation's
+`x * 0x3D1UL` and `(x << 6)` carry into one 64-bit expression. All five
+affected paths are covered in the current tree. The detached `b938a5d` tree
+passed `tests -t=fe_normalize_max_magnitude` and its complete randomized test
+binary under forced-int64/10x26. The current fixed tree passed the same
+focused test in both default and forced-int64 Clang ASan/UBSan builds, and all
+20 tracked field corpus inputs passed in the forced-int64 sanitizer binary.
+
+The clean-master severity proof was repeated at current `origin/master`
+`11dad6d`: a disposable test-only replay of the exact nonzero state
+`n[0]=0xffff0f91`, `n[1]=0xfffff040`, `n[9]=0x0fc00000` aborted at the first
+`normalizes_to_zero` assertion with exit 134 under forced-int64/10x26. The
+state represents `63*p + 2^58 + 2^32`, whose canonical residue is
+`2^58 + 2^32`. This remains a distinct **Medium/latent internal field
+correctness** finding on master, with potentially High arithmetic impact if
+the documented magnitude-32 state is reached; it is not a demonstrated
+remote key or signature vulnerability. The fork follow-up therefore adds no
+new finding and does not reduce the original severity or hide the zero-
+predicate bug behind its normalize repair.
