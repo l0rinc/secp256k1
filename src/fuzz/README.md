@@ -8317,3 +8317,20 @@ remain the same ancestor, so no rebase or additional cherry-pick is required.
 This campaign found no new clean-master defect or master-relative severity
 change. Existing findings remain rated against unmodified master, and a public
 or non-cryptographic nonce buffer is not a Critical erasure finding.
+
+## 2026-07-17 ECDH and EllSwift Worker Recheck
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds replayed the
+complete `ecdh` corpus (7 inputs) and `ellswift` corpus (15 inputs) with four
+workers per target using
+`-fork=4 -jobs=4 -max_total_time=30 -timeout=60 -rss_limit_mb=0`.
+All 16 workers exited 0. ECDH exercised shared-point symmetry, built-in and
+custom hash callbacks, invalid scalar handling, and output cleanup. EllSwift
+exercised encoding/decoding, modulo aliases, randomizer influence, inverse
+branches, XDH callbacks, and zero-`u`/failure cleanup. Every worker reported
+`oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or artifact was produced
+on either backend.
+
+This campaign found no new clean-master defect or master-relative severity
+change. Existing findings remain rated against unmodified master, and a public
+or non-cryptographic nonce buffer is not a Critical erasure finding.
