@@ -227,6 +227,56 @@ static int secp256k1_fuzz_recovery_nonce_one(unsigned char *nonce32, const unsig
     return 1;
 }
 
+/* The recoverable signer has a 65-byte output, including recid. Check exact
+ * message/output and seckey/output aliases against fixed wire data so an
+ * early output write cannot be masked by the same signing implementation. */
+static void secp256k1_fuzz_check_sign_recoverable_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "recoverable sign input-output overlap\n";
+    static const unsigned char generator_x32[32] = {
+        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
+        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
+        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
+        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98
+    };
+    static const unsigned char zero32[32] = { 0 };
+    union {
+        secp256k1_ecdsa_recoverable_signature sig;
+        unsigned char bytes[sizeof(secp256k1_ecdsa_recoverable_signature)];
+    } alias;
+    secp256k1_fuzz_recovery_nonce_data nonce_data;
+    unsigned char compact[64];
+    int recid;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    nonce_data.self = &nonce_data;
+    nonce_data.expected_msg32 = zero32;
+    nonce_data.expected_key32 = secp256k1_fuzz_scalar_one;
+    nonce_data.calls = 0;
+
+    /* With z = 0 and d = k = 1, r = s = x(G) and the recovery id is zero. */
+    memset(&alias, 0xA5, sizeof(alias));
+    memcpy(alias.bytes, zero32, sizeof(zero32));
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &alias.sig, alias.bytes, secp256k1_fuzz_scalar_one, secp256k1_fuzz_recovery_nonce_one, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, compact, &recid, &alias.sig) == 1);
+    FUZZ_CHECK(recid == 0);
+    FUZZ_CHECK(memcmp(compact, generator_x32, sizeof(generator_x32)) == 0);
+    FUZZ_CHECK(memcmp(compact + 32, generator_x32, sizeof(generator_x32)) == 0);
+
+    nonce_data.calls = 0;
+    memset(&alias, 0xA5, sizeof(alias));
+    memcpy(alias.bytes, secp256k1_fuzz_scalar_one, sizeof(secp256k1_fuzz_scalar_one));
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &alias.sig, zero32, alias.bytes, secp256k1_fuzz_recovery_nonce_one, &nonce_data) == 1);
+    FUZZ_CHECK(nonce_data.calls == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, compact, &recid, &alias.sig) == 1);
+    FUZZ_CHECK(recid == 0);
+    FUZZ_CHECK(memcmp(compact, generator_x32, sizeof(generator_x32)) == 0);
+    FUZZ_CHECK(memcmp(compact + 32, generator_x32, sizeof(generator_x32)) == 0);
+}
+
 static int secp256k1_fuzz_recovery_nonce_fail(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
     secp256k1_fuzz_recovery_nonce_data *nonce_data = (secp256k1_fuzz_recovery_nonce_data *)data;
 
@@ -816,6 +866,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     secp256k1_fuzz_check_recovery_generator_vector(ctx, input, size);
     secp256k1_fuzz_check_static_context_recovery(ctx, input, size);
+    secp256k1_fuzz_check_sign_recoverable_input_output_alias(ctx, input, size);
 
     secp256k1_fuzz_recovery_sha256_compression_calls = 0;
     secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_recovery_sha256_compression);
