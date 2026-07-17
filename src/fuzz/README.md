@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, a fixed ECDSA verification-infinity transition, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and a standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -7964,3 +7964,61 @@ No production mutation was used to claim a new issue in this recheck. The
 previous mutation-backed findings and deterministic tests remain the required
 proof for the production fixes; no finding is considered closed merely because
 a minor follow-up commit masks the triggering state.
+
+## 2026-07-17 ECDSA Verification-Infinity Oracle
+
+Coverage of the 44 pre-existing `api_roundtrip` corpus inputs did not reach
+the explicit `secp256k1_ecdsa_sig_verify` identity rejection at
+`src/ecdsa_impl.h:215`. The new gated input
+`api_roundtrip/ecdsa-verification-infinity` is the exact ASCII string
+`ecdsa verification infinity` followed by a newline. It constructs the
+generator `Q = G`, compact scalars `r = 1` and `s = 1`, and the valid message
+scalar `z = n - 1`. Verification therefore computes
+`u1*G + u2*Q = (-1)*G + 1*G = infinity`; the signature is parseable and low-S,
+so this reaches the identity transition rather than an earlier scalar guard.
+The assertion requires the public verifier to return zero.
+
+For causal proof, the production guard was temporarily changed from
+`if (secp256k1_gej_is_infinity(&pr))` to `if (0 &&
+secp256k1_gej_is_infinity(&pr))`. The exact seed aborted with status 134 at
+`src/group_impl.h:421` on native 5x52 and forced-int64/10x26 Clang 22
+ASan/UBSan builds. All 44 pre-existing API inputs stayed green under the same
+mutation on both backends. The mutation was restored before the fixed replay.
+
+The restored target passed all 45 API corpus inputs, including the new seed,
+on both sanitizer backends; the exact focused seed also passed independently.
+The coverage replay recorded the infinity branch as taken twice (and the
+non-infinity path 996 times) in `ecdsa_impl.h`, making the new state transition
+visible in the report rather than merely relying on the mutation result.
+Clean `origin/master` at `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` already has
+the production rejection, so this is **Informational / Low master-relative
+oracle hardening**, not a new production vulnerability or fix. It is not
+downgraded or upgraded by later audit commits, and no nonce-erasure claim is
+involved: a public or otherwise non-cryptographic nonce buffer is not a
+Critical finding.
+
+## 2026-07-17 l0rinc PR 16 and RFC6979 Ref Reconciliation
+
+The latest `git fetch --all --prune` exposed
+`l0rinc/l0rinc/field-10x26-normalize-overflow` at `b938a5d` (PR 16) and
+`l0rinc/l0rinc/rfc6979-reject-max-counter` at `7b47f1f`. Neither requires a
+rebase or an additional cherry-pick on `codex/fuzz-oracles`:
+
+- PR 16 repairs 64-bit carry propagation in 10x26 normalization. Its patch
+  is not byte-identical to this branch's `0d03dda` normalization repair and
+  `0346c09` zero-predicate repair, but those commits cover the same boundary
+  with a broader independent byte/reference oracle and a mutation-backed
+  zero-predicate seed. The clean-master issue remains **Medium/latent** and
+  is not considered absent merely because either patch makes a later replay
+  pass.
+- The RFC6979 branch adds the maximum-counter rejection already represented by
+  `6fa1dbc`, which also clears failure output and has the dedicated
+  `api_roundtrip/rfc6979-counter-max` corpus input. The public callback's
+  output is not cryptographic secret state; its clearing is stale-output
+  hygiene and is not Critical severity.
+
+The exact patch IDs differ because the audit commits retain the current-master
+behavioral context and add stronger proofs. These fork refs were compared as
+discovery-order evidence, not used to claim that clean master was safe. Any
+future fork fix that changes the triggering behavior must be recorded beside
+the affected finding and replayed with the original master-relative mutation.
