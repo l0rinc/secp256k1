@@ -86,6 +86,55 @@ static void secp256k1_fuzz_check_tagged_sha256(const secp256k1_context *ctx, con
     FUZZ_CHECK(memcmp(hash32_static, expected, sizeof(hash32_static)) == 0);
 }
 
+/* Exercise output/input overlap while comparing against the standalone
+ * transcript reference. The public API does not state a non-overlap
+ * precondition, and the implementation consumes both inputs before writing
+ * the final 32-byte digest. */
+static void secp256k1_fuzz_check_tagged_sha256_output_overlap(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "tagged sha256 output overlap\n";
+    unsigned char tag_and_output[64];
+    unsigned char message[96];
+    unsigned char tag[40];
+    unsigned char message_and_output[96];
+    unsigned char expected[32];
+    const size_t taglen = sizeof(tag);
+    const size_t msglen = 73;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < sizeof(tag_and_output); i++) {
+        tag_and_output[i] = (unsigned char)(0x17u + 37u * i);
+    }
+    for (i = 0; i < sizeof(message); i++) {
+        message[i] = (unsigned char)(0x2bu + 19u * i);
+    }
+    secp256k1_fuzz_tagged_sha256_reference(expected, tag_and_output, taglen, message, msglen);
+    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, tag_and_output, tag_and_output, taglen, message, msglen) == 1);
+    FUZZ_CHECK(memcmp(tag_and_output, expected, sizeof(expected)) == 0);
+    for (i = sizeof(expected); i < sizeof(tag_and_output); i++) {
+        FUZZ_CHECK(tag_and_output[i] == (unsigned char)(0x17u + 37u * i));
+    }
+
+    for (i = 0; i < sizeof(tag); i++) {
+        tag[i] = (unsigned char)(0x43u + 29u * i);
+    }
+    for (i = 0; i < sizeof(message_and_output); i++) {
+        message_and_output[i] = (unsigned char)(0x71u + 11u * i);
+    }
+    secp256k1_fuzz_tagged_sha256_reference(expected, tag, taglen, message_and_output, msglen);
+    FUZZ_CHECK(secp256k1_tagged_sha256(ctx, message_and_output + 8, tag, taglen, message_and_output, msglen) == 1);
+    FUZZ_CHECK(memcmp(message_and_output + 8, expected, sizeof(expected)) == 0);
+    for (i = 0; i < 8; i++) {
+        FUZZ_CHECK(message_and_output[i] == (unsigned char)(0x71u + 11u * i));
+    }
+    for (i = 8 + sizeof(expected); i < sizeof(message_and_output); i++) {
+        FUZZ_CHECK(message_and_output[i] == (unsigned char)(0x71u + 11u * i));
+    }
+}
+
 static void secp256k1_fuzz_check_tagged_sha256_compression(const secp256k1_context *ctx, const unsigned char *tag, size_t taglen, const unsigned char *msg, size_t msglen, int expect_custom_compression) {
     unsigned char expected[32];
     unsigned char hash32[32];
@@ -544,6 +593,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input, 0, input, 0);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input, size, input, size);
     secp256k1_fuzz_check_tagged_sha256(ctx, clone, input + tag_offset, taglen, input + msg_offset, msglen);
+    secp256k1_fuzz_check_tagged_sha256_output_overlap(ctx, input, size);
     secp256k1_fuzz_check_tagged_sha256(prealloc_ctx, prealloc_clone, input + tag_offset, taglen, input + msg_offset, msglen);
     secp256k1_fuzz_check_tagged_sha256_impossible_lengths(ctx, input + tag_offset, input + msg_offset);
     secp256k1_fuzz_check_tagged_sha256_null_inputs(ctx, input, input);
