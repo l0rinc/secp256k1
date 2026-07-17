@@ -9140,3 +9140,37 @@ control exited 0. The restored 12-file context corpus passed with
 Clang ASan/UBSan builds. The static-context unit and no-VERIFY slices also
 passed. The mutation was restored before this commit and no production
 behavior changed.
+
+## 2026-07-17 Static Context SHA Backend Barrier
+
+The existing `context/static-context-lifecycle` seed now also calls
+`secp256k1_context_set_sha256_compression(secp256k1_context_static, NULL)` and
+requires exactly one additional default illegal callback. This closes the
+remaining context-lifecycle hole around the mutable SHA backend: the setter
+must reject the actual read-only singleton before `secp256k1_hash_ctx_init`
+could write its state. The check is kept in the external-default-callback
+configuration because the ordinary default callback aborts by design.
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. The setter's documented input is a context object, while its
+implementation requires a proper writable context; the existing deterministic
+SHA callback tests exercised dynamically allocated contexts only. No
+master-relative severity changes: malformed opaque state, callback-failure
+memory safety, and secret-state lifetime remain **Medium** where proven; the
+forced-int64 magnitude boundary remains **Medium/latent**; bounded/documented
+alias cases remain **Low/latent**; cleanup and model checks remain
+**Informational**. A public or non-cryptographic nonce buffer is not a
+Critical erasure finding.
+
+For causal proof, a disposable mutation changed only
+`ARG_CHECK_VOID(secp256k1_context_is_proper(ctx))` in
+`secp256k1_context_set_sha256_compression` to `ARG_CHECK_VOID(1)`. The exact
+existing lifecycle seed then produced an ASan write-side `SEGV` in the static
+singleton; the restored control exited zero. This is the intended causal
+failure: the guard prevents a setter that writes `hash_ctx` from reaching the
+read-only object. After restoration, the focused seed and complete 12-file
+context corpus passed with two workers and two jobs on native 5x52,
+external-callback native, and external-callback forced-int64/10x26 Clang
+ASan/UBSan builds. The static-context unit and no-VERIFY slices passed as
+well. The mutation was restored before commit and no production behavior
+changed.
