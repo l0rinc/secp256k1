@@ -676,10 +676,12 @@ domain construction, sanitizer-only issue, or already-covered behavior.
 ## Current-Master Finding Ledger
 
 The entries below preserve the severities recorded against their historical
-clean-master snapshots. For current decisions, the authoritative baseline is
-`origin/master` at `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, which is also the
-current `l0rinc/master` as of 2026-07-17. The current-master replays and
-follow-up sections below reassess findings against that revision. A later
+clean-master snapshots. For current decisions, the authoritative upstream
+baseline is `origin/master` at
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, which includes `e217ead`
+(`field: serialize elements by word`). Historical replay references to
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` remain evidence for the earlier
+master state; `l0rinc/master` still points there as of 2026-07-18. A later
 minor fix must not be allowed to hide a more serious master failure. Every
 production finding has a focused corpus and a mutation or deterministic proof
 documented in its commit message.
@@ -6658,7 +6660,9 @@ than test clean master independently:
 13308e3  -> 6920d56   clear failed MuSig aggregate signature output
 51e93c4  -> 6920d56   same MuSig fix from the alternate detached parent
 b5e6108  -> cad8e5b   parse DER lengths with offsets
-e217ead  -> 6f602e7   serialize field elements by word
+e217ead  -> upstream    serialize field elements by word; the identical
+                         earlier audit commit `6f602e7` was dropped by the
+                         2026-07-18 rebase because its patch is now upstream
 a2a0ac2  -> 45d05f7,
              dc14cb7  preserve documented overlapping tweak inputs
 d1dca5c  -> c51b255  reject invalid loaded public keys, with stronger
@@ -10477,3 +10481,99 @@ contains the correct `rzr == 1` write, so this commit claims no production
 bug or fix and no cryptographic impact. It records a deterministic guard for
 a documented internal transition whose failure would otherwise be silently
 masked.
+
+## 2026-07-18 Master Rebase and Field Serialization Replay
+
+`git fetch --all --prune` advanced `origin/master` to
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`. Its behavior-bearing change is
+`e217ead` (`field: serialize elements by word`), which replaces the older
+byte-at-a-time field serializers in both 5x52 and 10x26 with word packing and
+the endian-write helpers. The audit branch had previously carried the
+5x52-only equivalent as `6f602e7`; `git rebase origin/master` completed
+without conflicts and correctly dropped that duplicate patch. `l0rinc/master`
+remains at the historical `11dad6d` baseline, so there is no new fork commit
+to cherry-pick.
+
+The rebased tree rebuilt `fuzz_field`, `tests`, and `noverify_tests` in native
+5x52 and forced-int64/10x26 Clang ASan/UBSan configurations. The four targeted
+field unit slices (`tests` and `noverify_tests` on both backends) passed. Each
+backend then ran its copied field corpus with isolated logs and artifacts using
+`-fork=2 -max_total_time=90 -timeout=30`; both exited zero with no sanitizer
+diagnostic, timeout, OOM, crash, or artifact.
+
+The highest-state public API corpora were also replayed from private copies
+after the rebase: `api_roundtrip` (49 tracked inputs), `schnorrsig` (15),
+`recovery` (14), and `musig` (72). Native 5x52 and forced-int64/10x26
+ASan/UBSan builds each ran every target with:
+
+```
+-fork=2 -max_total_time=60 -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+All eight managers exited zero with no sanitizer
+diagnostic, assertion failure, timeout, OOM, crash, or artifact. LibFuzzer
+generated additional inputs only in the disposable copied corpora; no tracked
+corpus file changed. This is negative state-transition evidence after the
+rebase, not a new oracle or master defect.
+
+The boundary-heavy public and internal corpora were then replayed from private
+copies: `context` (13 tracked inputs), `xonly_tweak` (15), `ecdh` (8),
+`ellswift` (16), and `ecmult_multi` (27). Native 5x52 and forced-int64/10x26
+ASan/UBSan builds ran each target with:
+
+```
+-fork=2 -max_total_time=45 -timeout=45 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+All ten managers exited zero. The artifact directories remained empty, the
+logs showed only normal libFuzzer progress lines with zero
+OOM/timeout/crash counters, and no sanitizer, assertion, timeout, OOM, crash,
+or artifact was observed. Generated corpus additions stayed in the disposable
+copies. This adds post-rebase evidence for the context randomization/clone,
+x-only tweak, ECDH/EllSwift callback, and multi-multiplication state
+transitions without changing any master-relative severity rating.
+
+The remaining arithmetic and hash corpora were replayed the same way from
+private copies: `hash` (10 tracked inputs), `scalar` (7), `group` (23),
+`ecmult_const` (9), and `field` (20). Native 5x52 and forced-int64/10x26
+ASan/UBSan builds ran each target with the same
+`-fork=2 -max_total_time=45 -timeout=45` strict failure settings. All ten
+managers exited zero; artifact directories were empty, logs contained only
+normal progress records with zero OOM/timeout/crash counters, and no
+sanitizer, assertion, timeout, OOM, crash, or artifact was observed. Generated
+units remained in disposable copied corpora. Together with the field-specific
+90-second replay above, this completes the post-rebase copied-corpus
+sanitizer check for every tracked target and backend.
+
+This records an upstream performance/maintainability change and its rebase
+verification only. It neither changes a historical clean-master finding nor
+alters any severity rating; a later upstream optimization must not be used to
+erase the earlier master-relative evidence.
+
+### PR #8 Broad-Hardening Reconciliation
+
+The full `l0rinc/pr/8` head was rechecked after the rebase, including its
+`104f53e` "harden edge cases found in vulnerability review" commit. Its
+behavior-bearing changes are already present here through the dedicated
+master-relative fixes and stronger follow-ups: scalar bit bounds, generic WNAF
+width checks, ECDSA range assertion, NULL-`ng` multiplication, rescale alias
+protection, EllSwift invalid-secret handling, field conditional-move masking,
+and context input guards. The inherited optimization stack is still not
+cherry-picked wholesale because it changes failure/cleanup behavior used by
+the causal master replays.
+
+The only textual source difference left from `104f53e` is the type of local
+`w` in the two variable-time `modinv64` divstep helpers. Current master uses
+`uint32_t`; the fork used `uint64_t`. This cannot change behavior: each
+assignment is immediately masked by `m`, where the negative-eta path makes
+`m <= 63` and the other path makes `m <= 15`. Thus the stored value always
+fits exactly in `uint32_t`; no input, sanitizer configuration, or production
+path can distinguish the declarations. This is not a production bug,
+hardening gap, or oracle candidate.
+
+The focused `modinv_tests` target passed at 16 iterations in `tests` and
+`noverify_tests` under both native 5x52 and forced-int64/10x26 Clang
+ASan/UBSan builds. No source patch was taken from this portion of PR #8, and
+there is no master-relative finding or severity change. This explicit negative
+result prevents a future fork replay from treating the type-only difference as
+a new vulnerability.
