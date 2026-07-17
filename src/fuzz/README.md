@@ -20,7 +20,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, second derived-nonce scalar zero rejection, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -10297,3 +10297,44 @@ the clean production path is correct, no production fix is claimed, and the new
 fixture only makes a rare scalar state deterministic. Existing clean-master
 Medium and latent arithmetic findings remain separately rated; this result does
 not downgrade or mask them.
+
+## 2026-07-17 Finite MuSig Nonce-Cancellation Oracle
+
+The `musig/finite-nonce-cancellation` fixture drives
+`secp256k1_musig_nonce_process` with two finite aggregate-nonce components
+`[R1, R2] = [G, -G]`. The existing compression-hook machinery forces the
+`MuSig/noncecoef` transcript to the scalar one, so the effective nonce reaches
+infinity through a finite group addition. The session must then use the BIP327
+fallback generator `G`, including its x-only parity and serialized x-coordinate.
+The oracle also requires that the nonce-coefficient and challenge compression
+callbacks were actually reached and that the serialized coefficient is one.
+
+This is distinct from the mixed-infinity and all-infinity fixtures: those enter
+the identity path before a finite cancellation. It is also distinct from the
+zero-coefficient fixture, which checks that `0 * R2` is ignored. The hook
+recognizes the nonce transcript's exact final SHA length block (`64 + 130`
+bytes, bit length `0x610`) rather than assuming that the hash implementation
+delivers the transcript in one multi-block callback.
+
+For causal proof, a disposable mutation in
+`src/modules/musig/session_impl.h` replaced the fallback `G` with `R2` only
+when both input points were finite, the effective coefficient was exactly one,
+and the addition had reached infinity. The focused input aborted with exit 134
+on native 5x52 and forced-int64/10x26 ASan/UBSan builds. All 69 pre-existing
+MuSig corpus files passed under that mutation on both backends. With production
+restored, all 70 corpus files passed single-process replay on both backends;
+two-worker/two-job campaigns ran 71 executions per job and all jobs exited zero.
+
+Clean master `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` passed an isolated
+ASan/UBSan projection of the same fixture. Applying the same finite-only
+mutation to that clean checkout caused the projection to abort, confirming the
+fixture is checking an existing master-branch transition rather than claiming
+a new production defect. The restored MuSig unit/vector suite passed all 22
+ordinary and no-verify tests.
+
+Master-relative severity is **Informational / Low internal-oracle hardening**:
+the clean production fallback is correct, no production fix is claimed, and no
+cryptographic nonce disclosure or public API vulnerability is inferred. The
+existing master-relative Medium findings remain independently rated; this
+fixture prevents a rare finite cancellation from being hidden behind only the
+identity-input oracle.
