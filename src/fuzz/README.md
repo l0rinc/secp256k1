@@ -9363,3 +9363,24 @@ production timeout or availability finding. Generated mutation units were
 discarded. No clean-master production finding or severity change was
 established; the existing Medium/Medium-latent, Low/latent, Informational,
 and non-Critical nonce-cleanup ratings remain in force.
+
+## 2026-07-17 Ecmult-Multi and Full-Test Verification
+
+The current 24-file `ecmult_multi` corpus was replayed from isolated copies
+with `-workers=2 -jobs=2 -max_total_time=30 -timeout=60 -rss_limit_mb=0
+-handle_abrt=0`. Native 5x52 jobs completed 82 and 85 executions,
+external-callback native jobs completed 117 each, and external-callback
+forced-int64/10x26 jobs completed 35 and 36. Every job exited zero without a
+sanitizer report, oracle failure, crash, or command-level timeout. The
+forced-int64 jobs recorded the existing `pippenger window 1261` input as an
+11-second libFuzzer slow unit; the generated slow-unit files were discarded
+with the temporary corpus. This is expensive independent-reference work,
+not a production availability finding.
+
+After the rebase check, the current Clang ASan/UBSan build also passed all 224
+CTest cases with `ctest --output-on-failure -j2`, including verify and
+no-verify slices and all enabled optional modules. No clean-master production
+finding or master-relative severity change was established. Existing
+malformed-state, callback-failure, secret-state-lifetime, and forced-int64
+arithmetic findings retain their recorded ratings; public or
+non-cryptographic nonce material is not a Critical erasure finding.
