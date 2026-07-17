@@ -1391,6 +1391,52 @@ static void secp256k1_fuzz_ecmult_multi_repeated_pippenger_batches(const secp256
     secp256k1_scratch_destroy(&ctx->error_callback, scratch);
 }
 
+/* Strauss also filters zero-scalar and infinity-point terms before building
+ * its WNAF state. Keep its all-filtered identity return deterministic rather
+ * than relying on a random scalar to happen to be zero. */
+static void secp256k1_fuzz_ecmult_multi_all_filtered_strauss(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "strauss all filtered terms\n";
+    const size_t n_points = 2;
+    const secp256k1_scalar *generator_scalars[2] = { NULL, &secp256k1_scalar_zero };
+    secp256k1_fuzz_ecmult_multi_repeat_data data;
+    secp256k1_scratch *scratch;
+    secp256k1_gej result;
+    secp256k1_scalar point_scalar;
+    size_t checkpoint;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    scratch = secp256k1_scratch_create(&ctx->error_callback,
+        secp256k1_strauss_scratch_size(n_points) + STRAUSS_SCRATCH_OBJECTS * ALIGNMENT);
+    FUZZ_CHECK(scratch != NULL);
+
+    for (i = 0; i < sizeof(generator_scalars) / sizeof(generator_scalars[0]); i++) {
+        memset(&data, 0, sizeof(data));
+        if (i == 0) {
+            secp256k1_scalar_set_int(&data.sc, 0);
+            secp256k1_scalar_set_int(&point_scalar, 2);
+            secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &data.pt, &point_scalar);
+            secp256k1_scalar_clear(&point_scalar);
+        } else {
+            secp256k1_scalar_set_int(&data.sc, 1);
+            secp256k1_ge_set_infinity(&data.pt);
+        }
+        checkpoint = scratch->alloc_size;
+        secp256k1_fuzz_ecmult_multi_repeat_reset_trace(&data);
+        memset(&result, 0xA5, sizeof(result));
+        FUZZ_CHECK(secp256k1_ecmult_strauss_batch_single(&ctx->error_callback, scratch, &result,
+            generator_scalars[i], secp256k1_fuzz_ecmult_multi_repeat_callback, &data, n_points) == 1);
+        FUZZ_CHECK(scratch->alloc_size == checkpoint);
+        secp256k1_fuzz_ecmult_multi_repeat_check_trace(&data, n_points);
+        secp256k1_fuzz_ecmult_multi_check_canonical_infinity(&result);
+    }
+
+    secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+}
+
 static void secp256k1_fuzz_ecmult_multi_repeated_strauss(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_repeat_data data;
     secp256k1_scratch *scratch;
@@ -1626,6 +1672,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_ecmult_multi_distinct_pippenger_batches(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_pippenger_window_boundary(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_pippenger_window_10(ctx, input, size);
+    secp256k1_fuzz_ecmult_multi_all_filtered_strauss(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_strauss(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
