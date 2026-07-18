@@ -15736,6 +15736,82 @@ downgrading a finding. The private corpus and artifacts were removed after
 the final process check, and no fuzz, sanitizer, compiler, or test process
 remains running.
 
+## 2026-07-18 ECMULT multi-batch timeout triage and backend recheck
+
+This pass rechecked the 29 tracked `src/fuzz/corpora/ecmult_multi` inputs,
+which cover no-scratch and scratch-backed calls, Strauss and Pippenger batch
+boundaries, filtered zero/infinity terms, generator retention, callback
+failure output, scratch checkpoints and allocation overflow, direct batch
+helpers, and equality/callback state. The first native four-worker wrapper
+used a 180-second outer guard and was incomplete: it ended with exit 124
+while a worker was still processing the large deterministic fixtures. That
+run is retained as orchestration evidence only and is not called clean.
+
+The definitive native replay used a longer outer guard and a shorter
+per-input threshold:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-oracles-external/bin/fuzz_ecmult_multi \
+      /tmp/codex-next-ecmult4-rerun -fork=4 -jobs=4 -max_total_time=45 \
+      -timeout=10 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecmult4-rerun-artifacts/ \
+      -print_final_stats=1
+
+All four jobs exited 0 and reported `oom/timeout/crash: 0/0/0`, with no
+ASan, UBSan, runtime, or crash diagnostic. The shorter threshold intentionally
+exposed a `slow-unit` file and a `timeout` file containing the exact tracked
+input `pippenger window 1261\n`; the manager's zero exit does not make those
+files disappear, so they are recorded rather than ignored. The same input
+replayed once with `-timeout=180` in 7172 ms on native 5x52. The forced-int64
+ASan/UBSan backend used two workers:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-next-asan-int64/bin/fuzz_ecmult_multi \
+      /tmp/codex-next-ecmult-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=10 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecmult-int64-artifacts/ \
+      -print_final_stats=1
+
+Both int64 jobs exited 0 with no sanitizer diagnostic. The same exact input
+took 11813 ms with `-timeout=180`, and 11800 ms with `-timeout=20`; the
+`-timeout=20` replay exited 0 with no artifact. Therefore the timeout artifact
+is a threshold/performance observation, not a crash or a production timeout
+under the normal 20-second policy. The 1261-point fixture is constructed by
+the fuzzer's fixed `pippenger-window-1261` trigger; it is not a caller-
+controlled `n_points` value exposed by Bitcoin Core's public block, witness,
+or peer paths.
+
+No production bug, deterministic regression test, or severity change is
+claimed. `ecmult_multi_var` is internal machinery used underneath public
+elliptic-curve operations, so an actual arithmetic, memory, or state failure
+reached through invalid block/witness verification would be High/Critical
+according to demonstrated consensus impact. The existing clean-master
+scratch-size overflow remains **Medium / confirmed internal memory safety
+with low current Core reachability**; the callback-failure stale-result issue
+remains **Low internal/API correctness** because Core's relevant callback
+contracts validate and return success. The observed slow unit is
+Informational harness-performance evidence, not a remote denial-of-service
+finding. An uncleared nonce with no standalone cryptographic meaning is not
+Critical merely because it is uncleared.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. PRs #1-#16 remain reconciled;
+no new l0rinc commit was cherry-picked. Future fixes or cherry-picks must
+amend the same commit message and this ledger with clean-master or
+minimal-production-mutation proof, exact corpus bytes or mutation,
+preconditions/postconditions, observed failure, Core caller,
+master-relative severity, existing test gap, and whether the change
+preserves, changes, or masks the trigger. A passing follow-up patch is not
+proof that master was safe; rerun the original baseline or mutation before
+downgrading a finding. The private corpora and artifacts were removed after
+the final process check, and no fuzz, sanitizer, compiler, or test process
+remains running.
+
 ## 2026-07-18 Context randomize/clone lifecycle recheck
 
 This pass exercised all 13 tracked `src/fuzz/corpora/context` inputs. The
