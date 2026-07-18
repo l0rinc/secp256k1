@@ -17385,3 +17385,70 @@ preconditions, postconditions, observed failure, Core caller and input origin,
 master-relative severity, existing test gap, verifier results, and whether the
 change preserves, changes, or masks the trigger. A passing generated run does
 not lower an older finding without its original baseline replay.
+
+## 2026-07-19 Generated arithmetic worker recheck
+
+The field, group, scalar, and x-only tweak targets were rebuilt in the forced-
+int64 10x26 ASan/UBSan build at `/tmp/secp256k1-next-asan-int64`. Each
+committed corpus was copied to a disposable `/tmp` directory so generated
+mutations could not alter tracked seeds. The targets exercised normalization,
+overflow and underflow boundaries, affine and batch group transitions, scalar
+range/shift behavior, x-only parity, and tweak success/failure postconditions.
+The fuzzer-side checks compared equivalent arithmetic paths where available and
+required rejected operations to leave their output and input state within the
+documented contract. No source mutation or l0rinc fork fix was applied.
+
+The exact commands were:
+
+    /tmp/secp256k1-next-asan-int64/bin/fuzz_field \
+      /tmp/secp256k1-next-generated-field-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-field-artifacts/
+    /tmp/secp256k1-next-asan-int64/bin/fuzz_group \
+      /tmp/secp256k1-next-generated-group-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-group-artifacts/
+    /tmp/secp256k1-next-asan-int64/bin/fuzz_scalar \
+      /tmp/secp256k1-next-generated-scalar-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-scalar-artifacts/
+    /tmp/secp256k1-next-asan-int64/bin/fuzz_xonly_tweak \
+      /tmp/secp256k1-next-generated-xonly-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-xonly-artifacts/
+
+All four jobs exited zero with no assertion, ASan, UBSan, runtime, timeout,
+OOM, or crash artifact. `fuzz_field` loaded 21 seeds and completed 734 runs,
+reaching 2,811 coverage points and 4,072 features. `fuzz_group` loaded 23
+seeds and completed 1,080 runs, reaching 4,651 coverage points and 9,174
+features. `fuzz_scalar` loaded 8 seeds and completed 498 runs, reaching 3,719
+coverage points and 13,505 features. `fuzz_xonly_tweak` loaded 20 seeds and
+completed 91 runs, reaching 5,197 coverage points and 15,529 features. No
+production bug, deterministic regression test, or severity change is claimed.
+
+Bitcoin Core reaches these arithmetic backends through public-key parsing,
+ECDSA/Schnorr verification, Taproot x-only key parsing and tweaking, and
+authorized signing paths. The generated arithmetic inputs are model-level
+states, not a claim that every raw field element can arrive on the wire. A
+clean-master failure that changes signature acceptance, key/tweak validation,
+or a consensus equation for an invalid transaction or witness must be rated
+from its demonstrated Core consequence, potentially High or Critical; a
+library-only normalization discrepancy without a reachable Core input remains
+the existing Medium latent-correctness finding. Memory corruption or a
+reliable peer-triggered crash in block/witness validation must likewise be
+rated from the demonstrated denial-of-service or integrity impact. Direct
+wallet/API and local lifecycle behavior does not become consensus-critical
+without that call-path proof. A nonce with no standalone cryptographic meaning
+is not Critical merely because it is uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. This
+campaign preserves the prior oracle behavior and does not mask a known
+finding. Any later arithmetic assertion, optimization, cherry-pick, or Core
+adapter change must record the exact clean-master or minimal-production-
+mutation baseline, corpus condition, preconditions, postconditions, observed
+failure, Core caller and input origin, master-relative severity, existing test
+gap, verifier commands/results, and whether the change preserves, changes, or
+masks the trigger. A passing generated run is negative evidence only and does
+not downgrade an older finding without its original baseline replay.
