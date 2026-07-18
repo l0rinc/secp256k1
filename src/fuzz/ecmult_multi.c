@@ -435,6 +435,10 @@ static void secp256k1_fuzz_ecmult_multi_check_canonical_failure_output(const sec
 }
 
 static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata);
+static void secp256k1_fuzz_ecmult_multi_reference(secp256k1_gej *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data);
+static void secp256k1_fuzz_ecmult_multi_affine_reference(secp256k1_ge *expected, const secp256k1_scalar *g_sc, size_t n_points, const secp256k1_fuzz_ecmult_multi_data *data);
+static void secp256k1_fuzz_ecmult_multi_check_affine_result(const secp256k1_gej *actual, const secp256k1_ge *expected);
+static void secp256k1_fuzz_ecmult_multi_check_result(const secp256k1_gej *actual, const secp256k1_gej *expected);
 
 static void secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(const secp256k1_context *ctx, const unsigned char *input, size_t size, secp256k1_ecmult_multi_func batch_fn, const secp256k1_scalar *g_sc, secp256k1_fuzz_ecmult_multi_data *data) {
     static const unsigned char trigger[] = "ecmult direct allocation failure\n";
@@ -533,6 +537,64 @@ static void secp256k1_fuzz_check_ecmult_multi_direct_empty_batch(const secp256k1
         FUZZ_CHECK(scratch->alloc_size == checkpoint);
         secp256k1_scratch_destroy(&ctx->error_callback, scratch);
     }
+}
+
+static void secp256k1_fuzz_check_ecmult_multi_direct_single_batch(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult direct single batch\n";
+    static const secp256k1_ecmult_multi_func batch_fns[2] = {
+        secp256k1_ecmult_strauss_batch_single,
+        secp256k1_ecmult_pippenger_batch_single
+    };
+    const size_t n_points = 1;
+    secp256k1_fuzz_ecmult_multi_data data;
+    secp256k1_scalar generator_sc;
+    secp256k1_scalar point_sc;
+    const secp256k1_scalar *g_sc_cases[2];
+    size_t scratch_sizes[2];
+    size_t i;
+    size_t j;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memset(&data, 0, sizeof(data));
+    secp256k1_scalar_set_int(&generator_sc, 17);
+    secp256k1_scalar_set_int(&data.sc[0], 23);
+    secp256k1_scalar_set_int(&point_sc, 5);
+    secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &data.pt[0], &point_sc);
+
+    g_sc_cases[0] = NULL;
+    g_sc_cases[1] = &generator_sc;
+    scratch_sizes[0] = secp256k1_strauss_scratch_size(n_points) + STRAUSS_SCRATCH_OBJECTS * ALIGNMENT;
+    scratch_sizes[1] = secp256k1_pippenger_scratch_size(n_points, secp256k1_pippenger_bucket_window(n_points)) + PIPPENGER_SCRATCH_OBJECTS * ALIGNMENT;
+
+    for (i = 0; i < sizeof(batch_fns) / sizeof(batch_fns[0]); i++) {
+        for (j = 0; j < sizeof(g_sc_cases) / sizeof(g_sc_cases[0]); j++) {
+            secp256k1_scratch *scratch = secp256k1_scratch_create(&ctx->error_callback, scratch_sizes[i]);
+            secp256k1_gej result;
+            secp256k1_gej expected;
+            secp256k1_ge affine_expected;
+            size_t checkpoint;
+
+            FUZZ_CHECK(scratch != NULL);
+            checkpoint = scratch->alloc_size;
+            secp256k1_fuzz_ecmult_multi_reference(&expected, g_sc_cases[j], n_points, &data);
+            secp256k1_fuzz_ecmult_multi_affine_reference(&affine_expected, g_sc_cases[j], n_points, &data);
+
+            secp256k1_fuzz_ecmult_multi_reset_trace(&data);
+            memset(&result, 0xA5, sizeof(result));
+            FUZZ_CHECK(batch_fns[i](&ctx->error_callback, scratch, &result, g_sc_cases[j], secp256k1_fuzz_ecmult_multi_callback, &data, n_points) == 1);
+            secp256k1_fuzz_ecmult_multi_check_success_trace(&data, n_points);
+            secp256k1_fuzz_ecmult_multi_check_affine_result(&result, &affine_expected);
+            secp256k1_fuzz_ecmult_multi_check_result(&result, &expected);
+            FUZZ_CHECK(scratch->alloc_size == checkpoint);
+            secp256k1_scratch_destroy(&ctx->error_callback, scratch);
+        }
+    }
+
+    secp256k1_scalar_clear(&point_sc);
+    secp256k1_scalar_clear(&generator_sc);
 }
 
 static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
@@ -1799,6 +1861,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_strauss_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_pippenger_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_check_ecmult_multi_direct_empty_batch(ctx, input, size);
+    secp256k1_fuzz_check_ecmult_multi_direct_single_batch(ctx, input, size);
     secp256k1_fuzz_check_ecmult_multi_pippenger_second_allocation_failure(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
     secp256k1_fuzz_ecmult_multi_all_filtered_pippenger(ctx, input, size);

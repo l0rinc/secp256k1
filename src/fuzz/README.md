@@ -12003,3 +12003,74 @@ inputs passed under the same mutation on both backends, including
 `infinity-rejection`, `odd-nonce-rejection`, and the broad all-`0xff` response
 check reached from every input. The mutation was restored, the clean replays
 above passed, and the production diff was empty before committing.
+
+## 2026-07-18 Direct Single ECMULT Batch Oracle
+
+The new `ecmult_multi/direct-single-batch` corpus input gates the internal
+single-batch wrappers for both Strauss and Pippenger with exactly one finite
+callback point. The helper calls `secp256k1_ecmult_strauss_batch_single` and
+`secp256k1_ecmult_pippenger_batch_single` directly, using callback scalar `23`,
+point `5G`, and both generator-scalar cases: `NULL` and `17`. The expected
+result is checked through the existing Jacobian reference and through the
+independent affine double-and-add model, so the one-point path cannot pass by
+sharing the production batch accumulator. Each call must visit callback index
+zero exactly once, return success, overwrite the poisoned result, and restore
+the scratch checkpoint.
+
+This complements but does not duplicate the existing direct empty-batch and
+direct allocation-failure seeds. Those cover `n == 0` and allocation failure
+before any callback can run. The larger direct and repeated seeds cover
+multi-point success and batch-loop behavior, but the tracked corpus had no
+`n_points == 1` direct-batch fixture; all 27 pre-existing `ecmult_multi` seeds
+remained a control set for this exact one-point wrapper state.
+
+The restored verifier set passed with the complete `ecmult_multi` corpus under
+native and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi/direct-single-batch \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+A copied-corpus worker replay then ran native and forced-int64 ASan/UBSan
+managers with:
+
+```
+-fork=2 -jobs=2 -max_total_time=45 -timeout=90 -rss_limit_mb=0 \
+  -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+Both managers exited 0. The worker logs reported
+`oom/timeout/crash: 0/0/0`, and the artifact directories were empty. The
+private copied corpora grew only with disposable libFuzzer-generated units; no
+tracked corpus file changed beyond the new focused seed.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production bug. At `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, no direct single-batch result
+failure was reproduced. If a production change made either internal wrapper
+drop or corrupt a one-point finite batch, the impact would be internal
+multi-multiplication correctness with severity depending on public
+reachability through higher-level callers; no such clean-master reachability
+or public API failure is claimed here.
+
+For causal proof, two disposable production mutations were tested separately.
+First, `secp256k1_ecmult_strauss_batch_single` was changed to set the result to
+infinity only after a successful `n == 1` call with non-NULL generator scalar.
+Second, the same targeted mutation was applied to
+`secp256k1_ecmult_pippenger_batch_single`. For each mutation, the focused seed
+aborted with exit 134 on native 5x52 and forced-int64/10x26 ASan/UBSan builds,
+while the 27 pre-existing `ecmult_multi` corpus inputs passed under the same
+mutation on both backends. Both mutations were restored, the clean replays
+above passed, and the production diff was empty before committing.
