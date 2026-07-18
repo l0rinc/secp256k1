@@ -1758,6 +1758,39 @@ static void secp256k1_fuzz_scalar32_reduce(unsigned char *out32, const unsigned 
     FUZZ_CHECK(borrow == 0);
 }
 
+/* Normalize the S scalar without calling the library normalizer. This keeps
+ * the serialized Core composition oracle independent at the low-S boundary. */
+static int secp256k1_fuzz_ecdsa_normalize_reference(const secp256k1_context *ctx, secp256k1_ecdsa_signature *out, const secp256k1_ecdsa_signature *in) {
+    unsigned char compact[64];
+    unsigned char half_order[32];
+    unsigned int carry = 0;
+    unsigned int borrow = 0;
+    int i;
+
+    if (!secp256k1_ecdsa_signature_serialize_compact(ctx, compact, in)
+        || !secp256k1_fuzz_scalar32_in_order(compact)
+        || !secp256k1_fuzz_scalar32_in_order(compact + 32)
+        || memcmp(compact, secp256k1_fuzz_scalar_zero, 32) == 0
+        || memcmp(compact + 32, secp256k1_fuzz_scalar_zero, 32) == 0) {
+        return 0;
+    }
+    for (i = 0; i < 32; i++) {
+        unsigned int value = secp256k1_fuzz_scalar_order[i];
+        half_order[i] = (unsigned char)((value >> 1) | carry);
+        carry = (value & 1u) != 0 ? 0x80u : 0u;
+    }
+    if (memcmp(compact + 32, half_order, sizeof(half_order)) > 0) {
+        for (i = 31; i >= 0; i--) {
+            unsigned int minuend = secp256k1_fuzz_scalar_order[i];
+            unsigned int subtrahend = (unsigned int)compact[32 + i] + borrow;
+            compact[32 + i] = (unsigned char)(minuend - subtrahend);
+            borrow = minuend < subtrahend;
+        }
+        FUZZ_CHECK(borrow == 0);
+    }
+    return secp256k1_ecdsa_signature_parse_compact(ctx, out, compact);
+}
+
 static void secp256k1_fuzz_check_rfc6979_algorithm_domain(const unsigned char *msg32, const unsigned char *key32, const unsigned char *extra32) {
     static const unsigned char algorithm16[16] = {
         0x73, 0x65, 0x63, 0x70, 0x32, 0x35, 0x36, 0x6B,
@@ -2909,6 +2942,120 @@ static void secp256k1_fuzz_check_signature_parse_der_input(const secp256k1_conte
     }
 }
 
+/* Match Bitcoin Core's serialized legacy ECDSA composition:
+ * CPubKey::Verify parses the wire key, accepts the historical lax DER form,
+ * normalizes S in place, and then calls the static-context verifier. The
+ * equation reference is used after an independently implemented low-S step. */
+static void secp256k1_fuzz_check_core_ecdsa_serialized_composition(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen, const unsigned char *expected_compact) {
+    secp256k1_pubkey pubkey;
+    secp256k1_pubkey static_pubkey;
+    secp256k1_ecdsa_signature lax_sig;
+    secp256k1_ecdsa_signature static_lax_sig;
+    secp256k1_ecdsa_signature reference_input;
+    secp256k1_ecdsa_signature reference_sig;
+    unsigned char compact[64];
+    unsigned char static_compact[64];
+    size_t pubkey_len;
+    size_t offset;
+    int parsed_pubkey;
+    int parsed_static_pubkey;
+    int parsed_lax;
+    int parsed_static_lax;
+    int static_result;
+    int dynamic_result;
+    int static_normalized;
+    int dynamic_normalized;
+    int reference_result = 0;
+    int reference_valid;
+
+    if (inputlen < 1) {
+        return;
+    }
+    pubkey_len = (input[0] & 1) != 0 ? 65 : 33;
+    if (inputlen < 1 + pubkey_len + 32) {
+        return;
+    }
+    offset = 1;
+    parsed_pubkey = secp256k1_ec_pubkey_parse(ctx, &pubkey, input + offset, pubkey_len);
+    parsed_static_pubkey = secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_pubkey, input + offset, pubkey_len);
+    FUZZ_CHECK(parsed_pubkey == parsed_static_pubkey);
+    if (!parsed_pubkey) {
+        return;
+    }
+    offset += pubkey_len + 32;
+
+    memset(&lax_sig, 0xA5, sizeof(lax_sig));
+    memset(&static_lax_sig, 0x5A, sizeof(static_lax_sig));
+    parsed_lax = ecdsa_signature_parse_der_lax(ctx, &lax_sig, input + offset, inputlen - offset);
+    parsed_static_lax = ecdsa_signature_parse_der_lax(secp256k1_context_static, &static_lax_sig, input + offset, inputlen - offset);
+    FUZZ_CHECK(parsed_lax == parsed_static_lax);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &lax_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(secp256k1_context_static, static_compact, &static_lax_sig) == 1);
+    FUZZ_CHECK(memcmp(compact, static_compact, sizeof(compact)) == 0);
+    if (expected_compact != NULL) {
+        FUZZ_CHECK(parsed_lax == 1);
+        FUZZ_CHECK(memcmp(compact, expected_compact, sizeof(compact)) == 0);
+    }
+
+    /* CPubKey::Verify returns false before normalization when lax parsing
+     * rejects the byte string. */
+    if (!parsed_lax) {
+        return;
+    }
+    reference_input = lax_sig;
+    static_normalized = secp256k1_ecdsa_signature_normalize(secp256k1_context_static, &static_lax_sig, &static_lax_sig);
+    FUZZ_CHECK(static_normalized == 0 || static_normalized == 1);
+    static_result = secp256k1_ecdsa_verify(secp256k1_context_static, &static_lax_sig, input + 1 + pubkey_len, &static_pubkey);
+    dynamic_normalized = secp256k1_ecdsa_signature_normalize(ctx, &lax_sig, &lax_sig);
+    FUZZ_CHECK(dynamic_normalized == 0 || dynamic_normalized == 1);
+    FUZZ_CHECK(static_normalized == dynamic_normalized);
+    dynamic_result = secp256k1_ecdsa_verify(ctx, &lax_sig, input + 1 + pubkey_len, &pubkey);
+    FUZZ_CHECK(static_result == dynamic_result);
+    reference_valid = secp256k1_fuzz_ecdsa_normalize_reference(ctx, &reference_sig, &reference_input);
+    FUZZ_CHECK(reference_valid || static_result == 0);
+    if (reference_valid) {
+        reference_result = secp256k1_fuzz_ecdsa_verify_reference(ctx, &reference_sig, input + 1 + pubkey_len, &pubkey);
+    }
+    FUZZ_CHECK(static_result == reference_result);
+    if (expected_compact != NULL) {
+        FUZZ_CHECK(static_result == 1);
+    }
+}
+
+static void secp256k1_fuzz_check_core_ecdsa_serialized_fixture(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    static const unsigned char trigger[] = "core ECDSA serialized composition\n";
+    unsigned char serialized[1 + 33 + 32 + 72];
+    unsigned char low_compact[64];
+    unsigned char high_compact[64];
+    unsigned char der[72];
+    size_t der_len;
+    size_t offset;
+    int i;
+
+    if (inputlen != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memcpy(low_compact, secp256k1_fuzz_pubkey_g_compressed + 1, 32);
+    memcpy(low_compact + 32, secp256k1_fuzz_pubkey_g_compressed + 1, 32);
+    memcpy(high_compact, low_compact, sizeof(high_compact));
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, high_compact + 32) == 1);
+    for (i = 0; i < 2; i++) {
+        const unsigned char *expected_compact = i == 0 ? low_compact : high_compact;
+
+        der_len = secp256k1_fuzz_make_der_signature(der, expected_compact, expected_compact + 32);
+        offset = 0;
+        memset(serialized, 0, sizeof(serialized));
+        serialized[offset++] = 0;
+        memcpy(serialized + offset, secp256k1_fuzz_pubkey_g_compressed, 33);
+        offset += 33;
+        memset(serialized + offset, 0, 32);
+        offset += 32;
+        memcpy(serialized + offset, der, der_len);
+        secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, serialized, offset + der_len, expected_compact);
+    }
+}
+
 static void secp256k1_fuzz_check_signature_parse_der_size_boundary(const secp256k1_context *ctx) {
     static const unsigned char non_der[1] = {0};
     unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = {0};
@@ -3719,6 +3866,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_boundary(ctx, sig64, sig64 + 32, msg32, &pubkey);
     secp256k1_fuzz_check_signature_parse_der_trailing(ctx, sig64, sig64 + 32, secp256k1_fuzz_byte(input, size, 49));
     secp256k1_fuzz_check_signature_parse_der_input(ctx, input, size, msg32, &pubkey);
+    secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, input, size, NULL);
+    secp256k1_fuzz_check_core_ecdsa_serialized_fixture(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
     return 0;
