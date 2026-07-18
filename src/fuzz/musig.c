@@ -1190,6 +1190,71 @@ static void secp256k1_fuzz_check_musig_duplicate_keyagg_reference(const secp256k
     FUZZ_CHECK(memcmp(cache.data + 132, keyagg_hash, sizeof(keyagg_hash)) == 0);
 }
 
+static void secp256k1_fuzz_check_musig_static_keyagg_public(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey0, const secp256k1_pubkey *pubkey1) {
+    const secp256k1_pubkey *pubkey_ptrs[2];
+    secp256k1_pubkey pubkey0_before = *pubkey0;
+    secp256k1_pubkey pubkey1_before = *pubkey1;
+    secp256k1_xonly_pubkey expected_xonly;
+    secp256k1_xonly_pubkey static_xonly;
+    secp256k1_xonly_pubkey static_xonly_no_cache;
+    secp256k1_musig_keyagg_cache expected_cache;
+    secp256k1_musig_keyagg_cache static_cache;
+    secp256k1_musig_keyagg_cache static_cache_no_output;
+    secp256k1_musig_keyagg_cache expected_tweak_cache;
+    secp256k1_musig_keyagg_cache static_tweak_cache;
+    secp256k1_musig_keyagg_cache expected_xonly_tweak_cache;
+    secp256k1_musig_keyagg_cache static_xonly_tweak_cache;
+    secp256k1_pubkey expected_full;
+    secp256k1_pubkey static_full;
+    secp256k1_pubkey static_full_from_expected_cache;
+    secp256k1_pubkey static_full_no_output;
+    secp256k1_pubkey expected_tweaked_full;
+    secp256k1_pubkey static_tweaked_full;
+    secp256k1_pubkey expected_xonly_tweaked_full;
+    secp256k1_pubkey static_xonly_tweaked_full;
+
+    pubkey_ptrs[0] = pubkey0;
+    pubkey_ptrs[1] = pubkey1;
+
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &expected_xonly, &expected_cache, pubkey_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &expected_full, &expected_cache) == 1);
+
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(secp256k1_context_static, &static_xonly, &static_cache, pubkey_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &static_xonly, &expected_xonly) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(secp256k1_context_static, &static_full, &static_cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_full, &expected_full) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(secp256k1_context_static, &static_full_from_expected_cache, &expected_cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_full_from_expected_cache, &expected_full) == 0);
+
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(secp256k1_context_static, &static_xonly_no_cache, NULL, pubkey_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &static_xonly_no_cache, &expected_xonly) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(secp256k1_context_static, NULL, &static_cache_no_output, pubkey_ptrs, 2) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(secp256k1_context_static, &static_full_no_output, &static_cache_no_output) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_full_no_output, &expected_full) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(secp256k1_context_static, NULL, NULL, pubkey_ptrs, 2) == 1);
+
+    expected_tweak_cache = expected_cache;
+    static_tweak_cache = expected_cache;
+    FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(ctx, &expected_tweaked_full, &expected_tweak_cache, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_ec_tweak_add(secp256k1_context_static, &static_tweaked_full, &static_tweak_cache, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_tweaked_full, &expected_tweaked_full) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(secp256k1_context_static, &static_full, &static_tweak_cache) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &expected_full, &expected_tweak_cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_full, &expected_full) == 0);
+
+    expected_xonly_tweak_cache = expected_cache;
+    static_xonly_tweak_cache = expected_cache;
+    FUZZ_CHECK(secp256k1_musig_pubkey_xonly_tweak_add(ctx, &expected_xonly_tweaked_full, &expected_xonly_tweak_cache, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_context_static, &static_xonly_tweaked_full, &static_xonly_tweak_cache, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_xonly_tweaked_full, &expected_xonly_tweaked_full) == 0);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(secp256k1_context_static, &static_full, &static_xonly_tweak_cache) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &expected_full, &expected_xonly_tweak_cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_full, &expected_full) == 0);
+
+    FUZZ_CHECK(memcmp(pubkey0, &pubkey0_before, sizeof(pubkey0_before)) == 0);
+    FUZZ_CHECK(memcmp(pubkey1, &pubkey1_before, sizeof(pubkey1_before)) == 0);
+}
+
 static void secp256k1_fuzz_check_musig_tweaked_sign_case(const secp256k1_context *ctx, const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, const secp256k1_musig_keyagg_cache *cache, const secp256k1_xonly_pubkey *agg_xonly) {
     unsigned char msg32[32] = { 0 };
     unsigned char sig64[64];
@@ -4283,6 +4348,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_check_musig_sixteen_keyagg_reference(ctx, input, size);
     secp256k1_fuzz_check_musig_duplicate_keyagg_reference(ctx, input, size);
+    if (size == sizeof("MuSig static key aggregation\n") - 1
+        && memcmp(input, "MuSig static key aggregation\n", sizeof("MuSig static key aggregation\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_static_keyagg_public(ctx, &fixed_pubkeys[0], &fixed_pubkeys[1]);
+    }
     secp256k1_fuzz_check_musig_sixteen_sign_roundtrip(ctx, input, size);
     secp256k1_fuzz_check_musig_tweaked_signing(ctx);
     secp256k1_fuzz_check_musig_xonly_tweaked_signing(ctx);
