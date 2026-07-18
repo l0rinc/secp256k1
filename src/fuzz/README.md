@@ -15285,3 +15285,106 @@ verifier commands, and re-rate the result against clean master. A minor fix
 that happens to suppress a failure must not lower an independent master
 finding. Uncleared nonce data without standalone cryptographic meaning is not
 Critical merely because it remains in memory.
+
+## 2026-07-18 Latest-Master Field Serializer Recheck
+
+The current `origin/master` merge
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` contains upstream commit
+`e217ead5c46062ecda964ba858f7518b7e3bb5e7`, which rewrites normalized field
+serialization into packed big-endian word stores for both 5x52 and 10x26.
+The tracked source corpus is now 21 files; the exact new trigger is the
+34-byte ASCII input `field word serialization boundary\n` at
+`src/fuzz/corpora/field/word-serialization-boundary` (hex
+`6669656c6420776f72642073657269616c697a6174696f6e20626f756e646172790a`).
+
+The focused oracle's preconditions are normalized field values at every
+25/26- and 51/52-bit limb boundary, plus the fixed mixed-bit value
+`123456789abcdef0112233445566778899aabbccddeeff00123456789abcdef01`.
+Its postconditions compare the independent big-endian reference against
+`secp256k1_fe_get_b32`, repeat the check after `set_b32_mod` and normalization,
+and require equivalent output across the 5x52 and forced-int64/10x26
+backends. The existing mutation proof remains the strongest causal evidence:
+flipping the first serialized byte only for the fixed mixed-bit value made
+the new seed abort with exit 134 while all 20 pre-existing seeds passed, and
+disabling only the new helper left the same mutation green. Those mutations
+were restored before this replay; no production bug is claimed for the
+upstream serializer.
+
+The field routines are not a direct Core API call, so severity is assigned
+through the public paths that consume them. A malformed block or witness can
+reach field parsing through Core's `CPubKey::Verify`/`XOnlyPubKey::VerifySchnorr`
+and Taproot `VerifyTaprootCommitment` paths; a BIP324 peer encoding reaches
+field decoding through `CKey::ComputeBIP324ECDHSecret` and EllSwift. A clean
+master acceptance/rejection, signature-equation, memory-safety, or
+concurrency discrepancy on those paths would be rated from the demonstrated
+consensus or peer impact and could be High/Critical. This run found none. It
+does not close or downgrade the separately proven Medium/latent
+`normalizes_to_zero` and magnitude-32 arithmetic findings, and a l0rinc
+normalization or serializer patch that happens to suppress a later failure
+must not be treated as proof that the original clean-master state was safe.
+
+The full source corpus was copied to private directories and run with these
+exact strict commands:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 200s /tmp/secp256k1-oracles-external/bin/fuzz_field \
+      /tmp/codex-deep-field-native -fork=4 -jobs=4 -max_total_time=120 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -rss_limit_mb=0 \
+      -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-deep-field-native/artifacts/ \
+      -print_final_stats=1
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 200s /tmp/secp256k1-next-asan-int64/bin/fuzz_field \
+      /tmp/codex-deep-field-int64 -fork=4 -jobs=4 -max_total_time=120 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -rss_limit_mb=0 \
+      -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-deep-field-int64/artifacts/ \
+      -print_final_stats=1
+
+All four native jobs and all four forced-int64 jobs exited 0. Worker-local
+fork corpus selection reported 17-19 retained seed inputs even though all 21
+tracked files were copied; the exact new seed was separately executed once on
+each backend. Every worker reported `oom/timeout/crash: 0/0/0`, no log had an
+ASan, UBSan, runtime-error, or `ERROR:` diagnostic, and both artifact
+directories were empty. The exact one-unit trigger commands were:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 40s /tmp/secp256k1-oracles-external/bin/fuzz_field \
+      src/fuzz/corpora/field/word-serialization-boundary -runs=1 \
+      -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 40s /tmp/secp256k1-next-asan-int64/bin/fuzz_field \
+      src/fuzz/corpora/field/word-serialization-boundary -runs=1 \
+      -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+    MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+    timeout 40s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_field \
+      src/fuzz/corpora/field/word-serialization-boundary -runs=1 \
+      -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+Native 5x52 and forced-int64/10x26 each exited 0 after one unit; the int64
+MSan binary `/tmp/secp256k1-msan-int64-ext2/bin/fuzz_field` also exited 0
+after one unit with no MemorySanitizer diagnostic. The exact two-worker,
+60-second MSan corpus replay was:
+
+    MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+    timeout 130s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_field \
+      /tmp/codex-deep-field-msan -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -rss_limit_mb=0 \
+      -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-deep-field-msan/artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 with `0/0/0` counters and no artifacts. The
+temporary generated corpora, logs, and artifacts were removed after the final
+process check. `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; no new fork commit was used.
+Future serializer, normalization, or cherry-pick changes must amend their
+commit message and this ledger with the exact boundary, mutation interaction,
+Core path, master-relative severity, failure output, and verifier commands.
