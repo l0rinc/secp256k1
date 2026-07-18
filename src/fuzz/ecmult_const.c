@@ -189,6 +189,27 @@ static void secp256k1_fuzz_ecmult_const_check_zero_scalar_infinity_z(const unsig
     FUZZ_CHECK(secp256k1_fe_normalizes_to_zero_var(&result.z));
 }
 
+static void secp256k1_fuzz_ecmult_const_check_generator_zero(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult const generator zero\n";
+    secp256k1_gej result_j;
+    secp256k1_ge result;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* Zero is an internal identity input. Keep this explicit because the regular
+     * generator oracle intentionally uses nonzero scalars. */
+    memset(&result_j, 0xA5, sizeof(result_j));
+    secp256k1_ecmult_gen_gej(&ctx->ecmult_gen_ctx, &result_j, &secp256k1_scalar_zero);
+    FUZZ_CHECK(secp256k1_gej_is_infinity(&result_j));
+
+    memset(&result, 0xA5, sizeof(result));
+    secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &result, &secp256k1_scalar_zero);
+    FUZZ_CHECK(secp256k1_ge_is_infinity(&result));
+    FUZZ_CHECK(!secp256k1_ge_is_valid_var(&result));
+}
+
 static void secp256k1_fuzz_ecmult_const_check_generator(const secp256k1_context *ctx, const secp256k1_scalar *scalar) {
     secp256k1_gej generated;
     secp256k1_ge generated_affine;
@@ -502,6 +523,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_ge infinity;
 
     secp256k1_fuzz_ecmult_const_check_zero_scalar_infinity_z(input, size);
+    secp256k1_fuzz_ecmult_const_check_generator_zero(ctx, input, size);
     secp256k1_fuzz_ecmult_const_check_fixed_generator_two(input, size);
     secp256k1_fuzz_ecmult_const_check_xonly_order_minus_one(input, size);
     secp256k1_fuzz_ecmult_const_scalar(&base_scalar, input, size, 101, 1);
