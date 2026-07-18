@@ -3056,6 +3056,33 @@ static void secp256k1_fuzz_check_core_ecdsa_serialized_fixture(const secp256k1_c
     }
 }
 
+/* Keep the field-coordinate overflow branch in the serialized Core-shaped
+ * verifier reachable. Here R = 2Q has x(R) = n + 2, while the wire signature
+ * carries r = 2 and s = 1 for z = 0. */
+static void secp256k1_fuzz_check_core_ecdsa_r_plus_order_fixture(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    static const unsigned char trigger[] = "core ECDSA r-plus-order composition\n";
+    unsigned char serialized[1 + 33 + 32 + 72];
+    unsigned char compact[64] = { 0 };
+    unsigned char der[72];
+    size_t der_len;
+    size_t offset = 0;
+
+    if (inputlen != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    compact[31] = 2;
+    compact[63] = 1;
+    der_len = secp256k1_fuzz_make_der_signature(der, compact, compact + 32);
+    serialized[offset++] = 0;
+    memcpy(serialized + offset, secp256k1_fuzz_ecdsa_r_plus_order_pubkey, 33);
+    offset += 33;
+    memset(serialized + offset, 0, 32); /* z = 0. */
+    offset += 32;
+    memcpy(serialized + offset, der, der_len);
+    secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, serialized, offset + der_len, compact);
+}
+
 /* Match Bitcoin Core's CheckSignatureEncoding -> IsLowDERSignature adapter.
  * The strict DER check sees the final sighash byte, then Core removes exactly
  * that byte before CPubKey::CheckLowS invokes its lax DER parser and static
@@ -3944,6 +3971,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_input(ctx, input, size, msg32, &pubkey);
     secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, input, size, NULL);
     secp256k1_fuzz_check_core_ecdsa_serialized_fixture(ctx, input, size);
+    secp256k1_fuzz_check_core_ecdsa_r_plus_order_fixture(ctx, input, size);
     secp256k1_fuzz_check_core_ecdsa_low_s_encoding_fixture(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
