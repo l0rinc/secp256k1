@@ -2460,6 +2460,66 @@ static void secp256k1_fuzz_check_ecdsa_verify_half_order(const secp256k1_context
     FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &sig, msg32, &pubkey) == 1);
 }
 
+static void secp256k1_fuzz_check_ecdsa_reject_high_half_order(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecdsa reject high half order\n";
+    static const unsigned char seckey_one32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    };
+    static const unsigned char msg32[32] = {
+        /* z = floor(n/2) + 1 - x(G) mod n, for d = k = 1. */
+        0x06, 0x41, 0x99, 0x81, 0x06, 0x23, 0x44, 0x53,
+        0xaa, 0x5f, 0x9d, 0x6a, 0x31, 0x78, 0xf4, 0xf8,
+        0x5a, 0xbb, 0x71, 0x98, 0x29, 0xd6, 0x27, 0x44,
+        0x85, 0xf6, 0xad, 0xeb, 0x51, 0x23, 0x09, 0x09
+    };
+    static const unsigned char high_compact[64] = {
+        /* r = x(G). */
+        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
+        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
+        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
+        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
+        /* s = floor(n/2) + 1. */
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d,
+        0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa1
+    };
+    static const unsigned char low_compact[64] = {
+        /* Same high-S twin normalized to s = floor(n/2). */
+        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
+        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
+        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
+        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d,
+        0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0
+    };
+    secp256k1_ecdsa_signature high_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+    secp256k1_pubkey pubkey;
+    unsigned char serialized[64];
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey_one32) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_parse_compact(ctx, &high_sig, high_compact) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_verify_reference(ctx, &high_sig, msg32, &pubkey) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &high_sig, msg32, &pubkey) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &high_sig, msg32, &pubkey) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &high_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, serialized, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(serialized, low_compact, sizeof(serialized)) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_ecdsa_verify_reference(ctx, &normalized_sig, msg32, &pubkey) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
+}
+
 static void secp256k1_fuzz_check_ecdsa_variable_nonce_equation(const secp256k1_context *ctx, const unsigned char *msg32, const unsigned char *seckey32, const unsigned char *nonce32) {
     secp256k1_fuzz_ecdsa_equation_nonce_data nonce_data;
     secp256k1_ecdsa_signature sig;
@@ -3599,6 +3659,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(ctx);
     secp256k1_fuzz_check_ecdsa_sign_input_output_alias(ctx, input, size);
     secp256k1_fuzz_check_ecdsa_verify_half_order(ctx, input, size);
+    secp256k1_fuzz_check_ecdsa_reject_high_half_order(ctx, input, size);
     secp256k1_fuzz_check_ecdsa_variable_nonce_equation(ctx, msg32, seckey, equation_nonce32);
     secp256k1_fuzz_check_ecdsa_retry_after_zero_s(ctx);
     if (size == sizeof("ecdsa verification infinity\n") - 1
