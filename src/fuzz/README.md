@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -10836,3 +10836,47 @@ exercise related static-context preconditions through a writable copy, while
 the fuzzer's real-static-singleton lifecycle seed did not cover these rejected
 secret-operation cleanup contracts. No existing master-relative severity rating
 changes.
+
+## 2026-07-18 Recoverable Signing Static-Context Cleanup Oracle
+
+The existing `recovery/static-context-recovery-barrier` corpus input now also
+checks the rejected side of the recovery module's static-context boundary.
+Recoverable-signature parsing, serialization, conversion, public-key recovery,
+and verification are public-data paths and remain valid on
+`secp256k1_context_static`; `secp256k1_ecdsa_sign_recoverable` derives a
+signature from a secret key and requires generator precomputation. In the
+external-default-callback build, the static singleton must therefore reject the
+call, invoke the default illegal callback once, and clear the prefilled
+recoverable-signature output before returning failure.
+
+This branch was verified with the forced-int64/10x26 MemorySanitizer
+external-callback build `/tmp/secp256k1-msan-int64-ext2`, rebuilt with
+`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON`:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_recovery \
+  src/fuzz/corpora/recovery/static-context-recovery-barrier \
+  -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused replay exited zero. The native 5x52 and forced-int64/10x26
+ASan/UBSan `fuzz_recovery` binaries also rebuilt and replayed the full tracked
+14-file recovery corpus with `-runs=1 -timeout=120 -rss_limit_mb=0
+-handle_abrt=0`; both exited zero. Ordinary builds compile out the
+default-callback counter assertion because their default illegal callback
+aborts by design, so they are compile and regression coverage rather than proof
+of the gated branch.
+
+For causal proof, a disposable production mutation replaced
+`memset(signature, 0, sizeof(*signature));` in the
+`secp256k1_ecdsa_sign_recoverable` precondition cleanup block with a no-op
+comment. Rebuilding the same external-callback MSan target and replaying the
+exact static-context recovery seed aborted with status 134 at the new stale
+recoverable-signature assertion, with no MemorySanitizer diagnostic. The
+mutation was restored and the focused replay passed again.
+
+This is **Informational oracle hardening**, not a clean-master production bug.
+Master already clears the output; the fuzzer gap was that the existing static
+recovery seed proved the permitted public-data operations but not the rejected
+secret-derived signing operation. No master-relative severity rating changes.

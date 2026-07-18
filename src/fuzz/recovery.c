@@ -129,6 +129,11 @@ static void secp256k1_fuzz_check_static_context_recovery(const secp256k1_context
     unsigned char zero32[32] = { 0 };
     unsigned char serialized_pubkeys[2][33];
     unsigned char serialized_normal[2][64];
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    secp256k1_ecdsa_recoverable_signature static_sig;
+    unsigned char zero_static_sig[sizeof(static_sig)] = { 0 };
+    unsigned int calls;
+#endif
     secp256k1_ecdsa_recoverable_signature recoverable[2];
     secp256k1_ecdsa_signature normal[2];
     secp256k1_pubkey pubkeys[2];
@@ -161,6 +166,17 @@ static void secp256k1_fuzz_check_static_context_recovery(const secp256k1_context
     }
     FUZZ_CHECK(memcmp(serialized_normal[0], serialized_normal[1], sizeof(serialized_normal[0])) == 0);
     FUZZ_CHECK(memcmp(serialized_pubkeys[0], serialized_pubkeys[1], sizeof(serialized_pubkeys[0])) == 0);
+
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    /* Recovery, conversion, and verification are public-data paths. Recoverable
+     * signing still requires generator precomputation and must reject the static
+     * singleton without leaking stale output bytes. */
+    calls = secp256k1_fuzz_default_illegal_calls;
+    memset(&static_sig, 0xA5, sizeof(static_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(secp256k1_context_static, &static_sig, zero32, secp256k1_fuzz_scalar_one, NULL, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls + 1);
+    FUZZ_CHECK(memcmp(&static_sig, zero_static_sig, sizeof(static_sig)) == 0);
+#endif
 }
 
 static int secp256k1_fuzz_recovery_nonce_retry(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int attempt) {
