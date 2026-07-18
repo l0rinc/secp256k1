@@ -15966,3 +15966,91 @@ proof that master was safe; rerun the original baseline or mutation before
 downgrading a finding. The private corpus and artifacts were removed after
 the final process check, and no fuzz, sanitizer, compiler, or test process
 remains running.
+
+## 2026-07-18 Group arithmetic and Core verification backend recheck
+
+This pass rechecked all 23 tracked `src/fuzz/corpora/group` inputs. The target
+now combines an independent affine group-law model with Jacobian addition,
+doubling, conversion, equality, infinity, Z-ratio, rescaling-alias,
+generator-multiplication, and invalid opaque-public-key barriers. Its
+preconditions are canonical generated curve points plus deliberately
+constructed infinity, cancellation, alias, and malformed opaque states. Its
+postconditions independently compare affine coordinates and canonical
+serialization, require the documented infinity and failure representations,
+and require invalid opaque points to invoke the illegal callback and clear
+outputs.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_group \
+      /tmp/codex-next-group4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-group4-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0 after 93-94 seconds. Each reported zero OOM,
+timeout, and crash counters; no ASan, UBSan, runtime, or `ERROR:` diagnostic
+appeared, and the artifact directory was empty. The forced-int64 ASan/UBSan
+replay used two workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_group \
+      /tmp/codex-next-group-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-group-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 with `oom/timeout/crash: 0/0/0`, no sanitizer or
+runtime diagnostic, and no artifact. The int64 MSan replay used two workers
+for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_group \
+      /tmp/codex-next-group-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-group-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 with zero OOM, timeout, and crash counters; no
+MSan, UBSan, runtime, or `ERROR:` diagnostic and no artifact was produced.
+No production bug, deterministic regression test, or severity change is
+claimed by this negative recheck.
+
+The Core relevance is direct but bounded by the caller. Core's
+`CPubKey::Unserialize` validates serialized public keys before
+`CPubKey::Verify` reaches `secp256k1_ecdsa_verify`; Taproot x-only parsing and
+`XOnlyPubKey::VerifySchnorr` use the same group arithmetic through the
+consensus script paths. Therefore a clean-master group equation, infinity,
+invalid-key, memory-safety, race, or state-corruption failure reachable from
+an invalid block or witness would be High/Critical according to demonstrated
+consensus impact. A failure confined to malformed opaque objects built by a
+direct API caller remains below that rating without an actual Core path; the
+negative replay does not turn the existing Medium opaque-state entries into
+wire-level findings. A nonce with no standalone cryptographic meaning is not
+Critical merely because it is uncleared.
+
+Existing unit tests cover individual group formulas, while this target
+combines cancellation, aliasing, infinity, independent affine comparison,
+and API failure cleanup. That combination is discovery evidence, not proof
+that unmodified master is safe. The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; PRs #1-#16 remain reconciled and
+no l0rinc commit was cherry-picked for this pass. Private corpus copies,
+logs, and artifacts were removed after the process check.
+
+Any later group, field, parser, Core adapter, production fix, or l0rinc
+cherry-pick must amend its commit message and this ledger with the
+clean-master or minimal-production-mutation baseline, exact corpus bytes or
+mutation, preconditions, postconditions, observed failure, Core caller,
+severity on unmodified master, existing test gap, verifier commands, and
+whether it preserves, changes, or masks the trigger. A follow-up patch that
+merely passes this replay is not proof that master was safe; rerun the
+original baseline or mutation before downgrading a finding. No fuzz,
+sanitizer, compiler, or test process remains running.
