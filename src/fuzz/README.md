@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss/Pippenger batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
@@ -11632,3 +11632,55 @@ native 5x52 and forced-int64/10x26 ASan/UBSan builds, while the eight
 pre-existing ECDH corpus files passed under the same mutation on both
 backends. The mutation was restored, the clean native focused replay passed
 again, and the mutation log contained no sanitizer diagnostic.
+
+## 2026-07-18 EllSwift Negative-Scalar Fixed-XDH Oracle
+
+The new `ellswift/xdh-fixed-minus-one` corpus input reuses the independently
+known BIP324 ElligatorSwift wire value from the fixed decode vector and calls
+`secp256k1_ellswift_xdh` with scalar `n - 1` for both party selections. Because
+the same fixed encoding is used on both sides, the x-only shared secret must
+equal the decoded point's fixed x-coordinate
+`948b40e7181713bc018ec1702d3d054d15746c59a7020730dd13ecf985a010d7`, matching
+the scalar-one XDH fixture even though the scalar-side multiplication goes
+through `-P`.
+
+This complements `ellswift/xdh-fixed-decode` and `ellswift/xdh-overflow-plus-one`.
+The first pins scalar-one XDH for the fixed decoded point; the second checks
+that `n - 1` is accepted on fuzz-derived encodings but does not assert the
+resulting x-coordinate. The new seed pins scalar-side negation in the EllSwift
+x-only multiplication path without deriving the expected x-coordinate from
+`ec_pubkey_tweak_mul` or another production public-key multiplication API.
+
+The restored verifier set passed with the complete EllSwift corpus under
+native and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_ellswift \
+  src/fuzz/corpora/ellswift -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_ellswift \
+  src/fuzz/corpora/ellswift -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ellswift \
+  src/fuzz/corpora/ellswift/xdh-fixed-minus-one \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **oracle hardening, not a clean-master production bug**. Master already
+computes the same fixed x-only shared secret for scalar `1` and scalar `n - 1`
+on this fixed decoded point. If this valid-input contract failed on master, the
+severity would be **High** because callers could derive an incorrect EllSwift
+XDH shared secret for valid inputs. The observed branch finding is
+informational because the only failing condition was a disposable mutation:
+after `secp256k1_fe_get_b32(sx, &px)` in `secp256k1_ellswift_xdh`, the
+mutation flipped one output byte only when the raw scalar was `n - 1` and the
+selected remote EllSwift encoding matched the fixed BIP324 vector. The focused
+seed aborted with exit 134 on both native 5x52 and forced-int64/10x26
+ASan/UBSan builds, while the sixteen pre-existing EllSwift corpus files passed
+under the same mutation on both backends. The mutation was restored, the clean
+native focused replay passed again, and the mutation log contained no sanitizer
+diagnostic.

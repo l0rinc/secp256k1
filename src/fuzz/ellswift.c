@@ -239,6 +239,7 @@ static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_c
      * ElligatorSwift decode test set. Do not pin encode/create output: those
      * public APIs explicitly do not guarantee stable encodings across versions. */
     static const unsigned char trigger[] = "ellswift-xdh-fixed-decode\n";
+    static const unsigned char minus_one_trigger[] = "ellswift-xdh-fixed-minus-one\n";
     static const unsigned char ell64[64] = {
         0xc5, 0x98, 0x1b, 0xae, 0x27, 0xfd, 0x84, 0x40, 0x1c, 0x72, 0xa1, 0x55, 0xe5, 0x70, 0x7f, 0xbb,
         0x81, 0x1b, 0x2b, 0x62, 0x06, 0x45, 0xd1, 0x02, 0x8e, 0xa2, 0x70, 0xcb, 0xe0, 0xee, 0x22, 0x5d,
@@ -271,6 +272,18 @@ static void secp256k1_fuzz_check_ellswift_bip324_decode_vector(const secp256k1_c
         FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell64, ell64,
             secp256k1_fuzz_scalar_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
         FUZZ_CHECK(memcmp(shared_x32, expected_compressed + 1, sizeof(shared_x32)) == 0);
+    }
+    if (size == sizeof(minus_one_trigger) - 1
+            && memcmp(input, minus_one_trigger, sizeof(minus_one_trigger) - 1) == 0) {
+        unsigned char shared_a_x32[32];
+        unsigned char shared_b_x32[32];
+
+        FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_a_x32, ell64, ell64,
+            secp256k1_fuzz_scalar_order_minus_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+        FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_b_x32, ell64, ell64,
+            secp256k1_fuzz_scalar_order_minus_one, 1, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+        FUZZ_CHECK(memcmp(shared_a_x32, expected_compressed + 1, sizeof(shared_a_x32)) == 0);
+        FUZZ_CHECK(memcmp(shared_b_x32, expected_compressed + 1, sizeof(shared_b_x32)) == 0);
     }
 }
 
