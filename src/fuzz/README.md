@@ -10700,3 +10700,49 @@ purpose.
 This pass records negative evidence and a duplicate-oracle control only. It
 does not prove clean master defect-free, does not add or remove any production
 finding, and does not change the existing master-relative severity ledger.
+
+## 2026-07-18 Schnorr/Recovery Oracle Recheck
+
+The branch was checked after the public-contract pass; `origin/master` remained
+at `8c3e6e6d992456d3b9228305ae84a6703273cf70` and was still an ancestor of
+`codex/fuzz-oracles`. No build, test, sanitizer, or fuzz processes were live
+before this pass started.
+
+The Schnorr and recovery fuzzers were re-audited before adding any new oracle.
+No duplicate assertion was added. The Schnorr target already has independent
+BIP340 nonce/tagged-hash references, variable-message and empty-message
+contracts, custom nonce callback domain checks, precondition and nonce-failure
+cleanup checks, explicit extraparams-magic failure handling, x-only/keypair
+consistency barriers, invalid-pubkey verification barriers, fixed-wire
+generator/infinity/odd-nonce vectors, rx overflow rejection, and independent
+signature-equation reconstruction. The recovery target already has
+recoverable-signature parse/serialize/convert contracts, illegal-argument
+cleanup checks, invalid opaque-state barriers for `r`, `s`, and `recid`,
+input/output alias vectors, static-context barriers, deterministic nonce retry
+coverage, high-S recovery behavior, zero-`s` and invalid-`x` rejection,
+message-scalar reduction, `r + n` recovery-id coverage, and an independent
+recovery equation check.
+
+The native 5x52 Clang ASan/UBSan build `/tmp/secp256k1-next-asan` and the
+forced-int64/10x26 Clang ASan/UBSan build `/tmp/secp256k1-next-asan-int64`
+rebuilt `fuzz_schnorrsig` and `fuzz_recovery`. Existing corpora replayed first:
+15 `schnorrsig` inputs and 14 `recovery` inputs exited zero on both builds with
+no sanitizer diagnostic or assertion failure.
+
+Fresh generated-input exploration then ran both targets from private copies of
+their tracked corpora with:
+
+```
+-fork=2 -max_total_time=120 -timeout=60 -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+All four fork managers exited zero. The artifact directories were empty. The
+log scan found no ASan/UBSan diagnostic, sanitizer summary, runtime error,
+generated crash artifact, timeout, OOM, or nonzero libFuzzer crash counter. The
+private copied corpora grew only as disposable libFuzzer state: native final
+file counts were 235 `schnorrsig` and 203 `recovery`; forced-int64 final file
+counts were 200 and 206 respectively.
+
+This pass records negative evidence only. It does not prove clean master
+defect-free, does not add or remove any production finding, and does not change
+the existing master-relative severity ledger.
