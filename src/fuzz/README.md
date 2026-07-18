@@ -12820,3 +12820,55 @@ consensus effect. This run found no discrepancy, memory error, or clean-master
 vulnerability. Existing tests missed the case because they covered point
 arithmetic and short control paths separately, not the full 128-iteration
 serialized Merkle fold and output-program check.
+
+## 2026-07-18 Generated Stateful Corpus MSan Recheck
+
+After the latest master rebase and the Core Taproot oracle commits, the
+existing tracked corpora for `api_roundtrip`, `schnorrsig`, `ellswift`, and
+`musig` were copied to a disposable private corpus. A native Clang ASan/UBSan
+two-job/two-worker campaign used the exact command shape
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_<target> \
+  /tmp/secp256k1-audit-sweep/<target>/corpus \
+  -jobs=2 -workers=2 -max_total_time=30 -timeout=60 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+Each target's two jobs exited 0 with no sanitizer report, timeout, OOM, crash,
+or tracked-corpus artifact. `api_roundtrip` ran 316 and 317 inputs per job and
+grew from 57 to 201 private files; `schnorrsig` ran 231 and 233 and grew from
+17 to 152; `ellswift` ran 174 and 173 and grew from 17 to 135; `musig` ran 78
+per job and stayed at 77 files. These jobs were independent and did not write
+the repository corpus.
+
+The generated files were then replayed once each under the forced-int64/10x26
+MemorySanitizer build with the exact command shape
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_<target> \
+  /tmp/secp256k1-audit-sweep/<target>/corpus \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 \
+  -print_final_stats=1
+```
+
+The final MSan counts were 202 for `api_roundtrip`, 153 for `schnorrsig`, 136
+for `ellswift`, and 78 for `musig`; all exited 0 with zero MemorySanitizer
+diagnostics and peak RSS of 69 MiB. No fuzz process remained. A temporary
+experiment also disabled the TapBranch sort: the pre-existing maximum-depth
+control-block seed already detected that mutation, so no separate lower-sibling
+branch-order seed was kept. This avoids duplicating an oracle already proven by
+the 128-sibling Core path.
+
+This is negative verification evidence, not a new clean-master production
+finding and not a severity downgrade. The branch was based on
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`; a real failure in
+the serialized Bitcoin Core ECDSA, Tapscript Schnorr, Taproot commitment, or
+BIP324 path must still be replayed against unmodified master and rated by its
+actual Core reachability. Invalid block/witness data reaching a consensus
+accept/reject discrepancy would be High or Critical according to impact;
+library-only malformed opaque state remains separately rated. A public nonce
+buffer with no standalone cryptographic meaning is not Critical merely because
+it is uncleared. Existing findings and fork/cherry-pick context remain
+master-relative and are not weakened by this clean worker sweep.
