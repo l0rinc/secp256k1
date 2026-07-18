@@ -597,6 +597,46 @@ static void secp256k1_fuzz_check_ecmult_multi_direct_single_batch(const secp256k
     secp256k1_scalar_clear(&generator_sc);
 }
 
+static void secp256k1_fuzz_check_ecmult_multi_simple_single(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult simple single point\n";
+    const size_t n_points = 1;
+    secp256k1_fuzz_ecmult_multi_data data;
+    secp256k1_scalar generator_sc;
+    secp256k1_scalar point_sc;
+    const secp256k1_scalar *g_sc_cases[2];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memset(&data, 0, sizeof(data));
+    secp256k1_scalar_set_int(&generator_sc, 17);
+    secp256k1_scalar_set_int(&data.sc[0], 23);
+    secp256k1_scalar_set_int(&point_sc, 5);
+    secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &data.pt[0], &point_sc);
+    g_sc_cases[0] = NULL;
+    g_sc_cases[1] = &generator_sc;
+
+    for (i = 0; i < sizeof(g_sc_cases) / sizeof(g_sc_cases[0]); i++) {
+        secp256k1_gej actual;
+        secp256k1_gej expected;
+        secp256k1_ge affine_expected;
+
+        secp256k1_fuzz_ecmult_multi_reference(&expected, g_sc_cases[i], n_points, &data);
+        secp256k1_fuzz_ecmult_multi_affine_reference(&affine_expected, g_sc_cases[i], n_points, &data);
+        secp256k1_fuzz_ecmult_multi_reset_trace(&data);
+        memset(&actual, 0xA5, sizeof(actual));
+        FUZZ_CHECK(secp256k1_ecmult_multi_var(&ctx->error_callback, NULL, &actual, g_sc_cases[i], secp256k1_fuzz_ecmult_multi_callback, &data, n_points) == 1);
+        secp256k1_fuzz_ecmult_multi_check_success_trace(&data, n_points);
+        secp256k1_fuzz_ecmult_multi_check_affine_result(&actual, &affine_expected);
+        secp256k1_fuzz_ecmult_multi_check_result(&actual, &expected);
+    }
+
+    secp256k1_scalar_clear(&point_sc);
+    secp256k1_scalar_clear(&generator_sc);
+}
+
 static int secp256k1_fuzz_ecmult_multi_callback(secp256k1_scalar *sc, secp256k1_ge *pt, size_t idx, void *cbdata) {
     secp256k1_fuzz_ecmult_multi_data *data = (secp256k1_fuzz_ecmult_multi_data *)cbdata;
     FUZZ_CHECK(idx < SECP256K1_FUZZ_ECMULT_MULTI_DIRECT_MAX_POINTS);
@@ -1862,6 +1902,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *input, size_t size) {
     secp256k1_fuzz_check_ecmult_multi_direct_allocation_failure(ctx, input, size, secp256k1_ecmult_pippenger_batch_single, g_sc_ptr, &data);
     secp256k1_fuzz_check_ecmult_multi_direct_empty_batch(ctx, input, size);
     secp256k1_fuzz_check_ecmult_multi_direct_single_batch(ctx, input, size);
+    secp256k1_fuzz_check_ecmult_multi_simple_single(ctx, input, size);
     secp256k1_fuzz_check_ecmult_multi_pippenger_second_allocation_failure(ctx, input, size);
     secp256k1_fuzz_ecmult_multi_repeated_pippenger(ctx, g_sc_ptr, input, size);
     secp256k1_fuzz_ecmult_multi_all_filtered_pippenger(ctx, input, size);
