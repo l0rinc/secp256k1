@@ -460,6 +460,52 @@ static void secp256k1_fuzz_check_ellswift_raw_consistency(const secp256k1_contex
     }
 }
 
+/* Match Bitcoin Core's CKey::ComputeBIP324ECDHSecret argument mapping with
+ * peer-controlled wire bytes. Core constructs the local EllSwift encoding from
+ * its own key, but the remote 64-byte value arrives from the handshake without
+ * first being checked against a private key. The XDH operation must therefore
+ * succeed and bind the exact raw pair into the built-in BIP324 transcript even
+ * when the remote value is not an encoding produced by ellswift_create(). */
+static void secp256k1_fuzz_check_core_bip324_raw_peer_wire(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *raw_ell_a64, const unsigned char *raw_ell_b64, const unsigned char *seckey_a32, const unsigned char *seckey_b32, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "core BIP324 arbitrary peer wire\n";
+    unsigned char dynamic_output[32];
+    unsigned char static_output[32];
+    const unsigned char *local_ellswift[2];
+    const unsigned char *peer_ellswift[2];
+    const unsigned char *seckeys[2];
+    int party;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    local_ellswift[0] = ell_a64;
+    local_ellswift[1] = ell_b64;
+    peer_ellswift[0] = raw_ell_b64;
+    peer_ellswift[1] = raw_ell_a64;
+    seckeys[0] = seckey_a32;
+    seckeys[1] = seckey_b32;
+    FUZZ_CHECK(memcmp(raw_ell_a64, ell_a64, 64) != 0);
+    FUZZ_CHECK(memcmp(raw_ell_b64, ell_b64, 64) != 0);
+
+    for (party = 0; party <= 1; party++) {
+        /* Core maps initiator=(our,their,0) and responder=(their,our,1).
+         * Use a generated local value and an unrelated raw peer value in each
+         * direction, then independently recompute the transcript from the
+         * returned X coordinate and the exact wire bytes. */
+        secp256k1_fuzz_check_ellswift_bip324_hash_reference_party(
+            secp256k1_context_static, local_ellswift[party], peer_ellswift[party],
+            seckeys[party], party);
+        FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, dynamic_output,
+            local_ellswift[party], peer_ellswift[party], seckeys[party], party,
+            secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+        FUZZ_CHECK(secp256k1_ellswift_xdh(secp256k1_context_static, static_output,
+            local_ellswift[party], peer_ellswift[party], seckeys[party], party,
+            secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+        FUZZ_CHECK(memcmp(dynamic_output, static_output, sizeof(dynamic_output)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_ellswift_failure_cleanup(secp256k1_context *ctx, const unsigned char *rnd32, const unsigned char *auxrnd32) {
     secp256k1_fuzz_ellswift_illegal_data illegal_data;
     secp256k1_pubkey invalid_pubkey;
@@ -825,6 +871,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_decodes_to_pubkey(ctx, ell_encoded_a64, &pubkey_a);
     secp256k1_fuzz_check_ellswift_randomizer_effect(ctx, &pubkey_a, seckey_a32, auxrnd_a32, rnd32, ell_a64, ell_encoded_a64);
     secp256k1_fuzz_check_ellswift_raw_consistency(ctx, raw_ell_a64, raw_ell_b64, seckey_a32, seckey_b32);
+    secp256k1_fuzz_check_core_bip324_raw_peer_wire(ctx, ell_a64, ell_b64, raw_ell_a64, raw_ell_b64, seckey_a32, seckey_b32, input, size);
     secp256k1_fuzz_check_ellswift_failure_cleanup(ctx, rnd32, auxrnd_a32);
 
     hash_data.expected_ell_a64 = ell_a64;
