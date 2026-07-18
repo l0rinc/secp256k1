@@ -12966,3 +12966,79 @@ cryptographic meaning is not Critical merely because it is uncleared.
 The old tests missed this because they checked point-equivalent decoding and
 generated BIP324 transcripts separately, without preserving noncanonical raw
 peer bytes through both Core party roles and the exact transcript hash.
+
+## 2026-07-18 ECDH and Recovery Worker/Sanitizer Sweep
+
+After the BIP324 oracle commit, the remaining module corpora were replayed so
+the audit did not stop at the Core-facing EllSwift target. The branch is a
+descendant of fetched `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; no rebase was needed. The
+tracked corpora contained 9 `ecdh` files and 15 `recovery` files. The seeds
+already cover generator-times-two and negative-generator equations, default
+and custom hash callbacks, invalid-scalar callback points, NULL/failure
+cleanup, static-context barriers, retry paths, invalid recovery X coordinates,
+`r+n` recovery IDs, high-S and zero-S boundaries, and independent recovery
+equations.
+
+The exact native Clang ASan/UBSan campaign was run from private copies, so
+libFuzzer could not modify the repository corpus:
+
+```
+timeout 180s /tmp/secp256k1-next-asan/bin/fuzz_<target> \
+  /tmp/codex-campaign-<target> -jobs=2 -workers=2 -max_total_time=25 \
+  -timeout=90 -rss_limit_mb=0 -handle_abrt=0 -ignore_timeouts=0 \
+  -ignore_ooms=0 -ignore_crashes=0 -print_final_stats=1
+```
+
+The two ECDH workers completed 351 and 356 executions, with the coordinator
+reporting 361; the two recovery workers completed 351 and 361, with the
+coordinator reporting 362. Both private corpora grew during mutation, to 88
+and 141 files respectively, without a crash, timeout, OOM, sanitizer report,
+or tracked-corpus artifact. The final private corpora were then replayed once
+under both forced-int64/10x26 Clang ASan/UBSan and external MSan:
+
+```
+/tmp/secp256k1-next-asan-int64/bin/fuzz_<target> \
+  /tmp/codex-campaign-<target> -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_<target> \
+  /tmp/codex-campaign-<target> -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+Each forced-int64 and MSan replay completed 89 ECDH or 142 recovery
+executions, exited 0, and emitted no diagnostic. No fuzz process remained.
+This is negative verification evidence; no production mutation was needed
+because this cycle added no oracle and observed no failure. A future failure
+must still be reproduced on unmodified master, or against a minimal documented
+production mutation when a causal oracle proof is required.
+
+The Bitcoin Core severity boundary is explicit. Core's BIP324 path is
+`BIP324Cipher::Initialize` -> `CKey::ComputeBIP324ECDHSecret` ->
+`secp256k1_ellswift_xdh`; it does not call the optional `secp256k1_ecdh`
+module. Therefore an ECDH result here is a library/API finding, not an invalid
+block or witness attack; a cryptographic output or callback-contract failure
+would be rated at the library boundary, not High/Critical consensus impact.
+Recovery does have a Core call path for user-supplied message verification:
+`MessageVerify` (`src/common/signmessage.cpp:26`) ->
+`CPubKey::RecoverCompact` (`src/pubkey.cpp:300`) -> static compact parsing and
+`secp256k1_ecdsa_recover`. The address, base64 compact signature, and message
+are RPC/UI inputs, but this path is outside block and witness validation. A
+false-positive message-authentication result could be a Core application/API
+Medium issue; a malformed-input rejection or availability issue is lower. It
+is not a consensus High/Critical finding merely because recovery accepts
+attacker-supplied bytes. Invalid block/witness data causing a consensus
+accept/reject, forged-signature, or memory-safety discrepancy in the separate
+legacy ECDSA, Tapscript Schnorr, or Taproot paths remains High/Critical as
+appropriate to the actual master impact.
+
+This sweep found no clean-master production bug and therefore adds no fix or
+deterministic regression test. Existing findings remain reiterated against
+unmodified master: `42842d5`, `8457e54`, `49a9725`, `5a34922`, `c16e3d8`, and
+`e16314a` are not downgraded by this clean run, and a later incidental fix
+must not hide the severity of a failure first reproduced on master. The
+fetched `l0rinc/master` ref was `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`;
+the relevant fork commits were already reconciled, so no additional
+cherry-pick was a prerequisite. A public nonce buffer with no standalone
+cryptographic meaning is not Critical merely because it is uncleared.
