@@ -20,7 +20,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing, TapLeaf CompactSize boundary vectors, and maximum-depth 128-sibling Merkle-chain vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, Bitcoin Core compact-recovery header and compressed/uncompressed serialization composition, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -13997,3 +13997,192 @@ Verification for this oracle:
 - Temporary origin worktrees, probes, mutation state, and private corpora
   were removed. A final process inventory found no fuzz or sanitizer jobs
   running.
+
+## 2026-07-18 Core Taproot Signing Composition Oracle
+
+The `schnorrsig/core-taproot-signing-composition` corpus input is the exact
+33-byte ASCII string `core-taproot-signing-composition\n`. It models the
+Bitcoin Core signing composition after Core has already computed the
+32-byte `SignatureHashSchnorr`. The fixture uses secret scalar `d = 11`,
+message bytes `00 01 02 ... 1f`, and the all-zero BIP340 auxiliary data that
+Core currently passes as `{}`. The independently serialized untweaked
+x-only public key is:
+
+    774ae7f858a9411e5ef4246b70c65aac5649980be5c17891bbec17895da008cb
+
+The helper preserves all three observable `CKey::SignSchnorr` merkle-root
+states:
+
+* `merkle_root == NULL`: no TapTweak is applied. This is the script-path
+  signing state. The output parity is `1`, and the output x-only key is the
+  untweaked key above.
+* A non-NULL pointer to a null `uint256`: Core hashes
+  `H_TapTweak(xonly)` by passing no root bytes. The exact tweak is
+  `4abc8fbf2243df3a8b8eb76e428803afad0017a11a88bb6dcdcab312ab25f037`.
+  The output parity is `0`, and the output x-only key is
+  `3114ee06015c28efc70b867b6aa3d2aaafadf37d07c1a10873d03301f41f00bc`.
+* A non-NULL pointer to a 32-byte root of repeated `0x42`: Core hashes
+  `H_TapTweak(xonly || merkle_root)`. The exact tweak is
+  `56d007f762fe8eaaf188d8a18def9f5f9e45afe2279791a2aef9d5c8eee4d213`.
+  The output parity is `0`, and the output x-only key is
+  `360601337bbd8ea03ff48f241876311c0c8029af40b851e7d06dcb6934a1b028`.
+
+For message `000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f`
+and zero auxiliary data, the exact BIP340 signatures are, in the same order:
+
+    dcd56e3886e64cbcb1ecbd7a479d5eb5ad1f86ce4e49e9b80cfad8e998107b31ae1a91f239d6231339392a63569b05c11f0cb49957f79cdbc0e0630ab9b2545d
+    ac581dff36eae62d641e8e817d855a4625cf051d7399844f0aff9f34719e96677665a690487d96d146d0ccb8136e4ecab0cbfba986795e47492e37e797d1f5d9
+    bde5d0ce083914d776b2763321e02798a594687a6467f7c8756e4ccc5f79827f9992a33dd947b07ed90a0cba485ae0cb28f4f34ae83e1611cc23b251b3ad8fbc
+
+The expected TapTweak bytes were computed independently with the existing
+fuzzer tagged-hash reference, and the point/signature bytes were independently
+checked with affine secp256k1 and BIP340 calculations before being fixed in
+the oracle. The public API must also report successful x-only extraction,
+exact parity, exact x-only serialization, successful Schnorr signing, and
+verification in both the full context and `secp256k1_context_static`.
+
+The corresponding Bitcoin Core call path in the local comparison checkout is
+wallet/descriptor/PSBT transaction-signing state ->
+`MutableTransactionSignatureCreator::CreateSchnorrSig`
+(`/mnt/my_storage/bitcoin/src/script/sign.cpp:102`) ->
+`ComputeSchnorrSignatureHash` -> `CKey::SignSchnorr`
+(`/mnt/my_storage/bitcoin/src/key.cpp:272`) ->
+`KeyPair::KeyPair` (`/mnt/my_storage/bitcoin/src/key.cpp:409`). The key-pair
+constructor calls `secp256k1_keypair_create` on Core's signing context,
+extracts and serializes the x-only public key on the static context, computes
+`XOnlyPubKey::ComputeTapTweakHash`, and calls
+`secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, ...)`. Core then
+calls `KeyPair::SignSchnorr` (`/mnt/my_storage/bitcoin/src/key.cpp:426`),
+which invokes `secp256k1_schnorrsig_sign32` with the zero auxiliary data and
+checks the result with static-context x-only verification. The fuzzer starts
+at the 32-byte hash because the standalone library target does not construct
+Core's complete transaction, spent-output cache, annex, script, and sighash
+state. This commit therefore does not claim to validate Core's
+`SignatureHashSchnorr` construction or hash-type selection.
+
+Existing `fuzz_xonly_tweak` control-block oracles cover the attacker-supplied
+Taproot commitment and generic x-only tweak arithmetic. Existing
+`fuzz_schnorrsig` Tapscript composition covers serialized 64/65-byte witness
+signature framing and the static verifier. Neither pins the private key,
+three-way merkle-root state, TapTweak, x-only parity, BIP340 signing, and
+post-signature verification as one Core-shaped operation. This oracle is
+therefore complementary, not a duplicate of those public verification paths.
+
+There is an important prior-commit interaction. This audit branch already
+contains `9989133d7dced5b0a25a0eb4677bef9244e2360b`,
+`extrakeys: reject inconsistent keypair state`. That change is not an
+ancestor of exact `origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`.
+Its new `secp256k1_keypair_load` check derives the public point from the
+secret and requires a built generator context. Consequently, the direct
+Core-shaped call using `secp256k1_context_static` aborts on this audit branch
+with:
+
+    [libsecp256k1] illegal argument: secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
+
+The existing static-context keypair barrier already tracks and rejects that
+secret-consuming static call. A standalone probe against exact origin/master
+returned `static_tweak_ret=1`, while the audit-branch probe returned exit 134.
+This is not a new clean-master production finding and is not reclassified as
+High or Critical. To exercise the valid Taproot transformation without merely
+rediscovering that already tracked barrier, this helper passes the full
+randomized context to `keypair_xonly_tweak_add`; it retains static-context
+public extraction, serialization, and verification. The code comment names
+`9989133d` so a future reader cannot mistake this context choice for the
+current Core call-site contract.
+
+The local Bitcoin Core checkout also contains an older bundled secp256k1 copy
+whose extrakeys loader predates that guard. That source/version split is part
+of the proof: a cherry-pick that makes the static call fail or pass changes
+the behavior of a follow-up oracle, but it does not change the clean
+origin/master result. Any later commit touching `keypair_load`,
+`keypair_xonly_tweak_add`, generator-context requirements,
+`secp256k1_context_static`, TapTweak hashing, or Core `CKey::SignSchnorr` must
+preserve these vectors and amend its commit message with this interaction.
+If a minor follow-up fix incidentally makes the Core static call pass, its
+message must say that it masks the `9989133d` integration condition and must
+rerun the exact origin/master control; it must not lower the severity of an
+independent master failure.
+
+Causal proof used a temporary, uncommitted production mutation in
+`src/modules/extrakeys/main_impl.h`. When the exact second-case tweak
+`56d007f762fe8eaaf188d8a18def9f5f9e45afe2279791a2aef9d5c8eee4d213` was
+passed to `secp256k1_keypair_xonly_tweak_add`, the mutation zeroed the tweak
+before the scalar and point additions. The dedicated seed then exited 134 at
+the exact x-only postcondition in
+`secp256k1_fuzz_check_core_taproot_signing_composition`
+(`src/fuzz/schnorrsig.c:848`). The focused command was:
+
+    gdb -q -batch -ex run -ex 'bt 16' --args /tmp/secp256k1-next-asan/bin/fuzz_schnorrsig /tmp/fuzz-schnorr-seed/native -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+
+The temporary mutation and failure-location instrumentation were restored
+before the clean replay and neither is committed. This proves that the
+oracle fails on a plausible wrong TapTweak state rather than merely adding
+coverage.
+
+The exact trigger also exposed a stale fuzzer-side domain assumption in the
+pre-existing keypair consistency helper. When two generated keypairs had the
+same public point, the helper tried only scalar one and scalar two to find a
+distinct replacement; this was insufficient for a valid input that selected
+one of those keys. It now tries scalar one, two, and three and asserts that a
+distinct valid replacement was found. This is classified as an overbroad
+fuzzer oracle correction, not a production finding. It prevents the new
+corpus input from being rejected before the intended Taproot oracle runs.
+
+Severity is based on unmodified-master Bitcoin Core reachability. This path is
+wallet, descriptor, PSBT, and authorized transaction signing state. A real
+master mismatch could make a valid wallet transaction un-signable or produce
+inconsistent wallet state, so it is **Informational / Low oracle hardening**
+with a possible **Medium** wallet-availability or funds-handling impact. It
+is not High or Critical merely because Core calls it: an invalid peer block or
+witness cannot invoke `CKey::SignSchnorr` during consensus validation. A
+High/Critical rating would require the clean master library to accept or
+reject attacker-controlled consensus data incorrectly, or a demonstrated
+memory-safety or concurrency impact. The separate raw Tapscript and Taproot
+control-block verifier paths remain consensus-sensitive and would be High or
+Critical if a clean-master discrepancy were proven. A nonce buffer with no
+standalone cryptographic meaning is not Critical merely because it is not
+cleared.
+
+No production bug was reproduced on clean master in this slice, so there is
+no production fix or deterministic regression test to claim. The exact
+origin/master public-API probe reported the following for all three cases:
+
+    case=0 ret=1 exact_x=1 exact_sig=1 verify=1 parity=1
+    case=1 ret=1 exact_x=1 exact_sig=1 verify=1 parity=0
+    case=2 ret=1 exact_x=1 exact_sig=1 verify=1 parity=0
+
+The same probe passed on the current clean audit production library. The
+origin control was an independent shared-library build at
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; the reconciled
+`l0rinc/master` ref is `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already an
+ancestor. The Bitcoin Core comparison ref was
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. No fork fix was copied into the
+origin control to hide a master-relative result. Existing raw Schnorr,
+Taproot control-block, static-keypair, BIP32, compact-signing, and low-R
+findings are reiterated here and retain their previously recorded
+master-relative severity.
+
+Verification for this oracle:
+
+* Native ASan/UBSan, forced-int64/10x26 ASan/UBSan, and forced-int64 MSan all
+  passed the dedicated seed for two executions. The restored Schnorr corpus
+  contains 18 tracked files totaling 670 bytes; each private replay loaded
+  those 18 files plus an explicit empty input and completed 19 executions
+  with exit 0 and no sanitizer diagnostic.
+* Native and forced-int64 ASan/UBSan private copies ran
+  `-fork=2 -jobs=2 -max_total_time=12 -timeout=5 -seed=1`. Both managers and
+  all workers exited 0, and the worker logs reported
+  `oom/timeout/crash: 0/0/0`.
+* The mutation replay failed at the exact x-only assertion, and the
+  production source was rebuilt and the focused clean replay passed after
+  restoration. The origin and current all-vector controls above both exited
+  0. Temporary probes, mutation state, and private corpora are outside the
+  repository. A final process check found no fuzz or sanitizer jobs running.
+
+Any confirmed future production issue from this composition must be fixed in
+production and covered by a deterministic test. Its commit message must name
+the exact Core entry point, merkle-root state, corpus bytes or mutation,
+assertion and failure mode, clean-master reproduction status, Core reachability
+and severity, verifier commands, and whether a cherry-picked fix changes or
+masks a later oracle. A commit that changes this behavior without carrying
+that context forward is incomplete.

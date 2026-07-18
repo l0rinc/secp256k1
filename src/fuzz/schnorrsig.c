@@ -702,6 +702,159 @@ static void secp256k1_fuzz_check_core_tapscript_schnorr_composition(const secp25
     }
 }
 
+/* Model Bitcoin Core's CKey::SignSchnorr composition after it has computed
+ * the 32-byte SignatureHashSchnorr. The merkle_root pointer has three
+ * observable states in Core: NULL means no tweak, a pointer to a null uint256
+ * means H_TapTweak(xonly), and a non-null root means
+ * H_TapTweak(xonly || merkle_root). */
+static void secp256k1_fuzz_check_core_taproot_signing_composition(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "core-taproot-signing-composition\n";
+    static const unsigned char seckey32[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B
+    };
+    static const unsigned char msg32[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+    };
+    static const unsigned char zero_aux32[32] = { 0 };
+    static const unsigned char zero_root32[32] = { 0 };
+    static const unsigned char script_root32[32] = {
+        0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+        0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+        0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+        0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42
+    };
+    static const unsigned char base_xonly32[32] = {
+        0x77, 0x4A, 0xE7, 0xF8, 0x58, 0xA9, 0x41, 0x1E,
+        0x5E, 0xF4, 0x24, 0x6B, 0x70, 0xC6, 0x5A, 0xAC,
+        0x56, 0x49, 0x98, 0x0B, 0xE5, 0xC1, 0x78, 0x91,
+        0xBB, 0xEC, 0x17, 0x89, 0x5D, 0xA0, 0x08, 0xCB
+    };
+    static const unsigned char expected_tweaks[2][32] = {
+        {
+            0x4A, 0xBC, 0x8F, 0xBF, 0x22, 0x43, 0xDF, 0x3A,
+            0x8B, 0x8E, 0xB7, 0x6E, 0x42, 0x88, 0x03, 0xAF,
+            0xAD, 0x00, 0x17, 0xA1, 0x1A, 0x88, 0xBB, 0x6D,
+            0xCD, 0xCA, 0xB3, 0x12, 0xAB, 0x25, 0xF0, 0x37
+        },
+        {
+            0x56, 0xD0, 0x07, 0xF7, 0x62, 0xFE, 0x8E, 0xAA,
+            0xF1, 0x88, 0xD8, 0xA1, 0x8D, 0xEF, 0x9F, 0x5F,
+            0x9E, 0x45, 0xAF, 0xE2, 0x27, 0x97, 0x91, 0xA2,
+            0xAE, 0xF9, 0xD5, 0xC8, 0xEE, 0xE4, 0xD2, 0x13
+        }
+    };
+    static const unsigned char expected_xonly32[3][32] = {
+        {
+            0x77, 0x4A, 0xE7, 0xF8, 0x58, 0xA9, 0x41, 0x1E,
+            0x5E, 0xF4, 0x24, 0x6B, 0x70, 0xC6, 0x5A, 0xAC,
+            0x56, 0x49, 0x98, 0x0B, 0xE5, 0xC1, 0x78, 0x91,
+            0xBB, 0xEC, 0x17, 0x89, 0x5D, 0xA0, 0x08, 0xCB
+        },
+        {
+            0x31, 0x14, 0xEE, 0x06, 0x01, 0x5C, 0x28, 0xEF,
+            0xC7, 0x0B, 0x86, 0x7B, 0x6A, 0xA3, 0xD2, 0xAA,
+            0xAF, 0xAD, 0xF3, 0x7D, 0x07, 0xC1, 0xA1, 0x08,
+            0x73, 0xD0, 0x33, 0x01, 0xF4, 0x1F, 0x00, 0xBC
+        },
+        {
+            0x36, 0x06, 0x01, 0x33, 0x7B, 0xBD, 0x8E, 0xA0,
+            0x3F, 0xF4, 0x8F, 0x24, 0x18, 0x76, 0x31, 0x1C,
+            0x0C, 0x80, 0x29, 0xAF, 0x40, 0xB8, 0x51, 0xE7,
+            0xD0, 0x6D, 0xCB, 0x69, 0x34, 0xA1, 0xB0, 0x28
+        }
+    };
+    static const unsigned char expected_sig64[3][64] = {
+        {
+            0xDC, 0xD5, 0x6E, 0x38, 0x86, 0xE6, 0x4C, 0xBC,
+            0xB1, 0xEC, 0xBD, 0x7A, 0x47, 0x9D, 0x5E, 0xB5,
+            0xAD, 0x1F, 0x86, 0xCE, 0x4E, 0x49, 0xE9, 0xB8,
+            0x0C, 0xFA, 0xD8, 0xE9, 0x98, 0x10, 0x7B, 0x31,
+            0xAE, 0x1A, 0x91, 0xF2, 0x39, 0xD6, 0x23, 0x13,
+            0x39, 0x39, 0x2A, 0x63, 0x56, 0x9B, 0x05, 0xC1,
+            0x1F, 0x0C, 0xB4, 0x99, 0x57, 0xF7, 0x9C, 0xDB,
+            0xC0, 0xE0, 0x63, 0x0A, 0xB9, 0xB2, 0x54, 0x5D
+        },
+        {
+            0xAC, 0x58, 0x1D, 0xFF, 0x36, 0xEA, 0xE6, 0x2D,
+            0x64, 0x1E, 0x8E, 0x81, 0x7D, 0x85, 0x5A, 0x46,
+            0x25, 0xCF, 0x05, 0x1D, 0x73, 0x99, 0x84, 0x4F,
+            0x0A, 0xFF, 0x9F, 0x34, 0x71, 0x9E, 0x96, 0x67,
+            0x76, 0x65, 0xA6, 0x90, 0x48, 0x7D, 0x96, 0xD1,
+            0x46, 0xD0, 0xCC, 0xB8, 0x13, 0x6E, 0x4E, 0xCA,
+            0xB0, 0xCB, 0xFB, 0xA9, 0x86, 0x79, 0x5E, 0x47,
+            0x49, 0x2E, 0x37, 0xE7, 0x97, 0xD1, 0xF5, 0xD9
+        },
+        {
+            0xBD, 0xE5, 0xD0, 0xCE, 0x08, 0x39, 0x14, 0xD7,
+            0x76, 0xB2, 0x76, 0x33, 0x21, 0xE0, 0x27, 0x98,
+            0xA5, 0x94, 0x68, 0x7A, 0x64, 0x67, 0xF7, 0xC8,
+            0x75, 0x6E, 0x4C, 0xCC, 0x5F, 0x79, 0x82, 0x7F,
+            0x99, 0x92, 0xA3, 0x3D, 0xD9, 0x47, 0xB0, 0x7E,
+            0xD9, 0x0A, 0x0C, 0xBA, 0x48, 0x5A, 0xE0, 0xCB,
+            0x28, 0xF4, 0xF3, 0x4A, 0xE8, 0x3E, 0x16, 0x11,
+            0xCC, 0x23, 0xB2, 0x51, 0xB3, 0xAD, 0x8F, 0xBC
+        }
+    };
+    static const unsigned char tap_tweak_tag[] = "TapTweak";
+    const unsigned char *merkle_roots[3] = { NULL, zero_root32, script_root32 };
+    unsigned char base_xonly_actual[32];
+    unsigned char tweak32[32];
+    unsigned char xonly32[32];
+    unsigned char sig64[64];
+    secp256k1_keypair keypair;
+    secp256k1_xonly_pubkey xonly;
+    int base_parity;
+    int output_parity;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey32) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(secp256k1_context_static, &xonly, &base_parity, &keypair) == 1);
+    FUZZ_CHECK(base_parity == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(secp256k1_context_static, base_xonly_actual, &xonly) == 1);
+    FUZZ_CHECK(memcmp(base_xonly_actual, base_xonly32, sizeof(base_xonly_actual)) == 0);
+
+    for (i = 0; i < sizeof(merkle_roots) / sizeof(merkle_roots[0]); i++) {
+        const unsigned char *merkle_root = merkle_roots[i];
+
+        FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey32) == 1);
+        if (merkle_root != NULL) {
+            secp256k1_fuzz_schnorrsig_tagged_hash_reference(
+                tweak32, tap_tweak_tag, sizeof(tap_tweak_tag) - 1,
+                base_xonly32, sizeof(base_xonly32),
+                i == 1 ? NULL : merkle_root, i == 1 ? 0 : sizeof(script_root32),
+                NULL, 0);
+            FUZZ_CHECK(memcmp(tweak32, expected_tweaks[i - 1], sizeof(tweak32)) == 0);
+            /* The Core call site currently passes context_static here. The
+             * audit branch's 9989133d inconsistent-keypair guard correctly
+             * rejects that secret-consuming context; use the full context to
+             * exercise the same valid transformation without rediscovering
+             * the tracked static-context barrier. */
+            FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &keypair, tweak32) == 1);
+        }
+
+        FUZZ_CHECK(secp256k1_keypair_xonly_pub(secp256k1_context_static, &xonly, &output_parity, &keypair) == 1);
+        FUZZ_CHECK(output_parity == (i == 0));
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(secp256k1_context_static, xonly32, &xonly) == 1);
+        FUZZ_CHECK(memcmp(xonly32, expected_xonly32[i], sizeof(xonly32)) == 0);
+
+        memset(sig64, 0xA5, sizeof(sig64));
+        FUZZ_CHECK(secp256k1_schnorrsig_sign32(ctx, sig64, msg32, &keypair, zero_aux32) == 1);
+        FUZZ_CHECK(memcmp(sig64, expected_sig64[i], sizeof(sig64)) == 0);
+        FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, sizeof(msg32), &xonly) == 1);
+        FUZZ_CHECK(secp256k1_schnorrsig_verify(secp256k1_context_static, sig64, msg32, sizeof(msg32), &xonly) == 1);
+    }
+}
+
 /* BIP340 rejects the identity as the reconstructed nonce. Use P = G and set
  * s to the challenge so the verifier must reach that explicit rejection. */
 static void secp256k1_fuzz_check_schnorrsig_infinity_rejection(const secp256k1_context *ctx) {
@@ -1024,6 +1177,13 @@ static void secp256k1_fuzz_check_schnorrsig_keypair_consistency(secp256k1_contex
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
     };
+    static const unsigned char scalar_three[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03
+    };
+    const unsigned char *alternate_seckeys[3] = { secp256k1_fuzz_scalar_one, scalar_two, scalar_three };
     secp256k1_fuzz_schnorrsig_illegal_data illegal_data;
     secp256k1_keypair mismatched_keypair;
     secp256k1_pubkey original_pubkey;
@@ -1033,15 +1193,19 @@ static void secp256k1_fuzz_check_schnorrsig_keypair_consistency(secp256k1_contex
     unsigned char sig64[64];
     unsigned char zero64[64] = { 0 };
     unsigned int calls;
+    size_t i;
 
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &original_pubkey, keypair) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &other_pubkey, other_keypair) == 1);
     if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) == 0) {
-        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, secp256k1_fuzz_scalar_one) == 1);
         mismatched_pubkey = &alternate_pubkey;
-        if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) == 0) {
-            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, scalar_two) == 1);
+        for (i = 0; i < sizeof(alternate_seckeys) / sizeof(alternate_seckeys[0]); i++) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &alternate_pubkey, alternate_seckeys[i]) == 1);
+            if (secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) != 0) {
+                break;
+            }
         }
+        FUZZ_CHECK(i < sizeof(alternate_seckeys) / sizeof(alternate_seckeys[0]));
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &original_pubkey, mismatched_pubkey) != 0);
     }
 
@@ -1243,6 +1407,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_check_schnorrsig_generator_equation(ctx, input, size);
     secp256k1_fuzz_check_core_tapscript_schnorr_composition(ctx, input, size, sig64, xonly32, msg32);
+    secp256k1_fuzz_check_core_taproot_signing_composition(ctx, input, size);
     secp256k1_fuzz_check_schnorrsig_s_order_boundary(ctx, input, size);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
