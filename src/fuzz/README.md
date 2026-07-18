@@ -13580,3 +13580,101 @@ Verification on the restored tree:
   had manager and worker exit 0; worker logs reported
   `oom/timeout/crash: 0/0/0`. Both used private corpus copies, and no fuzz
   process or tracked-corpus modification remained.
+
+## 2026-07-18 Core BIP32 Public-Derivation Composition Oracle
+
+The new `api_roundtrip/core-bip32-public-derivation-composition` seed is a
+41-byte ASCII dispatch input. It carries two independent Bitcoin Core BIP32
+public-derivation vectors through libsecp256k1: test-vector-2 `m -> m/0` with
+child index `0`, and test-vector-1 `m/0' -> m/0'/1` with child index `1`. The
+parent public keys are compressed SEC1 keys, and the fixture pins the complete
+64-byte HMAC-SHA512 results, including both the public tweak and the child
+chain code:
+
+    m -> m/0:
+      parent chain code 60499f801b896d83179a4374aeb7822aaeaceaa0db1f85ee3e904c4defbd9689
+      HMAC 60e3739cc2c3950b7c4d7f32cc503e13b996d0f7a45623d0a914e1efa7f811e0f0909affaa7ee7abe5dd4e100598d4dc53cd709d5a5c2cac40e7412f232f7c9c
+      child public key 02fc9e5af0ac8d9b3cecfe2a888e2117ba3d089d8585886c9c826b6b22a98d12ea
+
+    m/0' -> m/0'/1:
+      parent chain code 47fdacbd0f1097043b78c63c20c34ef4ed9a111d980047ad16282c7ae6236141
+      HMAC 4eb9d78157bae7a24115001621c4d91e3a3110e11e143c5259eaa4e55c5ec4bf2a7857631386ba23dacac34180dd1983734e444fdbf774041578e9b6adb37c19
+      child public key 03501e454bf00751f24b1b489aa925215d66af2234e3891c3b21a52bedb3cd711c
+
+The exact Bitcoin Core call path is wallet/descriptor input ->
+`CExtPubKey::Derive` (`/mnt/my_storage/bitcoin/src/pubkey.cpp`) ->
+`CPubKey::Derive` -> `BIP32Hash`/`CHMAC_SHA512` with the parent chain code,
+the compressed parent key, and the big-endian child index ->
+`secp256k1_ec_pubkey_parse` -> `secp256k1_ec_pubkey_tweak_add` ->
+`secp256k1_ec_pubkey_serialize`. Imported xpubs, descriptors, watch-only
+wallet state, and related RPC/PSBT workflows can supply the parent data. This
+is not a peer-supplied block or witness validation path: invalid blocks cannot
+reach this adapter during consensus checking.
+
+The fuzzer deliberately does not reimplement HMAC-SHA512. The complete HMAC
+outputs and compressed child encodings are fixed from Core's independent
+`src/test/bip32_tests.cpp` vectors; the libsecp oracle starts at the exact
+HMAC-derived tweak and checks dynamic and static contexts, in-place public-key
+tweak behavior, success, compressed output length, exact child bytes, and
+static/dynamic agreement. Existing generic tweak tests exercise arithmetic
+relations, while Core's own BIP32 unit vectors exercise the C++ wrapper. This
+seed adds the missing direct serialized Core-adapter assertion in the library
+fuzzer without pretending that the HMAC code is independently re-tested here.
+
+Causal proof used a temporary, uncommitted mutation in
+`src/secp256k1.c`: when `secp256k1_ec_pubkey_tweak_add` received the first
+vector's exact tweak
+`60e3739cc2c3950b7c4d7f32cc503e13b996d0f7a45623d0a914e1efa7f811e0`, it used
+32 zero bytes instead. Because the generic API oracle calls the same primitive
+before the fixture and would fail for an unrelated reason, a temporary
+harness-only early-return isolation invoked only this new fixture. The
+mutation then produced SIGABRT in
+`secp256k1_fuzz_check_core_bip32_public_derivation` under a GDB replay of the
+dedicated seed. Both the production mutation and isolation were restored; no
+mutation is committed.
+
+The exact replay command was:
+
+    gdb -q -batch -ex run -ex 'bt 16' --args /tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip src/fuzz/corpora/api_roundtrip/core-bip32-public-derivation-composition -runs=1
+
+GDB stopped on the expected `SIGABRT` in the new helper. The wrapper's final
+status is not used as evidence because GDB handles the signal; the backtrace
+and assertion location prove that the mutation reached this oracle.
+
+This is **Informational / Low oracle hardening**, not a production finding on
+clean master. A real master mismatch would affect wallet/descriptor child-key
+derivation and could be Medium depending on the caller and whether it caused
+funds to be sent to or watched under the wrong derived key, but it is not
+High/Critical merely because Core uses the library. High/Critical would require
+an unmodified-master consensus/security failure reachable from an invalid
+block, witness, or peer-controlled validation input, or a demonstrated
+memory/concurrency impact. No such path exists for this adapter. A public nonce
+buffer without standalone cryptographic meaning is not Critical merely
+because it is uncleared.
+
+The exact audit `origin/master` ref is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; reconciled `l0rinc/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already an ancestor. No fork fix
+was cherry-picked to hide a master-relative result. The Bitcoin Core call-site
+comparison used `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. Existing Core BIP32
+findings and the separate Core unit coverage are reiterated here, not
+reclassified. Any later cherry-pick changing public tweak arithmetic, parser
+contracts, or this adapter must preserve the exact vector, the temporary
+mutation/isolation explanation, and the wallet-only severity context.
+
+Verification for this commit:
+
+- Rebuilt the current source with native ASan/UBSan, forced-int64
+  ASan/UBSan, and forced-int64 MSan. Each replayed all 61 corpus files plus
+  the empty input with `-runs=1`; all exited 0 with no sanitizer diagnostic.
+- Native and forced-int64 ASan/UBSan ran private-copy campaigns with
+  `-fork=2 -jobs=2 -max_total_time=12 -timeout=5 -seed=1`. Both managers and
+  all workers exited 0; worker logs reported `oom/timeout/crash: 0/0/0`.
+  The private corpora were removed afterward and the tracked corpus was
+  unchanged.
+- A fresh shared-library build at exact `origin/master` linked a standalone
+  public-API probe containing both fixed Core vectors. For each vector,
+  `parsed=1`, `tweaked=1`, `serialized=1`, `outlen=33`, and `exact=1`.
+  The control exited 0, so this commit reports no production failure on
+  master.
+- A final process inventory found no running fuzz target or sanitizer replay.
