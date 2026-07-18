@@ -16311,3 +16311,94 @@ existing test gap, verifier commands, and whether it preserves, changes, or
 masks the trigger. Passing this replay after a fix is not proof that master was
 safe; rerun the original baseline or mutation before downgrading a finding. No
 fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 ECDH callback and scalar-boundary Core recheck
+
+This pass rechecked all 9 tracked `src/fuzz/corpora/ecdh` inputs. The target
+requires ECDH symmetry and an independent byte-field equation for `2G` and
+`-G`, checks default/explicit SHA callback equivalence and compressed-key
+hashing, validates callback coordinates, exercises zero/order/order-plus-one
+scalars, invalid opaque public keys, NULL arguments, callback failure, output
+cleanup, static-context ECDH, and the custom SHA compression dispatch. Its
+preconditions include valid generated keys, deliberately invalid scalar and
+opaque-key states, built-in and custom callback contracts, and sentinel-filled
+outputs. Postconditions require the independent shared-point relation,
+documented rejection, callback-call counts, and zeroed fixed-size built-in
+outputs; custom callback output remains governed by its documented caller-owned
+contract.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_ecdh \
+      /tmp/codex-next-ecdh4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecdh4-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0 after about 90-91 seconds with zero OOM, timeout,
+and crash counters and no assertion, ASan, UBSan, runtime, or `ERROR:`
+diagnostic. The forced-int64 ASan/UBSan replay used two workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_ecdh \
+      /tmp/codex-next-ecdh-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecdh-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 after about 64-65 seconds with
+`oom/timeout/crash: 0/0/0`. The int64 MSan replay used two workers for 45
+seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ecdh \
+      /tmp/codex-next-ecdh-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecdh-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 after about 46 seconds with zero OOM, timeout, and
+crash counters. No MSan, UBSan, runtime, or `ERROR:` diagnostic and no
+artifact was produced. No production mutation was needed and no production
+bug, deterministic regression test, or severity change is claimed.
+
+The library production path is `secp256k1_ecdh` -> `secp256k1_ecmult_const`.
+Bitcoin Core does not call this standalone ECDH entry point for BIP324; its
+relevant path is `BIP324Cipher::Initialize` ->
+`CKey::ComputeBIP324ECDHSecret` -> `secp256k1_ellswift_xdh`. Consequently, the
+existing invalid opaque-public-key, callback, NULL-input, scalar-rejection,
+and fixed-output cleanup findings in this target are API-state findings,
+currently Medium only where a direct caller supplies malformed opaque state
+and a non-aborting illegal callback; they are not consensus High/Critical and
+an invalid block cannot invoke this standalone ECDH path. A future clean-master
+failure in Core's EllSwift BIP324 path must instead be rated from the concrete
+peer consequence, such as remote crash/DoS or key-agreement integrity, while
+an ECDH-only direct API failure remains lower without a demonstrated Core
+trigger. A nonce with no standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+Existing ECDH unit/exhaustive tests cover fixed vectors and basic argument
+checks, but this oracle combines callback routing, static context behavior,
+independent point equations, invalid scalar transitions, and cleanup under
+sentinel outputs across both arithmetic backends. The comparison refs remain
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Temporary corpora and artifacts were removed
+after the process check.
+
+Any later ECDH, EllSwift, callback, production fix, or l0rinc cherry-pick must
+amend its commit message and this ledger with the clean-master or minimal
+production-mutation baseline, exact corpus bytes or mutation, preconditions,
+postconditions, observed failure, Core caller, severity on unmodified master,
+existing test gap, verifier commands, and whether it preserves, changes, or
+masks the trigger. A post-fix green replay is not proof that master was safe;
+rerun the original baseline or mutation before downgrading a finding. No fuzz,
+sanitizer, compiler, or test process remains running.
