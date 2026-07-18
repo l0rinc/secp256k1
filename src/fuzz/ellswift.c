@@ -678,6 +678,22 @@ static void secp256k1_fuzz_check_ellswift_static_context(const secp256k1_context
     FUZZ_CHECK(secp256k1_ellswift_xdh(secp256k1_context_static, static_bip324, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
     FUZZ_CHECK(memcmp(static_bip324, dynamic_bip324, sizeof(static_bip324)) == 0);
     secp256k1_fuzz_check_ellswift_bip324_hash_reference(secp256k1_context_static, ell_a64, ell_b64, seckey32);
+
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    {
+        unsigned char static_create[64];
+        unsigned char zero64[64] = { 0 };
+        unsigned int calls = secp256k1_fuzz_default_illegal_calls;
+
+        /* Creating from a secret key still requires generator precomputation.
+         * The public static-context paths above must not hide this rejection or
+         * leave a stale fixed-size encoding behind. */
+        memset(static_create, 0xA5, sizeof(static_create));
+        FUZZ_CHECK(secp256k1_ellswift_create(secp256k1_context_static, static_create, seckey32, rnd32) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls + 1);
+        FUZZ_CHECK(memcmp(static_create, zero64, sizeof(static_create)) == 0);
+    }
+#endif
 }
 #endif
 
