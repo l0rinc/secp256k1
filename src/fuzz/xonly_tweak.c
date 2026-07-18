@@ -11,11 +11,23 @@
 #ifdef ENABLE_MODULE_EXTRAKEYS
 #include "pubkey_reference.h"
 
+static const unsigned char secp256k1_fuzz_xonly_g_x[32] = {
+    0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+    0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+    0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+    0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+};
 static const unsigned char secp256k1_fuzz_xonly_two_g_x[32] = {
     0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
     0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
     0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
     0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5
+};
+static const unsigned char secp256k1_fuzz_xonly_three_g_x[32] = {
+    0xF9, 0x30, 0x8A, 0x01, 0x92, 0x58, 0xC3, 0x10,
+    0x49, 0x34, 0x4F, 0x85, 0xF8, 0x9D, 0x52, 0x29,
+    0xB5, 0x31, 0xC8, 0x45, 0x83, 0x6F, 0x99, 0xB0,
+    0x86, 0x01, 0xF1, 0x13, 0xBC, 0xE0, 0x36, 0xF9
 };
 
 typedef struct {
@@ -784,6 +796,72 @@ static void secp256k1_fuzz_check_keypair_create_failure(const secp256k1_context 
     }
 }
 
+static void secp256k1_fuzz_check_keypair_create_vectors(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "keypair create vectors\n";
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char scalar_three[32] = { 0 };
+    struct {
+        const unsigned char *seckey32;
+        const unsigned char *expected_xonly32;
+        int expected_parity;
+    } cases[4];
+    secp256k1_keypair keypair;
+    secp256k1_pubkey pubkey;
+    secp256k1_xonly_pubkey xonly;
+    secp256k1_xonly_pubkey xonly_no_parity;
+    unsigned char expected33[33];
+    unsigned char pubkey33[33];
+    unsigned char xonly32[32];
+    unsigned char extracted_seckey[32];
+    size_t output_len;
+    size_t i;
+    int parity;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    scalar_two[31] = 2;
+    scalar_three[31] = 3;
+    cases[0].seckey32 = secp256k1_fuzz_scalar_one;
+    cases[0].expected_xonly32 = secp256k1_fuzz_xonly_g_x;
+    cases[0].expected_parity = 0;
+    cases[1].seckey32 = scalar_two;
+    cases[1].expected_xonly32 = secp256k1_fuzz_xonly_two_g_x;
+    cases[1].expected_parity = 0;
+    cases[2].seckey32 = scalar_three;
+    cases[2].expected_xonly32 = secp256k1_fuzz_xonly_three_g_x;
+    cases[2].expected_parity = 0;
+    cases[3].seckey32 = secp256k1_fuzz_scalar_order_minus_one;
+    cases[3].expected_xonly32 = secp256k1_fuzz_xonly_g_x;
+    cases[3].expected_parity = 1;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        memset(&keypair, 0xA5, sizeof(keypair));
+        FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, cases[i].seckey32) == 1);
+
+        memset(extracted_seckey, 0x5A, sizeof(extracted_seckey));
+        FUZZ_CHECK(secp256k1_keypair_sec(ctx, extracted_seckey, &keypair) == 1);
+        FUZZ_CHECK(memcmp(extracted_seckey, cases[i].seckey32, sizeof(extracted_seckey)) == 0);
+
+        expected33[0] = (unsigned char)(cases[i].expected_parity ? SECP256K1_TAG_PUBKEY_ODD : SECP256K1_TAG_PUBKEY_EVEN);
+        memcpy(expected33 + 1, cases[i].expected_xonly32, 32);
+        FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
+        output_len = sizeof(pubkey33);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, pubkey33, &output_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(output_len == sizeof(pubkey33));
+        FUZZ_CHECK(memcmp(pubkey33, expected33, sizeof(pubkey33)) == 0);
+
+        parity = -1;
+        FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, &parity, &keypair) == 1);
+        FUZZ_CHECK(parity == cases[i].expected_parity);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+        FUZZ_CHECK(memcmp(xonly32, cases[i].expected_xonly32, sizeof(xonly32)) == 0);
+        FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &xonly_no_parity) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_invalid_pubkey_xonly_pub(secp256k1_context *ctx) {
     secp256k1_fuzz_xonly_illegal_data illegal_data;
     secp256k1_pubkey invalid_pubkey;
@@ -931,6 +1009,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, seckey) == 1);
     FUZZ_CHECK(secp256k1_keypair_pub(ctx, &pubkey, &keypair) == 1);
+    secp256k1_fuzz_check_keypair_create_vectors(ctx, input, size);
     secp256k1_fuzz_check_tweak_input_output_alias(ctx, input, size);
     secp256k1_fuzz_check_invalid_keypair_xonly_pub(ctx);
     secp256k1_fuzz_check_invalid_pubkey_xonly_pub(ctx);
