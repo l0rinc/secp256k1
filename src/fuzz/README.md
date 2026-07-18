@@ -15736,6 +15736,96 @@ downgrading a finding. The private corpus and artifacts were removed after
 the final process check, and no fuzz, sanitizer, compiler, or test process
 remains running.
 
+## 2026-07-18 API round-trip Core-boundary recheck
+
+This pass rechecked the 63 tracked `src/fuzz/corpora/api_roundtrip` inputs
+against the current audit source. The target is the broadest Core-facing
+oracle in this branch: it combines independent ECDSA point/signature
+equations with strict DER and SEC1 framing, low-S and r-plus-order behavior,
+public-key sorting and combining, key and x-only tweaks, private/public BIP32
+composition, signing retries, callback guards, aliasing, invalid opaque-state
+rejection, and documented output cleanup. Accepted values must satisfy the
+independent equation or round-trip model; rejected values must leave the
+documented failure state, and every alias check is restricted to an explicit
+In/Out contract rather than assuming arbitrary overlap is supported.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_api_roundtrip \
+      /tmp/codex-next-api4-final -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-api4-final-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0. The workers reported zero OOM, timeout, and crash
+counters, and the log contained no ASan, UBSan, runtime, or `ERROR:`
+diagnostic. The source corpus has 63 files; libFuzzer's forked workers
+reported 62 retained seeds after their per-worker corpus handling.
+
+The alternate forced-int64 ASan/UBSan replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+      /tmp/codex-next-api-int64-final -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-api-int64-final-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 with `oom/timeout/crash: 0/0/0`, no sanitizer or
+runtime diagnostic, and no artifact. The int64 MSan replay was:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_api_roundtrip \
+      /tmp/codex-next-api-msan-final -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-api-msan-final-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 with zero OOM, timeout, and crash counters. No
+MSan, UBSan, runtime, or `ERROR:` diagnostic and no artifact was produced.
+No production bug, deterministic regression test, or severity change is
+claimed by this negative replay.
+
+The Core boundary determines the rating. Consensus legacy ECDSA verification
+uses `CPubKey::Unserialize`/`CPubKey::Verify` and reaches
+`secp256k1_ecdsa_verify`; Core's lax DER adapter is consumed by the same
+verification and low-S checks. The signing-side compositions model
+`CKey::Sign`, `CKey::GetPrivKey`, and BIP32 derivation, which are wallet,
+descriptor, or authorized-signing paths rather than invalid-block or witness
+validation. A clean-master acceptance, signature-equation, invalid-key,
+memory-safety, race, or state-corruption failure reachable from an invalid
+block or witness would be High/Critical according to demonstrated consensus
+impact. A wallet/API-only failure is rated by its actual impact and is not
+consensus-Critical merely because the API is public. A nonce with no
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+Existing unit tests cover individual parser and signing cases, but this target
+combines their state transitions and failure-output contracts; the replay
+therefore provides negative discovery evidence, not a claim that ordinary
+tests prove master safe. The exact clean comparison remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. PRs #1-#16 remain reconciled and
+no l0rinc commit was cherry-picked for this pass. Private corpus copies,
+logs, and artifact directories were removed after the process check.
+
+Any later parser, serializer, normalization, Core adapter, production fix,
+or l0rinc cherry-pick must amend the same commit message and this ledger with
+the clean-master or minimal-production-mutation baseline, exact target and
+corpus bytes or mutation, preconditions, postconditions, observed failure,
+Core caller, severity on unmodified master, existing test gap, and whether
+the change preserves, changes, or masks the trigger. A follow-up patch that
+merely passes this replay is not proof that master was safe; rerun the
+original baseline or mutation before downgrading a finding. No fuzz,
+sanitizer, compiler, or test process remains running.
+
 ## 2026-07-18 ECMULT multi-batch timeout triage and backend recheck
 
 This pass rechecked the 29 tracked `src/fuzz/corpora/ecmult_multi` inputs,
