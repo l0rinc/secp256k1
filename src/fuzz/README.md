@@ -12872,3 +12872,97 @@ library-only malformed opaque state remains separately rated. A public nonce
 buffer with no standalone cryptographic meaning is not Critical merely because
 it is uncleared. Existing findings and fork/cherry-pick context remain
 master-relative and are not weakened by this clean worker sweep.
+
+## 2026-07-18 Core BIP324 Raw EllSwift Wire-Transcript Oracle
+
+The `ellswift` target now checks that the BIP324 transcript is bound to the
+exact serialized EllSwift wire values, not only to the public points decoded
+from them. Bitcoin Core's production path is
+`BIP324Cipher::Initialize` (`src/bip324.cpp:40`) ->
+`CKey::ComputeBIP324ECDHSecret` (`src/key.cpp:327`) ->
+`secp256k1_ellswift_xdh(..., secp256k1_ellswift_xdh_hash_function_bip324)`.
+The remote 64-byte EllSwift value is handshake input received from the peer.
+Core maps the initiator to `(ell_a, ell_b, party) = (our, their, 0)` and the
+responder to `(their, our, 1)`, so the oracle checks both party values and both
+serialized pair orderings.
+
+The existing `modulo-alias-encoding` corpus input proved that `p+1` encodings
+of the EllSwift `u` and `t` field elements decode to the same public key and
+produce the same shared X coordinate. The existing BIP324 reference computed
+the tagged SHA256 transcript only for generated encodings and used party 0.
+Neither check would fail if a later implementation canonicalized a peer's
+raw bytes before hashing. The new helper,
+`secp256k1_fuzz_check_ellswift_bip324_wire_alias`, constructs canonical
+`[u=1,t=1]` plus three point-equivalent aliases: `u=p+1`, `t=p+1`, and both.
+For every alias it independently computes
+`SHA256(taghash || taghash || ell_a64 || ell_b64 || shared_x)`, where the tag
+is `bip324_ellswift_xonly_ecdh`, and compares that model with the built-in
+callback. It then requires the raw alias transcript to differ from the
+canonical transcript. The trigger is the exact ASCII input
+`ellswift bip324 raw wire aliases\n`, stored at
+`src/fuzz/corpora/ellswift/bip324-raw-wire-aliases`. The tracked EllSwift
+corpus is now 18 files: 17 existing inputs plus this trigger.
+
+Causal proof used a temporary production mutation in
+`ellswift_xdh_hash_function_bip324_impl`: when only the second wire argument
+was exactly `p+1 || 1`, it copied that argument and replaced the first 32
+bytes with canonical `1` before the SHA writes. The old 17-file corpus passed
+with 18 executions and exit 0, while the one-file trigger aborted with exit
+134 under native Clang 22 ASan/UBSan. The mutation was removed and the target
+rebuilt before the remaining proof runs. This is an oracle mutation, not a
+production bug claim.
+
+On the restored branch, the exact 18-file corpus replay passed with 19
+executions and exit 0 under each of:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_ellswift \
+  /tmp/ellswift-wire-alias-final-default -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+/tmp/secp256k1-next-asan-int64/bin/fuzz_ellswift \
+  /tmp/ellswift-wire-alias-final-int64 -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ellswift \
+  /tmp/ellswift-wire-alias-final-msan -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+Each run had no ASan, UBSan, or MSan diagnostic. Fresh private copies of the
+same 18 seeds were then run with
+`-jobs=2 -workers=2 -max_total_time=12 -timeout=90 -rss_limit_mb=0
+-handle_abrt=0 -print_final_stats=1`. Native ASan/UBSan jobs completed 73 and
+78 executions; forced-int64 ASan/UBSan jobs completed 43 and 46. Every job
+exited 0 with no timeout, OOM, crash, sanitizer report, or tracked-corpus
+artifact. The private corpora were the only directories libFuzzer extended.
+
+The master-relative replay used a fresh detached worktree at unmodified
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`. Only the current
+EllSwift fuzzer, harness headers, one-target CMake overlay, and this corpus
+were copied into it. A temporary harness-only early return ran the modulo
+alias prerequisite and the new wire oracle, then returned before older
+aggregate checks; no production fix or fork patch was copied. Clang 22
+ASan/UBSan built and passed the trigger with exit 0 and two executed units.
+Leak checking was disabled for this isolated replay because the sanitizer's
+symbolizer pipe stalled during libFuzzer's post-input leak check; address and
+undefined-behavior sanitization remained enabled. The clean-master production
+tree had no modified `src/modules/ellswift` file.
+
+This is negative oracle evidence, not a clean-master production finding.
+Severity remains master-relative and follows Bitcoin Core reachability. If a
+real master regression canonicalized these peer-controlled bytes, the likely
+impact would be a BIP324 interoperability failure or handshake denial of
+service: **Medium at the library transport boundary, Low-to-Medium for Core
+operations**, and not a consensus High/Critical issue because this input does
+not enter block or witness validation. A later incidental fix must not lower
+the severity of a failure first reproduced on unmodified master. The prior
+EllSwift `u == 0` finding fixed by `e16314a`, the API/output findings fixed by
+`42842d5`, `8457e54`, `49a9725`, `5a34922`, and `c16e3d8`, and the reconciled
+l0rinc fork commits remain separate master-relative findings; none is a fix
+for this raw-wire boundary. No additional l0rinc cherry-pick was needed.
+As recorded throughout this ledger, a public nonce buffer with no standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The old tests missed this because they checked point-equivalent decoding and
+generated BIP324 transcripts separately, without preserving noncanonical raw
+peer bytes through both Core party roles and the exact transcript hash.

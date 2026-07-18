@@ -98,7 +98,7 @@ static int secp256k1_fuzz_ellswift_hash_fail(unsigned char *output, const unsign
     return 0;
 }
 
-static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
+static void secp256k1_fuzz_check_ellswift_bip324_hash_reference_party(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, int party) {
     static const unsigned char bip324_tag[] = "bip324_ellswift_xonly_ecdh";
     static const unsigned char ignored_data[64] = {
         0xA5, 0x5A, 0xC3, 0x3C, 0x96, 0x69, 0xF0, 0x0F,
@@ -120,7 +120,7 @@ static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_
 
     /* Obtain only X through the custom callback, then independently compute
      * the BIP324 transcript with the standalone SHA256 model. */
-    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckey32, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, shared_x32, ell_a64, ell_b64, seckey32, party, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
     secp256k1_fuzz_sha256_standalone(taghash, bip324_tag, sizeof(bip324_tag) - 1);
     memcpy(transcript, taghash, sizeof(taghash));
     memcpy(transcript + sizeof(taghash), taghash, sizeof(taghash));
@@ -129,22 +129,26 @@ static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_
     memcpy(transcript + 2 * sizeof(taghash) + 128, shared_x32, sizeof(shared_x32));
     secp256k1_fuzz_sha256_standalone(expected, transcript, sizeof(transcript));
 
-    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, party, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
     FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
 
     /* BIP324 fixes the transcript and explicitly ignores the callback data
      * pointer. Check both the exported callback and the ctx-aware dispatch. */
     FUZZ_CHECK(secp256k1_ellswift_xdh_hash_function_bip324(ignored_data_output, shared_x32, ell_a64, ell_b64, (void *)ignored_data) == 1);
     FUZZ_CHECK(memcmp(ignored_data_output, expected, sizeof(ignored_data_output)) == 0);
-    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, ignored_data_output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_bip324, (void *)ignored_data) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, ignored_data_output, ell_a64, ell_b64, seckey32, party, secp256k1_ellswift_xdh_hash_function_bip324, (void *)ignored_data) == 1);
     FUZZ_CHECK(memcmp(ignored_data_output, expected, sizeof(ignored_data_output)) == 0);
 
     memcpy(prefix64, taghash, sizeof(taghash));
     memcpy(prefix64 + sizeof(taghash), taghash, sizeof(taghash));
-    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, 0, secp256k1_ellswift_xdh_hash_function_prefix, prefix64) == 1);
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, output, ell_a64, ell_b64, seckey32, party, secp256k1_ellswift_xdh_hash_function_prefix, prefix64) == 1);
     FUZZ_CHECK(memcmp(output, expected, sizeof(output)) == 0);
     memset(taghash, 0, sizeof(taghash));
     memset(transcript, 0, sizeof(transcript));
+}
+
+static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32) {
+    secp256k1_fuzz_check_ellswift_bip324_hash_reference_party(ctx, ell_a64, ell_b64, seckey32, 0);
 }
 
 static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_context *ctx, const unsigned char *ell64, const secp256k1_pubkey *pubkey) {
@@ -320,6 +324,56 @@ static void secp256k1_fuzz_check_ellswift_modulo_alias(const secp256k1_context *
         FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &canonical_pubkey, &alias_pubkey) == 0);
         FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, actual_x, aliases[i], aliases[i], secp256k1_fuzz_scalar_one, 0, secp256k1_fuzz_ellswift_hash_x32, NULL) == 1);
         FUZZ_CHECK(memcmp(actual_x, expected_x, sizeof(actual_x)) == 0);
+    }
+}
+
+/* BIP324 authenticates the serialized EllSwift encodings, not just the points
+ * they decode to. Keep the modulo-alias point check above separate from this
+ * transcript check so canonicalizing a peer's wire bytes cannot pass merely
+ * because the resulting public point is unchanged. */
+static void secp256k1_fuzz_check_ellswift_bip324_wire_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ellswift bip324 raw wire aliases\n";
+    unsigned char canonical[64] = { 0 };
+    unsigned char alias_u[64];
+    unsigned char alias_t[64];
+    unsigned char alias_both[64];
+    unsigned char canonical_output[32];
+    unsigned char alias_output[32];
+    const unsigned char *aliases[3];
+    size_t i;
+    int party;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* p+1 is a distinct wire representation of the field element 1. */
+    canonical[31] = 1;
+    canonical[63] = 1;
+    memcpy(alias_u, canonical, sizeof(alias_u));
+    memcpy(alias_t, canonical, sizeof(alias_t));
+    memcpy(alias_both, canonical, sizeof(alias_both));
+    memcpy(alias_u, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    memcpy(alias_t + 32, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    memcpy(alias_both, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    memcpy(alias_both + 32, secp256k1_fuzz_ellswift_field_p_plus_one, 32);
+    aliases[0] = alias_u;
+    aliases[1] = alias_t;
+    aliases[2] = alias_both;
+
+    for (i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++) {
+        for (party = 0; party <= 1; party++) {
+            /* The standalone SHA transcript receives the exact raw pair. */
+            secp256k1_fuzz_check_ellswift_bip324_hash_reference_party(ctx, canonical, aliases[i], secp256k1_fuzz_scalar_one, party);
+            secp256k1_fuzz_check_ellswift_bip324_hash_reference_party(ctx, aliases[i], canonical, secp256k1_fuzz_scalar_one, party);
+        }
+    }
+
+    /* A point-equivalent alias must still produce a different BIP324 transcript. */
+    FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, canonical_output, canonical, canonical, secp256k1_fuzz_scalar_one, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+    for (i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++) {
+        FUZZ_CHECK(secp256k1_ellswift_xdh(ctx, alias_output, canonical, aliases[i], secp256k1_fuzz_scalar_one, 0, secp256k1_ellswift_xdh_hash_function_bip324, NULL) == 1);
+        FUZZ_CHECK(memcmp(canonical_output, alias_output, sizeof(canonical_output)) != 0);
     }
 }
 
@@ -748,6 +802,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_ellswift_bip324_decode_vector(ctx, input, size);
     secp256k1_fuzz_check_ellswift_modulo_alias(ctx);
+    secp256k1_fuzz_check_ellswift_bip324_wire_alias(ctx, input, size);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b32) == 1);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey_a);
