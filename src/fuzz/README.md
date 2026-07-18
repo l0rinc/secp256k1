@@ -9,8 +9,9 @@ Targets:
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, sorting, key transformations, and secret-key validation, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
-- `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
-  boundaries against independent byte/product references
+- `fuzz_scalar`: scalar high/conditional-negation half-order boundary,
+  bit-extraction boundaries, cadd-bit carry/no-op boundaries, and rounded
+  multiply-shift boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
@@ -11684,3 +11685,72 @@ ASan/UBSan builds, while the sixteen pre-existing EllSwift corpus files passed
 under the same mutation on both backends. The mutation was restored, the clean
 native focused replay passed again, and the mutation log contained no sanitizer
 diagnostic.
+
+## 2026-07-18 Scalar High Half-Order Boundary Oracle
+
+The new `scalar/high-boundary` corpus input gates a scalar-only oracle for the
+exact `floor(n/2)` and `floor(n/2) + 1` boundary. The harness carries fixed
+byte constants for both values rather than deriving them from
+`SECP256K1_N_H_*`, then asserts:
+
+- `secp256k1_scalar_is_high(floor(n/2)) == 0`
+- `secp256k1_scalar_is_high(floor(n/2) + 1) == 1`
+- `secp256k1_scalar_is_high(n - 1) == 1`
+- parity at the boundary
+- byte-level `scalar_negate` and `scalar_cond_negate` postconditions in both
+  directions across the boundary
+
+This complements the API-level `ecdsa-normalize-half-order-boundary` seed. That
+older seed proves the public ECDSA normalizer behavior, while this seed pins the
+direct internal scalar predicate and conditional-negation contract in both
+scalar backends. The existing scalar corpus had broad independent arithmetic,
+inverse, WNAF, split, cadd-bit, bit-extraction, and shift checks, but no fixed
+input for this exact high-S threshold.
+
+The restored verifier set passed with the complete scalar corpus under native
+and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_scalar \
+  src/fuzz/corpora/scalar -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_scalar \
+  src/fuzz/corpora/scalar -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_scalar \
+  src/fuzz/corpora/scalar/high-boundary \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. At `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, both scalar backends use the
+strict boundary required by the contract. If master classified `floor(n/2)` as
+high in public ECDSA normalization or verification paths, the severity would be
+**High for consensus-critical consumers** because valid boundary signatures
+could be transformed or rejected incorrectly. The observed branch finding does
+not raise master-relative severity because clean master passes.
+
+For causal proof, a temporary production mutation changed the final
+`secp256k1_scalar_is_high` limb comparison from `>` to `>=` in both
+`src/scalar_4x64_impl.h` and `src/scalar_8x32_impl.h`. The focused seed aborted
+with exit 134 on native 5x52 and forced-int64/10x26 ASan/UBSan builds. The
+seven pre-existing scalar corpus inputs passed under the same mutation on both
+backends:
+
+```
+src/fuzz/corpora/scalar/cadd-bit-carry-boundaries
+src/fuzz/corpora/scalar/cadd-bit-zero-order-boundary
+src/fuzz/corpora/scalar/get-bits-boundaries
+src/fuzz/corpora/scalar/inverse-independent-reference
+src/fuzz/corpora/scalar/mul-shift-over-512
+src/fuzz/corpora/scalar/split-lambda-independent-reference
+src/fuzz/corpora/scalar/wnaf-independent-reference
+```
+
+The mutation was restored, the clean replays above passed, and the production
+diff was empty before committing.
