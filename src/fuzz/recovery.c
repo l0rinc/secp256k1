@@ -673,6 +673,89 @@ static void secp256k1_fuzz_check_recoverable_high_s(const secp256k1_context *ctx
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, pubkey) == 1);
 }
 
+static void secp256k1_fuzz_check_recoverable_high_half_order(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "recoverable high half order\n";
+    static const unsigned char msg32[32] = {
+        /* z = floor(n/2) + 1 - x(G) mod n, for d = k = 1. */
+        0x06, 0x41, 0x99, 0x81, 0x06, 0x23, 0x44, 0x53,
+        0xaa, 0x5f, 0x9d, 0x6a, 0x31, 0x78, 0xf4, 0xf8,
+        0x5a, 0xbb, 0x71, 0x98, 0x29, 0xd6, 0x27, 0x44,
+        0x85, 0xf6, 0xad, 0xeb, 0x51, 0x23, 0x09, 0x09
+    };
+    static const unsigned char generator_compressed[33] = {
+        SECP256K1_TAG_PUBKEY_EVEN,
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char high_compact[64] = {
+        /* r = x(G), s = floor(n/2) + 1. */
+        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
+        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
+        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
+        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d,
+        0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa1
+    };
+    static const unsigned char low_compact[64] = {
+        /* Same high-S twin normalized to s = floor(n/2). */
+        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
+        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
+        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
+        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d,
+        0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0
+    };
+    secp256k1_ecdsa_recoverable_signature high_sig;
+    secp256k1_ecdsa_recoverable_signature low_sig;
+    secp256k1_ecdsa_signature high_normal_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+    secp256k1_ecdsa_signature low_normal_sig;
+    secp256k1_pubkey generator;
+    secp256k1_pubkey high_recovered;
+    secp256k1_pubkey low_recovered;
+    unsigned char compact[64];
+    unsigned char recovered33[33];
+    size_t recovered_len = sizeof(recovered33);
+    int recid;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &generator, generator_compressed, sizeof(generator_compressed)) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &high_sig, high_compact, 0) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &high_recovered, &high_sig, msg32) == 1);
+    secp256k1_fuzz_check_recovery_equation(ctx, &high_sig, msg32, &high_recovered);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &generator, &high_recovered) == 0);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, recovered33, &recovered_len, &high_recovered, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(recovered_len == sizeof(recovered33));
+    FUZZ_CHECK(memcmp(recovered33, generator_compressed, sizeof(recovered33)) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &high_normal_sig, &high_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &high_normal_sig, msg32, &generator) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &high_normal_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(compact, low_compact, sizeof(compact)) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &generator) == 1);
+
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &low_sig, low_compact, 1) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &low_recovered, &low_sig, msg32) == 1);
+    secp256k1_fuzz_check_recovery_equation(ctx, &low_sig, msg32, &low_recovered);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &generator, &low_recovered) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &low_normal_sig, &low_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, compact, &low_normal_sig) == 1);
+    FUZZ_CHECK(memcmp(compact, low_compact, sizeof(compact)) == 0);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, compact, &recid, &low_sig) == 1);
+    FUZZ_CHECK(recid == 1);
+    FUZZ_CHECK(memcmp(compact, low_compact, sizeof(compact)) == 0);
+}
+
 static void secp256k1_fuzz_check_recoverable_valid_nonce_retry(const secp256k1_context *ctx) {
     secp256k1_fuzz_recovery_nonce_data nonce_data;
     secp256k1_ecdsa_recoverable_signature sig;
@@ -926,6 +1009,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_recoverable_signature_state_barrier(ctx, &reparsed_sig, msg32);
     secp256k1_fuzz_check_recovery_illegal_failure_cleanup(ctx, &reparsed_sig, compact, msg32, seckey);
     secp256k1_fuzz_check_recoverable_high_s(ctx, &reparsed_sig, msg32, &pubkey);
+    secp256k1_fuzz_check_recoverable_high_half_order(ctx, input, size);
     secp256k1_fuzz_check_recovery_recid_overflow_boundary(ctx, msg32);
     if (size == sizeof("recovery-invalid-x-coordinate\n") - 1
         && memcmp(input, "recovery-invalid-x-coordinate\n", sizeof("recovery-invalid-x-coordinate\n") - 1) == 0) {
