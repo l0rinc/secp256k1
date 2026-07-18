@@ -669,6 +669,11 @@ static void secp256k1_fuzz_check_schnorrsig_generator_equation(const secp256k1_c
     unsigned char reduced_challenge32[32];
     unsigned char sig64[64];
     unsigned char serialized_xonly[32];
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    unsigned char zero_sig64[64] = { 0 };
+    secp256k1_keypair keypair;
+    unsigned int calls;
+#endif
     const secp256k1_context *contexts[2];
     secp256k1_xonly_pubkey xonly[2];
     size_t i;
@@ -697,6 +702,23 @@ static void secp256k1_fuzz_check_schnorrsig_generator_equation(const secp256k1_c
         FUZZ_CHECK(memcmp(serialized_xonly, generator_x, sizeof(serialized_xonly)) == 0);
         FUZZ_CHECK(secp256k1_schnorrsig_verify(contexts[i], sig64, msg32, sizeof(msg32), &xonly[i]) == 1);
     }
+
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    /* Verification is a public-data path. Schnorr signing still requires
+     * generator precomputation and must reject the static singleton without
+     * leaving stale signature bytes behind. */
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, secp256k1_fuzz_scalar_one) == 1);
+    calls = secp256k1_fuzz_default_illegal_calls;
+    memset(sig64, 0xA5, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_schnorrsig_sign32(secp256k1_context_static, sig64, msg32, &keypair, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(memcmp(sig64, zero_sig64, sizeof(sig64)) == 0);
+
+    memset(sig64, 0x5A, sizeof(sig64));
+    FUZZ_CHECK(secp256k1_schnorrsig_sign_custom(secp256k1_context_static, sig64, msg32, sizeof(msg32), &keypair, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(memcmp(sig64, zero_sig64, sizeof(sig64)) == 0);
+#endif
 }
 
 /* Check a generated signature against BIP340's public point equation without
