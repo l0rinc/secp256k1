@@ -3581,6 +3581,44 @@ static void secp256k1_fuzz_check_musig_static_public_signing(const secp256k1_mus
     }
 }
 
+static void secp256k1_fuzz_check_musig_static_public_nonce(
+    const secp256k1_context *ctx,
+    const secp256k1_musig_pubnonce *pubnonces,
+    const secp256k1_musig_pubnonce * const *pubnonce_ptrs,
+    size_t n_signers,
+    const secp256k1_musig_aggnonce *expected_aggnonce,
+    const unsigned char *msg32,
+    const secp256k1_musig_keyagg_cache *keyagg_cache,
+    const secp256k1_musig_session *expected_session
+) {
+    secp256k1_musig_pubnonce pubnonce_before[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    secp256k1_musig_keyagg_cache cache_before = *keyagg_cache;
+    secp256k1_musig_aggnonce static_aggnonce;
+    secp256k1_musig_session static_session;
+    unsigned char expected_aggnonce66[66];
+    unsigned char static_aggnonce66[66];
+    size_t i;
+
+    FUZZ_CHECK(n_signers <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
+    for (i = 0; i < n_signers; i++) {
+        pubnonce_before[i] = pubnonces[i];
+    }
+    memset(&static_aggnonce, 0xA5, sizeof(static_aggnonce));
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(secp256k1_context_static, &static_aggnonce, pubnonce_ptrs, n_signers) == 1);
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, expected_aggnonce66, expected_aggnonce) == 1);
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, static_aggnonce66, &static_aggnonce) == 1);
+    FUZZ_CHECK(memcmp(static_aggnonce66, expected_aggnonce66, sizeof(static_aggnonce66)) == 0);
+
+    memset(&static_session, 0x5A, sizeof(static_session));
+    FUZZ_CHECK(secp256k1_musig_nonce_process(secp256k1_context_static, &static_session, &static_aggnonce, msg32, keyagg_cache) == 1);
+    FUZZ_CHECK(memcmp(&static_session, expected_session, sizeof(static_session)) == 0);
+
+    FUZZ_CHECK(memcmp(keyagg_cache, &cache_before, sizeof(cache_before)) == 0);
+    for (i = 0; i < n_signers; i++) {
+        FUZZ_CHECK(memcmp(&pubnonces[i], &pubnonce_before[i], sizeof(pubnonce_before[i])) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char (*seckey)[32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
     static const unsigned char scalar_two[32] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -3604,6 +3642,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     secp256k1_musig_aggnonce aggnonce;
     secp256k1_musig_session session;
     secp256k1_musig_session session_replay;
+    secp256k1_musig_session session_default;
     secp256k1_musig_session wrong_cache_session;
     secp256k1_musig_partial_sig partial_sig[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
     const secp256k1_musig_partial_sig *partial_sig_ptrs[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
@@ -3668,6 +3707,12 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_fuzz_musig_noncecoef_sha256_compression_calls != 0);
     FUZZ_CHECK(secp256k1_fuzz_musig_challenge_sha256_compression_calls != 0);
     secp256k1_context_set_sha256_compression(ctx, NULL);
+    FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &session_default, &aggnonce, msg32, &keyagg_cache) == 1);
+    FUZZ_CHECK(memcmp(&session_default, &session, sizeof(session_default)) == 0);
+    if (size == sizeof("MuSig static public nonce\n") - 1
+            && memcmp(input, "MuSig static public nonce\n", sizeof("MuSig static public nonce\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_static_public_nonce(ctx, pubnonce, pubnonce_ptrs, n_signers, &aggnonce, msg32, &keyagg_cache, &session_default);
+    }
     FUZZ_CHECK(secp256k1_musig_nonce_process(ctx, &wrong_cache_session, &aggnonce, msg32, &wrong_cache) == 1);
     secp256k1_fuzz_check_musig_partial_sign_failure_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
     secp256k1_fuzz_check_musig_partial_sign_null_argument_cleanup(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
