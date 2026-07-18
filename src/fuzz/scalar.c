@@ -980,6 +980,65 @@ static void secp256k1_fuzz_scalar_check_cadd_bit_carry_boundaries(void) {
     }
 }
 
+static void secp256k1_fuzz_scalar_check_high_boundary(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "scalar high boundary\n";
+    static const unsigned char half_order32[32] = {
+        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D,
+        0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0
+    };
+    static const unsigned char half_order_plus_one32[32] = {
+        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D,
+        0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA1
+    };
+    secp256k1_scalar half_order;
+    secp256k1_scalar half_order_plus_one;
+    secp256k1_scalar order_minus_one;
+    secp256k1_scalar actual;
+    unsigned char actual32[32];
+    int overflow;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_scalar_set_b32(&half_order, half_order32, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    secp256k1_scalar_set_b32(&half_order_plus_one, half_order_plus_one32, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    secp256k1_scalar_set_b32(&order_minus_one, secp256k1_fuzz_scalar_order_minus_one, &overflow);
+    FUZZ_CHECK(overflow == 0);
+
+    FUZZ_CHECK(secp256k1_scalar_is_high(&half_order) == 0);
+    FUZZ_CHECK(secp256k1_scalar_is_high(&half_order_plus_one) == 1);
+    FUZZ_CHECK(secp256k1_scalar_is_high(&order_minus_one) == 1);
+    FUZZ_CHECK(secp256k1_scalar_is_even(&half_order) == 1);
+    FUZZ_CHECK(secp256k1_scalar_is_even(&half_order_plus_one) == 0);
+
+    secp256k1_scalar_negate(&actual, &half_order);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, half_order_plus_one32, sizeof(actual32)) == 0);
+    secp256k1_scalar_negate(&actual, &half_order_plus_one);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, half_order32, sizeof(actual32)) == 0);
+
+    actual = half_order;
+    FUZZ_CHECK(secp256k1_scalar_cond_negate(&actual, 0) == 1);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, half_order32, sizeof(actual32)) == 0);
+    FUZZ_CHECK(secp256k1_scalar_cond_negate(&actual, 1) == -1);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, half_order_plus_one32, sizeof(actual32)) == 0);
+
+    actual = half_order_plus_one;
+    FUZZ_CHECK(secp256k1_scalar_cond_negate(&actual, 1) == -1);
+    secp256k1_scalar_get_b32(actual32, &actual);
+    FUZZ_CHECK(memcmp(actual32, half_order32, sizeof(actual32)) == 0);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     unsigned char a32[32];
@@ -1010,6 +1069,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
     secp256k1_fuzz_scalar_check_cadd_bit_noop_boundary();
     secp256k1_fuzz_scalar_check_cadd_bit_carry_boundaries();
+    secp256k1_fuzz_scalar_check_high_boundary(input, size);
 
     return 0;
 }
