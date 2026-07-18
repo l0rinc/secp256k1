@@ -16500,3 +16500,95 @@ preserves, changes, or masks the trigger. A post-fix green replay is not proof
 that master was safe; rerun the original baseline or mutation before
 downgrading a finding. No fuzz, sanitizer, compiler, or test process remains
 running.
+
+## 2026-07-18 Taproot x-only tweak and control-block Core recheck
+
+This pass rechecked all 20 tracked `src/fuzz/corpora/xonly_tweak` inputs. The
+oracle models Bitcoin Core Taproot commitment verification with independent
+TapLeaf, TapBranch, TapTweak, CompactSize, and Merkle-chain hashing; checks
+33-byte control blocks through the maximum 128-sibling depth; and compares
+x-only parse/serialize, parity, affine tweak equations, pubkey/keypair
+equivalence, static-context codecs, invalid opaque states, zero/order/cancel
+tweaks, overlapping input/output buffers, and failure cleanup. Preconditions
+include valid internal keys, invalid and prime-field encodings, parity flips,
+31-byte and overflowing tweaks, exact CompactSize 252/253 boundaries, maximum
+control paths, duplicate/aliased buffers, and sentinel-filled opaque outputs.
+Postconditions require the independent `Q = P + tweak*G` result and parity,
+documented rejection, exact control-block commitment, unchanged inputs where
+required, and equivalent public/keypair state after successful mutation.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_xonly_tweak \
+      /tmp/codex-next-xonly4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-xonly4-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0 after about 92-96 seconds with zero OOM, timeout,
+and crash counters and no assertion, ASan, UBSan, runtime, or `ERROR:`
+diagnostic. The forced-int64 ASan/UBSan replay used two workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 300s /tmp/secp256k1-next-asan-int64/bin/fuzz_xonly_tweak \
+      /tmp/codex-next-xonly-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-xonly-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 after about 63-64 seconds with zero OOM, timeout, and
+crash counters. The int64 MSan replay used two workers for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 300s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_xonly_tweak \
+      /tmp/codex-next-xonly-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-xonly-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 after about 45-52 seconds with zero OOM, timeout,
+and crash counters. No MSan, UBSan, runtime, or `ERROR:` diagnostic and no
+artifact was produced. No production mutation was needed and no production
+bug, deterministic regression test, or severity change is claimed.
+
+The Core consensus boundary is direct. A Taproot witness control block reaches
+`VerifyTaprootCommitment` in `src/script/interpreter.cpp`, then
+`XOnlyPubKey::CheckTapTweak`, `secp256k1_xonly_pubkey_parse`, and
+`secp256k1_xonly_pubkey_tweak_add_check` with attacker-controlled program,
+parity, internal x-only key, and Merkle path bytes. Therefore a clean-master
+tweak equation, parity/acceptance discrepancy, memory-safety defect, race, or
+state corruption reachable from an invalid witness or block would be rated
+High/Critical from consensus impact. This pass found no such master bug. The
+separate valid static-context keypair compatibility result remains Medium
+wallet/API availability on the affected audit branch, not a clean-master
+consensus finding: invalid blocks, witnesses, and peers do not construct that
+opaque wallet keypair. Direct malformed opaque-state and alias contracts remain
+lower absent a concrete Core consequence. A nonce with no standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+Existing extrakeys tests cover fixed tweak and parity vectors, but they do not
+replace this independent Core-shaped control-block model across CompactSize
+boundaries, 128 siblings, aliasing, static contexts, and failure-state
+transitions. The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Temporary corpora and artifacts were removed
+after the process check.
+
+Any later x-only, Taproot adapter, keypair, production fix, or l0rinc
+cherry-pick must amend its commit message and this ledger with the clean-master
+or minimal-production-mutation baseline, exact corpus bytes or mutation,
+preconditions, postconditions, observed failure, Core caller, severity on
+unmodified master, existing test gap, verifier commands, and whether it
+preserves, changes, or masks the trigger. A post-fix green replay is not proof
+that master was safe; rerun the original baseline or mutation before
+downgrading a finding. No fuzz, sanitizer, compiler, or test process remains
+running.
