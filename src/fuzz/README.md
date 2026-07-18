@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -11266,3 +11266,49 @@ static singleton. Six separate static-only rejection mutations, one each in
 `secp256k1_musig_partial_sig_serialize`, each aborted the exact focused seed
 with exit 134. All mutations were restored, the clean native focused replay
 passed again, and the mutation logs contained no sanitizer diagnostic.
+
+## 2026-07-18 Static ECDSA Signature Codec Oracle
+
+The new `api_roundtrip/static-ecdsa-signature-codecs` corpus input checks the
+public ECDSA signature surface on `secp256k1_context_static`. It compares
+normal and static compact parsing, DER parsing, compact serialization, DER
+serialization, low-S normalization, in-place normalization, and verification
+for a valid low-S signature, its high-S twin, an invalid compact scalar, and a
+malformed DER input. Successful static serializations must match the normal
+context exactly and leave the opaque signature object unchanged; failed parse
+paths must clear the output under both contexts.
+
+This is public signature and verification data only. It does not claim that
+ECDSA signing or nonce generation is valid on the static singleton; those
+remain secret/precomputation-dependent operations.
+
+The clean verifier set passed with 50 tracked API corpus files and 51 total
+executions under both native and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip/static-ecdsa-signature-codecs \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **Informational static-context contract hardening**, not a
+clean-master production bug. Master already accepts these public ECDSA
+operations on the static singleton. Six separate static-only rejection
+mutations, one each in `secp256k1_ecdsa_signature_parse_compact`,
+`secp256k1_ecdsa_signature_serialize_compact`,
+`secp256k1_ecdsa_signature_parse_der`,
+`secp256k1_ecdsa_signature_serialize_der`,
+`secp256k1_ecdsa_signature_normalize`, and `secp256k1_ecdsa_verify`, each
+aborted the exact focused seed with exit 134. All mutations were restored, the
+clean native focused replay passed again, and the mutation logs contained no
+sanitizer diagnostic.
