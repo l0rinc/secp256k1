@@ -10654,3 +10654,49 @@ MSan replay of the same target list also exited zero.
 This adds uninitialized-state negative evidence for the current oracle set
 only. It does not prove clean master safe, introduce a production fix, or
 change the existing master-relative severity ledger.
+
+## 2026-07-18 Public Contract Oracle Recheck
+
+The branch was refreshed with `git fetch --all --prune`; `origin/master`
+remained at `8c3e6e6d992456d3b9228305ae84a6703273cf70` and was still an
+ancestor of `codex/fuzz-oracles`. No fuzz, sanitizer, build, or test jobs were
+live before this pass started.
+
+The exported variable-output and failed-output contracts were re-audited
+before adding new assertions. One candidate, the exact
+`secp256k1_ecdsa_signature_serialize_der` required length on insufficient
+output space, was intentionally not duplicated. A disposable production
+mutation changed the short-buffer branch in `src/ecdsa_impl.h` to report
+`*size = 11` while still returning 0 and clearing the requested buffer. The
+focused `api_roundtrip/variable-output-cleanup` input aborted on native 5x52
+and forced-int64/10x26 ASan/UBSan builds. Weakening only the tentative new
+assertion back to the older `output_len > 10` check did not make the mutation
+pass, because the shared `secp256k1_fuzz_check_signature_roundtrip` helper in
+`src/fuzz/fuzz.h` already asserts the stronger relation:
+`short_der_len == der_len` after a successful full DER serialization. The
+temporary mutation and tentative fuzzer edit were restored; no source change is
+needed for this DER postcondition.
+
+Fresh generated-input exploration then ran the contract-heavy public API
+targets `api_roundtrip`, `xonly_tweak`, and `context` from private copies of
+their tracked corpora. The native 5x52 Clang ASan/UBSan build
+`/tmp/secp256k1-next-asan` and the forced-int64/10x26 Clang ASan/UBSan build
+`/tmp/secp256k1-next-asan-int64` rebuilt the three fuzz targets from the
+restored checkout. Each target ran with:
+
+```
+-fork=2 -max_total_time=120 -timeout=60 -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+All six managers exited zero. The artifact directories were empty, and a log
+scan found no ASan/UBSan diagnostic, sanitizer summary, runtime error, timeout,
+OOM, crash, or generated crash artifact. The private copied corpora grew only
+as disposable libFuzzer state: native final file counts were 291
+`api_roundtrip`, 85 `xonly_tweak`, and 154 `context`; forced-int64 final file
+counts were 265, 81, and 159 respectively. The generated units are not claimed
+as new repository seeds without a distinct assertion failure or coverage
+purpose.
+
+This pass records negative evidence and a duplicate-oracle control only. It
+does not prove clean master defect-free, does not add or remove any production
+finding, and does not change the existing master-relative severity ledger.
