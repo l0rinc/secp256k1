@@ -2979,6 +2979,9 @@ static void secp256k1_fuzz_check_core_ecdsa_serialized_composition(const secp256
     parsed_pubkey = secp256k1_ec_pubkey_parse(ctx, &pubkey, input + offset, pubkey_len);
     parsed_static_pubkey = secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_pubkey, input + offset, pubkey_len);
     FUZZ_CHECK(parsed_pubkey == parsed_static_pubkey);
+    if (expected_compact != NULL) {
+        FUZZ_CHECK(parsed_pubkey == 1);
+    }
     if (!parsed_pubkey) {
         return;
     }
@@ -3081,6 +3084,57 @@ static void secp256k1_fuzz_check_core_ecdsa_r_plus_order_fixture(const secp256k1
     offset += 32;
     memcpy(serialized + offset, der, der_len);
     secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, serialized, offset + der_len, compact);
+}
+
+/* Preserve the historical SEC1 encodings that CPubKey::Verify can receive on
+ * the legacy script path. The compressed-key parser oracle above does not
+ * preserve this serialized Core boundary, and the uncompressed-only fixture
+ * does not exercise the hybrid parity tags. */
+static void secp256k1_fuzz_check_core_ecdsa_sec1_fixture(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    static const unsigned char trigger[] = "core ECDSA SEC1 encoding composition\n";
+    static const struct {
+        const unsigned char *compressed;
+        unsigned char prefix;
+    } cases[] = {
+        {secp256k1_fuzz_pubkey_g_compressed, SECP256K1_TAG_PUBKEY_UNCOMPRESSED},
+        {secp256k1_fuzz_pubkey_g_compressed, SECP256K1_TAG_PUBKEY_HYBRID_EVEN},
+        {secp256k1_fuzz_pubkey_minus_g_compressed, SECP256K1_TAG_PUBKEY_HYBRID_ODD}
+    };
+    unsigned char serialized[1 + 65 + 32 + 72];
+    unsigned char compact[64];
+    unsigned char der[72];
+    unsigned char full[65];
+    secp256k1_pubkey pubkey;
+    size_t der_len;
+    size_t full_len;
+    size_t offset;
+    size_t i;
+
+    if (inputlen != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memcpy(compact, secp256k1_fuzz_pubkey_g_compressed + 1, 32);
+    memcpy(compact + 32, secp256k1_fuzz_pubkey_g_compressed + 1, 32);
+    der_len = secp256k1_fuzz_make_der_signature(der, compact, compact + 32);
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        full_len = sizeof(full);
+        FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, cases[i].compressed, 33) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, full, &full_len, &pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+        FUZZ_CHECK(full_len == sizeof(full));
+        full[0] = cases[i].prefix;
+        FUZZ_CHECK(secp256k1_fuzz_pubkey_parse_reference(full, full_len) == 1);
+
+        offset = 0;
+        memset(serialized, 0, sizeof(serialized));
+        serialized[offset++] = 1;
+        memcpy(serialized + offset, full, full_len);
+        offset += full_len;
+        memset(serialized + offset, 0, 32); /* z = 0. */
+        offset += 32;
+        memcpy(serialized + offset, der, der_len);
+        secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, serialized, offset + der_len, compact);
+    }
 }
 
 /* Match Bitcoin Core's CheckSignatureEncoding -> IsLowDERSignature adapter.
@@ -3972,6 +4026,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, input, size, NULL);
     secp256k1_fuzz_check_core_ecdsa_serialized_fixture(ctx, input, size);
     secp256k1_fuzz_check_core_ecdsa_r_plus_order_fixture(ctx, input, size);
+    secp256k1_fuzz_check_core_ecdsa_sec1_fixture(ctx, input, size);
     secp256k1_fuzz_check_core_ecdsa_low_s_encoding_fixture(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
