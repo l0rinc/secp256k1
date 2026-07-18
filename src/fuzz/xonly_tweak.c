@@ -5,6 +5,7 @@
  ***********************************************************************/
 
 #include "fuzz.h"
+#include "sha256_reference.h"
 #include "../int128_impl.h"
 #include "../field_impl.h"
 
@@ -29,6 +30,236 @@ static const unsigned char secp256k1_fuzz_xonly_three_g_x[32] = {
     0xB5, 0x31, 0xC8, 0x45, 0x83, 0x6F, 0x99, 0xB0,
     0x86, 0x01, 0xF1, 0x13, 0xBC, 0xE0, 0x36, 0xF9
 };
+
+static void secp256k1_fuzz_taproot_tagged_hash(unsigned char out32[32], const unsigned char *tag, size_t taglen, const unsigned char *part1, size_t part1_len, const unsigned char *part2, size_t part2_len) {
+    unsigned char taghash[32];
+    unsigned char transcript[64 + 9 + 256];
+    size_t msglen = part1_len + part2_len;
+
+    FUZZ_CHECK(msglen <= sizeof(transcript) - 64);
+    secp256k1_fuzz_sha256_standalone(taghash, tag, taglen);
+    memcpy(transcript, taghash, sizeof(taghash));
+    memcpy(transcript + sizeof(taghash), taghash, sizeof(taghash));
+    memcpy(transcript + 2 * sizeof(taghash), part1, part1_len);
+    memcpy(transcript + 2 * sizeof(taghash) + part1_len, part2, part2_len);
+    secp256k1_fuzz_sha256_standalone(out32, transcript, 2 * sizeof(taghash) + msglen);
+}
+
+static size_t secp256k1_fuzz_taproot_compact_size(unsigned char out9[9], size_t size) {
+    if (size < 253) {
+        out9[0] = (unsigned char)size;
+        return 1;
+    }
+    if (size <= 0xFFFFu) {
+        out9[0] = 0xFD;
+        out9[1] = (unsigned char)size;
+        out9[2] = (unsigned char)(size >> 8);
+        return 3;
+    }
+    if (size <= 0xFFFFFFFFu) {
+        out9[0] = 0xFE;
+        out9[1] = (unsigned char)size;
+        out9[2] = (unsigned char)(size >> 8);
+        out9[3] = (unsigned char)(size >> 16);
+        out9[4] = (unsigned char)(size >> 24);
+        return 5;
+    }
+    out9[0] = 0xFF;
+    out9[1] = (unsigned char)size;
+    out9[2] = (unsigned char)(size >> 8);
+    out9[3] = (unsigned char)(size >> 16);
+    out9[4] = (unsigned char)(size >> 24);
+    out9[5] = (unsigned char)(size >> 32);
+    out9[6] = (unsigned char)(size >> 40);
+    out9[7] = (unsigned char)(size >> 48);
+    out9[8] = (unsigned char)(size >> 56);
+    return 9;
+}
+
+static void secp256k1_fuzz_taproot_tapleaf_hash(unsigned char out32[32], unsigned char leaf_version, const unsigned char *script, size_t script_len) {
+    unsigned char compact_size[9];
+    unsigned char script_data[9 + 256];
+    size_t compact_size_len;
+
+    FUZZ_CHECK(script_len <= 256);
+    compact_size_len = secp256k1_fuzz_taproot_compact_size(compact_size, script_len);
+    memcpy(script_data, compact_size, compact_size_len);
+    memcpy(script_data + compact_size_len, script, script_len);
+    secp256k1_fuzz_taproot_tagged_hash(out32, (const unsigned char *)"TapLeaf", sizeof("TapLeaf") - 1, &leaf_version, 1, script_data, compact_size_len + script_len);
+}
+
+static void secp256k1_fuzz_taproot_tapbranch_hash(unsigned char out32[32], const unsigned char a32[32], const unsigned char b32[32]) {
+    unsigned char ordered[64];
+
+    if (memcmp(a32, b32, 32) < 0) {
+        memcpy(ordered, a32, 32);
+        memcpy(ordered + 32, b32, 32);
+    } else {
+        memcpy(ordered, b32, 32);
+        memcpy(ordered + 32, a32, 32);
+    }
+    secp256k1_fuzz_taproot_tagged_hash(out32, (const unsigned char *)"TapBranch", sizeof("TapBranch") - 1, ordered, 32, ordered + 32, 32);
+}
+
+static int secp256k1_fuzz_taproot_merkle_root(unsigned char out32[32], const unsigned char control[], size_t control_len, const unsigned char tapleaf_hash32[32]) {
+    size_t offset;
+
+    if (control_len < 33 || control_len > 33 + 32 * 128 || (control_len - 33) % 32 != 0) {
+        return 0;
+    }
+    memcpy(out32, tapleaf_hash32, 32);
+    for (offset = 33; offset < control_len; offset += 32) {
+        unsigned char next32[32];
+        secp256k1_fuzz_taproot_tapbranch_hash(next32, out32, control + offset);
+        memcpy(out32, next32, sizeof(next32));
+    }
+    return 1;
+}
+
+/* Model Bitcoin Core's VerifyTaprootCommitment after the witness and control
+ * block size checks. The hashes are independently reconstructed from raw
+ * script/control-block bytes before the library tweak check is called. */
+static int secp256k1_fuzz_core_taproot_commitment(const secp256k1_context *ctx, const unsigned char control[], size_t control_len, const unsigned char program32[32], size_t program_len, const unsigned char *script, size_t script_len) {
+    unsigned char tapleaf_hash32[32];
+    unsigned char merkle_root32[32];
+    unsigned char tweak32[32];
+    secp256k1_xonly_pubkey internal_key;
+
+    if (program_len != 32 || control_len < 33 || control_len > 33 + 32 * 128 || (control_len - 33) % 32 != 0) {
+        return 0;
+    }
+    secp256k1_fuzz_taproot_tapleaf_hash(tapleaf_hash32, (unsigned char)(control[0] & 0xFEu), script, script_len);
+    if (!secp256k1_fuzz_taproot_merkle_root(merkle_root32, control, control_len, tapleaf_hash32)) {
+        return 0;
+    }
+    secp256k1_fuzz_taproot_tagged_hash(tweak32, (const unsigned char *)"TapTweak", sizeof("TapTweak") - 1, control + 1, 32, merkle_root32, 32);
+    if (!secp256k1_xonly_pubkey_parse(ctx, &internal_key, control + 1)) {
+        return 0;
+    }
+    return secp256k1_xonly_pubkey_tweak_add_check(ctx, program32, control[0] & 1u, &internal_key, tweak32);
+}
+
+static void secp256k1_fuzz_check_core_taproot_control_composition(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "core taproot control composition\n";
+    static const unsigned char script[] = { 'f', 'o', 'o', 'b', 'a', 'r' };
+    static const unsigned char sibling_leaf[32] = {
+        0xA5, 0x75, 0x48, 0x2C, 0xAE, 0x62, 0x20, 0x67,
+        0x6D, 0x4F, 0xF4, 0x53, 0x4C, 0xB6, 0x6F, 0x9E,
+        0xAA, 0x50, 0x84, 0xE4, 0x07, 0xBB, 0x87, 0x03,
+        0x72, 0x70, 0x07, 0x33, 0x10, 0x39, 0x50, 0xB7
+    };
+    static const unsigned char expected_leaf[32] = {
+        0x06, 0x9C, 0x5B, 0x7B, 0x76, 0x36, 0xF1, 0x03,
+        0x12, 0x52, 0x45, 0xCD, 0x97, 0xED, 0xD6, 0x5A,
+        0x7B, 0x02, 0xB9, 0x05, 0xD6, 0x11, 0xCC, 0xCD,
+        0x5D, 0x21, 0xA1, 0x72, 0xC2, 0x10, 0xBC, 0xED
+    };
+    static const unsigned char expected_branch[32] = {
+        0xEA, 0x62, 0x74, 0x50, 0xEB, 0xEF, 0x6D, 0xEE,
+        0xFF, 0xBA, 0x20, 0x73, 0xEA, 0x20, 0xA1, 0x8F,
+        0xBD, 0xC9, 0x32, 0xD5, 0x26, 0x43, 0xD8, 0xF6,
+        0x57, 0x41, 0x15, 0x76, 0xA1, 0xD4, 0x01, 0x77
+    };
+    static const unsigned char expected_tweak_one[32] = {
+        0xB3, 0x49, 0x9F, 0x91, 0x10, 0x38, 0xA2, 0xD7,
+        0x62, 0x4A, 0x7B, 0xD4, 0x62, 0xE8, 0x08, 0x9E,
+        0x98, 0x95, 0x1B, 0x53, 0xFD, 0x7D, 0x2C, 0xB1,
+        0xB2, 0x2D, 0x4A, 0x9D, 0xB7, 0x9B, 0x68, 0x00
+    };
+    static const unsigned char expected_tweak_two[32] = {
+        0xCA, 0x13, 0x00, 0x24, 0x05, 0xBF, 0x0A, 0x9F,
+        0x6E, 0x19, 0xD3, 0x18, 0xCE, 0x7F, 0x9F, 0x0C,
+        0x78, 0x56, 0xB7, 0x16, 0x8D, 0x3D, 0x57, 0x92,
+        0x91, 0xCD, 0xE0, 0x4B, 0xAE, 0xF6, 0x64, 0x52
+    };
+    static const unsigned char expected_program_one[32] = {
+        0x0E, 0x16, 0xD2, 0x1C, 0x42, 0xD6, 0x72, 0x65,
+        0x03, 0xF7, 0x69, 0x10, 0x43, 0xB0, 0x74, 0x25,
+        0x1E, 0x30, 0x3D, 0x75, 0x8E, 0xC7, 0x4B, 0x10,
+        0x11, 0xD7, 0x6A, 0xEC, 0xB6, 0xA3, 0xD8, 0x8D
+    };
+    static const unsigned char expected_program_two[32] = {
+        0x27, 0x52, 0x08, 0x42, 0x42, 0xFE, 0x80, 0xEC,
+        0x98, 0xD5, 0xE1, 0x44, 0xCB, 0x7C, 0xCB, 0xBA,
+        0xF5, 0x25, 0x22, 0x24, 0x36, 0xEC, 0xC9, 0xE4,
+        0x95, 0x76, 0x6C, 0x4D, 0x1C, 0x8C, 0x14, 0x6F
+    };
+    struct taproot_case {
+        const unsigned char *node;
+        const unsigned char *expected_merkle;
+        const unsigned char *expected_tweak;
+        const unsigned char *expected_program;
+        unsigned char parity;
+    } cases[2] = {
+        { NULL, expected_leaf, expected_tweak_one, expected_program_one, 1 },
+        { sibling_leaf, expected_branch, expected_tweak_two, expected_program_two, 0 }
+    };
+    const secp256k1_context *contexts[2];
+    unsigned char control[65];
+    unsigned char tapleaf_hash[32];
+    unsigned char merkle_root[32];
+    unsigned char tweak32[32];
+    unsigned char bad_control[65];
+    unsigned char bad_program[32];
+    secp256k1_xonly_pubkey internal_key;
+    secp256k1_pubkey actual_pubkey;
+    secp256k1_xonly_pubkey actual_xonly;
+    unsigned char actual_program[32];
+    size_t i;
+    size_t j;
+    int parity;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    contexts[0] = ctx;
+    contexts[1] = secp256k1_context_static;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        memset(control, 0, sizeof(control));
+        control[0] = (unsigned char)(0xC0u | cases[i].parity);
+        memcpy(control + 1, secp256k1_fuzz_xonly_g_x, 32);
+        if (cases[i].node != NULL) {
+            memcpy(control + 33, cases[i].node, 32);
+        }
+        j = cases[i].node == NULL ? 33 : sizeof(control);
+
+        secp256k1_fuzz_taproot_tapleaf_hash(tapleaf_hash, control[0] & 0xFEu, script, sizeof(script));
+        FUZZ_CHECK(memcmp(tapleaf_hash, expected_leaf, sizeof(tapleaf_hash)) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_taproot_merkle_root(merkle_root, control, j, tapleaf_hash) == 1);
+        FUZZ_CHECK(memcmp(merkle_root, cases[i].expected_merkle, sizeof(merkle_root)) == 0);
+        secp256k1_fuzz_taproot_tagged_hash(tweak32, (const unsigned char *)"TapTweak", sizeof("TapTweak") - 1, control + 1, 32, merkle_root, 32);
+        FUZZ_CHECK(memcmp(tweak32, cases[i].expected_tweak, sizeof(tweak32)) == 0);
+
+        for (j = 0; j < sizeof(contexts) / sizeof(contexts[0]); j++) {
+            FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(contexts[j], control, cases[i].node == NULL ? 33 : sizeof(control), cases[i].expected_program, 32, script, sizeof(script)) == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_parse(contexts[j], &internal_key, control + 1) == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(contexts[j], &actual_pubkey, &internal_key, tweak32) == 1);
+            parity = -1;
+            FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(contexts[j], &actual_xonly, &parity, &actual_pubkey) == 1);
+            FUZZ_CHECK(parity == cases[i].parity);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(contexts[j], actual_program, &actual_xonly) == 1);
+            FUZZ_CHECK(memcmp(actual_program, cases[i].expected_program, sizeof(actual_program)) == 0);
+        }
+
+        memcpy(bad_program, cases[i].expected_program, sizeof(bad_program));
+        bad_program[0] ^= 1u;
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, cases[i].node == NULL ? 33 : sizeof(control), bad_program, sizeof(bad_program), script, sizeof(script)) == 0);
+        memcpy(bad_control, control, sizeof(bad_control));
+        bad_control[0] ^= 1u;
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, bad_control, cases[i].node == NULL ? 33 : sizeof(control), cases[i].expected_program, 32, script, sizeof(script)) == 0);
+        memcpy(bad_control, control, sizeof(bad_control));
+        memcpy(bad_control + 1, secp256k1_fuzz_pubkey_field_prime, 32);
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, bad_control, cases[i].node == NULL ? 33 : sizeof(control), cases[i].expected_program, 32, script, sizeof(script)) == 0);
+        if (cases[i].node != NULL) {
+            memcpy(bad_control, control, sizeof(bad_control));
+            bad_control[33] ^= 1u;
+            FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, bad_control, sizeof(control), cases[i].expected_program, 32, script, sizeof(script)) == 0);
+        }
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, 32, cases[i].expected_program, 32, script, sizeof(script)) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, cases[i].node == NULL ? 33 : sizeof(control), cases[i].expected_program, 31, script, sizeof(script)) == 0);
+    }
+}
 
 typedef struct {
     unsigned char x[32];
@@ -1053,6 +1284,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         && memcmp(input, "xonly tweak affine reference\n", sizeof("xonly tweak affine reference\n") - 1) == 0) {
         secp256k1_fuzz_check_xonly_tweak_affine(ctx, &xonly, xonly32, &keypair);
     }
+    secp256k1_fuzz_check_core_taproot_control_composition(ctx, input, size);
     secp256k1_fuzz_check_xonly_invalid_tweak(ctx, xonly32, keypair_parity, tweak);
     secp256k1_fuzz_check_keypair_null_tweak(ctx, &keypair, tweak);
     secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
