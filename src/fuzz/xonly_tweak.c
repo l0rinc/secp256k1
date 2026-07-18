@@ -261,6 +261,110 @@ static void secp256k1_fuzz_check_core_taproot_control_composition(const secp256k
     }
 }
 
+static void secp256k1_fuzz_check_core_taproot_tapleaf_boundaries(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "core taproot tapleaf compactsize boundaries\n";
+    static const unsigned char expected_leaf_252[32] = {
+        0x4C, 0xC7, 0xAC, 0x60, 0x20, 0xB0, 0xB8, 0xA5,
+        0x28, 0x45, 0xBE, 0x64, 0xE0, 0x38, 0x2B, 0xAB,
+        0x51, 0xD7, 0xC5, 0x65, 0x12, 0x28, 0x5B, 0xD7,
+        0xF7, 0xB0, 0x7F, 0x26, 0x19, 0x24, 0xF6, 0x7B
+    };
+    static const unsigned char expected_leaf_253[32] = {
+        0xF5, 0xE5, 0x75, 0xFC, 0xCC, 0x11, 0x21, 0x6B,
+        0x89, 0xB6, 0x43, 0xCA, 0x5B, 0x05, 0x91, 0x1E,
+        0x5D, 0xE7, 0x39, 0xB5, 0xBA, 0xD7, 0x96, 0x52,
+        0x91, 0xD7, 0xB6, 0x99, 0x15, 0xA7, 0x55, 0x1C
+    };
+    static const unsigned char expected_tweak_252[32] = {
+        0x7D, 0x74, 0x97, 0xDC, 0x70, 0x14, 0x57, 0x87,
+        0x54, 0x1D, 0x06, 0x4F, 0xCE, 0x94, 0x17, 0xDE,
+        0x12, 0x14, 0x9D, 0x86, 0xC8, 0xC6, 0xD5, 0xA8,
+        0xA6, 0x60, 0x8B, 0x37, 0xC7, 0x30, 0xF9, 0x4C
+    };
+    static const unsigned char expected_tweak_253[32] = {
+        0xDC, 0xD6, 0xCF, 0x3D, 0xDC, 0x1D, 0xF8, 0xEB,
+        0x6F, 0xF5, 0x21, 0xE4, 0x7E, 0x49, 0x38, 0xD6,
+        0xA2, 0xE9, 0x60, 0xC5, 0xFD, 0x95, 0x19, 0xBB,
+        0xCD, 0x24, 0xC0, 0xC7, 0x60, 0xAC, 0xBB, 0xE7
+    };
+    static const unsigned char expected_program_252[32] = {
+        0x37, 0x88, 0xCE, 0x77, 0xDF, 0xB8, 0x44, 0x02,
+        0x62, 0xFD, 0x66, 0xBE, 0xB1, 0x8A, 0xCA, 0x74,
+        0xF1, 0x14, 0xF9, 0x45, 0x56, 0xA3, 0x96, 0x00,
+        0x89, 0x9D, 0xE8, 0x8C, 0xF6, 0x5F, 0x19, 0xF3
+    };
+    static const unsigned char expected_program_253[32] = {
+        0x52, 0x2E, 0xA7, 0x99, 0xDD, 0x70, 0x7F, 0x61,
+        0x98, 0xB2, 0x04, 0x69, 0x8D, 0x89, 0xC3, 0xBD,
+        0xAE, 0xBF, 0x14, 0x26, 0x51, 0x6B, 0x96, 0x82,
+        0xA3, 0x54, 0x47, 0x47, 0xC1, 0x35, 0xA0, 0x85
+    };
+    struct tapleaf_case {
+        size_t script_len;
+        const unsigned char *expected_leaf;
+        const unsigned char *expected_tweak;
+        const unsigned char *expected_program;
+    } cases[2] = {
+        { 252, expected_leaf_252, expected_tweak_252, expected_program_252 },
+        { 253, expected_leaf_253, expected_tweak_253, expected_program_253 }
+    };
+    const secp256k1_context *contexts[2];
+    unsigned char script[253];
+    unsigned char compact_size[9];
+    unsigned char control[33];
+    unsigned char tapleaf_hash[32];
+    unsigned char tweak32[32];
+    unsigned char bad_program[32];
+    unsigned char actual_program[32];
+    secp256k1_xonly_pubkey internal_key;
+    secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_pubkey actual_pubkey;
+    size_t i;
+    size_t j;
+    int parity;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < sizeof(script); i++) {
+        script[i] = (unsigned char)(0x5Du + 29u * i);
+    }
+    contexts[0] = ctx;
+    contexts[1] = secp256k1_context_static;
+    memset(control, 0, sizeof(control));
+    control[0] = 0xC1;
+    memcpy(control + 1, secp256k1_fuzz_xonly_g_x, 32);
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        size_t compact_size_len = secp256k1_fuzz_taproot_compact_size(compact_size, cases[i].script_len);
+
+        if (cases[i].script_len == 252) {
+            FUZZ_CHECK(compact_size_len == 1 && compact_size[0] == 0xFC);
+        } else {
+            FUZZ_CHECK(compact_size_len == 3 && compact_size[0] == 0xFD && compact_size[1] == 0xFD && compact_size[2] == 0x00);
+        }
+        secp256k1_fuzz_taproot_tapleaf_hash(tapleaf_hash, control[0] & 0xFEu, script, cases[i].script_len);
+        FUZZ_CHECK(memcmp(tapleaf_hash, cases[i].expected_leaf, sizeof(tapleaf_hash)) == 0);
+        secp256k1_fuzz_taproot_tagged_hash(tweak32, (const unsigned char *)"TapTweak", sizeof("TapTweak") - 1, control + 1, 32, tapleaf_hash, 32);
+        FUZZ_CHECK(memcmp(tweak32, cases[i].expected_tweak, sizeof(tweak32)) == 0);
+        for (j = 0; j < sizeof(contexts) / sizeof(contexts[0]); j++) {
+            FUZZ_CHECK(secp256k1_xonly_pubkey_parse(contexts[j], &internal_key, control + 1) == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(contexts[j], &actual_pubkey, &internal_key, tweak32) == 1);
+            parity = -1;
+            FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(contexts[j], &actual_xonly, &parity, &actual_pubkey) == 1);
+            FUZZ_CHECK(parity == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(contexts[j], actual_program, &actual_xonly) == 1);
+            FUZZ_CHECK(memcmp(actual_program, cases[i].expected_program, sizeof(actual_program)) == 0);
+            FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(contexts[j], control, sizeof(control), cases[i].expected_program, 32, script, cases[i].script_len) == 1);
+        }
+
+        memcpy(bad_program, cases[i].expected_program, sizeof(bad_program));
+        bad_program[0] ^= 1u;
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, sizeof(control), bad_program, 32, script, cases[i].script_len) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, sizeof(control), cases[i].expected_program, 32, script, cases[i == 0 ? 1 : 0].script_len) == 0);
+    }
+}
+
 typedef struct {
     unsigned char x[32];
     unsigned char y[32];
@@ -1285,6 +1389,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_xonly_tweak_affine(ctx, &xonly, xonly32, &keypair);
     }
     secp256k1_fuzz_check_core_taproot_control_composition(ctx, input, size);
+    secp256k1_fuzz_check_core_taproot_tapleaf_boundaries(ctx, input, size);
     secp256k1_fuzz_check_xonly_invalid_tweak(ctx, xonly32, keypair_parity, tweak);
     secp256k1_fuzz_check_keypair_null_tweak(ctx, &keypair, tweak);
     secp256k1_fuzz_check_xonly_parse(ctx, xonly32);
