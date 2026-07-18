@@ -12074,3 +12074,57 @@ aborted with exit 134 on native 5x52 and forced-int64/10x26 ASan/UBSan builds,
 while the 27 pre-existing `ecmult_multi` corpus inputs passed under the same
 mutation on both backends. Both mutations were restored, the clean replays
 above passed, and the production diff was empty before committing.
+
+## 2026-07-18 No-Scratch Single ECMULT Oracle
+
+The new `ecmult_multi/simple-single-point` corpus input gates the separate
+no-scratch `secp256k1_ecmult_multi_simple_var` path with exactly one finite
+callback point. It checks both generator cases (`NULL` and scalar `17`) for
+callback scalar `23` and point `5G`. The result is compared with the existing
+Jacobian reference and the independent affine double-and-add model; callback
+index zero must be visited exactly once and a poisoned result must be replaced.
+
+This is distinct from `direct-single-batch`: that fixture calls the Strauss and
+Pippenger batch wrappers with scratch space, while this one deterministically
+selects the no-scratch simple loop through `secp256k1_ecmult_multi_var`. The
+existing general `ecmult_multi` inputs choose their point count and generator
+pointer from fuzz bytes, but none of the 28 tracked inputs killed the targeted
+one-point simple-path mutation on either field backend.
+
+The restored verifier set passed the 29-file corpus under native and forced-
+int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+Disposable copied-corpus worker replays then used two workers and two jobs per
+backend:
+
+```
+-fork=2 -jobs=2 -max_total_time=15 -timeout=90 -rss_limit_mb=0 \
+  -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+Both native jobs exited 0 after 19 and 20 seconds, and both forced-int64 jobs
+exited 0 after 31 and 35 seconds. Every worker reported
+`oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or artifact was produced.
+The generated corpus units were disposable and removed after the run.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production bug. At `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, no simple-path result failure was
+reproduced. If a future change dropped a one-point callback term in the
+no-scratch helper, the impact would be internal multi-multiplication
+correctness, with severity determined by public reachability; no such clean-
+master public failure is claimed.
+
+For causal proof, a disposable production mutation set the callback term to
+infinity only when `n_points == 1` and the generator scalar was non-NULL. The
+focused seed aborted with exit 134 on native 5x52 and forced-int64/10x26
+ASan/UBSan builds, while all 28 pre-existing `ecmult_multi` inputs passed
+under the same mutation on both backends. The mutation was restored before
+the clean replay and the production diff was empty before committing.
