@@ -16992,3 +16992,59 @@ preserves, changes, or masks the trigger. A passing follow-up patch is not
 proof that master was safe; rerun the original baseline or mutation before
 downgrading a masked finding. No fuzz, sanitizer, compiler, or test process
 remains running.
+
+## 2026-07-19 Current-source CTest integration matrix
+
+After the clean x-only rebuild, `--clean-first` had removed the other build
+targets. An initial `ctest -N` therefore reported only two discovery failures
+per configuration because `tests` and `noverify_tests` were absent. This was a
+build-directory state gap, not a source result. All targets were rebuilt from
+the current source before the real CTest run:
+
+    timeout 900s cmake --build /tmp/secp256k1-oracles-external -j2
+    timeout 900s cmake --build /tmp/secp256k1-next-asan-int64 -j2
+    timeout 900s cmake --build /tmp/secp256k1-msan-int64-ext2 -j2
+
+The native CTest command was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 1200s ctest --test-dir /tmp/secp256k1-oracles-external \
+      --output-on-failure -j2
+
+The forced-int64 command used the same sanitizer variables and options with
+`/tmp/secp256k1-next-asan-int64`; the MSan command was:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 1800s ctest --test-dir /tmp/secp256k1-msan-int64-ext2 \
+      --output-on-failure -j2
+
+Native CTest passed 224/224 tests in 183.85 seconds. Forced-int64 CTest
+passed 222/222 tests in 302.41 seconds. MSan CTest passed 222/222 tests in
+335.49 seconds. The two-backend count difference is test discovery for the
+configured arithmetic backend, not a failure or an omitted failed test. No
+ASan, UBSan, MSan, runtime, or `ERROR:` diagnostic appeared. This is
+integration evidence only: no new production bug, deterministic regression
+test, or severity change is claimed.
+
+The matrix exercises the repaired post-clear test oracle, keypair and Taproot
+tests, all hash/RFC6979 cleanup checks, arithmetic modules, ECDH/EllSwift,
+ECDSA recovery, Schnorr, MuSig, and utility contracts. Existing findings keep
+their prior master-relative severity: direct cleanup/API and wallet state are
+not consensus-Critical without a concrete Bitcoin Core invalid-block,
+invalid-witness, or remote path; a future failure on such a path must be rated
+from its demonstrated impact. A nonce without standalone cryptographic
+meaning is not Critical merely because it is uncleared.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled and no new cherry-pick was justified. Any later production fix,
+fuzzer change, test adjustment, or l0rinc cherry-pick must amend its commit
+message and this ledger with the clean-master or minimal-mutation baseline,
+exact input, preconditions, postconditions, observed failure, Core caller,
+severity on unmodified master, test gap, verifier commands, and whether it
+preserves, changes, or masks the trigger. Rerun the original baseline or
+mutation before downgrading a masked finding. No fuzz, sanitizer, compiler, or
+test process remains running.
