@@ -12128,3 +12128,45 @@ focused seed aborted with exit 134 on native 5x52 and forced-int64/10x26
 ASan/UBSan builds, while all 28 pre-existing `ecmult_multi` inputs passed
 under the same mutation on both backends. The mutation was restored before
 the clean replay and the production diff was empty before committing.
+
+## 2026-07-18 Static Contract Audit and Worker Recheck
+
+The branch was rechecked against clean `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `HEAD` remained a direct
+descendant and the worktree was clean before this documentation change. The
+new no-scratch seed passed individually under native ASan/UBSan, forced-int64
+ASan/UBSan, and forced-int64 MSan. Native and forced-int64 copied-corpus
+replays used `-fork=2 -jobs=2` and exited 0 with zero OOMs, timeouts, crashes,
+sanitizer diagnostics, or artifacts.
+
+The fourteen tracked target corpora also passed a fresh GCC coverage replay:
+`api_roundtrip`, `context`, `hash`, `scalar`, `field`, `group`,
+`ecmult_const`, `ecmult_multi`, `ecdh`, `ellswift`, `xonly_tweak`,
+`recovery`, `schnorrsig`, and `musig`. The shared production profile reached
+94.69% line coverage and 97.83% branch coverage in `src/secp256k1.c`; all
+optional module implementation lines were executed. The remaining zero
+branches were VERIFY-only impossible states, intentional invalid-argument
+exits, or test-only helpers without a production caller.
+
+Independent static analysis of the complete production translation unit
+passed with both Clang Static Analyzer (`clang-tidy` `clang-analyzer-*`) and
+GCC 16 `-fanalyzer`, with and without `VERIFY`. Harness analyzer reports were
+limited to deliberate NULL calls against APIs whose headers declare
+`ARG_NONNULL`; suppressing that specific checker produced no additional
+finding. The empty-message Schnorr callback report was a false positive for
+the normal harness path: `secp256k1_fuzz_data_or_empty` supplies a valid
+one-byte buffer, while the dedicated NULL/zero-length calls do not install a
+message expectation.
+
+The audit rejected four tempting duplicate candidates. Error-callback routing
+is already exercised through invalid scratch objects and context clones;
+scalar WNAF has an independent byte-level model for every window 2 through
+31; public-key sorting covers duplicate and multi-key paths while no
+production caller uses a wider hsort stride; and the internal ECMULT
+functions are all reached by the existing Strauss/Pippenger, direct-batch,
+and no-scratch fixtures. This pass therefore claims **no new clean-master
+production bug** and leaves the existing severity ledger unchanged. The
+latest no-scratch commit remains **Informational / Low internal-oracle
+hardening**, not High or Critical: no public failure is reachable on master,
+and the mutation proves only that the new assertion would catch a future
+internal regression.
