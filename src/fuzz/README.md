@@ -705,16 +705,20 @@ documented in its commit message.
   failure plus the post-fix 14-target `make check` are recorded in the commit.
 
 - **Medium / confirmed internal memory safety, low current reachability:**
-  `ecmult_multi/scratch-wrap-create` (`b827e0e`). A clean-origin/master
+  `ecmult_multi/scratch-wrap-create` (`cc5132d`; clean-master evidence also
+  exists in the earlier `b827e0e` fork replay). A clean-origin/master
   ASan/UBSan replay at `11dad6d` requests `SIZE_MAX`; `base_alloc + size`
   wraps to 31 bytes, and the constructor then clears the 32-byte scratch
   header. Native 5x52 and forced-int64/10x26 builds both report the resulting
   heap-buffer-overflow. The constructor is static/internal in this baseline,
-  the removed public scratch-space symbols are not an entry point, and current
-  production MuSig aggregation uses the no-scratch path, so no remotely
-  reachable public-API exploit was demonstrated. That reachability limit does
-  not make the confirmed memory corruption informational. The guard and
-  `SIZE_MAX` regression test are in `cac07e8`; the earlier Low label
+  the removed public scratch-space symbols are not an entry point. Current
+  Bitcoin Core MuSig aggregation reaches `secp256k1_musig_pubkey_agg` and the
+  no-scratch `secp256k1_ecmult_multi_var(..., NULL, ...)` path rather than
+  `secp256k1_scratch_create`, so invalid block or witness bytes cannot supply
+  `SIZE_MAX` to this constructor. That reachability limit does not make the
+  confirmed internal corruption informational, but it rules out a Core
+  consensus High/Critical rating on the current call graph. The guard and
+  `SIZE_MAX` regression test are in `cc5132d`; the earlier Low label
   understated impact, while the original High label overstated current public
   reachability.
 - **Low / informational:** a magic-valid scratch object whose `alloc_size`
@@ -7100,7 +7104,7 @@ comparison on `ecmult_multi/sixteen-direct-batch`: the harness's unconditional
 `base_alloc + size` wrap in clean `scratch_impl.h`. The native and int64
 reports both show a 32-byte `memset` immediately past a 31-byte allocation.
 This is a re-confirmation of the existing **Medium** clean-master finding,
-fixed by `cac07e8`, not a defect in this oracle. The control therefore does
+fixed by `cc5132d`, not a defect in this oracle. The control therefore does
 not downgrade the finding merely because the branch guard makes the replay
 pass. A nonce or other public buffer without cryptographic meaning remains
 non-Critical for erasure severity.
@@ -13118,3 +13122,114 @@ this oracle. Any later incidental fix must be recorded as context rather than
 used to hide a failure first reproduced on unmodified master. A public nonce
 buffer with no standalone cryptographic meaning is not Critical merely because
 it is uncleared.
+
+## 2026-07-18 Remaining Arithmetic and Context Sanitizer Sweep
+
+After refreshing the upstream refs, `origin/master` remained
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, `l0rinc/master` remained
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, and this branch remained a direct
+descendant of master; no rebase was needed. The remaining tracked corpora were
+13 `context`, 10 `hash`, 8 `scalar`, 21 `field`, 23 `group`, and 11
+`ecmult_const` files. Their existing checks include independent arithmetic
+references, normalized and nonnormalized representations, infinity and
+zero-scalar transitions, callback and clone ownership, static-context
+barriers, impossible-length rejection, and failure-output cleanup.
+
+Each corpus was copied to a private directory and run with the exact native
+Clang ASan/UBSan campaign:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  timeout 180s /tmp/secp256k1-next-asan/bin/fuzz_<target> \
+  /tmp/codex-remaining-<target> -jobs=2 -workers=2 -max_total_time=20 \
+  -timeout=90 -rss_limit_mb=0 -handle_abrt=0 -ignore_timeouts=0 \
+  -ignore_ooms=0 -ignore_crashes=0 -print_final_stats=1
+```
+
+The two job execution counts were: `context` 163/263, `hash` 27689/24487,
+`scalar` 117/119, `field` 260/141, `group` 295/297, and `ecmult_const`
+97/106. The private corpora grew to 116, 117, 95, 58, 135, and 85 files in
+the same order. Every job exited 0 with no sanitizer report, timeout, OOM,
+crash, or tracked-corpus artifact.
+
+The generated private corpora were then replayed once under both alternate
+backends:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  /tmp/secp256k1-next-asan-int64/bin/fuzz_<target> \
+  /tmp/codex-remaining-<target> -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_<target> \
+  /tmp/codex-remaining-<target> -runs=1 -timeout=240 \
+  -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+Both backends completed, in target order, 117, 118, 96, 59, 136, and 86
+executions. All exited 0 with no ASan, UBSan, or MSan diagnostic, and no fuzz
+process remained. No production mutation was necessary because this sweep
+found no failure; it is negative verification rather than a production bug
+claim or severity downgrade.
+
+These targets are library-internal boundaries rather than direct Bitcoin Core
+wire parsers. A future arithmetic or context discrepancy that reaches Core's
+legacy ECDSA, Tapscript Schnorr, or Taproot verification from invalid
+transaction/block/witness bytes must be rated High or Critical according to
+the resulting consensus and memory-safety impact. No such discrepancy was
+reproduced here. The existing master-relative findings remain separate, and
+the reconciled l0rinc fork commits are not fixes that can lower a later
+master-relative severity. A public nonce buffer with no standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-18 Core-Reachability Severity Corrections
+
+The audit records below are authoritative over older shorthand labels. A
+library-only trigger, a malformed opaque object, or a direct callback misuse
+does not become a Bitcoin Core High/Critical issue unless the corresponding
+Core call path can construct it from an attacker-controlled transaction,
+block, witness, or peer message and the result has a demonstrated consensus,
+cryptographic, availability, or memory-safety consequence. Later fixes and
+fork patches are context, not evidence that the unmodified-master problem was
+less severe.
+
+The scratch-wrap finding is the exact `fuzz_ecmult_multi` condition
+`src/fuzz/corpora/ecmult_multi/scratch-wrap-create`, with `SIZE_MAX` (and the
+one-byte-over-boundary size) passed to the internal
+`secp256k1_scratch_create`. On clean master, removing the allocation-overflow
+guard and replaying that seed under Clang ASan/UBSan produces the 32-byte
+header write immediately after the 31-byte wrapped allocation; the restored
+guard is verified by the deterministic `SIZE_MAX` test and the native and
+forced-int64 worker replays. The old fuzzer corpus did not request a wrapping
+constructor size, so ordinary `ecmult_multi` coverage did not preserve this
+condition. The master-relative rating is **Medium, confirmed internal memory
+safety with low current Bitcoin Core reachability**. Bitcoin Core's MuSig path
+is `src/musig.cpp` -> `secp256k1_musig_pubkey_agg` -> the bundled library's
+`secp256k1_ecmult_multi_var(..., NULL, ...)` no-scratch path; it does not call
+`secp256k1_scratch_create`, and invalid block/witness bytes cannot supply this
+size. The original High label therefore overstated Core reachability; this is
+not a Core consensus High/Critical finding on the current call graph.
+
+The 10x26 magnitude-32 finding is the exact `fuzz_field`/
+`src/fuzz/corpora/field/magnitude32-normalize` state built from the documented
+maximum field magnitude. Replaying the clean-master uint32 carry chain under
+the forced-int64/10x26 ASan/UBSan target makes the independent low-magnitude
+byte reference abort, while the fixed uint64 carry implementation passes the
+focused seed and regression test. Earlier tests did not construct
+high-magnitude private field representations or compare their canonical bytes
+independently. The master-relative rating is **Medium/latent internal
+correctness**. Core's legacy ECDSA, Tapscript Schnorr, and Taproot paths do
+use field arithmetic, but no invalid transaction/block/witness input has been
+shown to construct this all-limbs state or cause a consensus discrepancy.
+Escalate to High/Critical only after that Core-specific proof; the production
+repair must not be used to lower a failure first reproduced on clean master.
+
+The corresponding scratch fix/oracle commits (`cc5132d`, `c073653`) and field
+oracle commit (`bebe5558`) now carry these exact corpus conditions, mutations,
+clean-master impact, Core reachability limits,
+why the old coverage missed the state, verification commands, and nearby
+l0rinc/fork-fix context. The same rule applies to all subsequent findings:
+reiterate the unmodified-master result, state whether Bitcoin Core can reach
+it, record the strongest proof, and distinguish a real production bug from an
+oracle-only regression. A public nonce buffer without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
