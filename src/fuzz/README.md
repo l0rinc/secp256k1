@@ -11536,3 +11536,50 @@ mutation: inserting `secp256k1_ge_neg(&p, &p);` immediately after
 focused seed abort with exit 134. The mutation was restored, the clean native
 focused replay passed again, and the mutation log contained no sanitizer
 diagnostic.
+
+## 2026-07-18 Keypair Create Vector Oracle
+
+The new `xonly_tweak/keypair-create-vectors` corpus input checks
+`secp256k1_keypair_create` against fixed vectors for secret keys `1`, `2`,
+`3`, and `n - 1`. For each keypair it extracts the secret key and requires the
+original scalar bytes, serializes the extracted full public key and compares
+it to the expected compressed `G`, `2G`, `3G`, or `-G` encoding, extracts the
+x-only public key with and without the optional parity output, and compares
+the serialized x-only bytes and parity against fixed expectations.
+
+This complements the existing keypair consistency and projection checks. Those
+checks prove that keypair accessors agree with each other and with production
+public-key creation for fuzz-derived state. This seed pins the extrakeys
+keypair creation path to fixed public/x-only vectors, so a mismatch between
+the saved secret half, public half, x-only projection, or parity byte fails at
+the keypair boundary instead of being detected only through a later tweak.
+
+The clean verifier set passed with 17 tracked x-only corpus files and 18 total
+executions under both native and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_xonly_tweak \
+  src/fuzz/corpora/xonly_tweak -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_xonly_tweak \
+  src/fuzz/corpora/xonly_tweak -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_xonly_tweak \
+  src/fuzz/corpora/xonly_tweak/keypair-create-vectors \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **oracle hardening, not a clean-master production bug**. Master already
+saves keypair secret/public/x-only state consistently for these fixed scalars.
+If this contract failed on master for a valid secret key, the severity would
+be **High** because callers could sign or publish keys whose public and secret
+halves disagree. The observed branch finding is informational because the only
+failing condition was a disposable mutation: inserting
+`secp256k1_ge_neg(&pk, &pk);` immediately before `secp256k1_keypair_save` in
+`secp256k1_keypair_create` made the focused seed abort with exit 134. The
+mutation was restored, the clean native focused replay passed again, and the
+mutation log contained no sanitizer diagnostic.
