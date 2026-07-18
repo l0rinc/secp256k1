@@ -1748,6 +1748,24 @@ static void secp256k1_fuzz_scalar32_add_mod_order(unsigned char *out32, const un
     memcpy(out32, sum + 1, 32);
 }
 
+static void secp256k1_fuzz_scalar32_negate_mod_order(unsigned char *out32, const unsigned char *input32) {
+    unsigned int borrow = 0;
+    int i;
+
+    if (memcmp(input32, secp256k1_fuzz_scalar_zero, 32) == 0) {
+        memcpy(out32, secp256k1_fuzz_scalar_zero, 32);
+        return;
+    }
+    for (i = 31; i >= 0; i--) {
+        unsigned int minuend = secp256k1_fuzz_scalar_order[i];
+        unsigned int subtrahend = (unsigned int)input32[i] + borrow;
+
+        out32[i] = (unsigned char)(minuend - subtrahend);
+        borrow = minuend < subtrahend;
+    }
+    FUZZ_CHECK(borrow == 0);
+}
+
 /* Multiply canonical scalars with byte arithmetic, independent of the scalar
  * implementation. Double-and-add keeps every intermediate value canonical
  * by routing it through the independent addition routine above. */
@@ -1765,6 +1783,75 @@ static void secp256k1_fuzz_scalar32_mul_mod_order(unsigned char *out32, const un
         }
     }
     memcpy(out32, product, 32);
+}
+
+static void secp256k1_fuzz_check_static_key_transforms(const secp256k1_context *ctx, const unsigned char *input, size_t size, const secp256k1_pubkey *pubkey, const unsigned char *seckey) {
+    static const unsigned char trigger[] = "static key transforms\n";
+    unsigned char expected[32];
+    unsigned char normal[32];
+    unsigned char actual[32];
+    unsigned char original33[33];
+    unsigned char normal33[33];
+    unsigned char static33[33];
+    unsigned char zero32[32] = { 0 };
+    secp256k1_pubkey normal_pubkey;
+    secp256k1_pubkey static_pubkey;
+    int expected_ret;
+    size_t original_len;
+    size_t normal_len;
+    size_t static_len;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_fuzz_scalar32_negate_mod_order(expected, seckey);
+    memcpy(normal, seckey, sizeof(normal));
+    memcpy(actual, seckey, sizeof(actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, normal) == 1);
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(secp256k1_context_static, actual) == 1);
+    FUZZ_CHECK(memcmp(normal, expected, sizeof(normal)) == 0);
+    FUZZ_CHECK(memcmp(actual, expected, sizeof(actual)) == 0);
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(secp256k1_context_static, actual) == 1);
+    FUZZ_CHECK(memcmp(actual, seckey, sizeof(actual)) == 0);
+
+    secp256k1_fuzz_scalar32_add_mod_order(expected, seckey, secp256k1_fuzz_scalar_one);
+    expected_ret = memcmp(expected, zero32, sizeof(expected)) != 0;
+    memcpy(normal, seckey, sizeof(normal));
+    memcpy(actual, seckey, sizeof(actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, normal, secp256k1_fuzz_scalar_one) == expected_ret);
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(secp256k1_context_static, actual, secp256k1_fuzz_scalar_one) == expected_ret);
+    FUZZ_CHECK(memcmp(normal, expected_ret ? expected : zero32, sizeof(normal)) == 0);
+    FUZZ_CHECK(memcmp(actual, expected_ret ? expected : zero32, sizeof(actual)) == 0);
+
+    secp256k1_fuzz_scalar32_mul_mod_order(expected, seckey, secp256k1_fuzz_scalar_order_minus_one);
+    expected_ret = memcmp(expected, zero32, sizeof(expected)) != 0;
+    memcpy(normal, seckey, sizeof(normal));
+    memcpy(actual, seckey, sizeof(actual));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, normal, secp256k1_fuzz_scalar_order_minus_one) == expected_ret);
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(secp256k1_context_static, actual, secp256k1_fuzz_scalar_order_minus_one) == expected_ret);
+    FUZZ_CHECK(memcmp(normal, expected_ret ? expected : zero32, sizeof(normal)) == 0);
+    FUZZ_CHECK(memcmp(actual, expected_ret ? expected : zero32, sizeof(actual)) == 0);
+
+    original_len = sizeof(original33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, original33, &original_len, pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(original_len == sizeof(original33));
+    normal_pubkey = *pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_pubkey, original33, sizeof(original33)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(ctx, &normal_pubkey) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(secp256k1_context_static, &static_pubkey) == 1);
+    normal_len = sizeof(normal33);
+    static_len = sizeof(static33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, normal33, &normal_len, &normal_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, static33, &static_len, &static_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(normal_len == sizeof(normal33));
+    FUZZ_CHECK(static_len == sizeof(static33));
+    FUZZ_CHECK(memcmp(static33, normal33, sizeof(static33)) == 0);
+    FUZZ_CHECK(secp256k1_ec_pubkey_negate(secp256k1_context_static, &static_pubkey) == 1);
+    static_len = sizeof(static33);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, static33, &static_len, &static_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(static_len == sizeof(static33));
+    FUZZ_CHECK(memcmp(static33, original33, sizeof(static33)) == 0);
 }
 
 static void secp256k1_fuzz_check_seckey_tweak_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey) {
@@ -3221,6 +3308,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_scalar32(tweak32, input, size, 31);
     secp256k1_fuzz_check_seckey_tweak_input_output_alias(ctx, input, size, seckey);
+    secp256k1_fuzz_check_static_key_transforms(ctx, input, size, &pubkey, seckey);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_one);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_order);

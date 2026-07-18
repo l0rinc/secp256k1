@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, and sorting, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, sorting, and key transformations, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
@@ -11404,3 +11404,45 @@ was that existing x-only static coverage proved public tweaking and keypair
 projection, but did not bind standalone static parse/serialize
 cleanup/equivalence, `xonly_pubkey_from_pubkey` parity, or comparator sign
 equivalence to a deterministic seed.
+
+## 2026-07-18 Static Key Transform Oracle
+
+The new `api_roundtrip/static-key-transforms` corpus input checks scalar-only
+and public-key transform APIs on `secp256k1_context_static`. It compares normal
+and static `ec_seckey_negate`, `ec_seckey_tweak_add` by one, and
+`ec_seckey_tweak_mul` by order-minus-one against independent byte-level
+modulo-order expectations, checks double negation restores the original secret
+key, reparses the generated public key into the static context, and compares
+static `ec_pubkey_negate` serialization with the normal-context result before
+negating the static key back to its original SEC1 encoding.
+
+The clean verifier set passed with 52 tracked API corpus files and 53 total
+executions under both native and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip/static-key-transforms \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **Informational static-context contract hardening**, not a clean-master
+production bug. These APIs do not need generator precomputation in the checked
+paths, and master already accepts them on the static singleton. Four separate
+disposable static-only rejection mutations in `secp256k1_ec_seckey_negate`,
+`secp256k1_ec_seckey_tweak_add`, `secp256k1_ec_seckey_tweak_mul`, and
+`secp256k1_ec_pubkey_negate` each aborted the exact focused seed with exit
+134. All mutations were restored, the clean native focused replay passed again,
+and the mutation logs contained no sanitizer diagnostic. The seed is intended
+to catch future static-only rejection or scalar-transform regressions; it does
+not claim that public-key creation or signing is valid on
+`secp256k1_context_static`.
