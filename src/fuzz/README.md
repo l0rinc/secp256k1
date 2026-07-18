@@ -10933,13 +10933,14 @@ signing. No master-relative severity rating changes.
 
 The existing `xonly_tweak/static-context-keypair-barrier` corpus input now also
 checks `secp256k1_keypair_create` on the actual `secp256k1_context_static`
-singleton. The same seed already distinguishes permitted public keypair
-projection from rejected keypair mutation: `secp256k1_keypair_xonly_pub` may use
-the static context, while `secp256k1_keypair_xonly_tweak_add` must reject it.
-Keypair creation is another secret-derived operation requiring generator
-precomputation. In the external-default-callback build, it must reject the
-static singleton, invoke exactly one default illegal callback, and clear the
-prefilled opaque keypair output.
+singleton. The same seed distinguishes permitted public keypair projection and
+keypair tweaking from rejected keypair creation: both
+`secp256k1_keypair_xonly_pub` and `secp256k1_keypair_xonly_tweak_add` may use
+the static context after the compatibility fix recorded below. Keypair creation
+is a secret-derived operation that still requires generator precomputation. In
+the external-default-callback build, it must reject the static singleton,
+invoke exactly one default illegal callback, and clear the prefilled opaque
+keypair output.
 
 This was verified with the forced-int64/10x26 MemorySanitizer external-callback
 build `/tmp/secp256k1-msan-int64-ext2`, rebuilt with
@@ -10960,16 +10961,19 @@ default-callback counter branch because their default illegal callback aborts
 by design, so they are compile/regression coverage rather than proof of the
 gated static rejection path.
 
-For causal proof, a disposable production mutation replaced
+For causal proof of the keypair-creation cleanup, a disposable production mutation replaced
 `memset(keypair, 0, sizeof(*keypair));` in `secp256k1_keypair_create` with a
 no-op comment. Rebuilding the same external-callback MSan target and replaying
 the exact static-context keypair seed aborted with status 134 at the new stale
 keypair assertion, with no MemorySanitizer diagnostic. The mutation was restored
-and the focused replay passed again.
+and the focused replay passed again. Before the compatibility fix below, the
+same seed separately encoded rejection of static-context keypair tweaking; that
+expectation is intentionally replaced by a valid static-vs-dynamic differential
+check while the keypair-creation rejection remains.
 
 This is **Informational oracle hardening**, not a clean-master production bug.
 Master already clears the output; the fuzzer gap was that the static keypair
-seed covered public projection and keypair-tweak rejection but not rejected
+seed covered public projection and keypair-tweak behavior but not rejected
 secret-derived keypair creation. No master-relative severity rating changes.
 
 ## 2026-07-18 MuSig Static Nonce-Generation Cleanup Oracle
@@ -14073,22 +14077,21 @@ contains `9989133d7dced5b0a25a0eb4677bef9244e2360b`,
 `extrakeys: reject inconsistent keypair state`. That change is not an
 ancestor of exact `origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`.
 Its new `secp256k1_keypair_load` check derives the public point from the
-secret and requires a built generator context. Consequently, the direct
-Core-shaped call using `secp256k1_context_static` aborts on this audit branch
-with:
+secret and, before this compatibility commit, required a built generator
+context. Consequently, the direct Core-shaped call using
+`secp256k1_context_static` aborted on the pre-fix audit branch with:
 
     [libsecp256k1] illegal argument: secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)
 
-The existing static-context keypair barrier already tracks and rejects that
-secret-consuming static call. A standalone probe against exact origin/master
-returned `static_tweak_ret=1`, while the audit-branch probe returned exit 134.
-This is not a new clean-master production finding and is not reclassified as
-High or Critical. To exercise the valid Taproot transformation without merely
-rediscovering that already tracked barrier, this helper passes the full
-randomized context to `keypair_xonly_tweak_add`; it retains static-context
-public extraction, serialization, and verification. The code comment names
-`9989133d` so a future reader cannot mistake this context choice for the
-current Core call-site contract.
+An exact-origin standalone probe returned `static_tweak_ret=1`, while the
+pre-fix audit-branch probe returned exit 134. This compatibility commit adds a
+constant-time no-table public derivation for keypair consistency validation, so
+the valid static tweak now succeeds and agrees byte-for-byte with the dynamic
+context. It retains static-context public extraction, serialization, and
+verification, keeps `keypair_create` rejection intact, and continues to reject
+two individually valid but mismatched opaque halves. The old barrier is
+therefore not silently dropped; only its invalid assumption that a static
+context cannot validate a keypair is removed.
 
 The local Bitcoin Core checkout also contains an older bundled secp256k1 copy
 whose extrakeys loader predates that guard. That source/version split is part
@@ -14098,10 +14101,11 @@ origin/master result. Any later commit touching `keypair_load`,
 `keypair_xonly_tweak_add`, generator-context requirements,
 `secp256k1_context_static`, TapTweak hashing, or Core `CKey::SignSchnorr` must
 preserve these vectors and amend its commit message with this interaction.
-If a minor follow-up fix incidentally makes the Core static call pass, its
-message must say that it masks the `9989133d` integration condition and must
-rerun the exact origin/master control; it must not lower the severity of an
-independent master failure.
+This commit is the explicit reconciliation: it changes the static valid-tweak
+expectation but preserves the mismatch rejection. Any later cherry-pick or
+minor fix must state whether it preserves, changes, or masks the exact
+`9989133d` condition, rerun the origin/master control, and must not lower the
+severity of an independent master failure.
 
 Causal proof used a temporary, uncommitted production mutation in
 `src/modules/extrakeys/main_impl.h`. When the exact second-case tweak
@@ -15029,3 +15033,114 @@ whether it preserves, changes, or masks this exact seed and mutation, and must
 carry the Core path, master-relative severity, failure output, and verifier
 commands into its amended commit message and notes. The l0rinc comparison head
 remains `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; no fork patch was used.
+
+## 2026-07-18 Core Static Keypair Tweak Compatibility Reconciliation
+
+This commit reconciles the stronger opaque-keypair invariant from
+`9989133d7dced5b0a25a0eb4677bef9244e2360b` with Bitcoin Core's documented
+static-context Taproot path. The relevant Core call site is
+`KeyPair::KeyPair` (`/mnt/my_storage/bitcoin/src/key.cpp:409-424`): Core creates
+the keypair on `secp256k1_context_sign`, extracts and serializes its x-only
+public key on `secp256k1_context_static`, computes the TapTweak, and calls
+`secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, keypair, tweak)`.
+This is wallet, descriptor, PSBT, and authorized transaction-signing state;
+it is not an invalid-block, witness, or peer-input consensus path.
+
+The exact deterministic trigger is the existing 32-byte ASCII corpus input
+`static context keypair barrier\n` at
+`src/fuzz/corpora/xonly_tweak/static-context-keypair-barrier`. Its precondition
+is a valid keypair created with the full context and a valid zero tweak. The
+static and dynamic `keypair_xonly_tweak_add` calls must both return 1 and
+produce identical 96-byte keypairs; the static result must still project to
+the same x-only key with even parity and must not invoke an illegal callback.
+The same helper constructs a second keypair by replacing only the public half
+with the negation of the valid public point. Both halves are individually
+valid but inconsistent. That static call must return 0, invoke exactly one
+illegal callback in the external-callback build, and clear all 96 bytes.
+
+The production change is deliberately narrow. `secp256k1_keypair_load` still
+derives the public point from the secret scalar and rejects a mismatch. When a
+context has generator precomputation it keeps the existing fast path. When a
+context has no generator table, it uses a fixed 256-bit double-and-add with
+`secp256k1_gej_double`, unified constant-time `secp256k1_gej_add_ge`,
+constant-time `secp256k1_gej_cmov`, and constant-time affine conversion. It does
+not use variable-time scalar multiplication, and temporary group values are
+cleared. `secp256k1_keypair_create` remains rejected on the static context;
+only valid keypair validation and tweaking are enabled there.
+
+Master-relative baseline and interaction:
+
+* Exact clean `origin/master` is
+  `8c3e6e6d992456d3b9228305ae84a6703273cf70`. The previously recorded direct
+  origin probe returned `static_tweak_ret=1`; the pre-fix audit branch at
+  `9989133d` returned exit 134 after the illegal-argument callback
+  `secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)`. Therefore this
+  commit fixes a regression introduced by the audit branch's stronger loader;
+  it does not claim a new clean-master production vulnerability.
+* The underlying mismatched-opaque-keypair finding remains **Medium for the
+  direct/API and local state boundary**, because it requires local mutation,
+  corruption, or unsafe persistence of a 96-byte opaque keypair. The static
+  context compatibility regression is **Medium wallet/API availability and
+  compatibility impact** on the affected branch because Core's valid
+  Taproot-construction path can reach the call and assert on failure. Neither
+  is High or Critical on unmodified master: invalid blocks, witnesses, and
+  peer messages do not construct this opaque keypair or invoke this wallet
+  constructor during consensus validation. A future memory-safety,
+  concurrency, funds, or consensus failure must be rated from its demonstrated
+  Core path, not from the existence of an assertion. A nonce without standalone
+  cryptographic meaning is not Critical merely because it is uncleared.
+* The l0rinc comparison head is
+  `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; PRs #1-#16 are already
+  reconciled by equivalent or stronger commits in this branch, so no additional
+  fork patch was cherry-picked here. Any later cherry-pick touching
+  `keypair_load`, generator-context requirements, static-context behavior,
+  TapTweak, or Core `KeyPair::KeyPair` must state whether it preserves, changes,
+  or masks this `9989133d` interaction and must amend its own commit message
+  and this ledger with the clean-master baseline and rerun results. A minor
+  patch that happens to make the static call pass does not lower the severity
+  of an independent master finding.
+
+Existing tests missed the regression because they covered static keypair
+creation rejection and dynamic-context keypair mismatch rejection, but did not
+exercise a valid static-context keypair tweak and compare it with the dynamic
+path. The earlier Core-shaped Taproot oracle intentionally used the full
+context for the tweak to avoid rediscovering the already tracked branch
+barrier. The new deterministic unit test in `test_keypair_add`, the upgraded
+fuzzer helper, and the exact corpus seed bind both success and rejection sides
+of the contract.
+
+Causal proof was run with two disposable production mutations, both restored
+before the clean replay:
+
+1. Restoring the old `9989133d` branch in `src/modules/extrakeys/main_impl.h`
+   so every no-generator context called the illegal callback made this exact
+   command exit 134 at the new valid-static-tweak oracle, while the fixed
+   command exits 0:
+
+       ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+       UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+       timeout 40s /tmp/secp256k1-oracles-external/bin/fuzz_xonly_tweak \
+         src/fuzz/corpora/xonly_tweak/static-context-keypair-barrier \
+         -runs=1 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 \
+         -print_final_stats=1
+
+2. Setting the no-table mismatch result to success made the deterministic
+   `test_keypair_add` regression abort with exit 134 at
+   `src/modules/extrakeys/tests_impl.h:474`, where the static mismatched
+   keypair is required to return 0. This proves the fallback did not merely
+   remove the original consistency check.
+
+Final verification on the restored source:
+
+* `cmake --build /tmp/secp256k1-oracles-external --target tests fuzz_xonly_tweak -j2`
+* `cmake --build /tmp/secp256k1-next-asan-int64 --target tests fuzz_xonly_tweak -j2`
+* `cmake --build /tmp/secp256k1-msan-int64-ext2 --target fuzz_xonly_tweak -j2`
+* `.../bin/tests -t=extrakeys -log=1`: all 7 extrakeys tests passed.
+* Native ASan/UBSan, forced-int64/10x26 ASan/UBSan, and int64 MSan replayed
+  the exact corpus input with `-runs=1`; all exited 0 with no sanitizer
+  diagnostic.
+* `ctest --test-dir /tmp/secp256k1-oracles-external --output-on-failure -j2`:
+  224/224 tests passed in 184.55 seconds.
+* `git diff --check` passed. The source mutation, temporary probes, and
+  private replay directories are outside the repository, and a final process
+  inventory found no fuzz, sanitizer, compiler, or test jobs still running.

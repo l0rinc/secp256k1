@@ -400,6 +400,7 @@ static void test_keypair_add(void) {
     unsigned char sk[32];
     secp256k1_keypair keypair;
     secp256k1_keypair mismatched_keypair;
+    secp256k1_keypair static_mismatched_keypair;
     unsigned char overflows[32];
     unsigned char zeros96[96] = { 0 };
     unsigned char tweak[32];
@@ -457,8 +458,21 @@ static void test_keypair_add(void) {
         CHECK(secp256k1_ec_pubkey_cmp(CTX, &original_pubkey, &alternate_pubkey) != 0);
         mismatched_keypair = keypair;
         memcpy(mismatched_keypair.data + 32, alternate_pubkey.data, sizeof(mismatched_keypair.data) - 32);
+        static_mismatched_keypair = mismatched_keypair;
         CHECK_ILLEGAL(CTX, secp256k1_keypair_xonly_tweak_add(CTX, &mismatched_keypair, tweak));
         CHECK(secp256k1_memcmp_var(&mismatched_keypair, zeros96, sizeof(mismatched_keypair)) == 0);
+    }
+
+    /* The static context has no generator table, but it can still validate
+     * and tweak a keypair. Its result must match the precomputed path. */
+    {
+        secp256k1_keypair static_keypair = keypair;
+        secp256k1_keypair dynamic_keypair = keypair;
+        CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &dynamic_keypair, zeros96) == 1);
+        CHECK(secp256k1_keypair_xonly_tweak_add(STATIC_CTX, &static_keypair, zeros96) == 1);
+        CHECK(secp256k1_memcmp_var(&static_keypair, &dynamic_keypair, sizeof(static_keypair)) == 0);
+        CHECK_ILLEGAL(STATIC_CTX, secp256k1_keypair_xonly_tweak_add(STATIC_CTX, &static_mismatched_keypair, zeros96));
+        CHECK(secp256k1_memcmp_var(&static_mismatched_keypair, zeros96, sizeof(static_mismatched_keypair)) == 0);
     }
 
     CHECK(secp256k1_keypair_xonly_tweak_add(CTX, &keypair, tweak) == 1);
