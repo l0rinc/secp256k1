@@ -15203,3 +15203,85 @@ commit message and this ledger.
 The private corpus copies, logs, and artifact directories were removed after
 the final process check confirmed that no fuzz, sanitizer, compiler, or test
 process remained.
+
+## 2026-07-18 Four-Worker Core Boundary Recheck
+
+The two highest-value public-input targets were given a longer four-worker
+recheck after the generated sweep. The exact clean-master baseline is
+`origin/master=8c3e6e6d992456d3b9228305ae84a6703273cf70`; the refreshed
+comparison fork is `l0rinc/master=11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`.
+The current audit branch is a descendant of the former. No l0rinc pull head
+was cherry-picked for this run: PRs #1-#16 are already represented by
+equivalent or stronger branch commits, and no fork-side patch was allowed to
+mask a master-relative result.
+
+`fuzz_xonly_tweak` replayed all 20 tracked inputs in
+`src/fuzz/corpora/xonly_tweak`, including the exact trigger files
+`core-taproot-control-composition`, `core-tapleaf-compactsize-boundaries`,
+`core-taproot-control-max-depth`, `zero-and-order-tweaks`, and
+`static-context-keypair-barrier`. Its relevant Core path is
+`VerifyTaprootCommitment` (`/mnt/my_storage/bitcoin/src/script/interpreter.cpp:1913-1924`)
+-> `XOnlyPubKey::CheckTapTweak`
+(`/mnt/my_storage/bitcoin/src/pubkey.cpp:257-263`)
+-> `secp256k1_xonly_pubkey_tweak_add_check`, with attacker-controlled
+Taproot witness control-block bytes and the separate wallet/signing
+`KeyPair::KeyPair` path covered by the static-keypair trigger. The oracle's
+preconditions are the deliberately constructed valid internal x-only key,
+TapLeaf hash, Merkle branch, parity, and 32-byte output program; its
+postconditions are the independent BIP341 hash model, exact branch sorting,
+matching dynamic/static public results, and rejection of malformed sizes,
+parity, and order-boundary tweaks. A clean-master discrepancy here would be
+consensus-sensitive when reached by an invalid witness and could warrant
+High/Critical severity only if the demonstrated result is consensus,
+memory-safety, or concurrency relevant.
+
+`fuzz_ellswift` replayed all 19 tracked inputs in
+`src/fuzz/corpora/ellswift`, including
+`core-bip324-arbitrary-peer-wire`, `bip324-raw-wire-aliases`,
+`bip324-independent-reference`, `party-boolean-semantics`, and the
+invalid-secret/overflow boundaries. Its relevant Core path is
+`BIP324Cipher::Initialize` (`/mnt/my_storage/bitcoin/src/bip324.cpp:40`)
+-> `CKey::ComputeBIP324ECDHSecret`
+(`/mnt/my_storage/bitcoin/src/key.cpp:327-344`)
+-> `secp256k1_ellswift_xdh` with the built-in BIP324 transcript hash. The
+raw-wire oracle's preconditions are valid local secret keys and encodings plus
+independent 64-byte peer encodings, with Core's initiator/responder mapping;
+its postconditions are dynamic/static agreement and an independent
+`SHA256(taghash || taghash || ell_a64 || ell_b64 || shared_x)` transcript
+reference. A clean-master discrepancy here is peer-reachable, but it is not
+automatically a consensus High/Critical issue because BIP324 is a transport
+handshake rather than invalid-block or witness validation; the rating must
+follow the proven cryptographic, availability, memory, or concurrency impact.
+
+Both targets used the native Clang ASan/UBSan binaries from
+`/tmp/secp256k1-oracles-external/bin` and private corpus copies. The exact
+command shape was:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 260s /tmp/secp256k1-oracles-external/bin/fuzz_<target> \
+      /tmp/codex-deep-<target> -fork=4 -jobs=4 -max_total_time=180 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -rss_limit_mb=0 \
+      -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-deep-<target>/artifacts/ \
+      -print_final_stats=1
+
+All four x-only jobs and all four EllSwift jobs exited 0. Every worker's
+reported `oom/timeout/crash` counters were `0/0/0`; neither log contained an
+ASan, UBSan, runtime-error, or `ERROR:` diagnostic, and both artifact
+directories were empty. The managers also exited 0 before the 260-second
+guard. This is negative discovery evidence, not a new production finding,
+and no production mutation or fix is claimed from it. The private copies,
+logs, and artifacts were removed after a final process inventory found no
+fuzz, sanitizer, compiler, or test process.
+
+The existing mutation proofs remain the causal evidence for the new oracles:
+they deliberately break the BIP324 transcript and static keypair contracts
+and are recorded in the preceding sections. Any future production fix,
+l0rinc cherry-pick, or follow-up oracle touching either boundary must state
+whether it preserves, changes, or masks those mutations and exact corpus
+inputs, amend its commit message and this ledger with the failure output and
+verifier commands, and re-rate the result against clean master. A minor fix
+that happens to suppress a failure must not lower an independent master
+finding. Uncleared nonce data without standalone cryptographic meaning is not
+Critical merely because it remains in memory.
