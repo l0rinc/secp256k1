@@ -14372,3 +14372,558 @@ or the Core adapters must say in its commit message whether it preserves,
 changes, or masks this master-relative direct-callback reproduction and must
 carry the exact seed, output, Core reachability split, and verifier command
 forward. No fork patch was used to soften the clean-master result.
+
+## 2026-07-18 Core-Facing Multi-Worker Sanitizer Replay
+
+After the clean-master differential control, the current audit branch was
+replayed from its restored tracked corpora with the Clang ASan/UBSan build at
+`/tmp/secp256k1-oracles-external`. The build uses Clang, `RelWithDebInfo`,
+`-fsanitize=address,undefined`, and all enabled modules (ECDH, EllSwift,
+ExtraKeys, MuSig, Recovery, and Schnorrsig). The source checkout used by that
+build is this audit worktree, not Bitcoin Core's bundled copy and not the
+detached origin/master control.
+
+The exact worker command, run independently for each target, was:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+timeout 120s /tmp/secp256k1-oracles-external/bin/fuzz_<target> \
+src/fuzz/corpora/<target> -fork=2 -jobs=2 -runs=120 -timeout=15 \
+-rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+The targets were `api_roundtrip`, `recovery`, `schnorrsig`, `xonly_tweak`,
+and `ellswift`. Both fork workers for every target exited 0. The worker
+outputs reported zero OOM, timeout, and crash counters and no ASan, UBSan, or
+illegal-argument diagnostic. Approximate completed executions per worker were
+`api_roundtrip` 140/147, `recovery` 156/146, `schnorrsig` 140/140,
+`xonly_tweak` 121/121, and `ellswift` 147/147; the exact logs were kept in
+`/tmp/secp256k1-audit-workers-<target>-20260718.log`. Fork-mode mutations were
+removed after the run, so no generated input was accidentally added to the
+tracked corpus.
+
+This is a branch regression/sanitizer result, not a claim that current master
+was independently clean under the deliberately stronger harness. The separate
+origin/master control at
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` remains the authority for
+master-relative findings. The target call-site boundaries are preserved in the
+interpretation: `api_roundtrip` includes Bitcoin Core's consensus legacy ECDSA
+route (`GenericTransactionSignatureChecker::CheckECDSASignature` ->
+`CPubKey::Verify` -> `secp256k1_ecdsa_verify`) and Core-owned serialized
+adapters; `schnorrsig` covers Tapscript verification and Core signing;
+`xonly_tweak` covers `VerifyTaprootCommitment` and attacker-controlled Taproot
+control-block bytes; `ellswift` covers the BIP324 peer path
+(`BIP324Cipher::Initialize` -> `CKey::ComputeBIP324ECDHSecret` ->
+`secp256k1_ellswift_xdh`); and `recovery` is the wallet/message API path
+(`CPubKey::RecoverCompact` -> `secp256k1_ecdsa_recover`), not block consensus.
+
+No new production bug or severity change was found in this replay. A future
+clean-master discrepancy on the legacy ECDSA, Tapscript Schnorr, Taproot, or
+BIP324 paths must be rated from the actual Core call graph: invalid
+block/witness or peer input reaching a memory-safety, consensus, or concurrency
+failure can be High/Critical; wallet/API-only behavior remains below that bar.
+The existing direct built-in nonce callback finding remains Medium for an
+arbitrary library caller but Low/Nice-to-have for Bitcoin Core. A nonce with no
+standalone cryptographic meaning is not Critical merely because a failure path
+does not clear it.
+
+This replay does not supersede the existing clean-master findings or their
+deterministic tests. Any cherry-pick, fork fix, or follow-up that changes the
+callback, Core adapter, ECDSA/Schnorr/Taproot composition, or BIP324 boundary
+must state in its own commit message whether it preserves, changes, or masks
+the original master-relative reproduction and must carry the exact corpus,
+failure output, Core reachability, severity, and verifier command forward.
+
+## 2026-07-18 Ecmult Callback-Failure Clean-Master Differential Recheck
+
+This reiterates the existing `ecmult: clear results on callback failure`
+finding and fix (`32962f84`). It is not a new production bug or a severity
+escalation. The production baseline was an exact detached `origin/master`
+checkout at `8c3e6e6d992456d3b9228305ae84a6703273cf70`; the comparison head was
+`l0rinc/master=11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. The clean-master
+control received only the current fuzzer/CMake overlay and its two local
+compatibility definitions (`checked_size_mul` and
+`SECP256K1_SHA256_MAX_SIZE`). It did not receive the production reset, a
+Bitcoin Core source change, or a fork fix.
+
+The authoritative input is the 43-byte ASCII corpus file
+`src/fuzz/corpora/ecmult_multi/callback-failure-output-state`:
+`ecmult multi callback failure output state\n`. A temporary, detached-control
+early return used that exact input to initialize two valid points (`5G` and
+`7G`) and scalars (`23` and `29`), accept callback index 0, reject index 1,
+and call `secp256k1_ecmult_multi_var` with `n=2`, `inp_g_sc=NULL`, and no
+scratch. The callback transcript was exactly two calls and the return value
+was `0`. The exact Clang ASan/UBSan command was:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 25s \
+/tmp/secp256k1-origin-ecmult-asan-build/bin/fuzz_ecmult_multi \
+src/fuzz/corpora/ecmult_multi/callback-failure-output-state \
+-runs=1 -timeout=15 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+Clean master printed `isolated_ecmult_ret=0 result_infinity=0
+callback_calls=2`. The identical temporary probe on the repaired branch,
+using `/tmp/secp256k1-oracles-external/bin/fuzz_ecmult_multi` and the same
+ASan/UBSan options, printed `isolated_ecmult_ret=0 result_infinity=1
+callback_calls=2`. The production test target also passed:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+/tmp/secp256k1-oracles-external/bin/tests \
+--target=ecmult_multi_tests --iterations=1 --seed=0000000000000001
+```
+
+On clean master, `src/ecmult_impl.h:791-793` returns after the simple
+fallback callback failure without clearing the accumulated `secp256k1_gej`,
+and `:860-862` has the same batch failure boundary. The repaired branch clears
+the result at both boundaries (`src/ecmult_impl.h:800-804` and `:871-875`).
+The old tests and fuzz paths checked return values, callback traces, and
+successful arithmetic but did not assert that a failed call leaves an infinity
+output; the deterministic test and the retained corpus now do. An earlier
+full-overlay ASan run reported a heap access before reaching this named case;
+that harness/version mismatch was excluded from the claim. The isolated
+production differential above is the proof.
+
+Bitcoin Core's only relevant current route is the non-consensus MuSig2 adapter:
+`/mnt/my_storage/bitcoin/src/musig.cpp:57-65` -> `:16-39` ->
+`secp256k1_musig_pubkey_agg` ->
+`src/modules/musig/keyagg_impl.h:154-166,208-212`. Core parses and validates
+the `CPubKey` vector before the library callback, and that callback always
+returns `1`; MuSig2 is wallet/descriptor/signing functionality, not invalid
+block, witness, or BIP324 peer validation. Thus the master-relative rating is
+**Low internal correctness / Nice-to-have for Bitcoin Core**, not High or
+Critical: no Core-reachable callback failure, consensus discrepancy, remote
+invalid-block trigger, memory-safety fault, or funds impact is established.
+Direct library/internal callers that supply a failing callback can still
+observe stale output after a `0` return, which is why the production invariant
+and regression test remain worthwhile.
+
+No l0rinc PR was cherry-picked for this recheck; PRs #1-#16 were already
+reconciled by equivalent or stronger commits. Any later cherry-pick or fix
+that changes `ecmult_multi_var`, MuSig2 callback behavior, or this corpus must
+state whether it preserves, changes, or masks the clean-master result and carry
+the exact input, callback transcript, output state, Core call path, severity,
+mutation/fixture condition, and verifier command in its commit message. A
+nonce without standalone cryptographic meaning is not Critical merely because
+a failure path does not clear it.
+
+## 2026-07-18 Bounded Schnorr Worker Confirmation
+
+As a continuation of the current-branch sanitizer campaign, the restored
+`schnorrsig` corpus was copied to a disposable directory and run with two
+libFuzzer workers against `/tmp/secp256k1-oracles-external`, the Clang
+ASan/UBSan build of this audit branch. The exact command was:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 45s \
+/tmp/secp256k1-oracles-external/bin/fuzz_schnorrsig \
+/tmp/secp256k1-worker-schnorrsig-20260718/corpus \
+-workers=2 -max_total_time=20 -timeout=15 -rss_limit_mb=0 \
+-handle_abrt=0 -verbosity=0 \
+-artifact_prefix=/tmp/secp256k1-worker-schnorrsig-20260718/artifacts/ \
+-print_final_stats=1
+```
+
+The manager exited 0 after 20.98 seconds. Its final statistics reported 18
+seed files, 162 executed units, 90 new units, zero sanitizer/timeout/OOM/crash
+diagnostics, and no artifact in the disposable artifact directory. This is
+negative regression evidence for the current branch only; it is not a
+clean-master claim and does not alter any existing finding or severity. The
+disposable corpus, generated units, log, and artifact directory were removed
+after the process check confirmed that no fuzz or sanitizer process remained.
+
+An exploratory MuSig command used the same ASan/UBSan build and
+`-fork=2 -jobs=2 -runs=240 -timeout=15 -rss_limit_mb=0 -handle_abrt=0
+-print_final_stats=1` under a 90-second outer timeout. The outer timeout
+stopped it before completion; its worker logs showed no diagnostic before the
+stop, but this is explicitly excluded from proof and from execution counts.
+No MuSig finding or severity change is claimed from that incomplete run.
+
+The severity rule remains master-relative and Core-specific: only a
+clean/unmodified-master failure reachable from invalid block, witness, or
+BIP324 peer bytes can receive a consensus/security High or Critical rating.
+Wallet, descriptor, signing, and direct-library callback behavior remains
+below that bar unless a concrete funds, availability, memory-safety, or
+concurrency impact is proven. A nonce with no standalone cryptographic meaning
+is not Critical merely because a failure path does not clear it. If a future
+fork cherry-pick or production fix changes either worker target, its commit
+message must say whether it preserves, changes, or masks the master-relative
+fixture/mutation, and carry the exact target, corpus condition, failure output,
+Core call path, severity, and verifier command forward.
+
+After the worker replay, the complete test matrix for the same build was
+verified with:
+
+```
+ctest --test-dir /tmp/secp256k1-oracles-external --output-on-failure -j2
+```
+
+All 224 tests passed in 196.55 seconds, including both `tests` and
+`noverify_tests` suites and the enabled ECDH, EllSwift, ExtraKeys, MuSig,
+Recovery, and Schnorrsig module tests. This confirms the branch remains
+buildable/testable after the oracle campaign; it is not additional clean-master
+proof and does not lower the severity of any master-relative finding.
+
+## 2026-07-18 Randomized Core-Sensitive Worker Sweep
+
+The next randomized pass used the current audit branch at
+`8149b542cffcd8c4c102fa99338e6ee5cb2c96ef`, with production behavior based on
+the unmodified `origin/master=8c3e6e6d992456d3b9228305ae84a6703273cf70` for
+the master-relative ledger. Each complete tracked corpus was copied to a
+private directory, so libFuzzer-generated units could not modify the committed
+seeds. The Clang ASan/UBSan build was
+`/tmp/secp256k1-oracles-external`; the source production tree was this audit
+branch and no production mutation or fork fix was applied.
+
+The exact command, run once per target, was:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 180s \
+/tmp/secp256k1-oracles-external/bin/fuzz_<target> \
+/tmp/secp256k1-random-<target>-20260718/corpus \
+-workers=2 -max_total_time=120 -timeout=15 -rss_limit_mb=0 \
+-handle_abrt=0 -verbosity=0 \
+-artifact_prefix=/tmp/secp256k1-random-<target>-20260718/artifacts/ \
+-print_final_stats=1
+```
+
+The four targets cover the highest-value current Core boundaries:
+
+* `api_roundtrip`: legacy serialized ECDSA (`CPubKey::Verify` ->
+  `secp256k1_ecdsa_verify`) and Core-shaped key/derivation adapters.
+* `schnorrsig`: Tapscript verification and Core Taproot signing composition.
+* `xonly_tweak`: `VerifyTaprootCommitment` control-block and TapLeaf inputs.
+* `ellswift`: BIP324 peer input through
+  `BIP324Cipher::Initialize` -> `CKey::ComputeBIP324ECDHSecret` ->
+  `secp256k1_ellswift_xdh`.
+
+All four managers exited 0 before the hard timeout. Their final statistics
+were:
+
+```
+target          seed files  executed units  new units  peak RSS  artifacts
+api_roundtrip   63          1245            241        50 MiB    none
+schnorrsig      18          929             206        48 MiB    none
+xonly_tweak     20          187             97         47 MiB    none
+ellswift        18          699             188        47 MiB    none
+```
+
+The private corpus directories grew to 303, 224, 117, and 205 files
+respectively during mutation, but were removed after the process check. No
+ASan/UBSan diagnostic, illegal-argument report, timeout, OOM, crash, or
+artifact appeared in any log. This is negative current-branch regression
+evidence only. It is not a clean-master proof, does not supersede the focused
+clean-master controls, and produces no new production bug or severity change.
+
+The severity boundary remains explicit: a clean-master discrepancy or
+memory/concurrency failure reachable from invalid block, witness, or BIP324
+peer bytes would be High/Critical according to impact; wallet, descriptor,
+signing, and direct callback behavior remains below that bar without concrete
+funds, availability, or memory impact. A nonce with no standalone
+cryptographic meaning is not Critical merely because it is uncleared. Any
+later cherry-pick or fix changing one of these adapters or library boundaries
+must state whether it preserves, changes, or masks this worker result and must
+carry the exact target, corpus condition, failure output, Core path, severity,
+and verifier command in its own commit message.
+
+## 2026-07-18 MuSig Stateful Backend Worker Recheck
+
+The previously excluded MuSig exploration was rerun to completion against the
+77 tracked `src/fuzz/corpora/musig` inputs, copied into the disposable
+`/tmp/secp256k1-worker-musig-20260718/corpus` directory. The audit branch was
+at `a127c336d2bddc9822e77249b82a240a1a9a46f8`; the master-relative baseline
+remains unmodified `origin/master=8c3e6e6d992456d3b9228305ae84a6703273cf70`.
+No production mutation, Bitcoin Core source change, or l0rinc fork fix was
+used.
+
+The native 5x52 and forced-int64/10x26 ASan/UBSan commands were identical
+except for the binary:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 180s \
+/tmp/secp256k1-oracles-external/bin/fuzz_musig \
+/tmp/secp256k1-worker-musig-20260718/corpus \
+-workers=2 -max_total_time=90 -timeout=15 -rss_limit_mb=0 \
+-handle_abrt=0 -verbosity=0 \
+-artifact_prefix=/tmp/secp256k1-worker-musig-20260718/artifacts/ \
+-print_final_stats=1
+
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 180s \
+/tmp/secp256k1-next-asan-int64/bin/fuzz_musig \
+/tmp/secp256k1-worker-musig-20260718/corpus \
+-workers=2 -max_total_time=90 -timeout=15 -rss_limit_mb=0 \
+-handle_abrt=0 -verbosity=0 \
+-artifact_prefix=/tmp/secp256k1-worker-musig-20260718/int64-artifacts/ \
+-print_final_stats=1
+```
+
+The external-memory-sanitizer replay used:
+
+```
+MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 180s \
+/tmp/secp256k1-msan-int64-ext2/bin/fuzz_musig \
+/tmp/secp256k1-worker-musig-20260718/corpus \
+-workers=2 -max_total_time=90 -timeout=15 -rss_limit_mb=0 \
+-handle_abrt=0 -verbosity=0 \
+-artifact_prefix=/tmp/secp256k1-worker-musig-20260718/msan-artifacts/ \
+-print_final_stats=1
+```
+
+All three managers exited 0 before the hard timeout, and the final statistics
+were:
+
+```
+backend                 seed files  executed units  new units  peak RSS  artifacts
+native 5x52 ASan/UBSan  77          78              0          54 MiB    none
+forced int64/10x26      77          78              0          54 MiB    none
+external MSan int64     77          97              19         69 MiB    none
+```
+
+The first forced-int64 invocation was rejected before fuzzing because its
+artifact directory did not exist; it exited 1 with the libFuzzer directory
+error and is excluded from these counts. Creating that directory and rerunning
+the exact corpus produced the successful 78-unit result above. No
+AddressSanitizer, UndefinedBehaviorSanitizer, MemorySanitizer, illegal-
+argument, timeout, OOM, crash, or artifact diagnostic appeared in the counted
+runs. The private corpus and all three artifact directories were removed after
+the process check confirmed that no fuzz process remained.
+
+This is negative state-machine regression evidence, not clean-master proof and
+not a new production finding. MuSig2's current Bitcoin Core route is
+`/mnt/my_storage/bitcoin/src/musig.cpp:57-65` -> `:16-39` ->
+`secp256k1_musig_pubkey_agg`; it is wallet/descriptor/signing functionality,
+not invalid-block, witness, or BIP324 peer validation. Therefore any MuSig
+opaque-state or callback failure remains below consensus High/Critical unless
+a concrete funds, availability, memory-safety, or concurrency impact is
+proven. A nonce with no standalone cryptographic meaning is not Critical merely
+because it is uncleared. Any later cherry-pick or fix changing MuSig state
+transitions must state whether it preserves, changes, or masks the clean-master
+fixture/mutation and carry the exact target, corpus, failure output, Core path,
+severity, and verifier command in its commit message.
+
+## 2026-07-18 Bitcoin Core Integration Worker Sweep
+
+The library-side worker campaigns were followed by a separate integration pass
+through the Bitcoin Core fuzz harnesses that actually consume the relevant
+secp256k1 APIs. The Core checkout was
+`/mnt/my_storage/bitcoin` at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` on
+`codex/btc-fuzz-oracles`. Its only pre-existing worktree change was the
+unrelated `src/test/blockencodings_tests.cpp`; neither that file nor the Core
+checkout was modified. The binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, a Clang
+AddressSanitizer/UndefinedBehaviorSanitizer/fuzzer build. The audit branch
+was at `9cba0bb818f12d31409f47538382ee23b4b9bd72` before this note was
+amended, with the master-relative baseline still
+`origin/master=8c3e6e6d992456d3b9228305ae84a6703273cf70`.
+
+Bitcoin Core does not publish checked-in seed corpora in this checkout for
+these targets. To keep the run reproducible and prevent generated units from
+changing the audit corpus, private copies were made from the tracked audit
+seeds: 18 `ellswift` files, 63 `api_roundtrip` files, and two selected DER
+files (`ecdsa-der-parser-boundaries` and `ecdsa-der-long-form-success`). The
+Core harnesses consume arbitrary byte strings, so this is an integration
+regression pass, not a claim that each secp256k1 structured seed is a valid
+Core fixture. The private directories and all generated units were removed
+after the process check.
+
+Each target used the following exact command shape (the six literal commands
+are listed immediately below):
+
+```
+env FUZZ=<target> \
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+/tmp/core-secp-integration-20260718/<corpus> \
+-fork=2 -jobs=2 -max_total_time=<budget> -timeout=20 -rss_limit_mb=0 \
+-handle_abrt=0 -verbosity=0 \
+-artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/<name>- \
+-print_final_stats=1
+```
+
+The exact target invocations were:
+
+```
+env FUZZ=bip324_cipher_roundtrip ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz /tmp/core-secp-integration-20260718/ellswift -fork=2 -jobs=2 -max_total_time=60 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/bip324-cipher- -print_final_stats=1
+env FUZZ=bip324_ecdh ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz /tmp/core-secp-integration-20260718/ellswift -fork=2 -jobs=2 -max_total_time=60 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/bip324-ecdh- -print_final_stats=1
+env FUZZ=key ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz /tmp/core-secp-integration-20260718/api -fork=2 -jobs=2 -max_total_time=60 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/key- -print_final_stats=1
+env FUZZ=ellswift_roundtrip ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz /tmp/core-secp-integration-20260718/ellswift -fork=2 -jobs=2 -max_total_time=45 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/ellswift-roundtrip- -print_final_stats=1
+env FUZZ=pub_key_deserialize ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz /tmp/core-secp-integration-20260718/api -fork=2 -jobs=2 -max_total_time=45 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/pubkey- -print_final_stats=1
+env FUZZ=secp256k1_ecdsa_signature_parse_der_lax ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 150s /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz /tmp/core-secp-integration-20260718/der -fork=2 -jobs=2 -max_total_time=45 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=/tmp/core-secp-integration-20260718/artifacts/der-lax- -print_final_stats=1
+```
+
+All six manager processes exited 0. The two worker logs reported the following
+last execution markers and zero `oom/timeout/crash` counters throughout:
+
+```
+target                              worker 0   worker 1   artifacts
+bip324_cipher_roundtrip             87702      89142      none
+bip324_ecdh                         50830      50668      none
+key                                  27584      28212      none
+ellswift_roundtrip                  35553      36237      none
+pub_key_deserialize                966359     978673      none
+ecdsa_signature_parse_der_lax       49513      50604      none
+```
+
+The DER values are explicitly last reported execution markers, not claimed
+final totals: the fork wrapper emitted additional coverage-function lines and
+then exited after 93 seconds without a final execution counter. No
+AddressSanitizer, UndefinedBehaviorSanitizer, illegal-argument, timeout, OOM,
+crash, or artifact diagnostic appeared in any target, and no fuzz process
+remained. This result is negative Core integration evidence only. The Core
+binary uses the Core checkout's bundled secp256k1, not the audit worktree's
+current production objects, so it neither proves the audit branch clean nor
+changes a clean-master finding.
+
+The exercised Core boundaries are:
+
+* `bip324_ecdh`: `CKey::ComputeBIP324ECDHSecret` at
+  `/mnt/my_storage/bitcoin/src/key.cpp:334-341` ->
+  `secp256k1_ellswift_xdh`, the peer-controlled BIP324 key-exchange path.
+* `bip324_cipher_roundtrip`: `BIP324Cipher::Initialize` at
+  `/mnt/my_storage/bitcoin/src/bip324.cpp` -> the same EllSwift XDH
+  operation, followed by the authenticated transport state machine.
+* `ellswift_roundtrip`: `CKey::EllSwiftCreate` ->
+  `secp256k1_ellswift_create`, then Core public-key verification through
+  `secp256k1_schnorrsig_verify`.
+* `key`: `CKey::Derive` -> `secp256k1_ec_seckey_tweak_add`, public-key
+  creation/serialization, and Core's key and pubkey adapters. This is wallet
+  and derivation state, not invalid-block validation.
+* `pub_key_deserialize`: Core `CPubKey::Unserialize` and the public-key parse
+  boundary used by script and consensus callers.
+* `secp256k1_ecdsa_signature_parse_der_lax`: Core's lax DER adapter used by
+  `CPubKey::Verify` and `CPubKey::CheckLowS`; the strict library DER parser is
+  covered separately by the audit target.
+
+No new production bug or severity change is established. A clean, unmodified
+`origin/master` failure reachable from invalid block or witness bytes through
+the public-key or ECDSA/Schnorr paths, or from peer bytes through BIP324, would
+be rated High/Critical according to its concrete consensus, memory-safety, or
+availability impact. The present result contains no such failure. Wallet,
+derivation, direct callback, and malformed opaque-state findings remain below
+that bar unless a concrete funds, availability, memory, or concurrency impact
+is proven. A nonce with no standalone cryptographic meaning is not Critical
+merely because a failure path leaves it uncleared.
+
+No l0rinc commit was cherry-picked for this pass. PRs #1-#16 remain
+reconciled by equivalent or stronger audit commits. Any later cherry-pick,
+Core update, or production fix affecting EllSwift, BIP324, pubkey parsing,
+DER parsing, or the listed adapters must say whether it preserves, changes, or
+masks the exact master-relative fixture or mutation, and carry the target,
+input provenance, failure output, Core call path, severity, and verifier
+command in the amended commit message and notes.
+
+## 2026-07-18 Final Core-Severity and Fork-Reconciliation Audit
+
+This note records the final state of this continuation before the next
+discovery pass. `git fetch --prune origin master` and
+`git fetch --prune l0rinc master` completed on 2026-07-18 with no ref changes.
+The audit branch is `codex/fuzz-oracles`; `origin/master` is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, `l0rinc/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, and
+`git merge-base --is-ancestor origin/master HEAD` succeeds. No rebase is
+required. The audit worktree is clean and no fuzz, sanitizer, compiler, or
+test process remains running. The Bitcoin Core checkout used for integration
+replays remains `/mnt/my_storage/bitcoin` at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; its unrelated pre-existing
+`src/test/blockencodings_tests.cpp` edit was not touched.
+
+The production-diff review covered the 50 changed production/header files,
+including the public API, field backends, scalar backends, group and ecmult
+implementations, hash cleanup, ECDH, EllSwift, recovery, ExtraKeys, Schnorr,
+and MuSig. No additional clean-master production bug was established in this
+pass. In particular, the apparent `keypair_xonly_pub` inconsistency case was
+rejected as a false positive: the raw `keypair_sec` and `keypair_pub`
+projections are intentionally independent documented extractors, while
+operations consuming both halves validate their relation. Bitcoin Core only
+constructs keypairs through `secp256k1_keypair_create` and uses them through
+valid `KeyPair` objects. No production change or severity claim is justified
+for that state.
+
+The existing findings are reiterated against clean master, before any later
+minor fix or fork patch is applied:
+
+* **Medium confirmed internal memory safety, low current Core reachability:**
+  scratch-size addition wrap (`cc5132d`) has a clean-master ASan/UBSan
+  `SIZE_MAX` proof and deterministic regression. Current Core's MuSig route
+  uses no scratch and does not let invalid block or witness bytes provide that
+  size, so it is not a consensus High/Critical finding.
+* **Medium/latent arithmetic correctness:** the 10x26 magnitude-32 carry
+  overflow (`84549065`) and zero-predicate carry loss (`f34ff1ba`) have exact
+  field states, independent model assertions, and clean-master mutation
+  evidence. They can become High only if a real caller reaches the documented
+  maximum-magnitude state; no such public or Core wire path has been shown.
+* **Medium local opaque-state integrity:** malformed or noncanonical public
+  keys, x-only keys, keypairs, ECDSA/recoverable signatures, MuSig caches,
+  nonces, sessions, and partial signatures are rejected at their load
+  boundaries. The proof is deterministic mutation/corpus coverage, not a
+  remote-wire claim. Core parses peer public keys and signatures into fresh
+  validated objects; it does not expose these opaque structs to invalid block
+  bytes.
+* **Medium direct API/callback contracts:** built-in ECDH/EllSwift/nonce
+  callback NULL-input barriers, RFC6979 `UINT_MAX` termination, and HMAC state
+  cleanup have focused reproductions. They require direct API misuse or a
+  caller-controlled callback boundary and do not become consensus Critical
+  without a Core-reachable memory, availability, disclosure, or forgery
+  impact.
+* **Low internal/API correctness:** `ecmult_multi_var` now clears its
+  accumulated result after a callback failure (`32962f84`). Clean master
+  reproduced stale finite output with valid 5G/7G inputs, scalars 23/29, a
+  callback that accepts index 0 and rejects index 1, `n=2`, and no scratch.
+  Core's current MuSig callback validates its inputs first and always returns
+  1, so this is not an invalid-block or witness-triggerable High/Critical
+  issue. Built-in ECDH return checking and callback cleanup have the same
+  direct-API boundary.
+* **Low/Informational stale-state hygiene:** failed public nonce, public
+  output, and optional callback-state cleanup has independent oracle and
+  mutation coverage. A nonce with no standalone cryptographic meaning is not
+  Critical merely because it is uncleared. The secret MuSig session-random
+  input is different: the API intentionally invalidates it after successful
+  nonce creation and preserves it for a corrected retry after invalid input.
+
+Core severity is assigned from actual call paths, not from the existence of a
+library assertion. `CPubKey::Unserialize` and Core's ECDSA/Schnorr verification
+adapters are the consensus-relevant public-key/signature boundaries;
+Taproot/control-block parsing reaches the x-only APIs; BIP324 peer bytes reach
+EllSwift XDH through `CKey::ComputeBIP324ECDHSecret`; and Core's `key.cpp` and
+`musig.cpp` keypair/MuSig calls are wallet, descriptor, derivation, or signing
+state. A clean-master failure in the first group that can be triggered by an
+invalid block, witness, or BIP324 peer message is rated High/Critical according
+to concrete consensus, memory-safety, or availability impact. Wallet/API-only,
+direct callback, and locally corrupted opaque-state behavior stays below that
+bar unless that impact is demonstrated. This classification is not lowered by
+a later minor patch that happens to mask the original master failure.
+
+The current l0rinc pull-head inventory is PR #1 `6e60f8d`, #2 `51e93c4`, #3
+`7ed2abc`, #4 `b9a169b`, #5 `f06920c`, #6 `ac915c9`, #7/#9 `3f5fafa`, #8
+`248be19`, #10 `65d38b0`, #11 `d1dca5c`, #12 `944932c`, #13 `87e57c8`, #14
+`b5e6108`, #15 `a2a0ac2`, and #16 `b938a5d`. They are all reconciled by
+equivalent or stronger commits and notes in this branch. PRs #1-#3 and #11
+repeat cleanup, public-key-load, and opaque-state barriers; #10 and #16
+repeat the 10x26 arithmetic boundary; #12 repeats word serialization; #13
+repeats shift-width guards; #14 repeats DER offset parsing; and #15 repeats
+overlapping tweak-input preservation. PRs #4-#6 and #8 are optimization
+stacks whose whole-tree application would restore unchecked loads or remove
+cleanup/failure barriers, thereby masking master-relative findings. PRs #7 and
+#9 are comment/test maintenance. No additional cherry-pick is justified.
+
+For every future cherry-pick, production fix, or follow-up oracle, the same
+commit message and this ledger must state: the clean-master baseline; the
+exact target and corpus bytes or source mutation; the precondition and
+postcondition; the observed failure output; the actual Bitcoin Core call path;
+the severity on unmodified master; why existing tests missed it; whether the
+change preserves, changes, or masks a prior or later finding; and the exact
+build, sanitizer, replay, and deterministic verifier commands. A fork fix is
+never evidence that master was safe. A confirmed production bug must have a
+minimal clean-master reproduction or a clearly documented production mutation
+that models the broken condition, plus a deterministic regression test.
