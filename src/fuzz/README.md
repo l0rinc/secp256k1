@@ -15,7 +15,7 @@ Targets:
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
 - `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss/Pippenger batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
-- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
+- `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
@@ -11583,3 +11583,52 @@ failing condition was a disposable mutation: inserting
 `secp256k1_keypair_create` made the focused seed abort with exit 134. The
 mutation was restored, the clean native focused replay passed again, and the
 mutation log contained no sanitizer diagnostic.
+
+## 2026-07-18 ECDH Negative-Scalar Generator Oracle
+
+The new `ecdh/generator-minus-g` corpus input checks `secp256k1_ecdh(G, n - 1)`
+with a coordinate-passthrough callback. It requires the returned x-coordinate
+to match the fixed generator x-coordinate, the returned y-coordinate to match
+the fixed `p - y(G)` odd root, and the byte-field equation `y^2 = x^3 + 7` to
+hold. It also computes the default ECDH output with the standalone SHA-256
+reference over the fixed compressed-odd generator encoding.
+
+This complements the existing `ecdh/generator-2g` and `odd-y-default-hash`
+seeds. The `2G` seed pins a positive scalar, while the odd-Y seed supplies a
+negated public key with scalar one. This seed pins the scalar-side negation
+path itself, so a regression in scalar parsing, constant-time multiplication,
+or default-hash parity cannot hide behind the arbitrary symmetry check or a
+separate public-key negation operation.
+
+The restored verifier set passed with the complete ECDH corpus under native and
+forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_ecdh \
+  src/fuzz/corpora/ecdh -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_ecdh \
+  src/fuzz/corpora/ecdh -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ecdh \
+  src/fuzz/corpora/ecdh/generator-minus-g \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **oracle hardening, not a clean-master production bug**. Master already
+computes `ECDH(G, n - 1)` as `-G` and hashes the compressed odd point. If this
+contract failed on master for a valid public key and scalar, the severity would
+be **High** because callers could derive an incorrect shared secret for valid
+ECDH inputs. The observed branch finding is informational because the only
+failing condition was a disposable mutation: after
+`secp256k1_ge_set_gej(&pt, &res)` in `secp256k1_ecdh`, the mutation compared
+the raw scalar input against the fixed 32-byte encoding of `n - 1` and negated
+only that affine shared point. The focused seed aborted with exit 134 on both
+native 5x52 and forced-int64/10x26 ASan/UBSan builds, while the eight
+pre-existing ECDH corpus files passed under the same mutation on both
+backends. The mutation was restored, the clean native focused replay passed
+again, and the mutation log contained no sanitizer diagnostic.
