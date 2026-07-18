@@ -17048,3 +17048,89 @@ severity on unmodified master, test gap, verifier commands, and whether it
 preserves, changes, or masks the trigger. Rerun the original baseline or
 mutation before downgrading a masked finding. No fuzz, sanitizer, compiler, or
 test process remains running.
+
+## 2026-07-19 Current fuzz-target inventory and finding-severity closure
+
+Refresh `origin/master` and `l0rinc/master` completed before this audit note.
+The refs remain `8c3e6e6d992456d3b9228305ae84a6703273cf70` and
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; `HEAD` is a descendant of
+`origin/master`, and `HEAD..l0rinc/master` is empty. No rebase or new
+cherry-pick was needed. The l0rinc PR #1-#16 reconciliation therefore remains
+the current one. Later fork commits must be evaluated for behavior masking,
+not applied merely to make a later replay pass.
+
+The source inventory contains 15 tracked C files under `src/fuzz`: 14 actual
+entry points (`api_roundtrip`, `context`, `hash`, `scalar`, `field`, `group`,
+`ecmult_const`, `ecmult_multi`, `ecdh`, `ellswift`, `xonly_tweak`, `recovery`,
+`schnorrsig`, and `musig`) plus the shared `external_callbacks.c` implementation.
+The latter is not a fifteenth target and intentionally has no corpus directory;
+it is linked into every CMake fuzz executable and every Autotools fuzz target.
+The 14 entry points have exactly 14 matching corpus directories and 338
+tracked inputs:
+
+    api_roundtrip 63       context 13          ecdh 9
+    ecmult_const 11        ecmult_multi 29     ellswift 19
+    field 21               group 23            hash 10
+    musig 77               recovery 17        scalar 8
+    schnorrsig 18          xonly_tweak 20
+
+Each corpus-backed target has a ledger entry describing its preconditions,
+postconditions, independent model or round-trip oracle, Core boundary, exact
+worker/sanitizer command, and result. The current-source matrix also passed
+224/224 native, 222/222 forced-int64, and 222/222 MSan CTest cases. The only
+source change after the last production audit change (`bb87febf`) is the MSan-
+safe test helper in `c0cc2838`; the subsequent commits are replay and test
+evidence notes. No target or corpus is unaccounted for, and this inventory
+pass found no new production failure or regression-test candidate.
+
+Existing findings are reiterated against unmodified `origin/master`, not
+against the repaired audit branch:
+
+* `ecmult_multi/scratch-wrap-create` proves a 32-byte header write after a
+  wrapped 31-byte allocation when the clean-master allocation guard is
+  removed. This is **Medium confirmed internal memory safety with low current
+  Bitcoin Core reachability**. Core's current MuSig aggregation reaches the
+  no-scratch `ecmult_multi_var(..., NULL, ...)` path; invalid blocks and
+  witnesses cannot supply `SIZE_MAX` to the internal scratch constructor.
+* The 10x26 magnitude-32 field state in `84549065` proves that the old uint32
+  carry chain can silently lose carry bits. This is **Medium latent internal
+  correctness**, potentially higher if an in-contract path reaches that state,
+  but no natural Core wire-state construction has been shown. It is not a
+  remote key or signature vulnerability on the evidence currently available.
+* Hash/HMAC/RFC6979 finalizer state retention in `62e3274f` is **Medium memory
+  hygiene** because signing-secret-derived state survives finalization, but no
+  standalone read primitive has been demonstrated. Core reaches RFC6979 from
+  `CKey::Sign`, which makes the cleanup relevant to wallet/authorized signing,
+  not invalid-block consensus validation. A nonce or nonce-related buffer
+  without standalone cryptographic meaning is not Critical merely because it
+  is uncleared.
+* Opaque public-key, keypair, signature, MuSig cache/session, callback NULL,
+  and direct API-state findings remain Medium only where the caller can supply
+  malformed local state or misuse the public API. The callback-failure stale
+  output and scalar shift-over-512 cases remain Low for current Core usage;
+  Core does not expose the relevant callback state or shift as invalid block
+  or witness input. The valid static keypair compatibility behavior in
+  `bb87febf` is **Medium wallet/API compatibility** on the audit branch. Core's
+  `KeyPair::KeyPair` can reach that wallet/descriptor/PSBT path, but invalid
+  witnesses do not construct the 96-byte opaque keypair.
+
+Severity must change when the call graph changes, not when a nearby patch
+happens to suppress an assertion. A clean-master equation, acceptance,
+memory-safety, race, or state-corruption failure reachable from an invalid
+block or witness is High/Critical according to the demonstrated consensus
+impact. A BIP324 peer-input failure is rated from its demonstrated remote
+crash, persistent DoS, key-agreement, or integrity consequence. Direct API,
+wallet, callback, and opaque-state failures stay below that boundary unless a
+concrete Bitcoin Core caller and impact are proven.
+
+Every future production fix, fuzzer assertion, test change, or cherry-pick
+must include in both its commit message and this ledger: the clean-master or
+minimal-production-mutation baseline; exact corpus bytes, generated condition,
+or mutation; preconditions and postconditions; observed failure and stack or
+assertion; affected Bitcoin Core caller and input origin; severity on the
+unmodified master; why existing tests missed it; verifier commands and
+results; and whether the change preserves, changes, or masks the original
+trigger. If a potential fix changes a follow-up finding's behavior, preserve
+the original baseline or mutation and document that relationship in the same
+commit. Do not downgrade a finding because a minor, unrelated fix made the
+follow-up replay green.
