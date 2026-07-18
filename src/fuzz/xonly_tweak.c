@@ -1041,21 +1041,40 @@ static void secp256k1_fuzz_check_keypair_null_tweak(secp256k1_context *ctx, cons
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
-static void secp256k1_fuzz_check_static_context_keypair(const secp256k1_keypair *keypair, const secp256k1_xonly_pubkey *valid_xonly, int valid_parity) {
-    secp256k1_keypair tweaked_keypair = *keypair;
+static void secp256k1_fuzz_check_static_context_keypair(secp256k1_context *ctx, const secp256k1_keypair *keypair, const secp256k1_xonly_pubkey *valid_xonly, int valid_parity) {
+    secp256k1_keypair static_tweaked_keypair = *keypair;
+    secp256k1_keypair dynamic_tweaked_keypair = *keypair;
     secp256k1_xonly_pubkey projected_xonly;
     int projected_parity = 7;
 
-    /* Public-only projection does not need generator precomputation, but
-     * mutating a keypair does. Keep the two context requirements distinct. */
+    /* Public-only projection and keypair tweaking both work with the static
+     * context. The latter validates the secret/public relationship through a
+     * constant-time fallback when generator precomputation is unavailable. */
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(secp256k1_context_static, &projected_xonly, &projected_parity, keypair) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &projected_xonly, valid_xonly) == 0);
     FUZZ_CHECK(projected_parity == valid_parity);
 
+    FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &dynamic_tweaked_keypair, secp256k1_fuzz_scalar_zero) == 1);
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    {
+        unsigned int calls = secp256k1_fuzz_default_illegal_calls;
+#endif
+        FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, &static_tweaked_keypair, secp256k1_fuzz_scalar_zero) == 1);
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+        FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls);
+    }
+#endif
+    FUZZ_CHECK(memcmp(&static_tweaked_keypair, &dynamic_tweaked_keypair, sizeof(static_tweaked_keypair)) == 0);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(secp256k1_context_static, &projected_xonly, &projected_parity, &static_tweaked_keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &projected_xonly, valid_xonly) == 0);
+    FUZZ_CHECK(projected_parity == 0);
+
 #ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
     {
         secp256k1_keypair static_keypair;
-        unsigned char zero_keypair[sizeof(tweaked_keypair)] = { 0 };
+        secp256k1_keypair mismatched_keypair = *keypair;
+        secp256k1_pubkey alternate_pubkey;
+        unsigned char zero_keypair[sizeof(static_tweaked_keypair)] = { 0 };
         unsigned int calls = secp256k1_fuzz_default_illegal_calls;
 
         memset(&static_keypair, 0xA5, sizeof(static_keypair));
@@ -1063,12 +1082,13 @@ static void secp256k1_fuzz_check_static_context_keypair(const secp256k1_keypair 
         FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
         FUZZ_CHECK(memcmp(&static_keypair, zero_keypair, sizeof(static_keypair)) == 0);
 
-        FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, &tweaked_keypair, secp256k1_fuzz_scalar_zero) == 0);
+        FUZZ_CHECK(secp256k1_keypair_pub(secp256k1_context_static, &alternate_pubkey, keypair) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_negate(secp256k1_context_static, &alternate_pubkey) == 1);
+        memcpy(mismatched_keypair.data + 32, alternate_pubkey.data, sizeof(mismatched_keypair.data) - 32);
+        FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, &mismatched_keypair, secp256k1_fuzz_scalar_zero) == 0);
         FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
-        FUZZ_CHECK(memcmp(&tweaked_keypair, zero_keypair, sizeof(tweaked_keypair)) == 0);
+        FUZZ_CHECK(memcmp(&mismatched_keypair, zero_keypair, sizeof(mismatched_keypair)) == 0);
     }
-#else
-    (void)tweaked_keypair;
 #endif
 }
 
@@ -1448,7 +1468,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly_no_parity, NULL, &keypair) == 1);
     if (size == sizeof("static context keypair barrier\n") - 1
         && memcmp(input, "static context keypair barrier\n", sizeof("static context keypair barrier\n") - 1) == 0) {
-        secp256k1_fuzz_check_static_context_keypair(&keypair, &xonly, keypair_parity);
+        secp256k1_fuzz_check_static_context_keypair(ctx, &keypair, &xonly, keypair_parity);
     }
     secp256k1_fuzz_check_keypair_projection(ctx, &keypair, &pubkey, &xonly, keypair_parity, seckey);
     secp256k1_fuzz_check_invalid_xonly_cmp(ctx, &xonly);
