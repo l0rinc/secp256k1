@@ -17322,3 +17322,66 @@ observed failure, Core caller and input origin, severity on unmodified master,
 existing test gap, verifier results, and whether the change preserves, changes,
 or masks the trigger. A passing generated campaign does not downgrade an older
 finding; rerun its clean-master or minimal-production-mutation baseline first.
+
+## 2026-07-19 Generated Core-adapter and lifecycle worker recheck
+
+The remaining Core-shaped and lifecycle-heavy targets were rebuilt from the
+same committed source in `/tmp/secp256k1-oracles-external`. To prevent
+libFuzzer's generated corpus from modifying the repository, each tracked
+corpus was copied to a disposable `/tmp` directory before replay. The existing
+oracles retained their independent serialized ECDSA/BIP32/Taproot equations,
+compact-recovery composition, output cleanup, callback, preallocated-context,
+static-context, and SHA state postconditions. No source mutation or fork fix
+was applied.
+
+The exact commands were:
+
+    /tmp/secp256k1-oracles-external/bin/fuzz_api_roundtrip \
+      /tmp/secp256k1-next-generated-api-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-api-artifacts/
+    /tmp/secp256k1-oracles-external/bin/fuzz_recovery \
+      /tmp/secp256k1-next-generated-recovery-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-recovery-artifacts/
+    /tmp/secp256k1-oracles-external/bin/fuzz_context \
+      /tmp/secp256k1-next-generated-context-corpus -workers=4 -jobs=1 \
+      -max_total_time=60 -timeout=30 -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-generated-context-artifacts/
+
+All three jobs exited zero with no assertion, sanitizer, runtime, timeout,
+OOM, or crash artifact. `fuzz_api_roundtrip` loaded 63 seeds and completed
+625 runs, reaching 4,122 coverage points and 11,354 features. Its Core-shaped
+input origin is serialized legacy ECDSA, BIP32, private-key, and public-key
+adapter data; a future clean-master acceptance, equation, or memory failure
+on invalid block/witness data would be rated from demonstrated consensus
+impact, but this run found none. `fuzz_recovery` loaded 17 seeds and
+completed 869 runs, reaching 2,902 coverage points and 6,895 features. Its
+compact-recovery path is wallet/message-signing and authorized API state, not
+invalid-block or witness validation, so no new consensus severity is implied.
+`fuzz_context` loaded 13 seeds and completed 790 runs, reaching 2,881
+coverage points and 5,966 features. Its context/preallocation/static-context
+input origin is startup and local API lifecycle, not peer-controlled block or
+witness bytes; no production failure was observed.
+
+This is negative generated-input evidence, not a clean-master production bug.
+No production fix or deterministic regression test is claimed, and the
+master-relative findings remain unchanged. Scratch-wrap remains **Medium
+confirmed internal memory safety with low current Bitcoin Core reachability**;
+the 10x26 magnitude-32 carry issue remains **Medium latent correctness**;
+hash/RFC6979 finalizer retention remains **Medium memory hygiene** without a
+standalone read primitive; and direct API, callback, opaque-state, and wallet
+findings remain below consensus High/Critical without a demonstrated Core
+invalid-block, invalid-witness, or remote consequence. A nonce without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. Future
+changes to these Core adapters, lifecycle paths, or fork commits must state
+the clean-master or minimal-mutation baseline, exact corpus/mutation,
+preconditions, postconditions, observed failure, Core caller and input origin,
+master-relative severity, existing test gap, verifier results, and whether the
+change preserves, changes, or masks the trigger. A passing generated run does
+not lower an older finding without its original baseline replay.
