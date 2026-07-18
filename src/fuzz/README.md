@@ -13314,3 +13314,110 @@ demonstrated consensus and memory-safety impact. Nearby fork fixes are context,
 not a reason to lower the unmodified-master finding, and a public nonce buffer
 without standalone cryptographic meaning is not Critical merely because it is
 uncleared.
+
+## 2026-07-18 Core ECDSA Low-S Encoding Composition Oracle
+
+The new `api_roundtrip/core-ecdsa-low-s-encoding-composition` seed covers the
+transaction-signature framing that the earlier Core ECDSA composition seed did
+not model. Bitcoin Core's exact path is
+`EvalChecksigPreTapscript`/`CHECKMULTISIG` -> `CheckSignatureEncoding` ->
+`IsValidSignatureEncoding` -> `IsLowDERSignature` -> `CPubKey::CheckLowS` in
+`src/script/interpreter.cpp` and `src/pubkey.cpp`. The input is an attacker
+controlled scriptSig or witness signature: canonical DER `r,s` followed by a
+single sighash byte. Core validates the complete vector, then removes exactly
+the final byte before its lax DER parser and static-context
+`secp256k1_ecdsa_signature_normalize` call. The later
+`GenericTransactionSignatureChecker::CheckECDSASignature` path removes the
+same byte before `CPubKey::Verify`.
+
+The fixture uses the compressed generator key, builds both the low-S and
+order-complement high-S forms, serializes each as canonical DER, and appends
+`0x83` (`SIGHASH_SINGLE | SIGHASH_ANYONECANPAY`). It independently expects the
+low case to return Core's `CheckLowS == true`, the high case to return false,
+and both contexts to normalize to the known low compact value. It also pins
+the Core length rule `sig[1] == sig.size() - 3` after the sighash byte is
+included. This is a composition assertion, not an assertion that any
+signature verifies a transaction.
+
+The old 57-file corpus plus the empty input completed 58 executions under a
+temporary harness mutation that changed the emulated Core slice from `der_len`
+to `der_len - 1`; the new seed alone aborted with exit 134 at the parsed
+postcondition. This proves the previous corpus did not exercise the exact
+adapter. The mutation was restored and is not a production change. The
+unmutated 58-file corpus (59 executions including the empty input) passed in
+each focused native Clang ASan/UBSan, forced-int64/10x26 Clang ASan/UBSan, and
+external MSan replay:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  timeout 180s /tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip/core-ecdsa-low-s-encoding-composition \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip/core-ecdsa-low-s-encoding-composition \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+tmp=$(mktemp -d)
+cp -a src/fuzz/corpora/api_roundtrip/. "$tmp/"
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  timeout 240s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_api_roundtrip \
+  "$tmp" -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 \
+  -print_final_stats=1
+status=$?
+rm -rf "$tmp"
+exit "$status"
+```
+
+The MSan command used this private-copy pattern so libFuzzer could not modify
+the tracked corpus.
+
+The complete corpus run produced 59 executions and exit 0 in all three
+backends, with no ASan, UBSan, or MSan diagnostic. The private native
+`-jobs=2 -workers=2 -max_total_time=20` replay reported manager exit 0 and
+worker counts 213 and 212. The forced-int64 replay reported exit 0 for both
+jobs; its coordinator log contained worker counts 131, 132, 213, and 212.
+No timeout, OOM, crash artifact, or tracked-corpus modification was retained.
+
+This is **Informational / Low oracle hardening**, not a clean-master
+production finding. `SCRIPT_VERIFY_LOW_S` is in Bitcoin Core's standard policy
+flags but not `MANDATORY_SCRIPT_VERIFY_FLAGS` or the normal block flags, so a
+low-S classification discrepancy affects relay/mempool acceptance rather than
+making an invalid block consensus-valid. The signature bytes are still
+attacker-controlled, so a future discrepancy in the actual ECDSA verification
+path must be re-rated from the demonstrated Core call graph; this oracle does
+not lower or hide the existing master-relative ECDSA findings. The exact
+`origin/master` ref remains `8c3e6e6d992456d3b9228305ae84a6703273cf70` and the
+reconciled `l0rinc/master` ref remains `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`;
+neither is a fix used to soften this result. Any later cherry-pick that changes
+this adapter must preserve this master comparison in its commit message. A
+public nonce buffer with no standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+## 2026-07-18 DER Coverage Ledger Addendum
+
+The historical 2026-07-16 DER-boundary paragraphs above were written before
+the 2026-07-17 `ecdsa-der-long-form-success` seed landed. They still describe
+the old corpus at that point in the audit, but their statement that the
+successful long-form return remained uncovered is superseded by the later
+entry and this addendum. A fresh Coverage build replayed all 58 tracked
+`api_roundtrip` files with exit 0; `gcov -b -c` then recorded execution of
+`secp256k1_der_read_len` line 88 and 100% of its 106 production branches (the
+135-line implementation was fully line-covered in that profile). The exact
+focused input remains the 28-byte ASCII
+`ecdsa DER long-form success\n`, whose `30 81 81` sequence is the causal
+condition; no production mutation or clean-master bug was found.
+
+This closes, rather than expands, the DER candidate list. Strict DER rejection,
+positive scalar overflow mapped to zero, successful long-form parsing, Core's
+lax legacy parser composition, and Core's low-S framing now have distinct
+postconditions and corpus inputs. The direct strict DER API is not itself a
+Bitcoin Core block/witness parser: Core's consensus ECDSA route is
+`EvalChecksigPreTapscript`/`CHECKMULTISIG` -> `CheckSignatureEncoding` ->
+`CheckECDSASignature` -> `CPubKey::Verify`, with Core-owned strict/lax framing
+around the library parser and verifier. A real master discrepancy in that
+serialized verification path would be High/Critical according to consensus and
+memory-safety impact; this coverage result is Informational/Low oracle evidence
+and claims no such discrepancy. The current `origin/master` and reconciled
+`l0rinc/master` refs are unchanged, fork fixes were not used to soften the
+comparison, and a public nonce buffer without standalone cryptographic meaning
+is not Critical merely because it is uncleared.
