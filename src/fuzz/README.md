@@ -7,7 +7,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 Targets:
 
 - `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
+- `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar bit-extraction boundaries and rounded multiply-shift
   boundaries against independent byte/product references
@@ -10790,3 +10790,49 @@ the fixed-output cleanup; the new oracle prevents the existing static-context
 seed from proving only the permitted public-data paths while missing the
 rejected secret-derived path. It does not change any existing master-relative
 severity rating.
+
+## 2026-07-18 Static Context Secret-Operation Cleanup Oracle
+
+The `context/static-context-lifecycle` corpus input now also checks two
+secret-derived APIs on the actual `secp256k1_context_static` singleton:
+`secp256k1_ec_pubkey_create` and `secp256k1_ecdsa_sign`. Both operations
+require generator precomputation, so the static singleton must reject the call,
+invoke the default illegal callback exactly once, and clear the caller's
+prefilled output object before returning failure. Public verification and
+parsing paths remain allowed on the static context; this oracle covers the
+opposite contract for operations that derive public state from secret input.
+
+The check is gated by `USE_EXTERNAL_DEFAULT_CALLBACKS` because ordinary builds
+abort through the default illegal callback by design. The forced-int64/10x26
+MemorySanitizer external-callback build `/tmp/secp256k1-msan-int64-ext2` was
+rebuilt with `SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON` and replayed with:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_context \
+  src/fuzz/corpora/context/static-context-lifecycle \
+  -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused replay exited zero. The native 5x52 and forced-int64/10x26
+ASan/UBSan `fuzz_context` binaries also rebuilt and replayed the full tracked
+13-file context corpus with `-runs=1 -timeout=120 -rss_limit_mb=0
+-handle_abrt=0`; both exited zero. Those ordinary builds compile out this
+callback-counting branch, so they are compile and regression coverage rather
+than proof of the gated external-callback path.
+
+Two disposable production mutations prove the new postconditions matter. First,
+removing `memset(pubkey, 0, sizeof(*pubkey));` from the static-context rejection
+path in `secp256k1_ec_pubkey_create` made the focused external-callback seed
+abort with status 134 at the stale-pubkey assertion. Second, removing
+`memset(signature, 0, sizeof(*signature));` from the matching rejection path in
+`secp256k1_ecdsa_sign` made the same seed abort with status 134 at the
+stale-signature assertion. Neither failure was sanitizer-only, and both
+mutations were restored before the clean replay.
+
+This is **Informational oracle hardening**, not a clean-master production bug.
+Master already clears both outputs; the gap was that the deterministic tests
+exercise related static-context preconditions through a writable copy, while
+the fuzzer's real-static-singleton lifecycle seed did not cover these rejected
+secret-operation cleanup contracts. No existing master-relative severity rating
+changes.

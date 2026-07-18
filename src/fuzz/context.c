@@ -501,6 +501,10 @@ static void secp256k1_fuzz_check_static_context_lifecycle(const unsigned char *s
     secp256k1_context *static_ctx = (secp256k1_context *)secp256k1_context_static;
     unsigned int calls = secp256k1_fuzz_default_illegal_calls;
     secp256k1_context *clone;
+    secp256k1_pubkey static_pubkey;
+    secp256k1_ecdsa_signature static_sig;
+    unsigned char zero_pubkey[sizeof(static_pubkey)] = { 0 };
+    unsigned char zero_sig[sizeof(static_sig)] = { 0 };
 
     FUZZ_CHECK(secp256k1_context_randomize(static_ctx, seed32) == 0);
     FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
@@ -523,6 +527,18 @@ static void secp256k1_fuzz_check_static_context_lifecycle(const unsigned char *s
     FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
     secp256k1_context_preallocated_destroy(static_ctx);
     FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+
+    /* Public verification and parsing may use the static context, but
+     * secret-derived operations still require generator precomputation. */
+    memset(&static_pubkey, 0xA5, sizeof(static_pubkey));
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(secp256k1_context_static, &static_pubkey, secp256k1_fuzz_scalar_one) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(memcmp(&static_pubkey, zero_pubkey, sizeof(static_pubkey)) == 0);
+
+    memset(&static_sig, 0x5A, sizeof(static_sig));
+    FUZZ_CHECK(secp256k1_ecdsa_sign(secp256k1_context_static, &static_sig, seed32, secp256k1_fuzz_scalar_one, NULL, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(memcmp(&static_sig, zero_sig, sizeof(static_sig)) == 0);
 #else
     (void)seed32;
 #endif
