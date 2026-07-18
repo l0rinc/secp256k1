@@ -860,6 +860,39 @@ static void secp256k1_fuzz_check_schnorrsig_odd_nonce_rejection(const secp256k1_
     FUZZ_CHECK(found);
 }
 
+static void secp256k1_fuzz_check_schnorrsig_s_order_boundary(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "schnorrsig s order boundary\n";
+    static const unsigned char generator_x[32] = {
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char msg32[32] = { 0 };
+    const secp256k1_context *contexts[2];
+    secp256k1_xonly_pubkey xonly;
+    unsigned char serialized_xonly[32];
+    unsigned char sig64[64];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memcpy(sig64, generator_x, sizeof(generator_x));
+    memcpy(sig64 + 32, secp256k1_fuzz_scalar_order, 32);
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_verify_reference(ctx, sig64, msg32, sizeof(msg32), generator_x) == 0);
+
+    contexts[0] = ctx;
+    contexts[1] = secp256k1_context_static;
+    for (i = 0; i < sizeof(contexts) / sizeof(contexts[0]); i++) {
+        FUZZ_CHECK(secp256k1_xonly_pubkey_parse(contexts[i], &xonly, generator_x) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(contexts[i], serialized_xonly, &xonly) == 1);
+        FUZZ_CHECK(memcmp(serialized_xonly, generator_x, sizeof(serialized_xonly)) == 0);
+        FUZZ_CHECK(secp256k1_schnorrsig_verify(contexts[i], sig64, msg32, sizeof(msg32), &xonly) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_schnorrsig_rx_overflow(const secp256k1_context *ctx, const unsigned char *sig64, const unsigned char *msg, size_t msglen, const secp256k1_xonly_pubkey *xonly) {
     static const unsigned char field_p[32] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -1130,6 +1163,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_schnorrsig_infinity_rejection(ctx);
     }
     secp256k1_fuzz_check_schnorrsig_generator_equation(ctx, input, size);
+    secp256k1_fuzz_check_schnorrsig_s_order_boundary(ctx, input, size);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
     secp256k1_fuzz_check_schnorrsig_keypair_consistency(ctx, msg32, &keypair, &other_keypair, aux32);

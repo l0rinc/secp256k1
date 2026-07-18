@@ -20,7 +20,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -11943,3 +11943,63 @@ on both backends, including `recoverable-compact`, `generator-vector`,
 `recovery-point-equation`, `arbitrary-recovery-equation`, and the older
 production-derived high-S recovery oracle. The mutation was restored, the clean
 replays above passed, and the production diff was empty before committing.
+
+## 2026-07-18 Schnorr Scalar-Order Rejection Oracle
+
+The new `schnorrsig/s-order-boundary` corpus input pins BIP340 verification at
+the exact scalar overflow boundary. It uses a syntactically plausible signature
+shape with:
+
+- `R.x = x(G)`
+- `P.x = x(G)`
+- `msg = 0`
+- `s = n`
+
+BIP340 requires the response scalar to be strictly smaller than the group order.
+The oracle therefore requires the independent BIP340 verifier model to reject
+the signature before point reconstruction, and requires both the ordinary
+context and static context public verifier paths to reject the same bytes after
+round-tripping the x-only generator key.
+
+This complements but does not duplicate the existing `sig64_bad` all-`0xff`
+mutation and `schnorrsig_rx_overflow`. Those checks cover broad scalar and
+field overflow, but they do not distinguish an exact `s == n` off-by-one from
+larger non-scalar values.
+
+The restored verifier set passed with the complete Schnorr corpus under native
+and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_schnorrsig \
+  src/fuzz/corpora/schnorrsig -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_schnorrsig \
+  src/fuzz/corpora/schnorrsig -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_schnorrsig \
+  src/fuzz/corpora/schnorrsig/s-order-boundary \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. At `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, both verifier contexts reject the
+exact `s == n` boundary. If master accepted this boundary in BIP340
+verification, the severity would be **High for signature-verification
+correctness** because a non-scalar Schnorr signature response would be accepted.
+The observed branch finding does not raise master-relative severity because
+clean master passes.
+
+For causal proof, a temporary production mutation in `secp256k1_schnorrsig_verify`
+returned success only when the signature response bytes exactly equaled the
+group order. The focused seed aborted with exit 134 on native 5x52 and
+forced-int64/10x26 ASan/UBSan builds, while the 15 pre-existing Schnorr corpus
+inputs passed under the same mutation on both backends, including
+`generator-equation`, `arbitrary-signature-verification-equation`,
+`infinity-rejection`, `odd-nonce-rejection`, and the broad all-`0xff` response
+check reached from every input. The mutation was restored, the clean replays
+above passed, and the production diff was empty before committing.
