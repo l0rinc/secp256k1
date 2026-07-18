@@ -6,7 +6,7 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, sorting, key transformations, and secret-key validation, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order boundary, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, sorting, key transformations, and secret-key validation, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order normalization and valid verification boundaries, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
 - `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar high/conditional-negation half-order boundary,
@@ -11754,3 +11754,62 @@ src/fuzz/corpora/scalar/wnaf-independent-reference
 
 The mutation was restored, the clean replays above passed, and the production
 diff was empty before committing.
+
+## 2026-07-18 ECDSA Valid Half-Order Verification Oracle
+
+The new `api_roundtrip/ecdsa-verify-half-order` corpus input gates a public
+verification oracle for a valid ECDSA signature whose `s` value is exactly
+`floor(n/2)`. With private key `d = 1` and nonce `k = 1`, the signature uses:
+
+- `r = x(G)`
+- `s = floor(n/2)`
+- `z = floor(n/2) - x(G) mod n`
+
+The helper carries the compact signature and message bytes as fixed constants,
+parses the signature, asserts that public normalization reports it as already
+low-S, checks the independent public-point verification reference, and then
+requires both the ordinary context and static context verifiers to accept it.
+
+This complements but does not duplicate `ecdsa-normalize-half-order-boundary`
+and `scalar/high-boundary`. Those seeds pin normalization and the internal
+scalar predicate. This seed pins the consensus-sensitive public verification
+path with an actually valid boundary signature. The existing arbitrary
+verification seed can exercise low-S values, but it did not force this exact
+boundary and did not include a deterministic valid signature at `s = n/2`.
+
+The restored verifier set passed with the complete API corpus under native and
+forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip/ecdsa-verify-half-order \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. At `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, the verifier accepts this valid
+boundary signature. If master rejected this signature in a consensus-critical
+consumer, the severity would be **High** because a valid boundary ECDSA
+signature would be treated as invalid. The observed branch finding does not
+raise master-relative severity because clean master passes.
+
+For causal proof, a temporary production mutation in `secp256k1_ecdsa_verify`
+serialized the loaded `s` scalar and returned failure only when it exactly
+equaled the fixed 32-byte encoding of `floor(n/2)`. This left normalization
+and the scalar predicate untouched. The focused seed aborted with exit 134 on
+native 5x52 and forced-int64/10x26 ASan/UBSan builds, while the 54
+pre-existing API corpus inputs passed under the same mutation on both
+backends, including `ecdsa-normalize-half-order-boundary` and
+`ecdsa-arbitrary-verification-equation`. The mutation was restored, the clean
+replays above passed, and the production diff was empty before committing.
