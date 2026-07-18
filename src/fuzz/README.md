@@ -14186,3 +14186,87 @@ assertion and failure mode, clean-master reproduction status, Core reachability
 and severity, verifier commands, and whether a cherry-picked fix changes or
 masks a later oracle. A commit that changes this behavior without carrying
 that context forward is incomplete.
+
+## 2026-07-18 Core Call-Site Inventory Closure
+
+The Bitcoin Core checkout was re-scanned after the Taproot signing oracle and
+the l0rinc PR reconciliation. The comparison covered the external
+libsecp256k1 symbols used below `bitcoin/src/`, excluding Core's bundled
+`src/secp256k1/` implementation. Every library operation in that external
+call set is now exercised by an existing target or a focused composition
+oracle. This is a negative inventory result, not a new production finding.
+
+The remaining names that initially looked uncovered are adapters owned by
+Bitcoin Core rather than additional libsecp256k1 entry points:
+
+* `ec_seckey_import_der` and `ec_seckey_export_der` in
+  `/mnt/my_storage/bitcoin/src/key.cpp:38-166` are Core's private-key DER
+  adapter. `fuzz_api_roundtrip` already exercises the equivalent
+  `contrib/lax_der_privatekey_parsing.c` implementation at
+  `secp256k1_fuzz_check_privkey_der`. It checks both compressed and
+  uncompressed SEC1 structures, exact public-key serialization, valid import
+  round trips, invalid scalar rejection, output clearing, and the overflow
+  length boundary. Copying the Core adapter a second time would duplicate
+  code rather than add an independent library oracle. The production path is
+  wallet key state -> `CKey::GetPrivKey` -> Core DER adapter ->
+  `secp256k1_ec_pubkey_create` and `secp256k1_ec_pubkey_serialize`; it is not
+  reachable from invalid blocks, witnesses, or peer validation.
+* Core's `ecdsa_signature_parse_der_lax` is the contrib parser used by
+  `CPubKey::Verify` and `CPubKey::CheckLowS`. The API target includes the
+  same parser source and separately checks Core's serialized ECDSA, low-S,
+  `r+n`, SEC1, and failure-output compositions. The strict library DER
+  parser is separately covered by the offset-boundary oracle. The lax parser
+  is therefore not an omitted library operation or a reason to copy Core's
+  wrapper into another target.
+* `secp256k1_context_sign` and `secp256k1_selftest` are Core-owned lifecycle
+  or startup references. Context creation, randomization, clone behavior,
+  static-context restrictions, and signing are already covered by
+  `fuzz_context`, `fuzz_api_roundtrip`, `fuzz_schnorrsig`, and the Core-shaped
+  signing fixtures. No separate self-test fuzzer would exercise a new
+  cryptographic state transition.
+
+The security-relevant Core split is explicit:
+
+* Consensus-sensitive or peer-controlled paths are
+  `CPubKey::Verify`/`XOnlyPubKey::VerifySchnorr` from legacy, witness, and
+  Tapscript checks, plus BIP324 peer handshake input through
+  `BIP324Cipher::Initialize` -> `CKey::ComputeBIP324ECDHSecret` ->
+  `secp256k1_ellswift_xdh` with the BIP324 hash function. The ECDSA, Schnorr,
+  Taproot control-block, raw EllSwift-wire, party-selection, and callback
+  oracles are the relevant evidence for these paths. A clean-master
+  acceptance/rejection discrepancy or demonstrated memory/concurrency fault
+  in one of these paths is the only basis for a High/Critical rating.
+* Wallet, descriptor, PSBT, RPC, and authorized signing paths include
+  `CKey::Sign`, `CKey::SignCompact`, `CKey::SignSchnorr`, BIP32 private/public
+  derivation, private-key DER export, and MuSig2. Their oracles remain
+  Informational/Low unless a concrete funds, availability, or memory impact is
+  demonstrated. An invalid block cannot invoke these signing paths during
+  consensus validation.
+* The standalone `secp256k1_ecdh` module is not the Core BIP324 path; Core
+  uses `secp256k1_ellswift_xdh`. The invalid opaque-public-key ECDH and
+  `ec_pubkey_combine` barriers are therefore API-state findings, currently
+  Medium on unmodified master only when a caller supplies malformed opaque
+  state and a non-aborting illegal callback. They must not be relabeled
+  High/Critical as a peer-invalid-block issue without a real Core call path.
+
+Fork reconciliation for this inventory is against
+`origin/master=8c3e6e6d992456d3b9228305ae84a6703273cf70` and
+`l0rinc/master=11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. The current public
+l0rinc heads #11 (`d1dca5c`), #13 (`87e57c8`), #14 (`b5e6108`), #15
+(`a2a0ac2`, with `56a9a65`), and #16 (`b938a5d`) were compared with the
+existing audit commits. Their behavior is already represented by equivalent
+or stronger commits and mutation-backed oracles recorded above; cherry-
+picking the whole heads would either duplicate fixes or remove the
+master-relative controls. No additional fork commit is justified by this
+inventory. If a later cherry-pick changes any listed adapter or library
+boundary, its commit message must state whether it preserves, changes, or
+masks the original clean-master condition and must carry the exact corpus or
+mutation proof forward.
+
+The severity ledger is unchanged: consensus/peer-reachable clean-master
+failures can be High/Critical; malformed opaque API state and demonstrated
+internal memory defects remain rated by actual reachability and impact;
+wallet-only mismatches remain below that bar; and a nonce with no standalone
+cryptographic meaning is not a Critical erasure finding. No production fix is
+claimed by this inventory section, and no deterministic regression test is
+required for a negative result.
