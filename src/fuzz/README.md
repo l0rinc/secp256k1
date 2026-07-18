@@ -14270,3 +14270,105 @@ wallet-only mismatches remain below that bar; and a nonce with no standalone
 cryptographic meaning is not a Critical erasure finding. No production fix is
 claimed by this inventory section, and no deterministic regression test is
 required for a negative result.
+
+## 2026-07-18 Clean-Master Core Replay and Nonce Finding Reiteration
+
+This is a fresh differential control for the current high-risk oracles. The
+production baseline is an exact detached `origin/master` worktree at
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` and remains an ancestor of this
+audit branch. Only the current fuzz sources, corpora, CMake fuzz wiring, and
+two harness compatibility definitions were overlaid into the control:
+`checked_size_mul` and `SECP256K1_SHA256_MAX_SIZE`. No production source,
+fork fix, Bitcoin Core source, or audit production mutation was copied.
+
+The complete current `api_roundtrip`, `schnorrsig`, `xonly_tweak`, and
+`ellswift` corpus replay is not itself a clean-master result because the
+newer harness deliberately reaches direct invalid-callback and old internal
+barriers that are fixed or guarded elsewhere on this branch. Those failures
+were classified as harness/version mismatches, not production findings. For
+the Core-facing control, temporary early returns in the detached harness ran
+only the exact serialized fixtures and returned before those unrelated
+barriers. The isolated Clang ASan/UBSan replay passed all 11 inputs with exit
+0:
+
+```
+api_roundtrip:
+  core-ecdsa-serialized-composition
+  core-ecdsa-r-plus-order-composition
+  core-ecdsa-sec1-encoding-composition
+  core-ecdsa-signing-composition
+  core-ecdsa-low-s-encoding-composition
+schnorrsig:
+  core-tapscript-schnorr-composition
+  core-taproot-signing-composition
+xonly_tweak:
+  core-taproot-control-composition
+  core-tapleaf-compactsize-boundaries
+  core-taproot-control-max-depth
+ellswift:
+  bip324-raw-wire-aliases
+```
+
+The verifier command was, for each private seed copy,
+`ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 40s
+/tmp/secp256k1-origin-core-asan-build/bin/fuzz_<target> <seed>
+-runs=1 -timeout=15 -rss_limit_mb=0 -handle_abrt=0
+-print_final_stats=1`. No sanitizer diagnostic, timeout, OOM, crash artifact,
+or tracked-corpus change occurred. An attempted `-fork=2 -jobs=2` replay was
+discarded as proof: fork workers mutated the one-seed corpus into inputs that
+left the temporary exact-trigger early return and then reached the deliberately
+unisolated invalid-input barriers. The jobs were stopped and a process check
+found no fuzz or sanitizer process. Existing branch commits contain the
+authoritative multi-worker campaigns over the restored full corpora.
+
+The same control also reiterates the existing clean-master direct nonce
+callback finding fixed by `32823e13` (`nonce: guard built-in callbacks`). The
+50-byte ASCII seed `Schnorr arbitrary signature verification equation\n`,
+under the current `fuzz_schnorrsig` source, calls the exported
+`secp256k1_nonce_function_bip340` with `nonce32 == NULL`. On unmodified master,
+`src/modules/schnorrsig/main_impl.h:83` finalizes SHA256 into that NULL output
+and reaches `src/util.h:438` (`secp256k1_write_be32`); Clang UBSan reports
+`applying non-zero offset 3 to null pointer`, followed by a null-page write
+and libFuzzer timeout. The exact replay was:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 timeout 20s \
+/tmp/secp256k1-origin-schnorr-asan-build/bin/fuzz_schnorrsig \
+/tmp/secp256k1-origin-recheck-corpora/schnorrsig/arbitrary-signature-verification-equation \
+-runs=1 -timeout=10 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+The branch fix adds the complete NULL message/key/output/public-key and size
+guards, clears a non-NULL failed output, and has deterministic module and
+test-suite coverage. The old normal signing tests did not catch this because
+they validate the signing API before the built-in callback is reached and
+always provide its internal 32-byte output buffer.
+
+Bitcoin Core does not call this callback pointer directly. Its signing path is
+`/mnt/my_storage/bitcoin/src/script/sign.cpp:112` ->
+`/mnt/my_storage/bitcoin/src/key.cpp:272` (`CKey::SignSchnorr`) ->
+`/mnt/my_storage/bitcoin/src/key.cpp:426` (`KeyPair::SignSchnorr`) ->
+`secp256k1_schnorrsig_sign32(secp256k1_context_sign, sig.data(),
+hash.data(), keypair, aux.data())`; the library owns a non-NULL nonce output
+inside that operation. Invalid blocks, witnesses, and BIP324 peer bytes do
+not reach the direct callback misuse. Therefore the correct split is
+**Medium availability for arbitrary direct library-API callers**, but
+**Low/Nice-to-have for Bitcoin Core**, not High or Critical. A nonce buffer
+without standalone cryptographic meaning is not Critical merely because it
+was not cleared; the meaningful issue here is the direct NULL dereference.
+The finding does not establish a consensus failure, invalid-block trigger,
+key disclosure, signature forgery, or cryptographic nonce-reuse path.
+
+No new production bug was found in the 11 Core-facing clean-master controls.
+If a later mutation produces a mismatch in one of those serialized ECDSA,
+Tapscript Schnorr, Taproot commitment, or BIP324 paths, it must be re-rated
+from the actual Core call graph; an invalid-block or peer-reachable memory,
+consensus, or concurrency failure can be High/Critical. Any cherry-pick or
+follow-up touching `nonce_function_bip340`, SHA size guards, Taproot signing,
+or the Core adapters must say in its commit message whether it preserves,
+changes, or masks this master-relative direct-callback reproduction and must
+carry the exact seed, output, Core reachability split, and verifier command
+forward. No fork patch was used to soften the clean-master result.
