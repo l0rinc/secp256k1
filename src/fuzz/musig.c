@@ -2727,6 +2727,13 @@ static void secp256k1_fuzz_check_musig_nonce_gen_bip327_vector(const secp256k1_c
     secp256k1_pubkey pubkey;
     secp256k1_musig_secnonce secnonce;
     secp256k1_musig_pubnonce pubnonce;
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    secp256k1_keypair keypair;
+    unsigned char session_secrand_before[32];
+    unsigned char zero_secnonce[sizeof(secnonce)] = { 0 };
+    unsigned char zero_pubnonce[sizeof(pubnonce)] = { 0 };
+    unsigned int calls;
+#endif
     size_t pubkey_len = sizeof(pubkey33);
 
     if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
@@ -2747,6 +2754,30 @@ static void secp256k1_fuzz_check_musig_nonce_gen_bip327_vector(const secp256k1_c
     FUZZ_CHECK(memcmp(serialized_pubnonce, expected_pubnonce66, sizeof(serialized_pubnonce)) == 0);
     secp256k1_memclear_explicit(&secnonce, sizeof(secnonce));
     secp256k1_memclear_explicit(&session_secrand, sizeof(session_secrand));
+
+#ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
+    /* The BIP327 vector is valid on a full context, but nonce generation needs
+     * generator precomputation and must reject the static singleton without
+     * leaving live nonce objects behind. */
+    memcpy(session_secrand, session_secrand_template, sizeof(session_secrand));
+    memcpy(session_secrand_before, session_secrand, sizeof(session_secrand));
+    memset(&secnonce, 0xA5, sizeof(secnonce));
+    memset(&pubnonce, 0x5A, sizeof(pubnonce));
+    calls = secp256k1_fuzz_default_illegal_calls;
+    FUZZ_CHECK(secp256k1_musig_nonce_gen(secp256k1_context_static, &secnonce, &pubnonce, session_secrand, NULL, &pubkey, NULL, NULL, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(memcmp(session_secrand, session_secrand_before, sizeof(session_secrand)) == 0);
+    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(&pubnonce, zero_pubnonce, sizeof(pubnonce)) == 0);
+
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, secp256k1_fuzz_scalar_one) == 1);
+    memset(&secnonce, 0xC3, sizeof(secnonce));
+    memset(&pubnonce, 0x3C, sizeof(pubnonce));
+    FUZZ_CHECK(secp256k1_musig_nonce_gen_counter(secp256k1_context_static, &secnonce, &pubnonce, 0, &keypair, NULL, NULL, NULL) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
+    FUZZ_CHECK(memcmp(&pubnonce, zero_pubnonce, sizeof(pubnonce)) == 0);
+#endif
 }
 
 static void secp256k1_fuzz_check_musig_nonce_gen_session_random_alias_case(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey32, const secp256k1_pubkey *pubkey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, unsigned int alias) {
