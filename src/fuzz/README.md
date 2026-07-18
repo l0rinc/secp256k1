@@ -21,7 +21,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing, TapLeaf CompactSize boundary vectors, and maximum-depth 128-sibling Merkle-chain vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, Bitcoin Core compact-recovery header and compressed/uncompressed serialization composition, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -11023,60 +11023,69 @@ real-static-singleton rejection and retry-state cleanup contracts were not
 bound to a deterministic corpus input. No master-relative severity rating
 changes. A public nonce remains non-critical for secret-erasure purposes.
 
-## 2026-07-18 MuSig Static Partial-Sign Cleanup Oracle
+## 2026-07-18 MuSig Static Partial-Sign Core-Context Differential
 
-The new `musig/static-partial-sign-cleanup` corpus input binds the rejected
-side of MuSig partial signing on the real `secp256k1_context_static`
-singleton. `secp256k1_musig_partial_sign` consumes a secret nonce before it
-loads the keypair; when the static context lacks generator precomputation, the
-call must still fail through exactly one illegal callback, clear the prefilled
-partial-signature output, consume the secret nonce by zeroing it, and leave the
-valid keypair, key-aggregation cache, and session inputs unchanged.
+The `musig/static-partial-sign-cleanup` seed was originally added by
+`efd5d0f3` with an expectation that `secp256k1_musig_partial_sign` must reject
+the real `secp256k1_context_static` singleton. That expectation described the
+pre-`bb87febf` behavior, where `secp256k1_keypair_load` rejected every
+secret-key validation without generator precomputation. It is not the current
+contract: `bb87febf` replaced that rejection with a constant-time
+no-precomputation keypair derivation, and Bitcoin Core's
+`src/musig.cpp:234` explicitly calls `secp256k1_musig_partial_sign` with
+`secp256k1_context_static`.
 
-The check is compiled only with `USE_EXTERNAL_DEFAULT_CALLBACKS`, because the
-normal default illegal callback aborts by design. The ordinary native 5x52 and
-forced-int64/10x26 ASan/UBSan `fuzz_musig` binaries rebuilt and replayed the
-full tracked MuSig corpus, now 73 files, with:
+The oracle is therefore a static/full-context differential. It creates two
+copies of the valid secret nonce, invokes `partial_sign` once on the signing
+context and once on the real static singleton, requires both calls to return
+1 with no illegal callback, requires byte-identical partial signatures,
+requires both secret nonces to be zeroed, and requires the keypair,
+key-aggregation cache, and session inputs to remain unchanged. The dynamic
+signature is already checked by the independent MuSig partial-signature
+equation later in the same transcript, so equality binds the static result to
+that independently checked output. MuSig nonce generation remains a separate
+static-context rejection contract; unlike nonce generation, partial signing
+does not require generator precomputation after `bb87febf`.
 
-```
-/tmp/secp256k1-next-asan/bin/fuzz_musig \
-  src/fuzz/corpora/musig -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
-/tmp/secp256k1-next-asan-int64/bin/fuzz_musig \
-  src/fuzz/corpora/musig -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
-```
+The check remains compiled only with `USE_EXTERNAL_DEFAULT_CALLBACKS`, because
+the ordinary default illegal callback aborts by design. The first current-source
+Debug external-callback build was `/tmp/secp256k1-debug-external`; replaying
+the exact 34-byte ASCII seed exited zero after this oracle change. The seed is
+also exercised by the CMake and Autotools corpus matrices recorded in the
+later 2026-07-19 entries.
 
-Both exited zero after 74 executions. The forced-int64/10x26 MemorySanitizer
-external-callback build `/tmp/secp256k1-msan-int64-ext2`, rebuilt with
-`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON`, then passed the focused replay:
+The behavior transition has a minimal production proof. In a disposable copy
+of the current source, restoring only the old `keypair_load` branch from
+`bb87febf^` (`if (!secp256k1_ecmult_gen_context_is_built(...))` followed by the
+illegal callback) makes the original static-rejection oracle pass and makes
+the current static/full-context differential fail at the expected return-value
+check. Restoring `bb87febf` makes the differential pass. This is a behavior
+change needed by the current Core MuSig caller, not evidence of an unfixed
+cryptographic bug.
 
-```
-MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
-  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_musig \
-  src/fuzz/corpora/musig/static-partial-sign-cleanup \
-  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
-```
+Existing secp256k1 MuSig unit tests exercised `partial_sign` through the normal
+`CTX` only; they did not compare the normal and static contexts. The affected
+Bitcoin Core call site is in a separate repository, so the static-context
+integration contract was absent from this repository's deterministic tests.
 
-Two disposable production mutations prove the new static oracle is not just
-duplicating the existing normal-context cleanup assertions. First, wrapping
-the secnonce wipe in
-`if (secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx))` made the
-focused external-callback MSan seed abort with status 134 at the stale
-secnonce assertion, while leaving full-context cleanup paths unaffected by the
-mutation. Second, wrapping the entry-time `partial_sig` clear in the same
-static/no-generator condition made the same seed abort with status 134 at the
-stale partial-signature assertion. Both mutations were restored, the clean
-focused replay passed again, and the mutation logs contained no sanitizer
-diagnostic.
+Master-relative severity is consequently split by baseline. On unmodified
+`origin/master`, the current Core MuSig partial-sign path would fail at the
+static keypair loader; that is **Medium wallet/MuSig API availability and
+compatibility**, not High/Critical, because Core's invalid-block and witness
+validation paths do not invoke MuSig partial signing. On the current audit
+branch, `bb87febf` fixes that availability incompatibility. The old
+`efd5d0f3` rejection oracle must not be reused as evidence against the fixed
+behavior or allowed to hide a Core-required success path. The secret secnonce
+still has cryptographic meaning and must be consumed on both successful and
+failure paths; a public/non-cryptographic nonce would not be Critical merely
+because it was uncleared.
 
-This is **Informational oracle hardening**, not a clean-master production bug.
-The API already documents that `partial_sign` overwrites the secnonce with
-zeros, and master already clears the partial-signature output on entry. The
-new seed makes the static-context rejection path deterministic so a later
-cleanup or callback regression cannot be hidden by the ordinary full-context
-signing round trip. A failure to consume this nonce would be more meaningful
-than public-nonce cleanup because the secnonce is cryptographic secret state,
-but no current master failure is claimed because the restored master behavior
-already satisfies the oracle.
+Any later keypair-loader, static-context, MuSig, or Core change must rerun both
+baselines and state whether it preserves, changes, or masks the pre-`bb87`
+behavior. Its commit message and this ledger must retain the exact seed,
+preconditions, postconditions, Core caller, master-relative severity, test gap,
+mutation or clean-master proof, verifier commands, and the preserve/change/mask
+relationship.
 
 ## 2026-07-18 MuSig Static Public Signing Oracle
 
@@ -11088,10 +11097,11 @@ the same partial signatures with `secp256k1_musig_partial_sig_agg` on the
 static singleton, requires the 64-byte aggregate signature to match the normal
 context result, and verifies that the public nonces, public keys, partial
 signatures, key-aggregation cache, and session inputs are unchanged. This
-complements the rejected static nonce-generation and partial-signing oracles:
-secret-derived operations need generator precomputation and reject the static
-context, while public verification/aggregation operations must continue to
-work there.
+complements the rejected static nonce-generation oracle and the static/full-
+context partial-signing differential: nonce generation needs generator
+precomputation, while partial signing can validate an opaque keypair through
+the constant-time no-precomputation path and public verification/aggregation
+must continue to work there.
 
 The ordinary native 5x52 and forced-int64/10x26 ASan/UBSan `fuzz_musig`
 binaries rebuilt and replayed the full tracked MuSig corpus, now 74 files,
@@ -11141,9 +11151,10 @@ then compares static versus normal plain EC and x-only MuSig public tweak-add
 results with tweak one. The helper also checks that the input public keys are
 unchanged.
 
-This complements the static signing oracles: MuSig nonce generation and
-partial signing are secret-derived operations that reject the static context,
-while key aggregation, cache extraction, and public tweaking are public-data
+This complements the static signing oracles: MuSig nonce generation remains a
+secret-derived operation that rejects the static context, while partial
+signing uses the validated no-precomputation keypair path required by Core.
+Key aggregation, cache extraction, and public tweaking are public-data
 operations whose headers do not exclude `secp256k1_context_static`.
 
 The ordinary native 5x52 and forced-int64/10x26 ASan/UBSan `fuzz_musig`
@@ -11242,8 +11253,9 @@ object under both contexts.
 
 This covers public data only: public nonces, aggregate nonces, and partial
 signatures carry no secret scalar state. It is separate from the static
-nonce-generation and partial-signing rejection oracles, which remain
-secret/precomputation-dependent and intentionally fail on the static singleton.
+nonce-generation rejection oracle and the static/full-context partial-signing
+differential: nonce generation remains precomputation-dependent, while partial
+signing uses the validated no-precomputation keypair path required by Core.
 
 The clean verifier set passed with 77 tracked MuSig corpus files and 78 total
 executions under both native and forced-int64 ASan/UBSan builds:
@@ -17186,3 +17198,61 @@ exact input or mutation, contracts, failure, Core caller, master-relative
 severity, test gap, verifier commands, and whether it preserves, changes, or
 masks the trigger. Rerun the original baseline or mutation before downgrading
 a finding that a later patch happens to hide.
+
+## 2026-07-19 MuSig static-signing behavior transition recheck
+
+The corrected oracle was rebuilt from the committed tree in the fresh
+Autotools external-callback archive `/tmp/secp256k1-autotools-core-src.Rdz5yp`
+and build `/tmp/secp256k1-autotools-core-build.qnVbTo` with:
+
+    ./autogen.sh
+    configure --enable-fuzz --enable-module-recovery --enable-experimental \
+      --enable-external-default-callbacks
+    make -j2 fuzz_api_roundtrip fuzz_context fuzz_hash fuzz_scalar fuzz_field \
+      fuzz_group fuzz_ecmult_const fuzz_ecmult_multi fuzz_ecdh fuzz_ellswift \
+      fuzz_xonly_tweak fuzz_recovery fuzz_schnorrsig fuzz_musig
+
+The corresponding replay root was `/tmp/secp256k1-autotools-core-run.6ZFdqP`.
+All 14 targets exited zero over all 338 tracked inputs, including
+`musig/static-partial-sign-cleanup`; no assertion, callback abort, sanitizer,
+runtime, timeout, or failed-input diagnostic appeared. Current CMake focused
+replays of the same 34-byte seed also exited zero in all three configurations:
+
+    /tmp/secp256k1-oracles-external/bin/fuzz_musig \
+      -runs=1 -timeout=30 -rss_limit_mb=0 -handle_abrt=0 \
+      src/fuzz/corpora/musig/static-partial-sign-cleanup
+    /tmp/secp256k1-next-asan-int64/bin/fuzz_musig \
+      -runs=1 -timeout=30 -rss_limit_mb=0 -handle_abrt=0 \
+      src/fuzz/corpora/musig/static-partial-sign-cleanup
+    MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+      /tmp/secp256k1-msan-int64-ext2/bin/fuzz_musig \
+      -runs=1 -timeout=30 -rss_limit_mb=0 -handle_abrt=0 \
+      src/fuzz/corpora/musig/static-partial-sign-cleanup
+
+To prove the historical behavior change, the disposable source copy above was
+mutated only in `src/modules/extrakeys/main_impl.h`: the `bb87febf`
+`secp256k1_keypair_derive_pubkey` call was replaced with the old
+`secp256k1_ecmult_gen_context_is_built` rejection branch. A fresh build at
+`/tmp/secp256k1-autotools-core-mut-build` replayed the same seed and exited
+134 at the corrected static-success assertion. Restoring `bb87febf` returned
+zero. This is the minimal production mutation proof that `efd5d0f3` captured
+the earlier behavior and that the corrected oracle is not masking a current
+failure.
+
+The affected Bitcoin Core caller is
+`CreateMuSig2PartialSig` in `src/musig.cpp:234`, a wallet/authorized-signing
+path that intentionally uses `secp256k1_context_static`; invalid blocks and
+witnesses do not reach it. The unmodified-master severity of the old behavior
+is therefore **Medium wallet/MuSig API availability and compatibility**, not
+High/Critical consensus impact. The current branch preserves the Core-required
+success result and still consumes the cryptographic secret nonce on both
+success and failure. A public or non-cryptographic nonce is not Critical merely
+because it is uncleared.
+
+Any future fix, fork cherry-pick, or fuzzer assertion touching keypair loading,
+static contexts, MuSig, or Core must rerun both the restored and old-branch
+baselines and amend its commit message and this ledger with the exact seed,
+preconditions, postconditions, failure, caller/input origin, master-relative
+severity, test gap, verifier commands, and whether it preserves, changes, or
+masks the pre-`bb87febf` behavior. A later patch that makes the old rejection
+seed green must not be treated as evidence against the current Core contract.
