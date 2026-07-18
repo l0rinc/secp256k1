@@ -20,7 +20,7 @@ Targets:
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
-- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
+- `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
@@ -12540,3 +12540,83 @@ all prerequisite overlays were outside the committed changes. This is the
 strongest available master proof for this follow-up: the valid low-S and
 historical high-S Core-shaped inputs agree with the independent equation, and
 there is no new severity rating to assign.
+
+## 2026-07-18 Core Taproot Schnorr Serialized-Composition Oracle
+
+The `schnorrsig` target now models the public-data boundary used by Bitcoin
+Core for a Tapscript checksig operation. The exact Core call path is
+`EvalChecksigTapscript` -> `GenericTransactionSignatureChecker::CheckSchnorrSignature`
+in `src/script/interpreter.cpp` -> `XOnlyPubKey::VerifySchnorr` in
+`src/pubkey.cpp` -> `secp256k1_xonly_pubkey_parse` and the static-context
+`secp256k1_schnorrsig_verify`. Core receives the 32-byte x-only key and the
+64/65-byte witness signature from serialized script or witness data. A 65-byte
+signature carries a non-default hash type in its last byte; Core rejects the
+default value in that form, validates the allowed hash-type domain while
+computing `SignatureHashSchnorr`, strips the byte, and passes the first 64
+bytes to `VerifySchnorr`.
+
+The new helper, `secp256k1_fuzz_check_core_tapscript_schnorr_composition`, is
+explicitly a post-`SignatureHashSchnorr` oracle: it receives a precomputed
+32-byte message hash because the standalone library fuzzer does not construct
+a complete Bitcoin transaction, spent-output cache, annex, and script
+execution state. It checks both the 64-byte default form and a 65-byte form
+with `0x01`, plus the invalid 63/66-byte lengths and invalid hash types
+`0x00`, `0x04`, `0x80`, and `0x84`. It reparses the serialized x-only bytes,
+round-trips them, compares both normal and static verifier contexts against
+the independent BIP340 point-equation reference, and requires the exact field
+overflow `x = p` to be rejected with the output object cleared. The reference
+expectation is computed on the normal context only: its public-key construction
+is not a valid operation on Core's static verification singleton. The static
+Core-shaped path is compared to that same independently derived byte-level
+expectation.
+
+The trigger is
+`schnorrsig/core-tapscript-schnorr-composition`. Before this change, the 16
+tracked Schnorr inputs exercised valid parsed x-only objects and 64-byte API
+signatures, but did not preserve raw key bytes and 64/65-byte witness framing
+through one Core-shaped operation. The new trigger uses the normal fuzzer setup
+to produce a valid serialized key/signature pair, then adds the raw-wire
+rejection and hashtype checks. This is a composition gap, not a claim that the
+underlying BIP340 equation was previously untested.
+
+For causal proof, `src/modules/extrakeys/main_impl.h` was temporarily mutated
+so the exact field-overflow encoding `p` was accepted as the generator. The 16
+pre-existing corpus files still exited 0 under Clang ASan/UBSan, while the new
+trigger aborted with exit 134 at the explicit raw-key parser assertion. The
+mutation was restored and the production diff was empty before the clean
+replays. This proves the new assertion reaches a production parser contract;
+it is not evidence of a master production bug.
+
+The restored branch passed all 17 Schnorr corpus files, 18 executions including
+the libFuzzer corpus replay, under native 5x52 ASan/UBSan, forced-int64/10x26
+ASan/UBSan, and forced-int64 MSan. A private copy of those 17 files was then
+run with two jobs and two workers for 12 seconds: job 0 completed 103
+executions and job 1 completed 96, both with exit 0 and no sanitizer report,
+timeout, OOM, crash, or artifact. The private corpus was the only corpus
+libFuzzer was allowed to extend; the tracked source corpus remained unchanged,
+and no fuzz process remained afterward.
+
+Severity is tied to unmodified-master Bitcoin Core reachability. Raw x-only
+output keys and Schnorr signatures are attacker-controlled Taproot witness or
+script bytes, so a master regression that accepted an invalid key/signature or
+rejected a valid one at this boundary would be **High or Critical according to
+the resulting consensus effect**. This oracle does not model transaction
+`SignatureHashSchnorr` construction, so it does not claim a hashtype-to-sighash
+mismatch beyond the post-hash framing contract. No invalid Taproot result,
+memory error, or consensus discrepancy was reproduced; this commit reports no
+clean-master vulnerability. The result is unrelated to nonce cleanup, and a
+nonce buffer without standalone cryptographic meaning is not Critical merely
+because it is not cleared.
+
+The master-relative check used a fresh detached worktree at unmodified
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`, with only the current
+fuzzer/CMake overlay. The replay used a temporary harness-only early return and
+a fixed scalar-one signing setup to bypass older aggregate-harness findings;
+the exact master production library passed the trigger with exit 0 under Clang
+ASan/UBSan. The temporary compatibility definition for
+`SECP256K1_SHA256_MAX_SIZE` existed only because the audit fuzzer contains the
+earlier impossible-length checks and exact master headers do not. No production
+fix was copied into this proof. Existing findings fixed by `42842d5`, `5a34922`,
+and `c16e3d8` remain separately documented and were not used to lower any
+master-relative severity; `e875e08` and `b5bf4e3` are complementary static and
+scalar Schnorr oracles, not prerequisites that alter this composition.
