@@ -3563,21 +3563,30 @@ static void secp256k1_fuzz_check_musig_partial_sign_null_output_cleanup(secp256k
 }
 
 #ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
-static void secp256k1_fuzz_check_musig_partial_sign_static_context_cleanup(const secp256k1_musig_secnonce *valid_secnonce, const secp256k1_keypair *valid_keypair, const secp256k1_musig_keyagg_cache *valid_cache, const secp256k1_musig_session *valid_session) {
-    secp256k1_musig_partial_sig partial_sig;
-    secp256k1_musig_secnonce secnonce = *valid_secnonce;
+static void secp256k1_fuzz_check_musig_partial_sign_static_context(const secp256k1_context *ctx, const secp256k1_musig_secnonce *valid_secnonce, const secp256k1_keypair *valid_keypair, const secp256k1_musig_keyagg_cache *valid_cache, const secp256k1_musig_session *valid_session) {
+    secp256k1_musig_partial_sig dynamic_partial_sig;
+    secp256k1_musig_partial_sig static_partial_sig;
+    secp256k1_musig_secnonce dynamic_secnonce = *valid_secnonce;
+    secp256k1_musig_secnonce static_secnonce = *valid_secnonce;
     secp256k1_keypair keypair_before = *valid_keypair;
     secp256k1_musig_keyagg_cache cache_before = *valid_cache;
     secp256k1_musig_session session_before = *valid_session;
-    unsigned char zero_partial_sig[sizeof(partial_sig)] = { 0 };
-    unsigned char zero_secnonce[sizeof(secnonce)] = { 0 };
+    unsigned char zero_secnonce[sizeof(dynamic_secnonce)] = { 0 };
     unsigned int calls = secp256k1_fuzz_default_illegal_calls;
 
-    memset(&partial_sig, 0xA5, sizeof(partial_sig));
-    FUZZ_CHECK(secp256k1_musig_partial_sign(secp256k1_context_static, &partial_sig, &secnonce, valid_keypair, valid_cache, valid_session) == 0);
-    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls + 1);
-    FUZZ_CHECK(memcmp(&partial_sig, zero_partial_sig, sizeof(partial_sig)) == 0);
-    FUZZ_CHECK(memcmp(&secnonce, zero_secnonce, sizeof(secnonce)) == 0);
+    /* Core's MuSig2 signer deliberately uses the static context here. The
+     * keypair loader's no-precomputation path must preserve the full-context
+     * result while consuming the secret nonce exactly once. */
+    memset(&dynamic_partial_sig, 0xA5, sizeof(dynamic_partial_sig));
+    FUZZ_CHECK(secp256k1_musig_partial_sign(ctx, &dynamic_partial_sig, &dynamic_secnonce, valid_keypair, valid_cache, valid_session) == 1);
+    FUZZ_CHECK(memcmp(&dynamic_secnonce, zero_secnonce, sizeof(dynamic_secnonce)) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls);
+
+    memset(&static_partial_sig, 0x5A, sizeof(static_partial_sig));
+    FUZZ_CHECK(secp256k1_musig_partial_sign(secp256k1_context_static, &static_partial_sig, &static_secnonce, valid_keypair, valid_cache, valid_session) == 1);
+    FUZZ_CHECK(memcmp(&static_partial_sig, &dynamic_partial_sig, sizeof(static_partial_sig)) == 0);
+    FUZZ_CHECK(memcmp(&static_secnonce, zero_secnonce, sizeof(static_secnonce)) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls);
     FUZZ_CHECK(memcmp(valid_keypair, &keypair_before, sizeof(keypair_before)) == 0);
     FUZZ_CHECK(memcmp(valid_cache, &cache_before, sizeof(cache_before)) == 0);
     FUZZ_CHECK(memcmp(valid_session, &session_before, sizeof(session_before)) == 0);
@@ -3836,7 +3845,7 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
 #ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
     if (size == sizeof("MuSig static partial sign cleanup\n") - 1
             && memcmp(input, "MuSig static partial sign cleanup\n", sizeof("MuSig static partial sign cleanup\n") - 1) == 0) {
-        secp256k1_fuzz_check_musig_partial_sign_static_context_cleanup(&secnonce[0], &keypairs[0], &keyagg_cache, &session);
+        secp256k1_fuzz_check_musig_partial_sign_static_context(ctx, &secnonce[0], &keypairs[0], &keyagg_cache, &session);
     }
 #endif
     if (size == sizeof("partial-sign-opaque-state-cleanup\n") - 1
