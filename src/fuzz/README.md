@@ -13880,3 +13880,120 @@ Verification for this oracle:
   clean-master control found no production failure.
 - The temporary origin worktree, probe, mutation, and private corpora were
   removed. A final process inventory found no running fuzz or sanitizer jobs.
+
+## 2026-07-18 Core `CKey::Sign` Low-R Retry Composition Oracle
+
+The new `api_roundtrip/core-ecdsa-signing-composition` seed is a 31-byte ASCII
+dispatch input. It models the default Bitcoin Core transaction-signing path,
+including the RFC6979 extra-entropy retry sequence used by Core's low-R
+grinder. The independent fixed vector uses Core's `key_tests.cpp` secret
+`strSecret1`, raw secret key
+`12b004fff7f4b69ef8650e767f18f11ede158148b425660723b9f9a66e61f747`, and the
+message text `A message to be signed0`. Core's double-SHA256 message hash is
+`e34e812f4c659156ac2279b92c22a53c9822ac10396fe8da12a2fcfef8813566`, and the
+independently derived compressed public key is
+`030b4c866585dd868a9d62348a9cd008d6a312937048fff31670e7e920cfc7a744`.
+
+The three exact libsecp256k1 signing attempts are:
+
+    attempt 0: no extra data, high-R candidate
+      compact 8ae148d1657bfc509ac7e118c5ead62d4bb3eed608ccad323959cfcf3cd7093314f8c7d85638181cf7c00af0a08e03e25a74770d38e12cd4a740661a9b5c2faa
+      DER 30450221008ae148d1657bfc509ac7e118c5ead62d4bb3eed608ccad323959cfcf3cd70933022014f8c7d85638181cf7c00af0a08e03e25a74770d38e12cd4a740661a9b5c2faa
+
+    attempt 1: 32-byte extra entropy 01000000..., high-R candidate
+      compact e7e80ed0bad57955076a39eb54abe75b37699e13115dd647a7567fa4cf29a4133ebe840dc62994c46828ce7951ccfc3b6458ada29af081604a22309c061a5aa4
+      DER 3045022100e7e80ed0bad57955076a39eb54abe75b37699e13115dd647a7567fa4cf29a41302203ebe840dc62994c46828ce7951ccfc3b6458ada29af081604a22309c061a5aa4
+
+    attempt 2: 32-byte extra entropy 02000000..., low-R result returned by Core
+      compact 68663052e6c29c7ed7ab02a68852301508503e7986b9754ec3e868772f2bf73928c6a35b2e90250d3179f96c2bb6b772e889e9a133a5156564a6965a8caa2b26
+      DER 3044022068663052e6c29c7ed7ab02a68852301508503e7986b9754ec3e868772f2bf739022028c6a35b2e90250d3179f96c2bb6b772e889e9a133a5156564a6965a8caa2b26
+
+The exact Bitcoin Core call path is wallet or signing-RPC transaction state
+-> `CWallet::SignTransaction` / the script provider ->
+`MutableTransactionSignatureCreator::CreateSig`
+(`/mnt/my_storage/bitcoin/src/script/sign.cpp:53`) -> `SignatureHash`
+(`/mnt/my_storage/bitcoin/src/script/sign.cpp:71`) -> `CKey::Sign`
+(`/mnt/my_storage/bitcoin/src/key.cpp:208`). `CKey::Sign` calls
+`secp256k1_ecdsa_sign(secp256k1_context_sign, ..., rfc6979, ...)`, rejects
+high-R results while `grind` is enabled, writes the incrementing counter as
+little-endian bytes into the 32-byte extra-entropy buffer, and retries
+(`/mnt/my_storage/bitcoin/src/key.cpp:217-223`). It then serializes DER on
+the static context and performs the additional public-key creation and static
+ECDSA verification barrier (`/mnt/my_storage/bitcoin/src/key.cpp:225-231`).
+The DER signature is finally given its sighash byte by `CreateSig`. This is
+the signing direction complementary to the existing Core serialized-verifier,
+low-S framing, and compact-message-signing oracles.
+
+The fixture checks the exact public key, every RFC6979 candidate, the two
+high-R rejection decisions and final low-R decision, dynamic/static compact
+serialization, dynamic/static DER serialization, strict DER reparse, and
+verification of each candidate. It does not reimplement RFC6979 in the
+fuzzer; the fixed bytes are independently calculated from the raw key and
+hash, and the API calls exercise the production nonce and signing code. The
+existing raw signing checks use generated messages and a custom retry
+callback. Bitcoin Core's `key_tests.cpp` pins one deterministic default DER
+signature and checks low-R properties over many messages, but it does not
+preserve this three-attempt extra-entropy transcript as an independent
+libsecp256k1 oracle. The new seed therefore covers the exact retry data,
+endianness, DER result, and final verification composition rather than merely
+duplicating a signing-success assertion.
+
+Causal proof used a temporary, uncommitted mutation in `src/secp256k1.c`:
+for this exact key and message, the RFC6979 callback omitted the 32-byte extra
+data only when Core's third external retry supplied `data[0] == 2`. A
+temporary harness-only early return isolated the seed from unrelated signing
+checks. The replay then stopped with SIGABRT at
+`secp256k1_fuzz_check_core_ecdsa_sign_composition`
+(`src/fuzz/api_roundtrip.c:3375`) under:
+
+    gdb -q -batch -ex run -ex 'bt 16' --args /tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip src/fuzz/corpora/api_roundtrip/core-ecdsa-signing-composition -runs=1
+
+The mutation changed the third candidate and the exact compact assertion
+failed; it did not merely increase coverage. The production mutation and
+harness isolation were restored before all clean replays and are not
+committed.
+
+This is **Informational / Low oracle hardening**, not a clean-master
+production finding. The path is wallet/RPC transaction signing, where the
+transaction and script state is supplied by a wallet caller or an authorized
+signing workflow, not by an invalid peer block or witness entering consensus
+validation. A real mismatch could produce an unusable or unexpected wallet
+signature and could become Medium depending on caller and funds impact, but
+it is not High/Critical merely because Bitcoin Core calls the method.
+High/Critical requires a clean-master consensus/security failure reachable
+from invalid block, witness, or peer input, or a demonstrated
+memory/concurrency impact. A public nonce buffer without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The exact audit `origin/master` ref is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; reconciled `l0rinc/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already an ancestor. The Bitcoin
+Core call-site comparison used `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+No fork fix was cherry-picked to hide a master-relative result. Existing Core
+ECDSA verification, low-S, compact-signing, BIP32, and related findings are
+reiterated here, not reclassified. Any later cherry-pick changing RFC6979
+extra-data handling, ECDSA signing retries, DER serialization, or Core's
+verification barrier must preserve this exact transcript and mutation proof.
+If an incidental fix changes the behavior of a follow-up commit, its commit
+message must state whether it preserves or masks the master-relative
+condition; merge this context into that commit when cherry-picking would
+otherwise obscure it.
+
+Verification for this oracle:
+
+- The focused seed passed under native ASan/UBSan, forced-int64 ASan/UBSan,
+  and forced-int64 MSan. The restored API corpus replayed all 63 corpus files
+  plus an explicit empty input, 64 inputs per backend, with zero failures and
+  no sanitizer diagnostic.
+- Native and forced-int64 ASan/UBSan private-copy campaigns used
+  `-fork=2 -jobs=2 -max_total_time=12 -timeout=5 -seed=1`. Both managers and
+  workers exited 0 and reported `oom/timeout/crash: 0/0/0`.
+- A fresh shared-library build at exact `origin/master` ran an independent
+  public-API probe for all three attempts. It reported
+  `attempt=0 signed=1 exact=1 der_len=71`,
+  `attempt=1 signed=1 exact=1 der_len=71`, and
+  `attempt=2 signed=1 exact=1 der_len=70`, then exited 0. No clean-master
+  production failure was found.
+- Temporary origin worktrees, probes, mutation state, and private corpora
+  were removed. A final process inventory found no fuzz or sanitizer jobs
+  running.
