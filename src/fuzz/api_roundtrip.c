@@ -3137,6 +3137,101 @@ static void secp256k1_fuzz_check_core_ecdsa_sec1_fixture(const secp256k1_context
     }
 }
 
+/* Match Bitcoin Core's non-hardened BIP32 public derivation boundary. The
+ * HMAC-SHA512 halves and resulting child keys are fixed from independent BIP32
+ * vectors; only the libsecp256k1 parse/tweak/serialize portion is exercised
+ * here, so this does not reproduce Core's HMAC implementation. */
+static void secp256k1_fuzz_check_core_bip32_public_derivation(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    static const unsigned char trigger[] = "core BIP32 public derivation composition\n";
+    static const unsigned char parent_pubkeys[2][33] = {
+        {
+            0x03, 0xCB, 0xCA, 0xA9, 0xC9, 0x8C, 0x87, 0x7A,
+            0x26, 0x97, 0x7D, 0x00, 0x82, 0x5C, 0x95, 0x6A,
+            0x23, 0x8E, 0x8D, 0xDD, 0xFB, 0xD3, 0x22, 0xCC,
+            0xE4, 0xF7, 0x4B, 0x0B, 0x5B, 0xD6, 0xAC, 0xE4,
+            0xA7
+        },
+        {
+            0x03, 0x5A, 0x78, 0x46, 0x62, 0xA4, 0xA2, 0x0A,
+            0x65, 0xBF, 0x6A, 0xAB, 0x9A, 0xE9, 0x8A, 0x6C,
+            0x06, 0x8A, 0x81, 0xC5, 0x2E, 0x4B, 0x03, 0x2C,
+            0x0F, 0xB5, 0x40, 0x0C, 0x70, 0x6C, 0xFC, 0xCC,
+            0x56
+        }
+    };
+    static const unsigned char expected_hmac[2][64] = {
+        {
+            0x60, 0xE3, 0x73, 0x9C, 0xC2, 0xC3, 0x95, 0x0B,
+            0x7C, 0x4D, 0x7F, 0x32, 0xCC, 0x50, 0x3E, 0x13,
+            0xB9, 0x96, 0xD0, 0xF7, 0xA4, 0x56, 0x23, 0xD0,
+            0xA9, 0x14, 0xE1, 0xEF, 0xA7, 0xF8, 0x11, 0xE0,
+            0xF0, 0x90, 0x9A, 0xFF, 0xAA, 0x7E, 0xE7, 0xAB,
+            0xE5, 0xDD, 0x4E, 0x10, 0x05, 0x98, 0xD4, 0xDC,
+            0x53, 0xCD, 0x70, 0x9D, 0x5A, 0x5C, 0x2C, 0xAC,
+            0x40, 0xE7, 0x41, 0x2F, 0x23, 0x2F, 0x7C, 0x9C
+        },
+        {
+            0x4E, 0xB9, 0xD7, 0x81, 0x57, 0xBA, 0xE7, 0xA2,
+            0x41, 0x15, 0x00, 0x16, 0x21, 0xC4, 0xD9, 0x1E,
+            0x3A, 0x31, 0x10, 0xE1, 0x1E, 0x14, 0x3C, 0x52,
+            0x59, 0xEA, 0xA4, 0xE5, 0x5C, 0x5E, 0xC4, 0xBF,
+            0x2A, 0x78, 0x57, 0x63, 0x13, 0x86, 0xBA, 0x23,
+            0xDA, 0xCA, 0xC3, 0x41, 0x80, 0xDD, 0x19, 0x83,
+            0x73, 0x4E, 0x44, 0x4F, 0xDB, 0xF7, 0x74, 0x04,
+            0x15, 0x78, 0xE9, 0xB6, 0xAD, 0xB3, 0x7C, 0x19
+        }
+    };
+    static const unsigned char expected_child_pubkeys[2][33] = {
+        {
+            0x02, 0xFC, 0x9E, 0x5A, 0xF0, 0xAC, 0x8D, 0x9B,
+            0x3C, 0xEC, 0xFE, 0x2A, 0x88, 0x8E, 0x21, 0x17,
+            0xBA, 0x3D, 0x08, 0x9D, 0x85, 0x85, 0x88, 0x6C,
+            0x9C, 0x82, 0x6B, 0x6B, 0x22, 0xA9, 0x8D, 0x12,
+            0xEA
+        },
+        {
+            0x03, 0x50, 0x1E, 0x45, 0x4B, 0xF0, 0x07, 0x51,
+            0xF2, 0x4B, 0x1B, 0x48, 0x9A, 0xA9, 0x25, 0x21,
+            0x5D, 0x66, 0xAF, 0x22, 0x34, 0xE3, 0x89, 0x1C,
+            0x3B, 0x21, 0xA5, 0x2B, 0xED, 0xB3, 0xCD, 0x71,
+            0x1C
+        }
+    };
+    size_t i;
+
+    if (inputlen != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < 2; i++) {
+        secp256k1_pubkey parent;
+        secp256k1_pubkey static_parent;
+        secp256k1_pubkey child;
+        secp256k1_pubkey static_child;
+        unsigned char serialized[33];
+        unsigned char static_serialized[33];
+        size_t serialized_len;
+        size_t static_serialized_len;
+
+        FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &parent, parent_pubkeys[i], sizeof(parent_pubkeys[i])) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_parent, parent_pubkeys[i], sizeof(parent_pubkeys[i])) == 1);
+
+        child = parent;
+        static_child = static_parent;
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &child, expected_hmac[i]) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(secp256k1_context_static, &static_child, expected_hmac[i]) == 1);
+
+        serialized_len = sizeof(serialized);
+        static_serialized_len = sizeof(static_serialized);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &child, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, static_serialized, &static_serialized_len, &static_child, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(expected_child_pubkeys[i]));
+        FUZZ_CHECK(static_serialized_len == serialized_len);
+        FUZZ_CHECK(memcmp(serialized, expected_child_pubkeys[i], sizeof(serialized)) == 0);
+        FUZZ_CHECK(memcmp(static_serialized, serialized, sizeof(serialized)) == 0);
+    }
+}
+
 /* Match Bitcoin Core's CheckSignatureEncoding -> IsLowDERSignature adapter.
  * The strict DER check sees the final sighash byte, then Core removes exactly
  * that byte before CPubKey::CheckLowS invokes its lax DER parser and static
@@ -4027,6 +4122,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_core_ecdsa_serialized_fixture(ctx, input, size);
     secp256k1_fuzz_check_core_ecdsa_r_plus_order_fixture(ctx, input, size);
     secp256k1_fuzz_check_core_ecdsa_sec1_fixture(ctx, input, size);
+    secp256k1_fuzz_check_core_bip32_public_derivation(ctx, input, size);
     secp256k1_fuzz_check_core_ecdsa_low_s_encoding_fixture(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
