@@ -30,6 +30,34 @@ static const unsigned char secp256k1_fuzz_pubkey_7g_uncompressed[65] = {
     0xA8, 0x13, 0xD0, 0xB8, 0x13, 0xFD, 0xE7, 0xB5,
     0xA5, 0x08, 0x26, 0x28, 0x08, 0x72, 0x64, 0xDA
 };
+static const unsigned char secp256k1_fuzz_pubkey_g_compressed[33] = {
+    0x02, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB,
+    0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B,
+    0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28,
+    0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17,
+    0x98
+};
+static const unsigned char secp256k1_fuzz_pubkey_2g_compressed[33] = {
+    0x02, 0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D,
+    0x6D, 0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C,
+    0xD8, 0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C,
+    0xA7, 0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E,
+    0xE5
+};
+static const unsigned char secp256k1_fuzz_pubkey_3g_compressed[33] = {
+    0x02, 0xF9, 0x30, 0x8A, 0x01, 0x92, 0x58, 0xC3,
+    0x10, 0x49, 0x34, 0x4F, 0x85, 0xF8, 0x9D, 0x52,
+    0x29, 0xB5, 0x31, 0xC8, 0x45, 0x83, 0x6F, 0x99,
+    0xB0, 0x86, 0x01, 0xF1, 0x13, 0xBC, 0xE0, 0x36,
+    0xF9
+};
+static const unsigned char secp256k1_fuzz_pubkey_minus_g_compressed[33] = {
+    0x03, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB,
+    0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B,
+    0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28,
+    0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17,
+    0x98
+};
 static const unsigned char secp256k1_fuzz_x_one_even_y[32] = {
     0x42, 0x18, 0xF2, 0x0A, 0xE6, 0xC6, 0x46, 0xB3,
     0x63, 0xDB, 0x68, 0x60, 0x58, 0x22, 0xFB, 0x14,
@@ -1366,6 +1394,56 @@ static void secp256k1_fuzz_check_pubkey_create_failure(const secp256k1_context *
     FUZZ_CHECK(memcmp(&pubkey, zero_pubkey, sizeof(pubkey)) == 0);
 }
 
+static void secp256k1_fuzz_check_pubkey_create_vectors(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "pubkey create vectors\n";
+    unsigned char scalar_two[32] = { 0 };
+    unsigned char scalar_three[32] = { 0 };
+    struct {
+        const unsigned char *seckey32;
+        const unsigned char *expected33;
+    } cases[4];
+    secp256k1_pubkey pubkey;
+    secp256k1_pubkey reparsed;
+    unsigned char compressed[33];
+    unsigned char uncompressed[65];
+    size_t output_len;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    scalar_two[31] = 2;
+    scalar_three[31] = 3;
+    cases[0].seckey32 = secp256k1_fuzz_scalar_one;
+    cases[0].expected33 = secp256k1_fuzz_pubkey_g_compressed;
+    cases[1].seckey32 = scalar_two;
+    cases[1].expected33 = secp256k1_fuzz_pubkey_2g_compressed;
+    cases[2].seckey32 = scalar_three;
+    cases[2].expected33 = secp256k1_fuzz_pubkey_3g_compressed;
+    cases[3].seckey32 = secp256k1_fuzz_scalar_order_minus_one;
+    cases[3].expected33 = secp256k1_fuzz_pubkey_minus_g_compressed;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        memset(&pubkey, 0xA5, sizeof(pubkey));
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, cases[i].seckey32) == 1);
+
+        output_len = sizeof(compressed);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, compressed, &output_len, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(output_len == sizeof(compressed));
+        FUZZ_CHECK(memcmp(compressed, cases[i].expected33, sizeof(compressed)) == 0);
+
+        FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &reparsed, cases[i].expected33, sizeof(compressed)) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &pubkey, &reparsed) == 0);
+
+        output_len = sizeof(uncompressed);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, uncompressed, &output_len, &pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+        FUZZ_CHECK(output_len == sizeof(uncompressed));
+        FUZZ_CHECK(secp256k1_fuzz_pubkey_parse_reference(uncompressed, sizeof(uncompressed)) == 1);
+        secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey);
+    }
+}
+
 static void secp256k1_fuzz_check_seckey_negate_failure(const secp256k1_context *ctx) {
     unsigned char zero32[32] = { 0 };
     unsigned char overflow32[32];
@@ -1942,32 +2020,12 @@ static void secp256k1_fuzz_check_static_pubkey_tweak(const secp256k1_context *ct
  * the expected point independent of the fuzzer's scalar and generator paths. */
 static void secp256k1_fuzz_check_static_pubkey_combine(const unsigned char *input, size_t size) {
     static const unsigned char trigger[] = "static context public combine\n";
-    static const unsigned char generator33[33] = {
-        0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
-        0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
-        0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98
-    };
-    static const unsigned char two_g33[33] = {
-        0x02, 0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45,
-        0x40, 0x6e, 0x95, 0xc0, 0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b, 0x8c,
-        0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70, 0x9e, 0xe5
-    };
-    static const unsigned char three_g33[33] = {
-        0x02, 0xf9, 0x30, 0x8a, 0x01, 0x92, 0x58, 0xc3, 0x10, 0x49, 0x34,
-        0x4f, 0x85, 0xf8, 0x9d, 0x52, 0x29, 0xb5, 0x31, 0xc8, 0x45, 0x83,
-        0x6f, 0x99, 0xb0, 0x86, 0x01, 0xf1, 0x13, 0xbc, 0xe0, 0x36, 0xf9
-    };
-    static const unsigned char neg_generator33[33] = {
-        0x03, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
-        0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
-        0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98
-    };
     secp256k1_pubkey static_generator;
     secp256k1_pubkey static_two_g;
     secp256k1_pubkey static_neg_generator;
     secp256k1_pubkey static_sum;
     const secp256k1_pubkey *inputs[2];
-    unsigned char serialized[sizeof(three_g33)];
+    unsigned char serialized[sizeof(secp256k1_fuzz_pubkey_3g_compressed)];
     unsigned char zero_pubkey[sizeof(static_sum)] = { 0 };
     size_t serialized_len;
 
@@ -1975,25 +2033,25 @@ static void secp256k1_fuzz_check_static_pubkey_combine(const unsigned char *inpu
         return;
     }
 
-    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_generator, generator33, sizeof(generator33)) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_two_g, two_g33, sizeof(two_g33)) == 1);
-    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_neg_generator, neg_generator33, sizeof(neg_generator33)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_generator, secp256k1_fuzz_pubkey_g_compressed, sizeof(secp256k1_fuzz_pubkey_g_compressed)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_two_g, secp256k1_fuzz_pubkey_2g_compressed, sizeof(secp256k1_fuzz_pubkey_2g_compressed)) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_neg_generator, secp256k1_fuzz_pubkey_minus_g_compressed, sizeof(secp256k1_fuzz_pubkey_minus_g_compressed)) == 1);
 
     inputs[0] = &static_generator;
     inputs[1] = &static_two_g;
     FUZZ_CHECK(secp256k1_ec_pubkey_combine(secp256k1_context_static, &static_sum, inputs, 2) == 1);
     serialized_len = sizeof(serialized);
     FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, serialized, &serialized_len, &static_sum, SECP256K1_EC_COMPRESSED) == 1);
-    FUZZ_CHECK(serialized_len == sizeof(three_g33));
-    FUZZ_CHECK(memcmp(serialized, three_g33, sizeof(three_g33)) == 0);
+    FUZZ_CHECK(serialized_len == sizeof(secp256k1_fuzz_pubkey_3g_compressed));
+    FUZZ_CHECK(memcmp(serialized, secp256k1_fuzz_pubkey_3g_compressed, sizeof(secp256k1_fuzz_pubkey_3g_compressed)) == 0);
 
     inputs[0] = &static_two_g;
     inputs[1] = &static_generator;
     FUZZ_CHECK(secp256k1_ec_pubkey_combine(secp256k1_context_static, &static_sum, inputs, 2) == 1);
     serialized_len = sizeof(serialized);
     FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, serialized, &serialized_len, &static_sum, SECP256K1_EC_COMPRESSED) == 1);
-    FUZZ_CHECK(serialized_len == sizeof(three_g33));
-    FUZZ_CHECK(memcmp(serialized, three_g33, sizeof(three_g33)) == 0);
+    FUZZ_CHECK(serialized_len == sizeof(secp256k1_fuzz_pubkey_3g_compressed));
+    FUZZ_CHECK(memcmp(serialized, secp256k1_fuzz_pubkey_3g_compressed, sizeof(secp256k1_fuzz_pubkey_3g_compressed)) == 0);
 
     inputs[0] = &static_generator;
     inputs[1] = &static_neg_generator;
@@ -3323,6 +3381,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     nonce_data.expected_msg32 = NULL;
     nonce_data.calls = 0;
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
+    secp256k1_fuzz_check_pubkey_create_vectors(ctx, input, size);
     secp256k1_fuzz_check_pubkey_roundtrip(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_serialize_short_buffer(ctx, &pubkey);
     secp256k1_fuzz_check_pubkey_serialize_flags(ctx, &pubkey);

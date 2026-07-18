@@ -11489,3 +11489,50 @@ mutations were restored, the clean native focused replay passed again, and the
 mutation logs contained no sanitizer diagnostic. The seed is intended to catch
 static-only rejection and semantic boundary regressions; it does not change any
 existing master-relative severity rating.
+
+## 2026-07-18 Public-Key Create Vector Oracle
+
+The new `api_roundtrip/pubkey-create-vectors` corpus input checks
+`secp256k1_ec_pubkey_create` against fixed SEC1 compressed encodings for
+secret keys `1`, `2`, `3`, and `n - 1`. It serializes each created public key,
+compares the 33-byte output to the known `G`, `2G`, `3G`, or `-G` vector,
+reparses the fixed vector and compares it to the created opaque key, then
+serializes the created key uncompressed and checks that the independent
+public-key parser model accepts the coordinates.
+
+This closes a narrow oracle gap in the API target. Many existing checks derive
+expected public keys through another production path, and the ECDH,
+Schnorrsig, and static-combine seeds already contain generator-related
+fixtures. This seed binds the core public-key creation API directly to fixed
+vectors, so a generator or save-path regression cannot be hidden by later
+operations agreeing with the same wrong generated point.
+
+The clean verifier set passed with 54 tracked API corpus files and 55 total
+executions under both native and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_api_roundtrip \
+  src/fuzz/corpora/api_roundtrip/pubkey-create-vectors \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **oracle hardening, not a clean-master production bug**. Master already
+derives the correct fixed public keys. If this contract failed on master for a
+valid secret key, the severity would be **High** because callers could derive
+or publish an incorrect public key for a valid secret. The observed branch
+finding is informational because the only failing condition was a disposable
+mutation: inserting `secp256k1_ge_neg(&p, &p);` immediately after
+`secp256k1_ec_pubkey_create_helper` in `secp256k1_ec_pubkey_create` made the
+focused seed abort with exit 134. The mutation was restored, the clean native
+focused replay passed again, and the mutation log contained no sanitizer
+diagnostic.
