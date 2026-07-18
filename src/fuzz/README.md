@@ -16592,3 +16592,93 @@ preserves, changes, or masks the trigger. A post-fix green replay is not proof
 that master was safe; rerun the original baseline or mutation before
 downgrading a finding. No fuzz, sanitizer, compiler, or test process remains
 running.
+
+## 2026-07-18 SHA, HMAC, and RFC6979 Core backend recheck
+
+This pass rechecked all 10 tracked `src/fuzz/corpora/hash` files. The oracle
+uses independent SHA-256 and HMAC-SHA256 models, one-shot/chunked equivalence,
+0/55/56/63/64/65/127/128/129/191/192-byte padding boundaries, tagged and
+arbitrary midstates, 63/64/65/127/128/129-byte HMAC keys, RFC6979 reference
+streams, output-length chunking, and explicit clearing of reusable and
+secret-bearing state. Preconditions include empty messages, split points at
+every boundary, long keys, multi-block prefixes, and sentinel-filled state.
+Postconditions require the independent digest/stream relation, correct byte
+accounting, equivalent chunking, and zeroed state after finalize/clear.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_hash \
+      /tmp/codex-next-hash4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-hash4-artifacts/ \
+      -print_final_stats=1
+
+All 10 tracked files were copied. Fork mode retained 7 effective seed inputs
+per worker after startup corpus reduction; all four workers exited 0 after 90
+seconds with zero OOM, timeout, and crash counters and no assertion, ASan,
+UBSan, runtime, or `ERROR:` diagnostic. The forced-int64 ASan/UBSan replay
+used two workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_hash \
+      /tmp/codex-next-hash-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-hash-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 after about 63 seconds with zero OOM, timeout, and
+crash counters; fork mode again reported 7 effective seed inputs per worker.
+The int64 MSan replay used two workers for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_hash \
+      /tmp/codex-next-hash-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-hash-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 after about 48 seconds with zero OOM, timeout, and
+crash counters; fork mode reported 6 effective seed inputs per worker. No
+MSan, UBSan, runtime, or `ERROR:` diagnostic and no artifact was produced.
+No production mutation was needed and no production bug, deterministic
+regression test, or severity change is claimed.
+
+The hash implementation feeds several Core-facing boundaries. RFC6979 and
+tagged-SHA signing are used by wallet/authorized signing paths such as
+`CKey::Sign` and Schnorr signing; BIP340 challenge hashing is also consumed by
+Core's Tapscript `CheckSchnorrSignature`; and the EllSwift BIP324 callback uses
+the built-in SHA path before transport HKDF. A clean-master digest, length,
+or state discrepancy reaching Tapscript verification through an invalid
+witness/block would be High/Critical by consensus impact, while a BIP324
+peer-triggered hash failure would be rated by the concrete transport crash,
+DoS, or key-agreement consequence. The custom compression callback, direct
+RFC6979 length boundary, and cleanup findings remain API/test-boundary issues
+unless a real Core caller can trigger them. The existing hash ledger entries
+are reiterated, not upgraded. A nonce with no standalone cryptographic
+meaning is not Critical merely because it is uncleared.
+
+Existing tests cover standard SHA/HMAC/RFC6979 vectors, but do not replace the
+independent multi-block midstate, split-boundary, state-clearing, and alternate
+backend matrix. The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Generated corpus entries, temporary copies,
+and artifacts were removed after the process check.
+
+Any later hash, RFC6979, Schnorr, EllSwift, BIP324 adapter, production fix,
+or l0rinc cherry-pick must amend its commit message and this ledger with the
+clean-master or minimal-production-mutation baseline, exact corpus bytes or
+mutation, preconditions, postconditions, observed failure, Core caller,
+severity on unmodified master, existing test gap, verifier commands, and
+whether it preserves, changes, or masks the trigger. A post-fix green replay
+is not proof that master was safe; rerun the original baseline or mutation
+before downgrading a finding. No fuzz, sanitizer, compiler, or test process
+remains running.
