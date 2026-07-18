@@ -13233,3 +13233,84 @@ reiterate the unmodified-master result, state whether Bitcoin Core can reach
 it, record the strongest proof, and distinguish a real production bug from an
 oracle-only regression. A public nonce buffer without standalone
 cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-18 Ecmult-Multi Huge-Count Candidate Rejected as Duplicate
+
+An exploratory candidate attempted to carry `SIZE_MAX - 1` and `SIZE_MAX`
+through `secp256k1_ecmult_multi_var` with an immediately failing callback, while
+checking both the no-scratch and 64 KiB scratch paths, callback indexes, the
+infinity failure result, scratch rollback, and a pre-existing prefix. The
+existing harness already checks the maximum values in
+`secp256k1_ecmult_multi_batch_size_helper`, so this was reviewed as a possible
+end-to-end arithmetic boundary rather than silently added as another seed.
+
+The candidate is **rejected as a duplicate**, with no source or corpus file
+committed. Its exact trigger was the ASCII condition
+`ecmult multi huge n callback failure\n`, with `n_cases = { SIZE_MAX - 1,
+SIZE_MAX }`; the callback accepted index 0 and rejected index 1. On an exact
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70` overlay, the candidate
+exited 134 before reaching the scratch case: the no-scratch callback accepted
+index 0, rejected index 1, and clean master left a partial result instead of
+infinity. Replacing `n_cases` with `{ 2 }` produced the same exit 134, proving
+that the count is not causal. This is the already recorded
+`ecmult: clear results on callback failure` finding and fix (`32962f84` on this
+branch), not a new integer-overflow or batch-sizing vulnerability. The restored
+branch's existing callback-failure corpus and production reset remain the
+authoritative oracle.
+
+The clean-master control copied only the fuzzer/CMake overlay and a
+harness-local `checked_size_mul` definition. Because clean master also has the
+separate scratch-constructor wrap, a harness-only early return initialized two
+valid callback entries and ran only this candidate. The exact replay command
+was:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  timeout 120s /tmp/secp256k1-clean-origin-huge-build/bin/fuzz_ecmult_multi \
+  /tmp/secp256k1-clean-origin-huge/src/fuzz/corpora/ecmult_multi/huge-n-callback-failure \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+For the causal harness signal, a temporary branch mutation returned success
+from `secp256k1_ecmult_multi_var` only for `n == SIZE_MAX - 1` or `SIZE_MAX`.
+The 29 pre-existing `ecmult_multi` inputs stayed green (30 executions with the
+empty input), while the candidate exited 134 at the required failure
+postcondition; the mutation was removed. The candidate build's 30-file corpus
+(29 pre-existing files plus the exploratory input) passed 31 executions under
+native and forced-int64 Clang ASan/UBSan and the private
+45-file worker corpus passed 46 executions under external MSan. Native and
+forced-int64 `-jobs=2 -workers=2 -max_total_time=20` replays exited 0 in both
+jobs (43/44 executions), with no diagnostic, timeout, OOM, or artifact. These
+commands prove the retained oracle is valid, but do not turn this duplicate
+candidate into a new finding.
+
+The restored candidate commands were:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  /tmp/secp256k1-next-asan/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi -runs=1 -timeout=240 -rss_limit_mb=0 \
+  -handle_abrt=0 -print_final_stats=1
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  /tmp/secp256k1-next-asan-int64/bin/fuzz_ecmult_multi \
+  src/fuzz/corpora/ecmult_multi -runs=1 -timeout=240 -rss_limit_mb=0 \
+  -handle_abrt=0 -print_final_stats=1
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ecmult_multi \
+  /tmp/codex-ecmult-huge-workers -runs=1 -timeout=240 -rss_limit_mb=0 \
+  -handle_abrt=0 -print_final_stats=1
+```
+
+Master-relative severity is therefore unchanged: the underlying partial-output
+state is **Low** because this is an internal callback helper and callers must
+honor the failure return; it is not a Bitcoin Core consensus High/Critical path.
+Core's current MuSig route is
+`src/musig.cpp:MuSig2AggregatePubkeys -> secp256k1_musig_pubkey_agg ->
+secp256k1_ecmult_multi_var(..., NULL, ...)`, with a local API vector count, not
+attacker-controlled block or witness bytes. A future distinct discrepancy that
+reaches legacy ECDSA, Tapscript Schnorr, or Taproot validation from invalid
+transaction/block/witness data must still be rated High or Critical by its
+demonstrated consensus and memory-safety impact. Nearby fork fixes are context,
+not a reason to lower the unmodified-master finding, and a public nonce buffer
+without standalone cryptographic meaning is not Critical merely because it is
+uncleared.
