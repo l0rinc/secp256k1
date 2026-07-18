@@ -111,6 +111,55 @@ static void secp256k1_fuzz_check_ecdh_generator_two(const secp256k1_context *ctx
     FUZZ_CHECK(memcmp(actual_hash, expected_hash, sizeof(actual_hash)) == 0);
 }
 
+static void secp256k1_fuzz_check_ecdh_generator_minus_one(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecdh-generator-minus-g\n";
+    static const unsigned char generator_x[32] = {
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char generator_negated_y[32] = {
+        0xB7, 0xC5, 0x25, 0x88, 0xD9, 0x5C, 0x3B, 0x9A,
+        0xA2, 0x5B, 0x04, 0x03, 0xF1, 0xEE, 0xF7, 0x57,
+        0x02, 0xE8, 0x4B, 0xB7, 0x59, 0x7A, 0xAB, 0xE6,
+        0x63, 0xB8, 0x2F, 0x6F, 0x04, 0xEF, 0x27, 0x77
+    };
+    secp256k1_pubkey generator;
+    unsigned char actual64[64];
+    unsigned char actual_hash[32];
+    unsigned char expected_hash[32];
+    unsigned char compressed[33];
+    unsigned char x_squared[32];
+    unsigned char x_cubed[32];
+    unsigned char y_squared[32];
+    unsigned char curve_rhs[32];
+    unsigned char seven[32] = { 0 };
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    seven[31] = 7;
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &generator, secp256k1_fuzz_scalar_one) == 1);
+    FUZZ_CHECK(secp256k1_ecdh(ctx, actual64, &generator, secp256k1_fuzz_scalar_order_minus_one, fuzz_ecdh_hash_passthrough, NULL) == 1);
+    FUZZ_CHECK(memcmp(actual64, generator_x, sizeof(generator_x)) == 0);
+    FUZZ_CHECK(memcmp(actual64 + 32, generator_negated_y, sizeof(generator_negated_y)) == 0);
+    FUZZ_CHECK((actual64[63] & 1u) == 1);
+
+    secp256k1_fuzz_pubkey_mul_mod(x_squared, actual64, actual64);
+    secp256k1_fuzz_pubkey_mul_mod(x_cubed, x_squared, actual64);
+    secp256k1_fuzz_pubkey_add_mod(curve_rhs, x_cubed, seven);
+    secp256k1_fuzz_pubkey_mul_mod(y_squared, actual64 + 32, actual64 + 32);
+    FUZZ_CHECK(memcmp(y_squared, curve_rhs, sizeof(y_squared)) == 0);
+
+    compressed[0] = SECP256K1_TAG_PUBKEY_ODD;
+    memcpy(compressed + 1, generator_x, sizeof(generator_x));
+    secp256k1_fuzz_sha256_standalone(expected_hash, compressed, sizeof(compressed));
+    FUZZ_CHECK(secp256k1_ecdh(ctx, actual_hash, &generator, secp256k1_fuzz_scalar_order_minus_one, NULL, NULL) == 1);
+    FUZZ_CHECK(memcmp(actual_hash, expected_hash, sizeof(actual_hash)) == 0);
+}
+
 static int fuzz_ecdh_hash_fail(unsigned char *output, const unsigned char *x32, const unsigned char *y32, void *data) {
     (void)output;
     (void)x32;
@@ -367,6 +416,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_ecdh_static_context(ctx, &pubkey_b, seckey_a);
     }
     secp256k1_fuzz_check_ecdh_generator_two(ctx, input, size);
+    secp256k1_fuzz_check_ecdh_generator_minus_one(ctx, input, size);
     secp256k1_fuzz_check_ecdh_odd_y_default_hash(ctx);
     secp256k1_fuzz_check_ecdh_order_plus_one(ctx, &pubkey_b, hash_data.mask32);
     secp256k1_fuzz_check_ecdh_invalid_scalar_callback_point(ctx, &pubkey_b, hash_data.mask32);
