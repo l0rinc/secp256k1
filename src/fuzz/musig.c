@@ -1740,6 +1740,123 @@ static void secp256k1_fuzz_check_musig_partial_sig_parse(secp256k1_context *ctx,
     }
 }
 
+static void secp256k1_fuzz_check_musig_static_pubnonce_codec(const secp256k1_context *ctx, const unsigned char *input66) {
+    unsigned char normal_serialized[66];
+    unsigned char static_serialized[66];
+    unsigned char zero_nonce[sizeof(secp256k1_musig_pubnonce)] = { 0 };
+    secp256k1_musig_pubnonce normal_nonce;
+    secp256k1_musig_pubnonce static_nonce;
+    secp256k1_musig_pubnonce static_reparsed;
+    secp256k1_musig_pubnonce nonce_before;
+    int normal_ret;
+    int static_ret;
+
+    memset(&normal_nonce, 0xA5, sizeof(normal_nonce));
+    memset(&static_nonce, 0x5A, sizeof(static_nonce));
+    normal_ret = secp256k1_musig_pubnonce_parse(ctx, &normal_nonce, input66);
+    static_ret = secp256k1_musig_pubnonce_parse(secp256k1_context_static, &static_nonce, input66);
+    FUZZ_CHECK(static_ret == normal_ret);
+    if (normal_ret) {
+        nonce_before = normal_nonce;
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(ctx, normal_serialized, &normal_nonce) == 1);
+        FUZZ_CHECK(memcmp(&normal_nonce, &nonce_before, sizeof(normal_nonce)) == 0);
+        nonce_before = static_nonce;
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(secp256k1_context_static, static_serialized, &static_nonce) == 1);
+        FUZZ_CHECK(memcmp(&static_nonce, &nonce_before, sizeof(static_nonce)) == 0);
+        FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_parse(secp256k1_context_static, &static_reparsed, static_serialized) == 1);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_serialize(secp256k1_context_static, static_serialized, &static_reparsed) == 1);
+        FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&normal_nonce, zero_nonce, sizeof(normal_nonce)) == 0);
+        FUZZ_CHECK(memcmp(&static_nonce, zero_nonce, sizeof(static_nonce)) == 0);
+    }
+}
+
+static void secp256k1_fuzz_check_musig_static_aggnonce_codec(const secp256k1_context *ctx, const unsigned char *input66) {
+    unsigned char normal_serialized[66];
+    unsigned char static_serialized[66];
+    unsigned char zero_nonce[sizeof(secp256k1_musig_aggnonce)] = { 0 };
+    secp256k1_musig_aggnonce normal_nonce;
+    secp256k1_musig_aggnonce static_nonce;
+    secp256k1_musig_aggnonce static_reparsed;
+    secp256k1_musig_aggnonce nonce_before;
+    int normal_ret;
+    int static_ret;
+
+    memset(&normal_nonce, 0xA5, sizeof(normal_nonce));
+    memset(&static_nonce, 0x5A, sizeof(static_nonce));
+    normal_ret = secp256k1_musig_aggnonce_parse(ctx, &normal_nonce, input66);
+    static_ret = secp256k1_musig_aggnonce_parse(secp256k1_context_static, &static_nonce, input66);
+    FUZZ_CHECK(static_ret == normal_ret);
+    if (normal_ret) {
+        nonce_before = normal_nonce;
+        FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, normal_serialized, &normal_nonce) == 1);
+        FUZZ_CHECK(memcmp(&normal_nonce, &nonce_before, sizeof(normal_nonce)) == 0);
+        nonce_before = static_nonce;
+        FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(secp256k1_context_static, static_serialized, &static_nonce) == 1);
+        FUZZ_CHECK(memcmp(&static_nonce, &nonce_before, sizeof(static_nonce)) == 0);
+        FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+        FUZZ_CHECK(secp256k1_musig_aggnonce_parse(secp256k1_context_static, &static_reparsed, static_serialized) == 1);
+        FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(secp256k1_context_static, static_serialized, &static_reparsed) == 1);
+        FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&normal_nonce, zero_nonce, sizeof(normal_nonce)) == 0);
+        FUZZ_CHECK(memcmp(&static_nonce, zero_nonce, sizeof(static_nonce)) == 0);
+    }
+}
+
+static void secp256k1_fuzz_check_musig_static_partial_sig_codec(const secp256k1_context *ctx, const unsigned char *input32) {
+    unsigned char normal_serialized[32];
+    unsigned char static_serialized[32];
+    unsigned char zero_sig[sizeof(secp256k1_musig_partial_sig)] = { 0 };
+    secp256k1_musig_partial_sig normal_sig;
+    secp256k1_musig_partial_sig static_sig;
+    secp256k1_musig_partial_sig static_reparsed;
+    secp256k1_musig_partial_sig sig_before;
+    int normal_ret;
+    int static_ret;
+
+    memset(&normal_sig, 0xA5, sizeof(normal_sig));
+    memset(&static_sig, 0x5A, sizeof(static_sig));
+    normal_ret = secp256k1_musig_partial_sig_parse(ctx, &normal_sig, input32);
+    static_ret = secp256k1_musig_partial_sig_parse(secp256k1_context_static, &static_sig, input32);
+    FUZZ_CHECK(static_ret == normal_ret);
+    if (normal_ret) {
+        sig_before = normal_sig;
+        FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(ctx, normal_serialized, &normal_sig) == 1);
+        FUZZ_CHECK(memcmp(&normal_sig, &sig_before, sizeof(normal_sig)) == 0);
+        sig_before = static_sig;
+        FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(secp256k1_context_static, static_serialized, &static_sig) == 1);
+        FUZZ_CHECK(memcmp(&static_sig, &sig_before, sizeof(static_sig)) == 0);
+        FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_parse(secp256k1_context_static, &static_reparsed, static_serialized) == 1);
+        FUZZ_CHECK(secp256k1_musig_partial_sig_serialize(secp256k1_context_static, static_serialized, &static_reparsed) == 1);
+        FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+    } else {
+        FUZZ_CHECK(memcmp(&normal_sig, zero_sig, sizeof(normal_sig)) == 0);
+        FUZZ_CHECK(memcmp(&static_sig, zero_sig, sizeof(static_sig)) == 0);
+    }
+}
+
+static void secp256k1_fuzz_check_musig_static_public_codecs(
+    const secp256k1_context *ctx,
+    const unsigned char *valid_pubnonce66,
+    const unsigned char *invalid_pubnonce66,
+    const unsigned char *valid_aggnonce66,
+    const unsigned char *zero_aggnonce66,
+    const unsigned char *invalid_aggnonce66
+) {
+    secp256k1_fuzz_check_musig_static_pubnonce_codec(ctx, valid_pubnonce66);
+    secp256k1_fuzz_check_musig_static_pubnonce_codec(ctx, invalid_pubnonce66);
+    secp256k1_fuzz_check_musig_static_aggnonce_codec(ctx, valid_aggnonce66);
+    secp256k1_fuzz_check_musig_static_aggnonce_codec(ctx, zero_aggnonce66);
+    secp256k1_fuzz_check_musig_static_aggnonce_codec(ctx, invalid_aggnonce66);
+    secp256k1_fuzz_check_musig_static_partial_sig_codec(ctx, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_musig_static_partial_sig_codec(ctx, secp256k1_fuzz_scalar_order_minus_one);
+    secp256k1_fuzz_check_musig_static_partial_sig_codec(ctx, secp256k1_fuzz_scalar_order);
+}
+
 static void secp256k1_fuzz_check_musig_nonce_agg_failure_cleanup(secp256k1_context *ctx, const secp256k1_musig_pubnonce * const *pubnonce_ptrs, size_t n_pubnonces) {
     secp256k1_fuzz_musig_illegal_data illegal_data;
     unsigned char zero_aggnonce[sizeof(secp256k1_musig_aggnonce)] = { 0 };
@@ -4602,6 +4719,17 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_musig_partial_sig_parse(ctx, secp256k1_fuzz_scalar_order);
     secp256k1_fuzz_check_musig_partial_sig_parse(ctx, ones32);
     secp256k1_fuzz_check_musig_partial_sig_parse(ctx, sig32);
+    if (size == sizeof("MuSig static public codecs\n") - 1
+            && memcmp(input, "MuSig static public codecs\n", sizeof("MuSig static public codecs\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_static_public_codecs(
+            ctx,
+            fixed_pubnonce66,
+            zero66,
+            valid_aggnonce66,
+            zero66,
+            invalid_aggnonce66
+        );
+    }
 
     secp256k1_context_destroy(ctx);
 #else
