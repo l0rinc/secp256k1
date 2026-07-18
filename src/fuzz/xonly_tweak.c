@@ -539,11 +539,17 @@ static void secp256k1_fuzz_check_static_context_keypair(const secp256k1_keypair 
 
 #ifdef USE_EXTERNAL_DEFAULT_CALLBACKS
     {
+        secp256k1_keypair static_keypair;
         unsigned char zero_keypair[sizeof(tweaked_keypair)] = { 0 };
         unsigned int calls = secp256k1_fuzz_default_illegal_calls;
 
+        memset(&static_keypair, 0xA5, sizeof(static_keypair));
+        FUZZ_CHECK(secp256k1_keypair_create(secp256k1_context_static, &static_keypair, secp256k1_fuzz_scalar_one) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
+        FUZZ_CHECK(memcmp(&static_keypair, zero_keypair, sizeof(static_keypair)) == 0);
+
         FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, &tweaked_keypair, secp256k1_fuzz_scalar_zero) == 0);
-        FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == calls + 1);
+        FUZZ_CHECK(secp256k1_fuzz_default_illegal_calls == ++calls);
         FUZZ_CHECK(memcmp(&tweaked_keypair, zero_keypair, sizeof(tweaked_keypair)) == 0);
     }
 #else
