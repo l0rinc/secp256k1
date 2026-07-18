@@ -12346,3 +12346,122 @@ result would be an internal generator-multiplication correctness failure whose
 severity would depend on that caller's reachability. This finding is unrelated
 to nonce cleanup and does not elevate any non-cryptographic nonce state to
 Critical severity.
+
+## 2026-07-18 Bitcoin Core Reachability Severity Recheck
+
+The severity ledger was re-evaluated against the call sites in the local
+Bitcoin Core checkout at `/mnt/my_storage/bitcoin`, rather than treating every
+internal libsecp256k1 failure as a consensus vulnerability. The Core checkout
+was left untouched; it had an unrelated pre-existing modification in
+`src/test/blockencodings_tests.cpp`.
+
+The consensus-sensitive paths are `CPubKey::Verify` from
+`src/script/interpreter.cpp`, `XOnlyPubKey::VerifySchnorr`, and
+`XOnlyPubKey::CheckTapTweak` in `src/pubkey.cpp`. They parse attacker-provided
+transaction or witness bytes before verification, so a future regression that
+accepts an invalid key/signature, rejects a valid one, or produces a different
+valid result must be rated High or Critical according to its consensus effect.
+The current master baseline passes the corresponding public parser, ECDSA,
+Schnorr, x-only, and tweak oracles; no such clean-master failure is claimed.
+
+Bitcoin Core also uses `EllSwiftPubKey::Decode` and
+`secp256k1_ellswift_xdh` while processing BIP324 V2 transport handshakes in
+`src/net.cpp`. These inputs are peer-controlled, so a malformed EllSwift
+regression can be a real network availability or transport-confidentiality
+issue. It is not automatically consensus-critical: the current zero-`u`,
+invalid-secret, callback, and transcript checks pass, and no memory-safety or
+key-agreement failure was reproduced on master.
+
+The following existing findings are not reachable from a Bitcoin Core block or
+transaction solely by supplying invalid serialized data: scratch allocation
+wraparound and accounting states, malformed opaque public/keypair/MuSig
+objects, direct NULL callback arguments, impossible SHA pointer/length pairs,
+the exact 10x26 magnitude-32 representation, and secret-state retention after
+internal finalization. They remain useful library/API hardening findings with
+the previously recorded library-level ratings, but their Bitcoin Core threat
+rating is Informational or Nice-to-have until a concrete Core call path can
+construct the state. In particular, a public nonce buffer with no standalone
+cryptographic meaning is not Critical merely because cleanup is incomplete.
+
+The dispatch findings are reachable only from caller-selected signing or
+hashing configuration, not from block validation: Core's static verification
+context and BIP324's fixed built-in transcript keep them below consensus
+severity. Future reports must state both ratings, name the exact Core entry
+point, and include a serialized-input reproduction when claiming High or
+Critical impact. A later fork fix or unrelated minor patch must not be used to
+lower the rating of a failure reproduced on the unmodified master baseline.
+
+## 2026-07-18 Core Taproot Tweak-Check Mutation Recheck
+
+The Bitcoin Core Taproot control-block path reaches
+`secp256k1_xonly_pubkey_tweak_add_check` through
+`XOnlyPubKey::CheckTapTweak`. The existing `xonly_tweak` target therefore has
+consensus-facing coverage: its affine-reference fixture computes the tweaked
+point with an independent byte-coordinate group model, while the regular
+path separately checks wrong X-coordinate and wrong-parity results.
+
+For a causal recheck, the production predicate in
+`src/modules/extrakeys/main_impl.h` was temporarily changed from `&&` to
+`||`. After rebuilding the Clang ASan/UBSan, `SECP256K1_ASM=OFF` target, the
+focused replay of `affine-reference`, `zero-and-order-tweaks`, and the invalid
+x-only comparator input aborted with exit 134 on the first fixture. The
+mutation was restored before clean verification. Five focused inputs then
+passed, and a copied 17-file corpus completed a two-worker/two-job
+`-max_total_time=12` campaign with both jobs exiting 0 and no diagnostic,
+timeout, OOM, crash, or artifact.
+
+This is negative evidence, not a clean-master production finding. If an
+unmodified master accepted a wrong Taproot tweak or parity for serialized
+control-block data, the Core impact would be High or Critical according to
+whether it changed consensus validity. No such failure was reproduced on
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`.
+
+## 2026-07-18 Direct `origin/master` Existing-Finding Replay
+
+To avoid allowing the repaired audit branch to hide master failures, a fresh
+detached worktree at unmodified `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` was built with Clang 22
+ASan/UBSan and `SECP256K1_ASM=OFF`. Only the fuzzer sources, corpora, and CMake
+overlay were copied into that worktree; no audit production change was
+present. The overlay replayed 44 `api_roundtrip`, 14 `schnorrsig`, 13
+`xonly_tweak`, and 14 `ellswift` inputs.
+
+The replay restated four already fixed master findings:
+
+* `api_roundtrip/ascii-near-der` stopped at `api_roundtrip.c:2654` because
+  clean master returned failure from the contrib `ec_privkey_export_der`
+  helper with `outlen == 0` but left the first documented 279 output bytes at
+  the caller's `0xA5` sentinel. This is the stale-output defect fixed by
+  `42842d5`, rated Low at the library level and Nice-to-have for Bitcoin Core:
+  Core does not use this private-key DER exporter while validating peer data.
+* `xonly_tweak/independent-parse-reference` stopped at
+  `xonly_tweak.c:449` because clean master left a caller-supplied parity
+  value unchanged after `keypair_xonly_pub` rejected an invalid opaque
+  keypair. This is the fixed-output portion of `8457e54`, a fail-closed API
+  hardening issue rather than a block-triggerable condition; its Core threat
+  rating is Nice-to-have.
+* `ellswift/bip324-decode-vector` reached the clean-master
+  `VERIFY_CHECK(!secp256k1_fe_normalizes_to_zero_var(&u))` in
+  `ellswift_xelligatorswift_var`. The hash-derived `u == 0` case is the
+  master bug fixed by `e16314a`; it can be forced by a custom SHA callback and
+  otherwise has about 2^-255 probability after field reduction. Bitcoin
+  Core's BIP324 path uses the built-in transcript and peer-controlled encoded
+  points, not a caller-selected SHA callback, so this remains Low/informational
+  library hardening and below consensus severity.
+* `schnorrsig/arbitrary-signature-verification-equation` entered the
+  clean-master impossible-message-length check with
+  `SECP256K1_SHA256_MAX_SIZE - 128`. UBSan reported the null-pointer offset in
+  `util.h:438`, followed by an ASan write fault. The length guard fixed by
+  `49a9725` prevents hashing before this incoherent pointer/length pair is
+  accepted. This is Medium at the library boundary when the invalid API
+  contract is deliberately constructed, but Nice-to-have for Bitcoin Core:
+  `XOnlyPubKey::VerifySchnorr` supplies a real 32-byte message hash and cannot
+  reach the oversized call from a block or witness.
+
+The repaired branch then passed its current 56, 16, 17, and 17-file public
+corpora for those targets, respectively. None of the four master replays
+accepted an invalid ECDSA/Schnorr/Taproot result or rejected a valid serialized
+consensus input. These are reiterations of existing master-relative findings,
+not new clean-master Critical vulnerabilities. The direct replay also does
+not alter the non-critical assessment of clearing a public nonce buffer whose
+contents carry no standalone cryptographic meaning.
