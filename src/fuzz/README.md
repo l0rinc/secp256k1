@@ -13678,3 +13678,89 @@ Verification for this commit:
   The control exited 0, so this commit reports no production failure on
   master.
 - A final process inventory found no running fuzz target or sanitizer replay.
+
+## 2026-07-18 Core `CKey::SignCompact` Composition Oracle
+
+The new `recovery/core-sign-compact-composition` seed models the serialized
+signing direction of Bitcoin Core's compact-message signature path. The fixed
+vector uses secret key `d = 1` and message hash `z = 0`. An independent
+RFC6979 HMAC-SHA256 and affine secp256k1 calculation gives nonce
+`010497d369b3d525ca15ec29c104a694210bb59ff6cabfc10afe6df0283896df`,
+`r = a0b37f8fba683cc68f6574cd43b39f0343a50008bf6ccea9d13231d9e7e2e1e4`,
+low `s = 11edc8d307254296264aebfc3dc76cd8b668373a072fd64665b50000e9fcce52`,
+and recovery ID `1`. The expected 64-byte compact signature is:
+
+    a0b37f8fba683cc68f6574cd43b39f0343a50008bf6ccea9d13231d9e7e2e1e411edc8d307254296264aebfc3dc76cd8b668373a072fd64665b50000e9fcce52
+
+The two Core wire headers are `28` (`27 + recid`, uncompressed) and `32`
+(`27 + recid + 4`, compressed). The oracle checks both dynamic and static
+compact serialization, the exact recovery ID and compact bytes, conversion
+to a normal signature, verification against the independently created
+generator key, recovery back to that key, and both exact SEC1 encodings.
+
+The exact Bitcoin Core path is `MessageSign` (`/mnt/my_storage/bitcoin/src/common/signmessage.cpp:57`)
+-> `CKey::SignCompact` (`/mnt/my_storage/bitcoin/src/key.cpp:249`) ->
+`secp256k1_ecdsa_sign_recoverable` on Core's signing context with
+`secp256k1_nonce_function_rfc6979` ->
+`secp256k1_ecdsa_recoverable_signature_serialize_compact` on the static
+context -> Core's header construction -> `secp256k1_ec_pubkey_create` and
+static `secp256k1_ecdsa_recover` verification. RPC/UI `signmessage` and wallet
+message-signing code can supply the message; the fuzzer starts at the fixed
+32-byte `MessageHash` result and deliberately does not reimplement Core's
+`HashWriter` message framing.
+
+The earlier recovery fuzzer checked raw recoverable signing, default-versus-
+RFC6979 agreement, recovery equations, and the inverse Core
+`CPubKey::RecoverCompact` adapter, but a same-path sign/recover round trip
+could preserve the same wrong compact bytes and header. Bitcoin Core's
+`key_tests.cpp` also has C++-level deterministic signing coverage. This seed
+adds an independent byte-level expectation at the libsecp sign/serialize
+boundary and explicitly preserves Core's static/dynamic context ordering.
+
+Causal proof used a temporary, uncommitted mutation in `src/secp256k1.c`: for
+the exact `z=0`, `d=1` vector, the successful recoverable signer toggled the
+returned recovery ID. A temporary harness-only early-return isolation invoked
+only this new helper so the generic recovery checks could not fail first. The
+dedicated replay then stopped with `SIGABRT` at
+`secp256k1_fuzz_check_core_sign_compact` (`src/fuzz/recovery.c:277`). The exact
+command was:
+
+    gdb -q -batch -ex run -ex 'bt 16' --args /tmp/secp256k1-next-asan/bin/fuzz_recovery src/fuzz/corpora/recovery/core-sign-compact-composition -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+
+The production mutation and harness isolation were restored; neither is
+committed. This proves the new assertion is sensitive to a real signer
+postcondition rather than merely increasing coverage.
+
+This is **Informational / Low oracle hardening**, not a clean-master
+production finding. A mismatch could break message-signature interoperability
+or make a wallet/RPC signing result unusable, but this path is not reachable
+from invalid blocks, transaction witnesses, or peer-controlled consensus
+validation. It is therefore not High/Critical merely because Bitcoin Core
+uses it. High/Critical requires an unmodified-master consensus/security
+failure reachable from attacker-controlled block or witness input, or a
+demonstrated memory/concurrency impact. A public nonce buffer without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+The exact audit `origin/master` ref is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; the reconciled `l0rinc/master`
+ref is `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already an ancestor. The
+Bitcoin Core call-site comparison used `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+A fresh recovery-enabled library build at exact `origin/master` reported
+`origin_recid=1 signed=1 serialized=1 exact=1` and exited 0. Existing compact
+recovery findings remain master-relative and are reiterated here, not
+reclassified. Any later cherry-pick changing recoverable signing,
+serialization, or header semantics must retain this independent vector,
+mutation isolation, clean-master control, and wallet-only severity context.
+
+Verification for this oracle:
+
+- Focused replay of the new seed passed under native ASan/UBSan, forced-int64
+  ASan/UBSan, and rebuilt forced-int64 MSan.
+- The restored recovery corpus passed all 17 files plus the empty input on
+  each of those three sanitizer configurations, with no diagnostic.
+- Native and forced-int64 private-copy campaigns used
+  `-fork=2 -jobs=2 -max_total_time=12 -timeout=240 -seed=1`; both managers
+  and workers exited 0 and reported `oom/timeout/crash: 0/0/0`.
+- The temporary clean-master worktree, probe, and private corpora were
+  removed. A final process inventory found no fuzz or sanitizer jobs running.
