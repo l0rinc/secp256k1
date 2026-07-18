@@ -1766,6 +1766,18 @@ static void secp256k1_fuzz_scalar32_negate_mod_order(unsigned char *out32, const
     FUZZ_CHECK(borrow == 0);
 }
 
+static int secp256k1_fuzz_seckey_verify_reference(const unsigned char input32[32]) {
+    return memcmp(input32, secp256k1_fuzz_scalar_zero, 32) != 0
+        && memcmp(input32, secp256k1_fuzz_scalar_order, 32) < 0;
+}
+
+static void secp256k1_fuzz_check_seckey_verify_case(const secp256k1_context *ctx, const unsigned char input32[32]) {
+    int expected = secp256k1_fuzz_seckey_verify_reference(input32);
+
+    FUZZ_CHECK(secp256k1_ec_seckey_verify(ctx, input32) == expected);
+    FUZZ_CHECK(secp256k1_ec_seckey_verify(secp256k1_context_static, input32) == expected);
+}
+
 /* Multiply canonical scalars with byte arithmetic, independent of the scalar
  * implementation. Double-and-add keeps every intermediate value canonical
  * by routing it through the independent addition routine above. */
@@ -1783,6 +1795,22 @@ static void secp256k1_fuzz_scalar32_mul_mod_order(unsigned char *out32, const un
         }
     }
     memcpy(out32, product, 32);
+}
+
+static void secp256k1_fuzz_check_static_seckey_validation(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *seckey, const unsigned char *candidate32) {
+    static const unsigned char trigger[] = "static secret validation\n";
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_fuzz_check_seckey_verify_case(ctx, secp256k1_fuzz_scalar_zero);
+    secp256k1_fuzz_check_seckey_verify_case(ctx, secp256k1_fuzz_scalar_one);
+    secp256k1_fuzz_check_seckey_verify_case(ctx, secp256k1_fuzz_scalar_order_minus_one);
+    secp256k1_fuzz_check_seckey_verify_case(ctx, secp256k1_fuzz_scalar_order);
+    secp256k1_fuzz_check_seckey_verify_case(ctx, secp256k1_fuzz_field_p_plus_one);
+    secp256k1_fuzz_check_seckey_verify_case(ctx, seckey);
+    secp256k1_fuzz_check_seckey_verify_case(ctx, candidate32);
 }
 
 static void secp256k1_fuzz_check_static_key_transforms(const secp256k1_context *ctx, const unsigned char *input, size_t size, const secp256k1_pubkey *pubkey, const unsigned char *seckey) {
@@ -3308,6 +3336,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_scalar32(tweak32, input, size, 31);
     secp256k1_fuzz_check_seckey_tweak_input_output_alias(ctx, input, size, seckey);
+    secp256k1_fuzz_check_static_seckey_validation(ctx, input, size, seckey, tweak32);
     secp256k1_fuzz_check_static_key_transforms(ctx, input, size, &pubkey, seckey);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_zero);
     secp256k1_fuzz_check_tweak_add(ctx, &pubkey, seckey, secp256k1_fuzz_scalar_one);
