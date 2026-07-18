@@ -16402,3 +16402,101 @@ existing test gap, verifier commands, and whether it preserves, changes, or
 masks the trigger. A post-fix green replay is not proof that master was safe;
 rerun the original baseline or mutation before downgrading a finding. No fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 EllSwift BIP324 peer-wire Core recheck
+
+This pass rechecked all 19 tracked `src/fuzz/corpora/ellswift` inputs. The
+oracle independently checks EllSwift create/encode/decode round trips, modulo
+field aliases, `t == 0` parity, inverse branches and degenerate guards,
+zero-`u` hash-compression behavior, x-only shared-point equations, party
+selector semantics, raw BIP324 transcript hashing, static-context equivalence,
+callback coordinates, invalid-secret behavior, NULL/failure output cleanup,
+and exact raw peer-wire binding. Preconditions include generated local keys,
+arbitrary decoded 64-byte peer values, modulo-equivalent wire forms, zero and
+order-boundary secrets, both parties, nonzero party encodings, custom and
+built-in hash callbacks, and sentinel-filled outputs. Postconditions require
+the independent point or transcript relation, documented rejection, exact
+raw-wire authentication, callback call counts, and zeroed fixed-size outputs
+on built-in failure paths.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_ellswift \
+      /tmp/codex-next-ellswift4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ellswift4-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0 after about 90-97 seconds with zero OOM, timeout,
+and crash counters and no assertion, ASan, UBSan, runtime, or `ERROR:`
+diagnostic. The forced-int64 ASan/UBSan replay used two workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-next-asan-int64/bin/fuzz_ellswift \
+      /tmp/codex-next-ellswift-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ellswift-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 after about 65 seconds with zero OOM, timeout, and
+crash counters. The int64 MSan replay used two workers for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ellswift \
+      /tmp/codex-next-ellswift-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ellswift-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 after about 49-51 seconds with zero OOM, timeout,
+and crash counters. No MSan, UBSan, runtime, or `ERROR:` diagnostic and no
+artifact was produced. No production mutation was needed and no production
+bug, deterministic regression test, or severity change is claimed.
+
+The Core boundary is direct: `BIP324Cipher::Initialize` receives the remote
+`EllSwiftPubKey`, then `CKey::ComputeBIP324ECDHSecret` maps
+`(their, our, initiator)` to `secp256k1_ellswift_xdh` using the static context
+and the fixed BIP324 hash callback. Core creates the local encoding from its
+own secret, but the remote 64-byte value is peer input and is not checked
+against a private key first. The oracle therefore binds the exact raw pair to
+the independently reconstructed transcript in both initiator and responder
+directions. The resulting secret feeds BIP324 HKDF and transport ciphers.
+
+No Bitcoin Core invalid-block or witness path reaches EllSwift XDH, so a clean-
+master EllSwift equation, parser, memory, race, or output-state failure is not
+consensus-Critical merely because the peer bytes are malformed. A future
+failure that a remote peer can use to crash nodes, cause persistent handshake
+DoS, or produce an unauthenticated key-agreement/integrity mismatch can be
+High or otherwise security-significant based on that demonstrated transport
+impact. Direct API-only opaque-state and callback findings remain lower
+without a Core trigger. The existing zero-`u`, static-context, party,
+invalid-secret, and built-in cleanup checks are oracle/contract evidence, not
+new production findings. A nonce with no standalone cryptographic meaning is
+not Critical merely because it is uncleared.
+
+Existing EllSwift tests cover fixed vectors and basic XDH correctness, but the
+combined raw-peer transcript, modulo-alias distinction, static context, forced
+hash-compression boundary, callback contracts, and sentinel cleanup matrix is
+not duplicated by the normal suite. The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Temporary corpora and artifacts were removed
+after the process check.
+
+Any later EllSwift, BIP324 adapter, ECDH, production fix, or l0rinc
+cherry-pick must amend its commit message and this ledger with the clean-master
+or minimal-production-mutation baseline, exact corpus bytes or mutation,
+preconditions, postconditions, observed failure, Core caller, severity on
+unmodified master, existing test gap, verifier commands, and whether it
+preserves, changes, or masks the trigger. A post-fix green replay is not proof
+that master was safe; rerun the original baseline or mutation before
+downgrading a finding. No fuzz, sanitizer, compiler, or test process remains
+running.
