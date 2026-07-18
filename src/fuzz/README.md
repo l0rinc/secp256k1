@@ -17134,3 +17134,55 @@ trigger. If a potential fix changes a follow-up finding's behavior, preserve
 the original baseline or mutation and document that relationship in the same
 commit. Do not downgrade a finding because a minor, unrelated fix made the
 follow-up replay green.
+
+## 2026-07-19 Fresh Autotools common-callback and corpus replay
+
+To verify the build-system boundary independently of the CMake matrix, archive
+the committed tree at `f82d4a1b` into a disposable source directory, run
+`./autogen.sh`, and configure a fresh build with:
+
+    configure --enable-fuzz --enable-module-recovery --enable-experimental
+
+The concrete disposable roots were `/tmp/secp256k1-autotools-current-src.lU7URK`
+and `/tmp/secp256k1-autotools-current-build.NCxg0b`; per-target replay logs
+were written under `/tmp/secp256k1-autotools-corpus-run.AexFTD`.
+
+The build then compiled all 14 entry points in parallel with `make -j2`:
+`fuzz_api_roundtrip`, `fuzz_context`, `fuzz_hash`, `fuzz_scalar`,
+`fuzz_field`, `fuzz_group`, `fuzz_ecmult_const`, `fuzz_ecmult_multi`,
+`fuzz_ecdh`, `fuzz_ellswift`, `fuzz_xonly_tweak`, `fuzz_recovery`,
+`fuzz_schnorrsig`, and `fuzz_musig`. Each target compiled and linked the
+shared `src/fuzz/external_callbacks.c` implementation. The only compiler
+output was the existing deprecated `secp256k1_schnorrsig_sign` warning and
+the existing MuSig pointer-qualifier warnings; no build failure occurred.
+
+All 14 resulting binaries then replayed their matching tracked corpus
+directories concurrently under `timeout 900s`; together they processed all
+338 tracked inputs. Every target exited zero. No assertion, abort, sanitizer,
+runtime error, `ERROR:`, failed-input, timeout, or artifact diagnostic was
+observed. This is a fresh non-sanitized Autotools build/replay check; the
+native, forced-int64, and MSan sanitizer evidence remains the CMake matrix
+recorded above. No production bug, deterministic regression test, or severity
+change was found.
+
+This build check confirms that the common callback shim is linked consistently
+without treating it as a separate target or inventing a corpus for it. The
+master-relative findings therefore remain unchanged: scratch-wrap is Medium
+internal memory safety with low current Core reachability; the 10x26
+magnitude-32 carry defect is Medium latent correctness; hash/RFC6979 state
+retention is Medium memory hygiene without a standalone read primitive; and
+direct opaque/API, callback, and wallet-state findings remain below consensus
+High/Critical absent a demonstrated Bitcoin Core invalid-block, invalid-
+witness, or remote consequence. A nonce without standalone cryptographic
+meaning is not Critical merely because it is uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled and no
+new cherry-pick. Any later Autotools/CMake callback change, production fix,
+fuzzer assertion, test adjustment, or fork cherry-pick must amend its commit
+message and this ledger with the clean-master or minimal-mutation baseline,
+exact input or mutation, contracts, failure, Core caller, master-relative
+severity, test gap, verifier commands, and whether it preserves, changes, or
+masks the trigger. Rerun the original baseline or mutation before downgrading
+a finding that a later patch happens to hide.
