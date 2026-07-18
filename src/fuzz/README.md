@@ -16225,3 +16225,89 @@ whether it preserves, changes, or masks the trigger. A follow-up patch that
 merely passes this replay is not proof that master was safe; rerun the
 original baseline or mutation before downgrading a finding. No fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 Constant-time multiplication Core backend recheck
+
+This pass rechecked all 11 tracked `src/fuzz/corpora/ecmult_const` inputs. The
+target compares constant-time generator and arbitrary-point multiplication with
+an independent affine double-and-add model, generic multiplication, canonical
+SEC1 coordinates, x-only known-on-curve and fractional-coordinate forms, the
+odd-multiples global-Z ratios, zero/order-minus-one scalars, infinity results,
+and cleanup after sentinel-filled outputs. Preconditions include finite valid
+points, nonzero reduced scalars, deliberately non-normalized field fractions,
+invalid x-only inputs, zero, infinity, and exact order boundaries. Postconditions
+require the independent equation or a documented rejection, canonical infinity
+metadata where promised, and no stale output or table state after a failure.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_ecmult_const \
+      /tmp/codex-next-ecmultconst4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecmultconst4-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0 after 90-92 seconds with zero OOM, timeout, and
+crash counters. The forced-int64 ASan/UBSan replay used two workers for 60
+seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_ecmult_const \
+      /tmp/codex-next-ecmultconst-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecmultconst-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 with `oom/timeout/crash: 0/0/0`. The int64 MSan replay
+used two workers for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ecmult_const \
+      /tmp/codex-next-ecmultconst-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecmultconst-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 with zero OOM, timeout, and crash counters. No
+ASan, UBSan, MSan, runtime, or `ERROR:` diagnostic and no artifact was
+produced. This is a negative recheck: no production bug, deterministic
+regression test, or severity change is claimed.
+
+The library production callers are `secp256k1_ecdh`, which invokes
+`secp256k1_ecmult_const`, and `secp256k1_ellswift_xdh`, which invokes
+`secp256k1_ecmult_const_xonly`. In Bitcoin Core the relevant direct path is
+`CKey::ComputeBIP324ECDHSecret` -> `secp256k1_ellswift_xdh` with the BIP324 hash
+function, so malformed peer EllSwift data is a transport-input boundary. The
+Core ECDSA/Schnorr invalid-block and witness paths use other multiplication
+helpers; no current Core call site makes this backend consensus-Critical merely
+because a block is invalid. A future clean-master failure in this helper must
+be rated from the demonstrated consequence: an actual remote BIP324 crash,
+persistent DoS, or key-agreement/integrity failure can be High or otherwise
+security-significant, while a direct opaque-API or test-only failure remains
+lower without a Core trigger. A nonce with no standalone cryptographic meaning
+is not Critical merely because it is uncleared.
+
+Existing unit and exhaustive tests cover fixed edge cases and correspondence,
+but do not replace this independent affine model across malformed fractions,
+sentinel outputs, and forked sanitizer workers. The comparison refs remain
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Temporary corpora, logs, and artifacts were
+removed after the process check.
+
+Any later ecmult, ECDH, EllSwift, production fix, or l0rinc cherry-pick must
+amend its commit message and this ledger with the clean-master or minimal
+production-mutation baseline, exact corpus bytes or mutation, preconditions,
+postconditions, observed failure, Core caller, severity on unmodified master,
+existing test gap, verifier commands, and whether it preserves, changes, or
+masks the trigger. Passing this replay after a fix is not proof that master was
+safe; rerun the original baseline or mutation before downgrading a finding. No
+fuzz, sanitizer, compiler, or test process remains running.
