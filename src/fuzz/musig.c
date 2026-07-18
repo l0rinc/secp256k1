@@ -3487,6 +3487,35 @@ static void secp256k1_fuzz_check_musig_secnonce_reuse(secp256k1_context *ctx, se
     secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
 }
 
+static void secp256k1_fuzz_check_musig_static_public_signing(const secp256k1_musig_pubnonce *pubnonces, const secp256k1_pubkey *pubkeys, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_musig_session *session, const secp256k1_musig_partial_sig * const *partial_sig_ptrs, size_t n_signers, const unsigned char *expected_sig64) {
+    secp256k1_musig_pubnonce pubnonce_before[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    secp256k1_pubkey pubkey_before[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    secp256k1_musig_partial_sig partial_sig_before[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS];
+    secp256k1_musig_keyagg_cache cache_before = *keyagg_cache;
+    secp256k1_musig_session session_before = *session;
+    unsigned char static_sig64[64];
+    size_t i;
+
+    FUZZ_CHECK(n_signers <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
+    for (i = 0; i < n_signers; i++) {
+        pubnonce_before[i] = pubnonces[i];
+        pubkey_before[i] = pubkeys[i];
+        partial_sig_before[i] = *partial_sig_ptrs[i];
+        FUZZ_CHECK(secp256k1_musig_partial_sig_verify(secp256k1_context_static, partial_sig_ptrs[i], &pubnonces[i], &pubkeys[i], keyagg_cache, session) == 1);
+    }
+    memset(static_sig64, 0xA5, sizeof(static_sig64));
+    FUZZ_CHECK(secp256k1_musig_partial_sig_agg(secp256k1_context_static, static_sig64, session, partial_sig_ptrs, n_signers) == 1);
+    FUZZ_CHECK(memcmp(static_sig64, expected_sig64, sizeof(static_sig64)) == 0);
+
+    FUZZ_CHECK(memcmp(keyagg_cache, &cache_before, sizeof(cache_before)) == 0);
+    FUZZ_CHECK(memcmp(session, &session_before, sizeof(session_before)) == 0);
+    for (i = 0; i < n_signers; i++) {
+        FUZZ_CHECK(memcmp(&pubnonces[i], &pubnonce_before[i], sizeof(pubnonce_before[i])) == 0);
+        FUZZ_CHECK(memcmp(&pubkeys[i], &pubkey_before[i], sizeof(pubkey_before[i])) == 0);
+        FUZZ_CHECK(memcmp(partial_sig_ptrs[i], &partial_sig_before[i], sizeof(partial_sig_before[i])) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char (*seckey)[32], const secp256k1_keypair *keypairs, const secp256k1_pubkey *pubkeys, size_t n_pubkeys, const unsigned char *msg32) {
     static const unsigned char scalar_two[32] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -3630,6 +3659,10 @@ static void secp256k1_fuzz_check_musig_sign_roundtrip(secp256k1_context *ctx, co
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64, &session, partial_sig_ptrs, n_signers) == 1);
     FUZZ_CHECK(secp256k1_musig_partial_sig_agg(ctx, sig64_replay, &session_replay, partial_sig_ptrs, n_signers) == 1);
     FUZZ_CHECK(memcmp(sig64, sig64_replay, sizeof(sig64)) == 0);
+    if (size == sizeof("MuSig static public signing\n") - 1
+            && memcmp(input, "MuSig static public signing\n", sizeof("MuSig static public signing\n") - 1) == 0) {
+        secp256k1_fuzz_check_musig_static_public_signing(pubnonce, pubkeys, &keyagg_cache, &session, partial_sig_ptrs, n_signers, sig64);
+    }
     secp256k1_fuzz_check_musig_final_sig_equation(ctx, sig64, &session, &agg_pk, msg32);
     FUZZ_CHECK(secp256k1_schnorrsig_verify(ctx, sig64, msg32, 32, &agg_pk) == 1);
     secp256k1_fuzz_check_musig_partial_sig_agg_failure_cleanup(ctx, &session, partial_sig_ptrs, n_signers);
