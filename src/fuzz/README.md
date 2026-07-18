@@ -15567,3 +15567,89 @@ preconditions/postconditions, failure output, Core caller, master-relative
 severity, test gap, and whether the change preserves, changes, or masks the
 behavior. The private corpus and artifacts were removed after the final
 process check, and no fuzz job remains running.
+
+## 2026-07-18 Schnorr/Taproot four-worker backend recheck
+
+This pass revisited the consensus-sensitive Schnorr target after the MuSig
+state-machine replay. The tested source behavior is the audit branch at
+`78bb72247dd682128ed57a4197c7557094abb363`; the later commits on this branch
+are documentation-only. The tracked `src/fuzz/corpora/schnorrsig` corpus has
+18 files, including the exact triggers for the independent BIP340 equation,
+infinity and odd-nonce rejection, scalar-order boundary, nonce reference and
+cleanup, opaque-keypair consistency, and Core Tapscript/Taproot composition
+oracles. Private copies were used for every run and were not written back to
+the repository.
+
+The native Clang ASan/UBSan four-worker command was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-oracles-external/bin/fuzz_schnorrsig \
+      /tmp/codex-next-schnorr4 -fork=4 -jobs=4 -max_total_time=120 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-schnorr4-artifacts/ \
+      -print_final_stats=1
+
+All four jobs exited 0 after 120-128 seconds. Every worker reported
+`oom/timeout/crash: 0/0/0`; no ASan, UBSan, runtime, or `ERROR:` diagnostic
+was emitted; and the artifact directory was empty. The alternate int64
+ASan/UBSan backend used two workers for 60 seconds with the same strict
+failure policy:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/secp256k1-next-asan-int64/bin/fuzz_schnorrsig \
+      /tmp/codex-next-schnorr-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-schnorr-int64-artifacts/ \
+      -print_final_stats=1
+
+Both int64 jobs exited 0 with `oom/timeout/crash: 0/0/0`, no sanitizer
+diagnostic, and no artifact. The MSan int64 backend then used two workers for
+45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_schnorrsig \
+      /tmp/codex-next-schnorr-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-schnorr-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan jobs exited 0 with `oom/timeout/crash: 0/0/0`, no MSan/UBSan
+diagnostic, and no artifact. No production bug, deterministic regression
+test, or severity change is claimed by these negative replays.
+
+The Core relevance is concrete. On the verification side,
+`ExecuteWitnessScript`/key-path Taproot evaluation calls
+`GenericTransactionSignatureChecker::CheckSchnorrSignature`, which enforces
+the 64/65-byte witness framing and hash-type rules, computes
+`SignatureHashSchnorr`, parses the x-only witness key, and reaches
+`XOnlyPubKey::VerifySchnorr` -> `secp256k1_schnorrsig_verify`. On the signing
+side, `CKey::SignSchnorr` computes the optional TapTweak from the null or
+non-null merkle-root state, then `KeyPair::SignSchnorr` calls
+`secp256k1_schnorrsig_sign32` and verifies the result. A clean-master
+acceptance or equation discrepancy, invalid-key/witness confusion, memory
+failure, race, or state corruption on those paths would be High/Critical
+according to demonstrated consensus impact. The negative result does not
+turn direct callback, wallet, or locally corrupted opaque-state findings into
+consensus findings, and a nonce with no standalone cryptographic meaning is
+not Critical merely because it is uncleared.
+
+The master comparison remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. PRs #1-#16 remain reconciled;
+no new l0rinc commit was cherry-picked for this pass. Future fixes,
+serializer/normalization changes, or l0rinc cherry-picks must amend their
+commit messages and this ledger with the clean-master or minimal-production
+mutation baseline, exact corpus bytes or mutation, preconditions and
+postconditions, observed failure, Core caller, severity on unmodified master,
+existing test gap, and whether the change preserves, changes, or masks the
+trigger. A follow-up patch passing after a fix is not proof that master was
+safe; rerun the original baseline or its minimal production mutation before
+downgrading a finding. The private corpus and artifact directories were
+removed after the final process check, and no fuzz, sanitizer, compiler, or
+test process remains running.
