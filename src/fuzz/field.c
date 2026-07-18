@@ -428,6 +428,46 @@ static void secp256k1_fuzz_fe_check_set_b32_mod(const unsigned char *input32) {
     FUZZ_CHECK(memcmp(actual32, expected32, sizeof(actual32)) == 0);
 }
 
+/* The word-packed serializers have independent 26- and 52-bit limb
+ * boundaries. Keep these inputs deterministic so a boundary-specific packing
+ * regression cannot depend on the random corpus selecting the exact bit. */
+static void secp256k1_fuzz_fe_check_word_serialization_boundary(void) {
+    static const unsigned int bit_positions[] = {
+        0, 25, 26, 51, 52, 77, 78, 103, 104, 129, 130, 155, 156, 181, 182, 207, 208, 233, 234
+    };
+    static const unsigned char word_pattern32[32] = {
+        0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+        0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0x01
+    };
+    unsigned char value32[32];
+    unsigned char actual32[32];
+    secp256k1_fe value;
+    size_t i;
+
+    for (i = 0; i < sizeof(bit_positions) / sizeof(bit_positions[0]); i++) {
+        memset(value32, 0, sizeof(value32));
+        value32[31 - bit_positions[i] / 8] = (unsigned char)(1u << (bit_positions[i] & 7u));
+        FUZZ_CHECK(secp256k1_fe_set_b32_limit(&value, value32) == 1);
+        secp256k1_fe_get_b32(actual32, &value);
+        FUZZ_CHECK(memcmp(actual32, value32, sizeof(actual32)) == 0);
+
+        secp256k1_fe_set_b32_mod(&value, value32);
+        secp256k1_fe_normalize_var(&value);
+        secp256k1_fe_get_b32(actual32, &value);
+        FUZZ_CHECK(memcmp(actual32, value32, sizeof(actual32)) == 0);
+    }
+
+    FUZZ_CHECK(secp256k1_fe_set_b32_limit(&value, word_pattern32) == 1);
+    secp256k1_fe_get_b32(actual32, &value);
+    FUZZ_CHECK(memcmp(actual32, word_pattern32, sizeof(actual32)) == 0);
+    secp256k1_fe_set_b32_mod(&value, word_pattern32);
+    secp256k1_fe_normalize_var(&value);
+    secp256k1_fe_get_b32(actual32, &value);
+    FUZZ_CHECK(memcmp(actual32, word_pattern32, sizeof(actual32)) == 0);
+}
+
 /* A small standalone 8x32-bit modular arithmetic model. It deliberately does
  * not call field or modular-inverse helpers from the library under test. */
 static void secp256k1_fuzz_ref_u32_from_be(uint32_t out[8], const unsigned char in[32]) {
@@ -1435,6 +1475,7 @@ static void secp256k1_fuzz_fe_check_arithmetic(const unsigned char *input, size_
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     static const unsigned char zero_predicate_slow_path_trigger[] = "field zero-predicate slow path\n";
+    static const unsigned char word_serialization_trigger[] = "field word serialization boundary\n";
     unsigned char boundary[32];
     unsigned char limit_input[32];
     int i;
@@ -1485,6 +1526,9 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 #endif
     if (size == sizeof(zero_predicate_slow_path_trigger) - 1 && memcmp(input, zero_predicate_slow_path_trigger, sizeof(zero_predicate_slow_path_trigger) - 1) == 0) {
         secp256k1_fuzz_fe_check_zero_predicate_slow_path();
+    }
+    if (size == sizeof(word_serialization_trigger) - 1 && memcmp(input, word_serialization_trigger, sizeof(word_serialization_trigger) - 1) == 0) {
+        secp256k1_fuzz_fe_check_word_serialization_boundary();
     }
     secp256k1_fuzz_fe_check_arithmetic(input, size);
 
