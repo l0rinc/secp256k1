@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing, TapLeaf CompactSize boundary vectors, and maximum-depth 128-sibling Merkle-chain vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, Bitcoin Core compact-recovery header and compressed/uncompressed serialization composition, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -13042,3 +13042,79 @@ fetched `l0rinc/master` ref was `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`;
 the relevant fork commits were already reconciled, so no additional
 cherry-pick was a prerequisite. A public nonce buffer with no standalone
 cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-18 Core Compact Recovery Composition Oracle
+
+The `recovery` target now models Bitcoin Core's 65-byte compact-signature
+wrapper, which was not covered by its raw 64-byte `(r,s)` and integer `recid`
+checks. Core's user-input path is
+`MessageVerify` (`/mnt/my_storage/bitcoin/src/common/signmessage.cpp:26`) ->
+`CPubKey::RecoverCompact` (`/mnt/my_storage/bitcoin/src/pubkey.cpp:300`) ->
+`secp256k1_ecdsa_recoverable_signature_parse_compact` and
+`secp256k1_ecdsa_recover` on the static context -> SEC1 serialization ->
+`PKHash(pubkey)`. The address, base64 signature, and message are supplied by
+the RPC/UI caller. The compact header is Core's caller-side framing: `27`
+selects recovery ID 0 and uncompressed output, while `31` selects recovery ID
+0 and compressed output.
+
+The exact trigger is `core recover compact composition\n`, stored at
+`src/fuzz/corpora/recovery/core-recover-compact-composition`. It uses fixed
+independent wire bytes `r = s = x(G)` and `z = 0`, so recovery ID 0 must produce
+`G`. For both canonical headers the helper independently checks the exact
+`(header - 27) & 3` and `(header - 27) & 4` mapping, fixed compressed and
+uncompressed SEC1 encodings of `G`, and agreement between the dynamic context
+and Core's static singleton. The expected public-key bytes are not derived
+from the recovery result or from a Core wrapper.
+
+Existing tests covered Core's generated `CKey::SignCompact` ->
+`CPubKey::RecoverCompact` round trip, and the recovery fuzzer covered the raw
+compact parser and recovery equations, but neither kept a fixed 65-byte Core
+wire value while independently checking header selection and final
+serialization. The causal oracle proof used a temporary harness-model
+mutation that swapped the compressed and uncompressed serialization flags.
+The old 15-file corpus passed with 16 executions and exit 0; the new 16-file
+corpus aborted with exit 134. This was an adapter mutation, not a production
+bug claim, because `CPubKey::RecoverCompact` lives in Bitcoin Core rather than
+this library. The source was restored before the final builds.
+
+On the restored branch, the 16-file corpus passed with 17 executions and exit
+0 under each of native 5x52 Clang ASan/UBSan, forced-int64/10x26 Clang
+ASan/UBSan, and external MSan:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  /tmp/secp256k1-next-asan/bin/fuzz_recovery /tmp/recovery-core-new \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  /tmp/secp256k1-next-asan-int64/bin/fuzz_recovery /tmp/recovery-core-new \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_recovery /tmp/recovery-core-new \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+A native ASan/UBSan two-job/two-worker replay of the same 16 seeds used
+`-jobs=2 -workers=2 -max_total_time=12 -timeout=240`; both jobs exited 0
+after 181 and 182 executions. The private corpus grew to 111 files, and no
+sanitizer report, timeout, OOM, crash, or tracked artifact occurred.
+
+This is negative oracle evidence, not a clean-master production finding. The
+branch descends from `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; the current l0rinc ref is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, and relevant fork commits were
+already reconciled before this change. No production mutation, fix, or
+deterministic regression test is justified. A failure in this exact wrapper
+would be a Core message-authentication/API issue: a false-positive recovered
+identity could be Medium depending on the caller, while a false negative or
+malformed-input failure is lower. It is not a consensus High/Critical issue
+because `RecoverCompact` is not called by Bitcoin Core block or witness
+validation. A separate legacy ECDSA `CPubKey::Verify` discrepancy reached from
+invalid transaction/script bytes must still be rated High/Critical according
+to its actual master consensus impact.
+
+The existing master-relative findings (`42842d5`, `8457e54`, `49a9725`,
+`5a34922`, `c16e3d8`, and `e16314a`) remain separate and are not downgraded by
+this oracle. Any later incidental fix must be recorded as context rather than
+used to hide a failure first reproduced on unmodified master. A public nonce
+buffer with no standalone cryptographic meaning is not Critical merely because
+it is uncleared.
