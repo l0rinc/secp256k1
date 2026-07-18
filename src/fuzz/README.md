@@ -14,7 +14,7 @@ Targets:
   multiply-shift boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, normalized/non-normalized rational x-only fractions, and the fixed x-only `(n - 1)G` order-boundary contract across both input forms and curve-known branches
+- `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, explicit zero-scalar generator identity results in both Jacobian and affine forms, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, normalized/non-normalized rational x-only fractions, and the fixed x-only `(n - 1)G` order-boundary contract across both input forms and curve-known branches
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss/Pippenger batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
@@ -12290,3 +12290,59 @@ the specific caller and reachability; this seed only proves that a future
 near-order x-only regression will be caught immediately. This finding does
 not concern public nonce cleanup; nonce data without cryptographic meaning
 is not Critical solely because it is retained or cleared.
+
+## 2026-07-18 Generator Zero-Scalar Identity Oracle
+
+The `ecmult_const/generator-zero` corpus input now pins the exact zero-scalar
+contract for the blinded generator helpers. It calls both
+`secp256k1_ecmult_gen_gej` and `secp256k1_ecmult_gen_ge` with the explicit
+`secp256k1_scalar_zero` value after poisoning each output. The projective
+result must carry the infinity flag, the affine result must carry the infinity
+flag, and the affine result must not be accepted as a valid finite curve
+point. This is deliberately separate from the regular generator oracle,
+whose scalar helper forces nonzero values; the existing group fuzzer can reach
+zero only through its general input-derived stream and had no deterministic
+zero-generator seed.
+
+The causal production mutation was inserted immediately after
+`secp256k1_ge_set_gej` in `secp256k1_ecmult_gen_ge`:
+
+```
+if (secp256k1_scalar_is_zero(a)) {
+    r->infinity = 0;
+}
+```
+
+All 10 pre-existing `ecmult_const` inputs passed under that mutation on the
+native 5x52 and forced-int64/10x26 ASan/UBSan builds. The new
+`generator-zero` seed aborted with exit 134 on both backends. The control
+build kept the production mutation but disabled only the new trigger call;
+the same focused seed then exited 0 on both backends. This isolates the new
+assertion as the detector rather than relying on an older incidental check.
+The production mutation and control bypass were restored before clean
+verification.
+
+The restored 11-file `ecmult_const` corpus passed native and forced-int64
+ASan/UBSan replays. The focused seed passed independently under both of those
+builds and under forced-int64 MSan with origin tracking. Native and
+forced-int64 two-worker/two-job libFuzzer replays used:
+
+```
+-fork=2 -jobs=2 -max_total_time=15 -timeout=90 -rss_limit_mb=0 \
+  -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+Both managers exited 0 with no sanitizer diagnostic, timeout, OOM, crash, or
+artifact. Generated worker inputs were removed and the tracked corpus was
+restored to its 11-file state.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production bug. The clean baseline
+`origin/master` at `8c3e6e6d992456d3b9228305ae84a6703273cf70` passes the
+identity contract, and public secret-key creation rejects zero before calling
+the blinded generator path; no public master-relative failure is claimed.
+If a future internal caller did pass zero and lost the infinity state, the
+result would be an internal generator-multiplication correctness failure whose
+severity would depend on that caller's reachability. This finding is unrelated
+to nonce cleanup and does not elevate any non-cryptographic nonce state to
+Critical severity.
