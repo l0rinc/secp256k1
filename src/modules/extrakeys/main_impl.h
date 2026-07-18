@@ -195,6 +195,31 @@ static int secp256k1_keypair_seckey_load(const secp256k1_context* ctx, secp256k1
     return ret;
 }
 
+/* Derive a public key from sk without relying on generator precomputation.
+ * This path is only used to validate an opaque keypair in a context such as
+ * the static context. Keep the scalar multiplication constant-time because
+ * sk is secret key material. */
+static void secp256k1_keypair_derive_pubkey(const secp256k1_context* ctx, secp256k1_ge *pk, const secp256k1_scalar *sk) {
+    if (secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)) {
+        secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, pk, sk);
+    } else {
+        secp256k1_gej result, doubled, added;
+        int i;
+
+        secp256k1_gej_set_infinity(&result);
+        for (i = 255; i >= 0; i--) {
+            secp256k1_gej_double(&doubled, &result);
+            secp256k1_gej_add_ge(&added, &doubled, &secp256k1_ge_const_g);
+            secp256k1_gej_cmov(&doubled, &added, (int)secp256k1_scalar_get_bits_limb32(sk, (unsigned int)i, 1));
+            result = doubled;
+        }
+        secp256k1_ge_set_gej(pk, &result);
+        secp256k1_gej_clear(&result);
+        secp256k1_gej_clear(&doubled);
+        secp256k1_gej_clear(&added);
+    }
+}
+
 /* Load a keypair into pk and sk (if non-NULL). This function declassifies pk
  * and ARG_CHECKs that the keypair is not invalid. It always initializes sk and
  * pk with dummy values. */
@@ -211,17 +236,12 @@ static int secp256k1_keypair_load(const secp256k1_context* ctx, secp256k1_scalar
         if (ret) {
             secp256k1_ge expected_pk;
 
-            if (!secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)) {
-                ret = 0;
-                secp256k1_callback_call(&ctx->illegal_callback, "secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)");
-            } else {
-                secp256k1_ecmult_gen_ge(&ctx->ecmult_gen_ctx, &expected_pk, sk);
-                ret = secp256k1_ge_eq_var(pk, &expected_pk);
-                secp256k1_ge_clear(&expected_pk);
-                secp256k1_declassify(ctx, &ret, sizeof(ret));
-                if (!ret) {
-                    secp256k1_callback_call(&ctx->illegal_callback, "keypair public key does not match secret key");
-                }
+            secp256k1_keypair_derive_pubkey(ctx, &expected_pk, sk);
+            ret = secp256k1_ge_eq_var(pk, &expected_pk);
+            secp256k1_ge_clear(&expected_pk);
+            secp256k1_declassify(ctx, &ret, sizeof(ret));
+            if (!ret) {
+                secp256k1_callback_call(&ctx->illegal_callback, "keypair public key does not match secret key");
             }
         }
     }
