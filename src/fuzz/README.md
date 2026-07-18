@@ -10611,3 +10611,46 @@ This is negative evidence only. It does not establish a new clean-master
 production bug, does not change the severity of the existing Medium/latent
 field and malformed-state findings, and does not downgrade any finding merely
 because the current hardened branch remains clean under this worker sweep.
+
+## 2026-07-18 Fork Branch Check and MSan Replay
+
+Another `git fetch --all --prune` plus explicit
+`refs/pull/*/head:refs/remotes/l0rinc-pr/*` fetch left the public l0rinc pull
+set unchanged: PR heads #1 through #16 are still the complete visible pull-ref
+surface. The branch-only `l0rinc/detached*` refs that were not already named in
+this file were inspected separately. The undocumented heads are alternate
+performance stacks around `SECP256K1_ALWAYS_INLINE` and xor-mask conditional
+moves (`41adffe`, `f775875`, `9c2d101`, `5125d1f`, `7f8d892`, `2012b42`,
+`33b1b9c`, and the shared `80203e2` stack). They do not add a new correctness
+oracle or clean-master vulnerability proof, and cherry-picking them would mix
+code-size/performance tradeoffs into the causal bug-discovery branch. They
+were therefore not applied and do not change any existing severity rating.
+
+The stateful corpus set was also replayed under MemorySanitizer using the
+forced-int64/10x26 external-callback build
+`/tmp/secp256k1-msan-int64-ext2`, rebuilt from the current checkout with:
+
+```
+-O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer
+```
+
+The replay targets were `api_roundtrip`, `context`, `xonly_tweak`, `ecdh`,
+`schnorrsig`, `recovery`, `musig`, `ellswift`, and `ecmult_multi`, each run
+with:
+
+```
+-runs=1 -timeout=120 -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+All nine targets exited zero with empty artifact directories and no
+MemorySanitizer warning, sanitizer summary, timeout, OOM, crash, or assertion
+failure. LibFuzzer loaded the complete tracked corpus directories: 49
+`api_roundtrip`, 13 `context`, 15 `xonly_tweak`, 8 `ecdh`, 15 `schnorrsig`, 14
+`recovery`, 72 `musig`, 16 `ellswift`, and 27 `ecmult_multi` files. Its
+in-memory minimized corpus at `DONE` was smaller for `xonly_tweak` and
+`musig`, but that is not a skipped-input finding; a redundant explicit-file
+MSan replay of the same target list also exited zero.
+
+This adds uninitialized-state negative evidence for the current oracle set
+only. It does not prove clean master safe, introduce a production fix, or
+change the existing master-relative severity ledger.
