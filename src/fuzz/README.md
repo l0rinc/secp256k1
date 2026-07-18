@@ -18,7 +18,7 @@ Targets:
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss/Pippenger batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
-- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing and TapLeaf CompactSize boundary vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
+- `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing, TapLeaf CompactSize boundary vectors, and maximum-depth 128-sibling Merkle-chain vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
@@ -12757,3 +12757,66 @@ no standalone cryptographic meaning is not Critical merely because cleanup
 is incomplete. Existing tests missed this because their TapLeaf fixtures only
 used the one-byte CompactSize form and their point/tweak checks did not hash
 raw script length bytes through Core's composition.
+
+## 2026-07-18 Core Taproot Control-Block Maximum-Depth Oracle
+
+The `xonly_tweak` target now pins Bitcoin Core's maximum valid Taproot
+control-block depth: `VerifyWitnessProgram` -> `ComputeTapleafHash` /
+`ComputeTaprootMerkleRoot` -> `VerifyTaprootCommitment` ->
+`XOnlyPubKey::CheckTapTweak` -> static `secp256k1_xonly_pubkey_parse` and
+`secp256k1_xonly_pubkey_tweak_add_check`. The relevant block/witness fields are
+attacker-controlled: the 32-byte output program, control parity and leaf
+version, internal x-only key, executed script, and each Merkle sibling. Core's
+prechecked control-block domain is 33 + 32*n bytes for n in [0, 128], so the
+maximum serialized input is 4129 bytes. This seed exercises n=128 rather than
+only the common zero- or one-sibling paths.
+
+The reference remains independent of the production hash composition. It
+reconstructs CompactSize, `TapLeaf`, lexicographically ordered `TapBranch`,
+and `TapTweak` with `secp256k1_fuzz_sha256_standalone`. The fixed script is
+`foobar`, the control byte is `0xc1`, the internal key is the generator x
+coordinate, and sibling byte j of node i is `(0xa1 + 17*i + 31*j) mod 256`.
+The independent vectors are TapLeaf
+`069c5b7b7636f103125245cd97edd65a7b02b905d611cccd5d21a172c210bced`, root
+`df37b8e843fa876dd160dbeadc4e991b8c82a8b8e2d5abded52b398d6cda3143`, tweak
+`37de716f1816b6953f202e0b9ca8033cba4a8c8c3eababa8cfc2452d31a91970`, output
+`74e2e57ba13c4b749b8a85954d43117a24d917662a2cae22526bb85549f04d01`, and
+parity 1. Node 0 is
+`a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e605244362` and
+node 127 is
+`102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1`.
+Normal and static contexts agree. Flipping parity, the last sibling, or
+truncating one sibling (127-depth) rejects the expected program.
+
+The trigger is `xonly_tweak/core-taproot-control-max-depth`. For causal proof,
+`secp256k1_xonly_pubkey_tweak_add_check` was temporarily mutated to reject only
+the exact output/tweak pair above. The old 19-file corpus passed with 20
+executions (exit 0), while the new seed aborted with exit 134 under native
+Clang ASan/UBSan. The mutation was restored before the final runs. The
+restored 20-file corpus passed with 21 executions under native 5x52
+ASan/UBSan, forced-int64/10x26 ASan/UBSan, and forced-int64 MSan. A private
+copy ran with `-jobs=2 -workers=2 -max_total_time=12`; both jobs exited 0
+after 21 executions, without sanitizer diagnostics, timeout, OOM, crash, or
+artifact. No tracked corpus file was extended and no fuzz process remained.
+
+The master-relative replay used a fresh detached worktree at unmodified
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`, with only the
+fuzzer/CMake overlay and a temporary harness-only early return for this seed.
+The exact master production library passed the trigger under Clang ASan/UBSan
+with exit 0; no production fix or fork patch was imported. The nearby
+`16253c5` CompactSize, `1f3fc97` control-composition, and `878f28d` Schnorr
+composition commits are complementary coverage and must not be treated as
+fixes that lower a failure first reproduced on master. The l0rinc pull refs
+were fetched and reconciled before this audit; no additional cherry-pick was
+needed for this boundary. Existing findings remain rated against unmodified
+master and Bitcoin Core call paths. In particular, a nonce buffer without
+standalone cryptographic meaning is not Critical merely because it is not
+cleared.
+
+Severity is master-relative: if a real master discrepancy at this Core
+boundary accepted an invalid commitment or rejected a valid one from an
+invalid block/witness, rate it High or Critical according to the resulting
+consensus effect. This run found no discrepancy, memory error, or clean-master
+vulnerability. Existing tests missed the case because they covered point
+arithmetic and short control paths separately, not the full 128-iteration
+serialized Merkle fold and output-program check.
