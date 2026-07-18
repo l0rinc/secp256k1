@@ -15519,3 +15519,51 @@ changes, or masks the trigger. A candidate patch that merely makes a follow-up
 commit pass is not proof that master was safe; rerun the original master or
 the minimal production mutation before downgrading a finding. No fuzz or
 sanitizer job remains running after this replay.
+
+## 2026-07-18 MuSig four-worker state-machine recheck
+
+The next distinct discovery pass targeted the MuSig state machine rather than
+repeating the field, context, ecmult, EllSwift, or Core wire campaigns. The
+tracked `src/fuzz/corpora/musig` corpus has 77 files. It was copied with
+`rsync -a --delete` to the private `/tmp/codex-next-mu4` directory; no
+generated input was written to the repository. The tested source state is
+unchanged from `78bb72247dd682128ed57a4197c7557094abb363`; the commits after
+that point are documentation-only, so the existing Clang ASan/UBSan
+`/tmp/secp256k1-oracles-external/bin/fuzz_musig` binary still matches the
+source under test.
+
+The exact replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-oracles-external/bin/fuzz_musig \
+      /tmp/codex-next-mu4 -fork=4 -jobs=4 -max_total_time=120 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-mu4-artifacts/ \
+      -print_final_stats=1
+
+All four workers/jobs exited 0 after 133-136 seconds. Each worker reported
+`oom/timeout/crash: 0/0/0`; there was no ASan, UBSan, runtime, or `ERROR:`
+diagnostic, and `/tmp/codex-next-mu4-artifacts` was empty. The workers loaded
+all 77 seed files and reached the existing MuSig transitions for duplicate
+signers, cache and key aggregation, nonce/session aliases, zero or canceled
+effective nonces, consumed secret nonces, partial-signature failure cleanup,
+and invalid opaque-state rejection. This is negative state-machine evidence;
+it is not a claim that a direct MuSig API misuse is Bitcoin Core consensus
+reachable.
+
+No production bug, deterministic regression test, or severity change is
+claimed. A future clean-master MuSig failure must be rated through the real
+caller: Core does not construct MuSig opaque caches, sessions, or secret
+nonces from an invalid block, witness, or ordinary peer message, so those
+failures remain direct-API/wallet or local-state findings unless a concrete
+Core reachability and impact proof changes that classification. A nonce with
+no standalone cryptographic meaning is not Critical merely because it is not
+cleared; secret session randomness remains a separate cryptographic contract.
+Any later fix or l0rinc cherry-pick must amend its commit message and this
+ledger with the clean-master or minimal-mutation baseline, exact trigger,
+preconditions/postconditions, failure output, Core caller, master-relative
+severity, test gap, and whether the change preserves, changes, or masks the
+behavior. The private corpus and artifacts were removed after the final
+process check, and no fuzz job remains running.
