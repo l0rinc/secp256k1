@@ -623,6 +623,85 @@ static void secp256k1_fuzz_check_schnorrsig_verify_reference(const secp256k1_con
                == secp256k1_schnorrsig_verify(ctx, sig64, msg, msglen, xonly));
 }
 
+/* Model the part of Bitcoin Core's Tapscript signature path after
+ * SignatureHashSchnorr has produced the 32-byte message hash. Core accepts a
+ * 64-byte default signature or a 65-byte signature with a valid, non-default
+ * hash type, strips the latter byte, reparses the raw x-only key, and then
+ * calls the fixed-size Schnorr verifier. */
+static int secp256k1_fuzz_core_schnorr_hash_type_valid(unsigned char hashtype) {
+    return hashtype != 0 && (hashtype <= 3 || (hashtype >= 0x81 && hashtype <= 0x83));
+}
+
+static int secp256k1_fuzz_core_tapscript_schnorr_verify(const secp256k1_context *ctx, const unsigned char *sig, size_t siglen, const unsigned char *xonly32, const unsigned char *msg32) {
+    secp256k1_xonly_pubkey xonly;
+
+    if (siglen != 64 && siglen != 65) {
+        return 0;
+    }
+    if (siglen == 65 && !secp256k1_fuzz_core_schnorr_hash_type_valid(sig[64])) {
+        return 0;
+    }
+    if (!secp256k1_xonly_pubkey_parse(ctx, &xonly, xonly32)) {
+        return 0;
+    }
+    return secp256k1_schnorrsig_verify(ctx, sig, msg32, 32, &xonly);
+}
+
+static void secp256k1_fuzz_check_core_tapscript_schnorr_composition(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *sig64, const unsigned char *xonly32, const unsigned char *msg32) {
+    static const unsigned char trigger[] = "core-tapscript-schnorr-composition\n";
+    static const unsigned char field_p[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x2F
+    };
+    static const unsigned char invalid_hash_types[] = { 0x00, 0x04, 0x80, 0x84 };
+    const secp256k1_context *contexts[2];
+    unsigned char sig65[65];
+    unsigned char serialized_xonly[32];
+    unsigned char zero_xonly[sizeof(secp256k1_xonly_pubkey)] = { 0 };
+    secp256k1_xonly_pubkey parsed_xonly;
+    int reference;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    contexts[0] = ctx;
+    contexts[1] = secp256k1_context_static;
+    memcpy(sig65, sig64, sizeof(sig64[0]) * 64);
+    sig65[64] = 0x01;
+
+    reference = secp256k1_fuzz_schnorrsig_verify_reference(ctx, sig64, msg32, 32, xonly32);
+    FUZZ_CHECK(reference == 1);
+    for (i = 0; i < sizeof(contexts) / sizeof(contexts[0]); i++) {
+        FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(contexts[i], sig64, 64, xonly32, msg32) == reference);
+        FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(contexts[i], sig65, sizeof(sig65), xonly32, msg32) == reference);
+
+        FUZZ_CHECK(secp256k1_xonly_pubkey_parse(contexts[i], &parsed_xonly, xonly32) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(contexts[i], serialized_xonly, &parsed_xonly) == 1);
+        FUZZ_CHECK(memcmp(serialized_xonly, xonly32, sizeof(serialized_xonly)) == 0);
+    }
+
+    /* BIP341/BIP342 witness bytes can carry a field overflow as the raw
+     * output key. Core must reject it before the Schnorr equation is used. */
+    for (i = 0; i < sizeof(contexts) / sizeof(contexts[0]); i++) {
+        memset(&parsed_xonly, 0xA5, sizeof(parsed_xonly));
+        FUZZ_CHECK(secp256k1_xonly_pubkey_parse(contexts[i], &parsed_xonly, field_p) == 0);
+        FUZZ_CHECK(memcmp(&parsed_xonly, zero_xonly, sizeof(parsed_xonly)) == 0);
+        FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(contexts[i], sig64, 64, field_p, msg32) == 0);
+    }
+    FUZZ_CHECK(secp256k1_fuzz_schnorrsig_verify_reference(ctx, sig64, msg32, 32, field_p) == 0);
+
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(ctx, sig64, 63, xonly32, msg32) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(ctx, sig64, 66, xonly32, msg32) == 0);
+    for (i = 0; i < sizeof(invalid_hash_types); i++) {
+        sig65[64] = invalid_hash_types[i];
+        FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(ctx, sig65, sizeof(sig65), xonly32, msg32) == 0);
+    }
+}
+
 /* BIP340 rejects the identity as the reconstructed nonce. Use P = G and set
  * s to the challenge so the verifier must reach that explicit rejection. */
 static void secp256k1_fuzz_check_schnorrsig_infinity_rejection(const secp256k1_context *ctx) {
@@ -1163,6 +1242,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_schnorrsig_infinity_rejection(ctx);
     }
     secp256k1_fuzz_check_schnorrsig_generator_equation(ctx, input, size);
+    secp256k1_fuzz_check_core_tapscript_schnorr_composition(ctx, input, size, sig64, xonly32, msg32);
     secp256k1_fuzz_check_schnorrsig_s_order_boundary(ctx, input, size);
     secp256k1_fuzz_check_schnorrsig_invalid_pubkey_verify(ctx, sig64, msg32, sizeof(msg32));
     secp256k1_fuzz_check_schnorrsig_extraparams_magic(ctx, msg32, &keypair);
