@@ -16054,3 +16054,88 @@ whether it preserves, changes, or masks the trigger. A follow-up patch that
 merely passes this replay is not proof that master was safe; rerun the
 original baseline or mutation before downgrading a finding. No fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 Scalar arithmetic and Core signing/verification backend recheck
+
+This pass rechecked all 8 tracked `src/fuzz/corpora/scalar` inputs. The target
+uses independent base-2^16 arithmetic and reconstruction checks for scalar
+addition, multiplication, inverses, shifts, WNAF, signed serialization,
+overflow handling, and the documented rounded-shift boundaries. Its
+preconditions include canonical reduced scalars, zero/order boundaries, and
+the in-contract shifts through `UINT_MAX`; its postconditions compare the
+production result with the independent model and require defined rejection
+or zero output on invalid domains.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 240s /tmp/secp256k1-oracles-external/bin/fuzz_scalar \
+      /tmp/codex-next-scalar4 -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-scalar4-artifacts/ \
+      -print_final_stats=1
+
+All four workers exited 0 after 93-95 seconds with zero OOM, timeout, and
+crash counters. No ASan, UBSan, runtime, or `ERROR:` diagnostic appeared,
+and no artifact was produced. The forced-int64 ASan/UBSan replay used two
+workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-next-asan-int64/bin/fuzz_scalar \
+      /tmp/codex-next-scalar-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-scalar-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers exited 0 with `oom/timeout/crash: 0/0/0`, no sanitizer or
+runtime diagnostic, and no artifact. The int64 MSan replay used two workers
+for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_scalar \
+      /tmp/codex-next-scalar-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-scalar-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers exited 0 with zero OOM, timeout, and crash counters; no
+MSan, UBSan, runtime, or `ERROR:` diagnostic and no artifact was produced.
+No production bug, deterministic regression test, or severity change is
+claimed by this negative recheck.
+
+The scalar result is consumed by Core's ECDSA and Schnorr signing and
+verification adapters, including `CKey::Sign`,
+`GenericTransactionSignatureChecker::CheckECDSASignature`, and
+`CheckSchnorrSignature`. A clean-master scalar equation or acceptance error,
+memory failure, race, or state corruption reachable from an invalid block or
+witness would be High/Critical according to demonstrated consensus impact.
+The existing rounded-shift-over-512 finding remains **Low latent internal
+memory safety**: the helper contract allows that shift, but current in-tree
+callers use the constant 384 and no public Core caller controls it. A nonce
+without standalone cryptographic meaning is not Critical merely because it
+is uncleared.
+
+Existing scalar tests cover individual operations; this target combines
+independent arithmetic, backend boundaries, and failure-state behavior. The
+replay is negative discovery evidence, not proof that unmodified master is
+safe. The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; PRs #1-#16 remain reconciled and
+no l0rinc commit was cherry-picked for this pass. Private corpus copies,
+logs, and artifacts were removed after the process check.
+
+Any later scalar, signature, Core adapter, production fix, or l0rinc
+cherry-pick must amend its commit message and this ledger with the
+clean-master or minimal-production-mutation baseline, exact corpus bytes or
+mutation, preconditions, postconditions, observed failure, Core caller,
+severity on unmodified master, existing test gap, verifier commands, and
+whether it preserves, changes, or masks the trigger. A follow-up patch that
+merely passes this replay is not proof that master was safe; rerun the
+original baseline or mutation before downgrading a finding. No fuzz,
+sanitizer, compiler, or test process remains running.
