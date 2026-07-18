@@ -3056,6 +3056,82 @@ static void secp256k1_fuzz_check_core_ecdsa_serialized_fixture(const secp256k1_c
     }
 }
 
+/* Match Bitcoin Core's CheckSignatureEncoding -> IsLowDERSignature adapter.
+ * The strict DER check sees the final sighash byte, then Core removes exactly
+ * that byte before CPubKey::CheckLowS invokes its lax DER parser and static
+ * normalizer. Keep the expected low/high result independent of the library
+ * normalizer so this remains a composition oracle rather than a round trip. */
+static void secp256k1_fuzz_check_core_ecdsa_low_s_encoding(const secp256k1_context *ctx, const unsigned char *der, size_t der_len, const unsigned char *input_compact, const unsigned char *expected_normalized_compact, int expected_high) {
+    unsigned char signature[73];
+    unsigned char normalized_compact[64];
+    unsigned char static_normalized_compact[64];
+    secp256k1_ecdsa_signature sig;
+    secp256k1_ecdsa_signature static_sig;
+    secp256k1_ecdsa_signature normalized_sig;
+    secp256k1_ecdsa_signature static_normalized_sig;
+    int parsed;
+    int static_parsed;
+    int normalized;
+    int static_normalized;
+
+    FUZZ_CHECK(der_len + 1 <= sizeof(signature));
+    memcpy(signature, der, der_len);
+    signature[der_len] = 0x83; /* SIGHASH_SINGLE | SIGHASH_ANYONECANPAY. */
+
+    /* IsValidSignatureEncoding counts the sighash in sig.size() but excludes
+     * it from the DER sequence length. The fixture is canonical by
+     * construction, so pin that exact Core framing before slicing it. */
+    FUZZ_CHECK(der_len >= 8);
+    FUZZ_CHECK(signature[0] == 0x30);
+    FUZZ_CHECK(signature[1] == der_len - 2);
+
+    /* Core's vchSigCopy is signature[0 .. der_len), not the full framed
+     * vector. The lax parser and static context mirror CPubKey::CheckLowS. */
+    parsed = ecdsa_signature_parse_der_lax(ctx, &sig, signature, der_len);
+    static_parsed = ecdsa_signature_parse_der_lax(secp256k1_context_static, &static_sig, signature, der_len);
+    FUZZ_CHECK(parsed == 1);
+    FUZZ_CHECK(parsed == static_parsed);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normalized_compact, &sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(secp256k1_context_static, static_normalized_compact, &static_sig) == 1);
+    FUZZ_CHECK(memcmp(normalized_compact, input_compact, sizeof(normalized_compact)) == 0);
+    FUZZ_CHECK(memcmp(normalized_compact, static_normalized_compact, sizeof(normalized_compact)) == 0);
+
+    normalized_sig = sig;
+    static_normalized_sig = static_sig;
+    normalized = secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &sig);
+    static_normalized = secp256k1_ecdsa_signature_normalize(secp256k1_context_static, &static_normalized_sig, &static_sig);
+    FUZZ_CHECK(normalized == expected_high);
+    FUZZ_CHECK(static_normalized == normalized);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normalized_compact, &normalized_sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(secp256k1_context_static, static_normalized_compact, &static_normalized_sig) == 1);
+    FUZZ_CHECK(memcmp(normalized_compact, expected_normalized_compact, sizeof(normalized_compact)) == 0);
+    FUZZ_CHECK(memcmp(normalized_compact, static_normalized_compact, sizeof(normalized_compact)) == 0);
+    FUZZ_CHECK((!normalized) == (expected_high == 0)); /* Core's CheckLowS return value. */
+}
+
+static void secp256k1_fuzz_check_core_ecdsa_low_s_encoding_fixture(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    static const unsigned char trigger[] = "core ECDSA low-S encoding composition\n";
+    unsigned char low_compact[64];
+    unsigned char high_compact[64];
+    unsigned char der[72];
+    size_t der_len;
+    int i;
+
+    if (inputlen != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    memcpy(low_compact, secp256k1_fuzz_pubkey_g_compressed + 1, 32);
+    memcpy(low_compact + 32, secp256k1_fuzz_pubkey_g_compressed + 1, 32);
+    memcpy(high_compact, low_compact, sizeof(high_compact));
+    FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, high_compact + 32) == 1);
+    for (i = 0; i < 2; i++) {
+        const unsigned char *input_compact = i == 0 ? low_compact : high_compact;
+        der_len = secp256k1_fuzz_make_der_signature(der, input_compact, input_compact + 32);
+        secp256k1_fuzz_check_core_ecdsa_low_s_encoding(ctx, der, der_len, input_compact, low_compact, i == 1);
+    }
+}
+
 static void secp256k1_fuzz_check_signature_parse_der_size_boundary(const secp256k1_context *ctx) {
     static const unsigned char non_der[1] = {0};
     unsigned char zero_sig[sizeof(secp256k1_ecdsa_signature)] = {0};
@@ -3868,6 +3944,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_signature_parse_der_input(ctx, input, size, msg32, &pubkey);
     secp256k1_fuzz_check_core_ecdsa_serialized_composition(ctx, input, size, NULL);
     secp256k1_fuzz_check_core_ecdsa_serialized_fixture(ctx, input, size);
+    secp256k1_fuzz_check_core_ecdsa_low_s_encoding_fixture(ctx, input, size);
 
     secp256k1_context_destroy(ctx);
     return 0;
