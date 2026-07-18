@@ -1032,6 +1032,138 @@ static void secp256k1_fuzz_check_pubkey_sort_sixteen(const secp256k1_context *ct
     }
 }
 
+static void secp256k1_fuzz_check_static_pubkey_parse_case(const secp256k1_context *ctx, const unsigned char *input, size_t inputlen) {
+    unsigned char normal_compressed[33];
+    unsigned char static_compressed[33];
+    unsigned char normal_uncompressed[65];
+    unsigned char static_uncompressed[65];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_pubkey normal_pubkey;
+    secp256k1_pubkey static_pubkey;
+    secp256k1_pubkey pubkey_before;
+    size_t normal_len;
+    size_t static_len;
+    int normal_ret;
+    int static_ret;
+
+    memset(&normal_pubkey, 0xA5, sizeof(normal_pubkey));
+    memset(&static_pubkey, 0x5A, sizeof(static_pubkey));
+    normal_ret = secp256k1_ec_pubkey_parse(ctx, &normal_pubkey, input, inputlen);
+    static_ret = secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_pubkey, input, inputlen);
+    FUZZ_CHECK(static_ret == normal_ret);
+    if (!normal_ret) {
+        FUZZ_CHECK(memcmp(&normal_pubkey, zero_pubkey, sizeof(normal_pubkey)) == 0);
+        FUZZ_CHECK(memcmp(&static_pubkey, zero_pubkey, sizeof(static_pubkey)) == 0);
+        return;
+    }
+
+    normal_len = sizeof(normal_compressed);
+    static_len = sizeof(static_compressed);
+    pubkey_before = normal_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, normal_compressed, &normal_len, &normal_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(memcmp(&normal_pubkey, &pubkey_before, sizeof(normal_pubkey)) == 0);
+    pubkey_before = static_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, static_compressed, &static_len, &static_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(memcmp(&static_pubkey, &pubkey_before, sizeof(static_pubkey)) == 0);
+    FUZZ_CHECK(normal_len == sizeof(normal_compressed));
+    FUZZ_CHECK(static_len == normal_len);
+    FUZZ_CHECK(memcmp(static_compressed, normal_compressed, normal_len) == 0);
+
+    normal_len = sizeof(normal_uncompressed);
+    static_len = sizeof(static_uncompressed);
+    pubkey_before = normal_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, normal_uncompressed, &normal_len, &normal_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(memcmp(&normal_pubkey, &pubkey_before, sizeof(normal_pubkey)) == 0);
+    pubkey_before = static_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, static_uncompressed, &static_len, &static_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(memcmp(&static_pubkey, &pubkey_before, sizeof(static_pubkey)) == 0);
+    FUZZ_CHECK(normal_len == sizeof(normal_uncompressed));
+    FUZZ_CHECK(static_len == normal_len);
+    FUZZ_CHECK(memcmp(static_uncompressed, normal_uncompressed, normal_len) == 0);
+}
+
+static void secp256k1_fuzz_check_static_pubkey_codecs(
+    const secp256k1_context *ctx,
+    const secp256k1_pubkey * const *pubkeys
+) {
+    enum { N_PUBKEYS = 4, SERIALIZED_SIZE = 33 };
+    static const unsigned char invalid_pubkey33[33] = { 0x05 };
+    secp256k1_pubkey static_pubkeys[N_PUBKEYS];
+    const secp256k1_pubkey *static_input[N_PUBKEYS];
+    const secp256k1_pubkey *static_sorted[N_PUBKEYS];
+    unsigned char serialized[N_PUBKEYS][SERIALIZED_SIZE];
+    unsigned char expected[N_PUBKEYS][SERIALIZED_SIZE];
+    unsigned char key[SERIALIZED_SIZE];
+    unsigned char normal_uncompressed[65];
+    int matched[N_PUBKEYS] = { 0 };
+    size_t serialized_len;
+    size_t i;
+    size_t j;
+
+    for (i = 0; i < N_PUBKEYS; i++) {
+        serialized_len = sizeof(serialized[i]);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized[i], &serialized_len, pubkeys[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(serialized[i]));
+        secp256k1_fuzz_check_static_pubkey_parse_case(ctx, serialized[i], sizeof(serialized[i]));
+        FUZZ_CHECK(secp256k1_ec_pubkey_parse(secp256k1_context_static, &static_pubkeys[i], serialized[i], sizeof(serialized[i])) == 1);
+        memcpy(expected[i], serialized[i], sizeof(expected[i]));
+    }
+
+    serialized_len = sizeof(normal_uncompressed);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, normal_uncompressed, &serialized_len, pubkeys[0], SECP256K1_EC_UNCOMPRESSED) == 1);
+    FUZZ_CHECK(serialized_len == sizeof(normal_uncompressed));
+    secp256k1_fuzz_check_static_pubkey_parse_case(ctx, normal_uncompressed, sizeof(normal_uncompressed));
+    secp256k1_fuzz_check_static_pubkey_parse_case(ctx, invalid_pubkey33, sizeof(invalid_pubkey33));
+
+    for (i = 0; i < N_PUBKEYS; i++) {
+        for (j = 0; j < N_PUBKEYS; j++) {
+            int normal_cmp = secp256k1_ec_pubkey_cmp(ctx, pubkeys[i], pubkeys[j]);
+            int static_cmp = secp256k1_ec_pubkey_cmp(secp256k1_context_static, &static_pubkeys[i], &static_pubkeys[j]);
+            FUZZ_CHECK((static_cmp == 0) == (normal_cmp == 0));
+            FUZZ_CHECK((static_cmp < 0) == (normal_cmp < 0));
+            FUZZ_CHECK((static_cmp > 0) == (normal_cmp > 0));
+        }
+    }
+
+    for (i = 1; i < N_PUBKEYS; i++) {
+        memcpy(key, expected[i], sizeof(key));
+        j = i;
+        while (j > 0 && memcmp(expected[j - 1], key, sizeof(key)) > 0) {
+            memcpy(expected[j], expected[j - 1], sizeof(expected[j]));
+            j--;
+        }
+        memcpy(expected[j], key, sizeof(key));
+    }
+
+    static_input[0] = &static_pubkeys[2];
+    static_input[1] = &static_pubkeys[0];
+    static_input[2] = &static_pubkeys[3];
+    static_input[3] = &static_pubkeys[1];
+    for (i = 0; i < N_PUBKEYS; i++) {
+        static_sorted[i] = static_input[i];
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_sort(secp256k1_context_static, static_sorted, N_PUBKEYS) == 1);
+    for (i = 0; i < N_PUBKEYS; i++) {
+        unsigned char actual[SERIALIZED_SIZE];
+
+        serialized_len = sizeof(actual);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, actual, &serialized_len, static_sorted[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == sizeof(actual));
+        FUZZ_CHECK(memcmp(actual, expected[i], sizeof(actual)) == 0);
+        for (j = 0; j < N_PUBKEYS; j++) {
+            if (!matched[j] && static_sorted[i] == static_input[j]) {
+                matched[j] = 1;
+                break;
+            }
+        }
+        FUZZ_CHECK(j < N_PUBKEYS);
+    }
+    for (i = 0; i < N_PUBKEYS; i++) {
+        FUZZ_CHECK(matched[i]);
+    }
+}
+
 static void secp256k1_fuzz_check_empty_pubkey_sort(const secp256k1_context *ctx) {
     const secp256k1_pubkey *empty[1] = { NULL };
 
@@ -3139,6 +3271,16 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &sort_pubkeys[2], sort_seckey) == 1);
     secp256k1_fuzz_valid_seckey32(ctx, sort_seckey, input, size, 29);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &sort_pubkeys[3], sort_seckey) == 1);
+    if (size == sizeof("static public-key codecs\n") - 1
+        && memcmp(input, "static public-key codecs\n", sizeof("static public-key codecs\n") - 1) == 0) {
+        const secp256k1_pubkey *static_codec_pubkeys[4];
+
+        static_codec_pubkeys[0] = &sort_pubkeys[0];
+        static_codec_pubkeys[1] = &sort_pubkeys[1];
+        static_codec_pubkeys[2] = &sort_pubkeys[2];
+        static_codec_pubkeys[3] = &sort_pubkeys[3];
+        secp256k1_fuzz_check_static_pubkey_codecs(ctx, static_codec_pubkeys);
+    }
     sorted_pubkeys[0] = &sort_pubkeys[0];
     sorted_pubkeys[1] = &sort_pubkeys[1];
     sorted_pubkeys[2] = &sort_pubkeys[2];
