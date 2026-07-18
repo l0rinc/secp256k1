@@ -14,7 +14,7 @@ Targets:
   multiply-shift boundaries against independent byte/product references
 - `fuzz_field`: internal field normalization, arithmetic, nonnormalized arithmetic, maximum-magnitude multiplication aliasing, strict input parsing, encoding, field cleanup, add-int boundaries, maximum-magnitude consistency and inversion representation invariance, canonical/raw-modulus zero-predicate slow-path checks, zero-predicate false-positive barriers, byte-level maximum-residue references, and independent byte-level negation, small-multiplier, add-int, and square-root references
 - `fuzz_group`: Jacobian/affine group-operation agreement, independent canonical-coordinate equality, positive and negative Jacobian/affine equality including affine-infinity mismatches, fractional curve-membership, finite, mixed-infinity, and all-infinity batch conversion, direct inverse-Z affine conversion, ordinary inverse-point cancellation with optional Z-ratio postconditions, nonnormalized affine-to-storage conversion, normalized and nonnormalized rescale scales, rescale aliasing, invalid opaque public-key operation barriers, lambda-degenerate alternate-slope addition, affine-point cleanup, and state cleanup
-- `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
+- `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, normalized/non-normalized rational x-only fractions, and the fixed x-only `(n - 1)G` order-boundary contract across both input forms and curve-known branches
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss/Pippenger batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
@@ -12251,3 +12251,42 @@ make that future regression fail at the field contract instead of being hidden
 by downstream arithmetic. This finding does not concern public nonce cleanup;
 nonce data without cryptographic meaning is not Critical solely because it is
 retained or cleared.
+
+## 2026-07-18 X-Only Order-Boundary Oracle
+
+The `ecmult_const` fuzzer now has a deterministic
+`ecmult_const/xonly-order-minus-one` input for the exact scalar `n - 1`.
+The focused oracle checks `secp256k1_ecmult_const_xonly` with the fixed
+generator x-coordinate in both forms: `d == NULL` and the equivalent
+`n/d` fraction with `d = 1`. Each form is exercised with both
+`known_on_curve == 0` and `known_on_curve == 1`, and the result is poisoned
+before the call. Since `(n - 1)G = -G`, every successful result must have the
+generator's canonical x-coordinate. This is an x-only multiplication
+contract, not another scalar arithmetic boundary: the scalar fuzzer already
+tests `n - 1`, but no existing `ecmult_const` seed forced this value through
+the isomorphic-curve x-only algorithm.
+
+For causal proof, a temporary production mutation added one to the returned
+field element only when `q` serialized as the exact order-minus-one value.
+All 9 pre-existing `ecmult_const` inputs passed under that mutation on native
+5x52 and forced-int64/10x26 ASan/UBSan builds. The new seed aborted with exit
+134 on both backends. Disabling only the new trigger call made the same
+mutated seed exit 0 on both backends, proving that the focused assertion,
+rather than an older incidental check, detects the targeted regression. The
+mutation and control bypass were restored before clean verification.
+
+The restored 10-file corpus passed native and forced-int64 ASan/UBSan
+replays. The focused seed also passed under the forced-int64 MSan build. A
+copied-corpus replay used `-fork=2 -jobs=2 -max_total_time=15` on both
+ASan/UBSan backends; both managers exited 0, with no OOM, timeout, crash,
+sanitizer diagnostic, or artifact. Temporary worker corpora were removed.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production bug. `origin/master` at
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` passes the contract, and no public
+failure is claimed. A real regression here could corrupt public operations
+that route through x-only multiplication, but its severity would depend on
+the specific caller and reachability; this seed only proves that a future
+near-order x-only regression will be caught immediately. This finding does
+not concern public nonce cleanup; nonce data without cryptographic meaning
+is not Critical solely because it is retained or cleared.

@@ -443,6 +443,51 @@ static void secp256k1_fuzz_ecmult_const_check_fixed_generator_two(const unsigned
     secp256k1_scalar_clear(&scalar);
 }
 
+static void secp256k1_fuzz_ecmult_const_check_xonly_order_minus_one(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "ecmult const xonly order minus one\n";
+    static const unsigned char generator_x[32] = {
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    secp256k1_scalar order_minus_one;
+    secp256k1_fe expected_x;
+    secp256k1_fe numerator;
+    secp256k1_fe denominator;
+    secp256k1_fe result;
+    unsigned int known_on_curve;
+    int overflow;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_scalar_set_b32(&order_minus_one, secp256k1_fuzz_scalar_order_minus_one, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    FUZZ_CHECK(!secp256k1_scalar_is_zero(&order_minus_one));
+
+    secp256k1_fe_set_b32_mod(&expected_x, generator_x);
+    secp256k1_fe_normalize_var(&expected_x);
+    denominator = secp256k1_fe_one;
+    secp256k1_fe_set_b32_mod(&numerator, generator_x);
+
+    /* (n - 1)G = -G, so both x-only input forms must return G.x. */
+    for (known_on_curve = 0; known_on_curve <= 1; known_on_curve++) {
+        memset(&result, 0xA5, sizeof(result));
+        FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &secp256k1_ge_const_g.x, NULL, &order_minus_one, known_on_curve) == 1);
+        secp256k1_fe_normalize_var(&result);
+        FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_x));
+
+        memset(&result, 0xA5, sizeof(result));
+        FUZZ_CHECK(secp256k1_ecmult_const_xonly(&result, &numerator, &denominator, &order_minus_one, known_on_curve) == 1);
+        secp256k1_fe_normalize_var(&result);
+        FUZZ_CHECK(secp256k1_fe_equal(&result, &expected_x));
+    }
+
+    secp256k1_scalar_clear(&order_minus_one);
+}
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     const unsigned char *input = secp256k1_fuzz_data_or_empty(data, size);
     secp256k1_context *ctx = secp256k1_fuzz_context(input, size, 97);
@@ -458,6 +503,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_ecmult_const_check_zero_scalar_infinity_z(input, size);
     secp256k1_fuzz_ecmult_const_check_fixed_generator_two(input, size);
+    secp256k1_fuzz_ecmult_const_check_xonly_order_minus_one(input, size);
     secp256k1_fuzz_ecmult_const_scalar(&base_scalar, input, size, 101, 1);
     secp256k1_fuzz_ecmult_const_scalar(&scalar, input, size, 107, 1);
     secp256k1_fuzz_ecmult_const_check_generator(ctx, &secp256k1_scalar_one);
