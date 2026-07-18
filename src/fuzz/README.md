@@ -12170,3 +12170,33 @@ latest no-scratch commit remains **Informational / Low internal-oracle
 hardening**, not High or Critical: no public failure is reachable on master,
 and the mutation proves only that the new assertion would catch a future
 internal regression.
+
+## 2026-07-18 Stateful Multi-Worker Recheck
+
+After the static audit, six high-risk targets were rerun from copied versions
+of their complete tracked corpora: `api_roundtrip`, `context`, `ecmult_multi`,
+`ellswift`, `musig`, and `schnorrsig`. Each manager used two libFuzzer workers
+and two jobs with independent artifact prefixes:
+
+```
+-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0 \
+  -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+The native Clang ASan/UBSan `ecmult_multi` replay used the complete 29-file
+corpus and both workers exited 0 with `oom/timeout/crash: 0/0/0`. The native
+MuSig replay used its complete corpus and both workers likewise exited 0 with
+`oom/timeout/crash: 0/0/0`; its long corpus-merge startup was allowed to
+finish rather than being classified as a timeout. The `api_roundtrip`,
+`context`, `ellswift`, and `schnorrsig` managers also exited 0, with no
+sanitizer diagnostics or crash artifacts. Temporary generated units and
+artifact directories were removed after each successful run; no tracked
+corpus changed.
+
+This is fresh negative evidence, not a new clean-master finding. No worker
+observed a production failure, sanitizer-only memory or concurrency failure,
+or oracle assertion failure, so the existing severity ledger is unchanged.
+The result does not downgrade the earlier Medium findings or promote any
+internal-oracle result to High/Critical. In particular, public nonce objects
+without cryptographic meaning are not classified as Critical merely because
+they were included in a cleanup-oriented stateful replay.
