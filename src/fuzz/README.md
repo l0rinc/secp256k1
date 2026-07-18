@@ -13764,3 +13764,119 @@ Verification for this oracle:
   and workers exited 0 and reported `oom/timeout/crash: 0/0/0`.
 - The temporary clean-master worktree, probe, and private corpora were
   removed. A final process inventory found no fuzz or sanitizer jobs running.
+
+## 2026-07-18 Core BIP32 Private-Derivation Composition Oracle
+
+The new `api_roundtrip/core-bip32-private-derivation-composition` seed is a
+42-byte ASCII dispatch input. It carries two independent Bitcoin Core BIP32
+private-derivation vectors through the libsecp256k1 secret-key tweak boundary:
+the hardened `m -> m/0'` step from test vector 1, followed by the
+non-hardened `m/0' -> m/0'/1` step. The fixture fixes the complete HMAC-SHA512
+outputs, so the first half is the exact private tweak and the second half is
+the exact child chain code:
+
+    m -> m/0' (child index 0x80000000, hardened):
+      parent chain code 873dff81c02f525623fd1fe5167eac3a55a049de3d314bb42ee227ffed37d508
+      parent private key e8f32e723decf4051aefac8e2c93c9c5b214313817cdb01a1494b917c8436b35
+      parent public key 0339a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2
+      HMAC 04bfb2dd60fa8921c2a4085ec15507a921f49cdc839f27f0f280e9c1495d44b547fdacbd0f1097043b78c63c20c34ef4ed9a111d980047ad16282c7ae6236141
+      child private key edb2e14f9ee77d26dd93b4ecede8d16ed408ce149b6cd80b0715a2d911a0afea
+      child chain code 47fdacbd0f1097043b78c63c20c34ef4ed9a111d980047ad16282c7ae6236141
+      child public key 035a784662a4a20a65bf6aab9ae98a6c068a81c52e4b032c0fb5400c706cfccc56
+
+    m/0' -> m/0'/1 (child index 1, non-hardened):
+      parent chain code 47fdacbd0f1097043b78c63c20c34ef4ed9a111d980047ad16282c7ae6236141
+      parent private key edb2e14f9ee77d26dd93b4ecede8d16ed408ce149b6cd80b0715a2d911a0afea
+      parent public key 035a784662a4a20a65bf6aab9ae98a6c068a81c52e4b032c0fb5400c706cfccc56
+      HMAC 4eb9d78157bae7a24115001621c4d91e3a3110e11e143c5259eaa4e55c5ec4bf2a7857631386ba23dacac34180dd1983734e444fdbf774041578e9b6adb37c19
+      child private key 3c6cb8d0f6a264c91ea8b5030fadaa8e538b020f0a387421a12de9319dc93368
+      child chain code 2a7857631386ba23dacac34180dd1983734e444fdbf774041578e9b6adb37c19
+      child public key 03501e454bf00751f24b1b489aa925215d66af2234e3891c3b21a52bedb3cd711c
+
+The exact Bitcoin Core call path is imported xprv, wallet key state, or a
+private descriptor -> `CExtKey::Derive`
+(`/mnt/my_storage/bitcoin/src/key.cpp:359`) -> `CKey::Derive`
+(`/mnt/my_storage/bitcoin/src/key.cpp:292`). `CKey::Derive` selects the
+hardened branch when `nChild >> 31` is nonzero and passes header `0` plus the
+32-byte parent secret to `BIP32Hash`; the non-hardened branch serializes the
+compressed parent public key and passes its prefix as the header plus the
+32-byte x-coordinate. `BIP32Hash` (`/mnt/my_storage/bitcoin/src/hash.cpp:71`)
+does HMAC-SHA512 over chain code, header, data, and big-endian child index.
+Core copies HMAC bytes 32..63 to the child chain code, copies the parent
+secret into the child, then calls
+`secp256k1_ec_seckey_tweak_add(secp256k1_context_static, child, vout.data())`
+(`/mnt/my_storage/bitcoin/src/key.cpp:306`). A failed tweak clears the child
+key. The fuzzer checks both dynamic and static contexts, the exact child
+secret, child public key, compressed serialization, and context agreement.
+
+This is a wallet and descriptor boundary, not a block or witness consensus
+boundary. Imported extended private keys, wallet databases, descriptors, and
+RPC/PSBT workflows can supply the parent state, but an invalid peer block
+cannot invoke `CExtKey::Derive` during Bitcoin Core validation. The fixture
+does not reimplement HMAC-SHA512: its values are independently fixed from
+Core's `src/test/bip32_tests.cpp` vectors, while the assertion begins at the
+same tweak and child-key API boundary used by production. The earlier public
+BIP32 oracle covers `CExtPubKey::Derive` and
+`secp256k1_ec_pubkey_tweak_add`; generic tweak tests cover arithmetic
+relations. Neither alone pins the hardened/non-hardened private mapping,
+parent-secret copying, child-chain-code split, and private-to-public result
+as one Core composition.
+
+Causal proof used a temporary, uncommitted production mutation in
+`src/secp256k1.c`: after a successful `secp256k1_ec_seckey_tweak_add` result
+was serialized, the last child-secret byte was toggled when the tweak matched
+the first vector's exact 32-byte value
+`04bfb2dd60fa8921c2a4085ec15507a921f49cdc839f27f0f280e9c1495d44b5`.
+Because the generic API checks run before this fixture, a temporary
+harness-only early return isolated the dedicated seed to this helper. The
+replay stopped with SIGABRT at
+`secp256k1_fuzz_check_core_bip32_private_derivation`
+(`src/fuzz/api_roundtrip.c:3228`) under:
+
+    gdb -q -batch -ex run -ex 'bt 16' --args /tmp/secp256k1-next-asan/bin/fuzz_api_roundtrip src/fuzz/corpora/api_roundtrip/core-bip32-private-derivation-composition -runs=1
+
+The backtrace reached the expected child-secret assertion. The production
+mutation and harness isolation were restored, and neither is committed. This
+is proof that the oracle fails on a plausible wrong private-derivation state,
+not merely that it adds coverage.
+
+This is **Informational / Low oracle hardening**, not a production finding on
+clean master. A real master mismatch could make wallet-derived keys or
+addresses inconsistent and could become Medium depending on whether the
+caller lost access to funds or exposed the wrong wallet state. It is not
+High/Critical merely because Bitcoin Core calls it: the unmodified-master
+path is not reachable from invalid blocks, transaction witnesses, or
+peer-controlled consensus validation. High/Critical would require a clean
+master consensus/security failure from such input, or a demonstrated
+memory/concurrency impact. A nonce buffer without standalone cryptographic
+meaning is not Critical merely because it is uncleared.
+
+The exact audit `origin/master` ref is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; reconciled `l0rinc/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already an ancestor. The Bitcoin
+Core call-site comparison used `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+No fork fix was cherry-picked to hide a master-relative result. Existing Core
+BIP32 and private-tweak findings are reiterated here, not reclassified. Any
+later cherry-pick that changes `CKey::Derive`, `BIP32Hash`, private tweak
+failure handling, or child-chain-code semantics must preserve this exact
+vector, the mutation/isolation proof, the origin control, and the wallet-only
+severity context. If a follow-up fix changes the behavior this oracle
+observes, its commit message must say whether it preserves or masks the
+master-relative condition; merging the context into that commit is required
+when a cherry-pick would otherwise obscure it.
+
+Verification for this oracle:
+
+- The new seed, all 62 corpus files, and an explicit empty input completed
+  with exit 0 under native ASan/UBSan, forced-int64 ASan/UBSan, and forced-
+  int64 MSan. The replay therefore covered 63 inputs in each configuration,
+  with no sanitizer diagnostic.
+- Native and forced-int64 ASan/UBSan ran private-copy campaigns with
+  `-fork=2 -jobs=2 -max_total_time=12 -timeout=5 -seed=1`. Both managers and
+  all workers exited 0; worker logs reported `oom/timeout/crash: 0/0/0`.
+- A fresh shared-library build at exact `origin/master` linked an independent
+  public-API probe containing both vectors. It reported
+  `vector=0 ret=1 exact=1` and `vector=1 ret=1 exact=1`, then exited 0. This
+  clean-master control found no production failure.
+- The temporary origin worktree, probe, mutation, and private corpora were
+  removed. A final process inventory found no running fuzz or sanitizer jobs.
