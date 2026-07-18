@@ -15735,3 +15735,68 @@ proof that master was safe; rerun the original baseline or mutation before
 downgrading a finding. The private corpus and artifacts were removed after
 the final process check, and no fuzz, sanitizer, compiler, or test process
 remains running.
+
+## 2026-07-18 Context randomize/clone lifecycle recheck
+
+This pass exercised all 13 tracked `src/fuzz/corpora/context` inputs. The
+target covers heap and preallocated context creation, clone-size accounting,
+randomize/reset transitions, custom SHA compression callback inheritance,
+static-context lifecycle rejection, invalid flags, tagged-SHA input/output
+overlap, and deterministic ECDSA/Schnorr equivalence across randomized and
+cloned contexts. Secret operations are compared against an independently
+randomized reference context, while every rejected operation checks its
+illegal-callback count and output cleanup. Private corpus copies were used.
+
+The native Clang ASan/UBSan four-worker command was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-oracles-external/bin/fuzz_context \
+      /tmp/codex-next-context4 -fork=4 -jobs=4 -max_total_time=120 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-context4-artifacts/ \
+      -print_final_stats=1
+
+All four jobs loaded 13 seeds and exited 0 after 120-123 seconds. Every
+worker reported `oom/timeout/crash: 0/0/0`; no ASan, UBSan, runtime, or
+`ERROR:` diagnostic appeared; and no artifact was produced. The int64 MSan
+backend then used two workers for 45 seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_context \
+      /tmp/codex-next-context-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-context-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan jobs exited 0 with `oom/timeout/crash: 0/0/0`, no MSan/UBSan
+diagnostic, and no artifact. No production bug, deterministic regression
+test, or severity change is claimed by this replay.
+
+The Core boundary is split. Core's static verification and signing contexts
+feed public-key, ECDSA, Schnorr/Taproot, and BIP324 library calls, so a clean
+master arithmetic, callback, or context-state failure reached from an
+invalid block, witness, or peer wire would be rated High/Critical according
+to demonstrated consensus or transport impact. This replay found none.
+Context creation, randomization, cloning, preallocation, and custom callback
+installation are local integration contracts; a failure confined to an
+arbitrary direct caller is not consensus-Critical merely because the API is
+public. An uncleared nonce with no standalone cryptographic meaning is also
+not Critical merely for that reason.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. PRs #1-#16 remain reconciled;
+no new l0rinc commit was cherry-picked. Future fixes or cherry-picks must
+amend the same commit message and this ledger with clean-master or
+minimal-production-mutation proof, exact corpus bytes or mutation,
+preconditions/postconditions, observed failure, Core caller,
+master-relative severity, existing test gap, and whether the change
+preserves, changes, or masks the trigger. A passing follow-up patch is not
+proof that master was safe; rerun the original baseline or mutation before
+downgrading a finding. The private corpus and artifacts were removed after
+the final process check, and no fuzz, sanitizer, compiler, or test process
+remains running.
