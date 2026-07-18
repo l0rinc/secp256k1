@@ -13421,3 +13421,78 @@ and claims no such discrepancy. The current `origin/master` and reconciled
 `l0rinc/master` refs are unchanged, fork fixes were not used to soften the
 comparison, and a public nonce buffer without standalone cryptographic meaning
 is not Critical merely because it is uncleared.
+
+## 2026-07-18 Core ECDSA `r + n` Serialized-Composition Oracle
+
+The new `api_roundtrip/core-ecdsa-r-plus-order-composition` seed carries the
+field-coordinate overflow case through the same post-sighash adapter used by
+Bitcoin Core's legacy ECDSA verifier. The relevant call path is
+`EvalChecksigPreTapscript`/`CHECKMULTISIG` -> `CheckSignatureEncoding` ->
+`GenericTransactionSignatureChecker::CheckECDSASignature` -> `CPubKey::Verify`
+-> `secp256k1_ecdsa_verify`. Core's script signature can contain canonical DER
+for `r = 2, s = 1` followed by an ordinary sighash byte; after Core removes
+that byte, the verifier receives the 32-byte sighash `z = 0` and a compressed
+public key `Q`.
+
+The fixture uses the fixed public point `Q` for which `R = 2Q` is a valid curve
+point with `x(R) = n + 2`. Therefore ECDSA's equation is valid even though the
+serialized `r` is `2`: the verifier must compare the reconstructed point's
+x-coordinate with both `r` and `r + n`. The oracle builds the canonical DER
+bytes, parses the exact serialized key and lax DER with normal and static
+contexts, checks the compact bytes, normalizes S, compares both verifier
+contexts, and then compares the result with the independent public-point
+equation reference. This is distinct from the existing raw
+`ecdsa-r-plus-order` check because it preserves the Core-shaped serialized
+key/DER boundary and its static-context normalization ordering.
+
+The attacker-controlled condition is a valid legacy script signature: the
+wire bytes are `02`/`01` DER integers plus a normal sighash byte, not an
+invalid parser input. A bug in the field-overflow comparison on unmodified
+master could therefore make a valid transaction fail or an invalid transaction
+pass; because Core can reach this branch from block and witness-adjacent script
+data, the master-relative severity would be High or Critical according to the
+observed consensus or memory-safety impact. The clean master and this branch
+agree on the vector, so this commit records no production vulnerability.
+
+The causal proof was a temporary production mutation that omitted the
+`r + n` candidate comparison only when the fixture supplied `(r,s)=(2,1)`.
+For isolation, the older raw `ecdsa-r-plus-order` assertion was temporarily
+disabled in the harness while the production mutation removed the second
+`secp256k1_gej_eq_x_var` comparison. The 58 pre-existing files plus the empty
+libFuzzer input completed 59 executions with exit 0 on both native and
+forced-int64 ASan/UBSan builds. The new seed then exited 134 on both builds at
+the serialized Core oracle's required-success postcondition. Both temporary
+changes were restored before the clean replays. The old corpus lacked a
+serialized `r + n` vector, so raw API coverage could not prove the Core adapter
+was wired correctly. This mutation models the exact broken condition and is
+not a fix.
+
+The restored 59-file corpus completed with exit 0 and 59 executed units on
+both native and forced-int64 ASan/UBSan. The external forced-int64 MSan replay
+used a private corpus copy, completed 60 runs including libFuzzer's empty
+input, and reported no diagnostic. The Coverage wrapper replayed all 59 files
+one at a time with status 0; `gcov -b -c` recorded 98.52% of 135
+`ecdsa_impl.h` lines and 100% of its 106 branches, including the second
+`r + n` comparison. Native and forced-int64 `-fork=2 -jobs=2
+-max_total_time=12` campaigns both returned manager exit 0; every worker
+reported `oom/timeout/crash: 0/0/0`. No fuzz process or tracked-corpus change
+remained after these commands.
+
+The current `origin/master` ref is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, and the reconciled
+`l0rinc/master` ref is `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; neither is
+being used to hide a master-relative result. Any later cherry-pick that changes
+the ECDSA verifier or this adapter must retain this unmodified-master
+comparison in its commit message. Existing raw `r + n` and Core serialized
+findings are reiterated here rather than reclassified, and a public nonce
+buffer with no standalone cryptographic meaning is not Critical merely because
+it is uncleared.
+
+As an explicit master control, a fresh library build at the exact
+`origin/master` ref was linked to a minimal public-API probe containing this
+same key, DER, and zero message. It printed
+`parsed_key=1 parsed_sig=1 dynamic=1 static=1` and exited 0. The master source
+contains the same `secp256k1_fe_add` and second `secp256k1_gej_eq_x_var` path;
+the branch-only DER offset refactor in this audit does not change that
+verifier. This control confirms that the retained finding is oracle coverage,
+not a production failure already masked by a later branch fix.
