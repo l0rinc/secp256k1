@@ -16814,3 +16814,88 @@ existing test gap, verifier commands, and whether it preserves, changes, or
 masks the trigger. A post-fix green replay is not proof that master was safe;
 rerun the original baseline or mutation before downgrading a finding. No fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 Current-HEAD deterministic sanitizer matrix and MSan test-oracle repair
+
+The existing native and forced-int64 deterministic test binaries were
+refreshed from the current source after their filesystem timestamps were
+observed to precede the later `bb87febf` commit timestamp. Because this
+worktree can contain source bytes before their commit metadata is written,
+timestamps alone were not treated as proof of stale code. The current source
+was rebuilt and tested with the fixed seed `0x5ec256k1`, 16 iterations, and
+four workers for the ASan/UBSan configurations:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 900s /tmp/secp256k1-oracles-external/bin/tests \
+      -j=4 -i=16 --seed=0x5ec256k1 --log=1
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 900s /tmp/secp256k1-next-asan-int64/bin/tests \
+      -j=4 -i=16 --seed=0x5ec256k1 --log=1
+
+Both rebuilt binaries exited 0 with all modules passing, including keypair,
+hash, ecmult, ECDSA recovery, Schnorr, MuSig, and EllSwift. The native run
+took 75.116 seconds and the forced-int64 run took 130.224 seconds. No ASan,
+UBSan, runtime, or `ERROR:` diagnostic appeared.
+
+The first current-HEAD MSan suite exposed a test-only oracle defect. The exact
+command was:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 1200s /tmp/secp256k1-msan-int64-ext2/bin/tests \
+      -j=2 -i=16 --seed=0x5ec256k1 --log=1
+
+It exited 1 after 435.496 seconds at `src/tests.c:893`, where
+`rfc6979_hmac_sha256_tests` passed a post-finalizer `rng` object to
+`all_bytes_equal`. `secp256k1_memclear_explicit` intentionally marks cleared
+storage undefined under MSan, so the test read triggered
+`MemorySanitizer: use-of-uninitialized-value`; this is not a production read,
+uninitialized secret, or sanitizer finding in the library. The isolated
+`-j=1 -i=1 -t=rfc6979_hmac_sha256_tests` replay reproduced the warning, while
+the HMAC target passed. The same contract applied to the buffered SHA wipe
+assertion.
+
+The test repair adds `all_bytes_equal_after_clear` in `src/tests.c`. It calls
+`SECP256K1_CHECKMEM_MSAN_DEFINE` only for the range whose implementation-level
+zero postcondition is intentionally being inspected, then performs the
+existing byte comparison. Production clearing, MSan poisoning, and normal
+use-after-clear detection are unchanged. This is **Low test-infrastructure /
+oracle correctness**, not a production vulnerability or deterministic
+regression requiring a production fix. No clean-master or minimal production
+mutation is claimed for this event: `origin/master` does not contain the
+post-finalizer test assertion that triggered it.
+
+After the repair, the exact full MSan command above exited 0 in 236.391
+seconds with no MSan, UBSan, runtime, or `ERROR:` diagnostic. The targeted
+`-t=hash` test passed under native, forced-int64, and MSan builds, and
+`-t=sha256_multi_block_compression_tests` passed under MSan. The helper is a
+test-only correction; it does not mask a production failure. Any future test
+that reads cleared storage must either use this explicit postcondition helper
+or retain the poison so an unintended read fails.
+
+For master-relative severity, the underlying hash-state clearing issue tracked
+by `62e3274f` remains **Medium memory hygiene / wallet-signing state**, not
+High/Critical: Bitcoin Core's RFC6979 path is reached by `CKey::Sign` and
+related signing code, not by invalid block or witness validation, and there is
+no standalone read primitive in this finding. The state is secret-derived, so
+it is a real cleanup contract, but a nonce or state without standalone
+cryptographic meaning is not Critical merely because it is uncleared. A future
+clean-master failure that reaches consensus validation, an invalid witness, or
+a remotely reachable transport path must be rated from that demonstrated
+impact instead.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger commits and no new cherry-pick was
+justified. Any later hash cleanup change, test adjustment, production fix, or
+l0rinc cherry-pick must amend its commit message and this ledger with the
+clean-master or minimal-mutation baseline, exact corpus/test input,
+preconditions, postconditions, failure, Core caller, severity on unmodified
+master, test gap, verifier commands, and whether it preserves, changes, or
+masks the trigger. A passing follow-up patch is not proof that master was safe;
+rerun the original baseline or mutation before downgrading a masked finding.
+No fuzz, sanitizer, compiler, or test process remains running.
