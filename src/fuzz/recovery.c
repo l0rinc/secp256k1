@@ -190,6 +190,101 @@ static void secp256k1_fuzz_check_core_recover_compact(const secp256k1_context *c
     }
 }
 
+/* Match Bitcoin Core's CKey::SignCompact composition. Core signs with its
+ * mutable signing context, serializes through the static context, and adds
+ * the compressed-key bit to the recovery header. The expected compact bytes
+ * below come from an independent RFC6979 and affine-curve calculation. */
+static void secp256k1_fuzz_check_core_sign_compact(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "core sign compact composition\n";
+    static const unsigned char seckey[32] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    };
+    static const unsigned char msg32[32] = { 0 };
+    static const unsigned char expected_compact[64] = {
+        0xA0, 0xB3, 0x7F, 0x8F, 0xBA, 0x68, 0x3C, 0xC6,
+        0x8F, 0x65, 0x74, 0xCD, 0x43, 0xB3, 0x9F, 0x03,
+        0x43, 0xA5, 0x00, 0x08, 0xBF, 0x6C, 0xCE, 0xA9,
+        0xD1, 0x32, 0x31, 0xD9, 0xE7, 0xE2, 0xE1, 0xE4,
+        0x11, 0xED, 0xC8, 0xD3, 0x07, 0x25, 0x42, 0x96,
+        0x26, 0x4A, 0xEB, 0xFC, 0x3D, 0xC7, 0x6C, 0xD8,
+        0xB6, 0x68, 0x37, 0x3A, 0x07, 0x2F, 0xD6, 0x46,
+        0x65, 0xB5, 0x00, 0x00, 0xE9, 0xFC, 0xCE, 0x52
+    };
+    static const unsigned char expected_compressed[33] = {
+        SECP256K1_TAG_PUBKEY_EVEN,
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char expected_uncompressed[65] = {
+        SECP256K1_TAG_PUBKEY_UNCOMPRESSED,
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+        0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65,
+        0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
+        0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+        0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8
+    };
+    static const unsigned char headers[2] = { 28, 32 };
+    const unsigned char *expected_pubkeys[2] = { expected_uncompressed, expected_compressed };
+    const unsigned int serialize_flags[2] = { SECP256K1_EC_UNCOMPRESSED, SECP256K1_EC_COMPRESSED };
+    secp256k1_ecdsa_recoverable_signature sig;
+    secp256k1_ecdsa_signature normal_sig;
+    secp256k1_pubkey expected_pubkey;
+    secp256k1_pubkey recovered_pubkey;
+    unsigned char dynamic_compact[64];
+    unsigned char static_compact[64];
+    unsigned char wire[65];
+    unsigned char serialized[65];
+    size_t serialized_len;
+    int dynamic_recid;
+    int static_recid;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &sig, msg32, seckey, secp256k1_nonce_function_rfc6979, NULL) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, dynamic_compact, &dynamic_recid, &sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(secp256k1_context_static, static_compact, &static_recid, &sig) == 1);
+    FUZZ_CHECK(dynamic_recid == 1);
+    FUZZ_CHECK(static_recid == dynamic_recid);
+    FUZZ_CHECK(memcmp(dynamic_compact, expected_compact, sizeof(expected_compact)) == 0);
+    FUZZ_CHECK(memcmp(static_compact, expected_compact, sizeof(expected_compact)) == 0);
+
+    FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(secp256k1_context_static, &normal_sig, &sig) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(secp256k1_context_static, static_compact, &normal_sig) == 1);
+    FUZZ_CHECK(memcmp(static_compact, expected_compact, sizeof(expected_compact)) == 0);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected_pubkey, seckey) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_verify(secp256k1_context_static, &normal_sig, msg32, &expected_pubkey) == 1);
+    FUZZ_CHECK(secp256k1_ecdsa_recover(secp256k1_context_static, &recovered_pubkey, &sig, msg32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(secp256k1_context_static, &expected_pubkey, &recovered_pubkey) == 0);
+
+    /* CKey::SignCompact writes 27 + recid and adds four for compressed keys. */
+    for (i = 0; i < sizeof(headers); i++) {
+        int recid = (headers[i] - 27) & 3;
+        int compressed = ((headers[i] - 27) & 4) != 0;
+
+        wire[0] = headers[i];
+        memcpy(wire + 1, expected_compact, sizeof(expected_compact));
+        FUZZ_CHECK(recid == dynamic_recid);
+        FUZZ_CHECK(compressed == (int)(i == 1));
+        FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(secp256k1_context_static, &sig, wire + 1, recid) == 1);
+        FUZZ_CHECK(secp256k1_ecdsa_recover(secp256k1_context_static, &recovered_pubkey, &sig, msg32) == 1);
+        serialized_len = sizeof(serialized);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(secp256k1_context_static, serialized, &serialized_len, &recovered_pubkey, serialize_flags[i]) == 1);
+        FUZZ_CHECK(serialized_len == (i == 0 ? sizeof(expected_uncompressed) : sizeof(expected_compressed)));
+        FUZZ_CHECK(memcmp(serialized, expected_pubkeys[i], serialized_len) == 0);
+    }
+}
+
 static void secp256k1_fuzz_check_static_context_recovery(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
     static const unsigned char trigger[] = "static context recovery barrier\n";
     static const unsigned char generator_compressed[33] = {
@@ -1041,6 +1136,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     secp256k1_fuzz_check_recovery_generator_vector(ctx, input, size);
     secp256k1_fuzz_check_core_recover_compact(ctx, input, size);
+    secp256k1_fuzz_check_core_sign_compact(ctx, input, size);
     secp256k1_fuzz_check_static_context_recovery(ctx, input, size);
     secp256k1_fuzz_check_sign_recoverable_input_output_alias(ctx, input, size);
 
