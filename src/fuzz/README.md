@@ -16899,3 +16899,96 @@ master, test gap, verifier commands, and whether it preserves, changes, or
 masks the trigger. A passing follow-up patch is not proof that master was safe;
 rerun the original baseline or mutation before downgrading a masked finding.
 No fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 Current-source x-only tweak and control-block replay
+
+The x-only target was rebuilt cleanly from the current audit source in all
+three configurations before this replay:
+
+    timeout 600s cmake --build /tmp/secp256k1-oracles-external \
+      --clean-first --target fuzz_xonly_tweak -j2
+    timeout 600s cmake --build /tmp/secp256k1-next-asan-int64 \
+      --clean-first --target fuzz_xonly_tweak -j2
+    timeout 600s cmake --build /tmp/secp256k1-msan-int64-ext2 \
+      --clean-first --target fuzz_xonly_tweak -j2
+
+All 20 tracked `src/fuzz/corpora/xonly_tweak` inputs were copied to private
+corpora. The oracle covers independent affine TapTweak arithmetic, parity and
+order-boundary aliases, valid static/dynamic keypair equivalence, mismatched
+opaque keypair rejection and output clearing, TapLeaf/Branch hashing,
+CompactSize boundaries, and control blocks up to the consensus maximum depth.
+Some fork workers report 19 effective seeds after libFuzzer's initial corpus
+reduction; the tracked input count remains 20.
+
+The exact native Clang ASan/UBSan replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-oracles-external/bin/fuzz_xonly_tweak \
+      /tmp/codex-xonly-current-native -fork=4 -jobs=4 -max_total_time=90 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-xonly-current-native-artifacts/ \
+      -print_final_stats=1
+
+The exact forced-int64 ASan/UBSan replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-next-asan-int64/bin/fuzz_xonly_tweak \
+      /tmp/codex-xonly-current-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-xonly-current-int64-artifacts/ \
+      -print_final_stats=1
+
+The int64 MSan replay was:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_xonly_tweak \
+      /tmp/codex-xonly-current-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-xonly-current-msan-artifacts/ \
+      -print_final_stats=1
+
+All four native jobs, both forced-int64 jobs, and both MSan jobs exited 0.
+Every worker reported zero OOM, timeout, and crash counters; no ASan, UBSan, MSan,
+runtime, or `ERROR:` diagnostic appeared, and all three artifact directories
+were empty. The clean-master replay found no new production bug, deterministic
+regression test, or severity change.
+
+Core's `KeyPair::KeyPair` valid static-context tweak path is wallet,
+descriptor, PSBT, and authorized-signing state. Core's invalid witness path
+uses `XOnlyPubKey::CheckTapTweak` and the x-only tweak-check API, while an
+invalid block or witness does not construct the opaque 96-byte keypair used by
+the static keypair compatibility oracle. The existing opaque-keypair mismatch
+finding remains **Medium direct API/local-state integrity**; the affected
+static-context regression remains **Medium wallet/API compatibility**. Neither
+is High/Critical on unmodified master without a demonstrated consensus or
+remote path. A future clean-master parity, tweak-equation, acceptance,
+memory-safety, race, or state failure reached from an invalid witness/block
+must be rated High/Critical from its concrete consensus impact. A nonce without
+standalone cryptographic meaning is not Critical merely because it is uncleared.
+
+The earlier timestamp observation is not treated as a source-state claim:
+worktree files can carry source bytes before the corresponding commit metadata.
+This pass therefore used explicit clean rebuilds and the exact current source;
+it does not claim that an earlier binary was stale solely from its timestamp.
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger commits and no new cherry-pick was
+justified. Private corpora, logs, and artifacts were removed after the final
+process check.
+
+Any later x-only, keypair, Taproot, control-block, production fix, or l0rinc
+cherry-pick must amend its commit message and this ledger with the clean-master
+or minimal-production-mutation baseline, exact corpus bytes or mutation,
+preconditions, postconditions, observed failure, Core caller, severity on
+unmodified master, existing test gap, verifier commands, and whether it
+preserves, changes, or masks the trigger. A passing follow-up patch is not
+proof that master was safe; rerun the original baseline or mutation before
+downgrading a masked finding. No fuzz, sanitizer, compiler, or test process
+remains running.
