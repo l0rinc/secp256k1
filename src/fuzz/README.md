@@ -15144,3 +15144,62 @@ Final verification on the restored source:
 * `git diff --check` passed. The source mutation, temporary probes, and
   private replay directories are outside the repository, and a final process
   inventory found no fuzz, sanitizer, compiler, or test jobs still running.
+
+## 2026-07-18 Generated Multi-Worker Discovery Sweep
+
+After the Core call-site and static-keypair reconciliation, all 14 current
+fuzzer targets with tracked corpora were run from private copies under
+`/tmp/codex-next-sweep-*` and `/tmp/codex-next-sweep2-*`. The corpus sizes were:
+`api_roundtrip` 63, `schnorrsig` 18, `recovery` 17, `xonly_tweak` 20,
+`ellswift` 19, `ecdh` 9, `ecmult_multi` 29, `musig` 77, `context` 13,
+`field` 21, `group` 23, `scalar` 8, `hash` 10, and `ecmult_const` 11.
+No generated units were written into the repository.
+
+The first seven targets (`api_roundtrip`, `schnorrsig`, `recovery`,
+`xonly_tweak`, `ecdh`, `ellswift`, and `ecmult_multi`) used the native Clang
+ASan/UBSan binary directory `/tmp/secp256k1-oracles-external/bin` with two
+fork workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 95s /tmp/secp256k1-oracles-external/bin/fuzz_<target> \
+      /tmp/codex-next-sweep-<target> -fork=2 -jobs=2 \
+      -max_total_time=60 -timeout=20 -rss_limit_mb=0 -handle_abrt=0 \
+      -verbosity=0 -artifact_prefix=/tmp/codex-next-sweep-<target>/artifacts/
+
+Six managers exited 0 with no sanitizer, crash, OOM, timeout, or artifact
+diagnostic. The first `ecmult_multi` wrapper hit the outer 95-second guard
+while one worker was still wrapping up; it is explicitly incomplete evidence,
+not a negative result. No process or artifact remained. A rerun used two
+workers, `-max_total_time=45`, `-timeout=10`, `-ignore_timeouts=0`, and
+`-ignore_ooms=0` under a 150-second outer guard. Both workers exited 0, every
+reported `oom/timeout/crash` counter was `0/0/0`, and the artifact directory
+was empty.
+
+The remaining seven targets (`musig`, `context`, `field`, `group`, `scalar`,
+`hash`, and `ecmult_const`) used the same native sanitizer binary with two
+workers, `-max_total_time=60`, `-timeout=20`, `-ignore_timeouts=0`, and
+`-ignore_ooms=0` under a 150-second outer guard. All managers and workers
+exited 0. No AddressSanitizer, UndefinedBehaviorSanitizer, runtime-error,
+OOM, timeout, crash, or artifact diagnostic appeared. The logs' fork-worker
+lines are interleaved, so their coverage/corpus values are not treated as
+final aggregate totals; only exit status and explicit diagnostics are used
+as evidence.
+
+This is negative discovery evidence, not a clean-master production finding.
+The targets include consensus-sensitive public-key/signature and peer-facing
+EllSwift paths, but no failure was observed. If a future clean-master failure
+is found through invalid block, witness, or BIP324 peer bytes, its severity
+must follow the demonstrated Bitcoin Core consensus, memory-safety,
+availability, or concurrency impact. Wallet, MuSig, direct callback, and
+locally corrupted opaque-state failures remain below High/Critical without
+that impact. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared. No l0rinc commit was cherry-picked for this
+sweep; PRs #1-#16 remain reconciled by existing commits. Any later fix or
+cherry-pick must say whether it preserves, changes, or masks the exact target,
+corpus, mutation, Core path, and master-relative classification in both its
+commit message and this ledger.
+
+The private corpus copies, logs, and artifact directories were removed after
+the final process check confirmed that no fuzz, sanitizer, compiler, or test
+process remained.
