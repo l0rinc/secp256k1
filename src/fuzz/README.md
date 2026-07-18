@@ -15388,3 +15388,134 @@ process check. `l0rinc/master` remains
 Future serializer, normalization, or cherry-pick changes must amend their
 commit message and this ledger with the exact boundary, mutation interaction,
 Core path, master-relative severity, failure output, and verifier commands.
+
+## 2026-07-18 Bitcoin Core boundary replay
+
+The standalone oracle campaigns were followed by a disposable Bitcoin Core
+integration build. The parent Core worktree was not modified: Core was checked
+out detached at `00c4bb06ae9bf903af6ff72dbd6b097f36830ce`, and only its
+`src/secp256k1` tree was overlaid from this audit branch at
+`78bb72247dd682128ed57a4197c7557094abb363`. The secp baseline was current
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master`
+was `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. No new l0rinc commit was
+cherry-picked in this pass. The existing PR #1-#16 reconciliation remains
+the comparison ledger, not a safety proof.
+
+The disposable build used Clang 22.1.7 and the normal Core fuzz dispatcher:
+
+    CC=clang CXX=clang++ cmake -S /tmp/bitcoin-secp-audit \
+      -B /tmp/bitcoin-secp-audit-build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DBUILD_FOR_FUZZING=ON -DSANITIZERS=address,undefined,fuzzer \
+      -DWITH_ZMQ=OFF -DENABLE_GUI=OFF -DENABLE_WALLET=OFF -DENABLE_IPC=OFF
+
+    cmake --build /tmp/bitcoin-secp-audit-build --target fuzz -j2 --verbose
+
+The private inputs were rebuilt from the tracked secp corpora only: 19
+`src/fuzz/corpora/ellswift` files, 63 `src/fuzz/corpora/api_roundtrip` files,
+and 20 `src/fuzz/corpora/xonly_tweak` files. The files were flattened into
+`/tmp/core-secp-audit-20260718/{ellswift,api,xonly}` so directory nesting or
+stale generated inputs could not affect the replay. Each command used the
+same strict policy:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    timeout 120s /tmp/bitcoin-secp-audit-build/bin/fuzz <inputs> \
+      -fork=4 -jobs=4 -max_total_time=30 -timeout=20 \
+      -ignore_timeouts=0 -ignore_ooms=0 -rss_limit_mb=0 -handle_abrt=0 \
+      -verbosity=0 -artifact_prefix=<private-artifacts>/ \
+      -print_final_stats=1
+
+The exact target replays were:
+
+    env FUZZ=bip324_cipher_roundtrip \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/bitcoin-secp-audit-build/bin/fuzz \
+      /tmp/core-secp-audit-20260718/ellswift -fork=4 -jobs=4 \
+      -max_total_time=30 -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/core-secp-audit-20260718/artifacts/bip324-cipher- \
+      -print_final_stats=1
+
+    env FUZZ=bip324_ecdh \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/bitcoin-secp-audit-build/bin/fuzz \
+      /tmp/core-secp-audit-20260718/ellswift -fork=4 -jobs=4 \
+      -max_total_time=30 -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/core-secp-audit-20260718/artifacts/bip324-ecdh- \
+      -print_final_stats=1
+
+    env FUZZ=pub_key_deserialize \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/bitcoin-secp-audit-build/bin/fuzz \
+      /tmp/core-secp-audit-20260718/api /tmp/core-secp-audit-20260718/xonly \
+      -fork=4 -jobs=4 -max_total_time=30 -timeout=20 \
+      -ignore_timeouts=0 -ignore_ooms=0 -rss_limit_mb=0 -handle_abrt=0 \
+      -verbosity=0 \
+      -artifact_prefix=/tmp/core-secp-audit-20260718/artifacts/pubkey- \
+      -print_final_stats=1
+
+    env FUZZ=secp256k1_ecdsa_signature_parse_der_lax \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/bitcoin-secp-audit-build/bin/fuzz \
+      /tmp/core-secp-audit-20260718/api -fork=4 -jobs=4 \
+      -max_total_time=30 -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/core-secp-audit-20260718/artifacts/der-lax- \
+      -print_final_stats=1
+
+    env FUZZ=script_flags \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/bitcoin-secp-audit-build/bin/fuzz \
+      /tmp/core-secp-audit-20260718/api -fork=4 -jobs=4 \
+      -max_total_time=30 -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/core-secp-audit-20260718/artifacts/script-flags- \
+      -print_final_stats=1
+
+All five targets ran four fork workers. Every worker exited 0; every reported
+`oom/timeout/crash` counter was `0/0/0`; no ASan, UBSan, runtime, or `ERROR:`
+diagnostic appeared; and the artifact directory was empty. The target-local
+retained seed counts reported by libFuzzer were 8 for cipher, 69 for ECDH, 4
+for public-key deserialization, 14 for lax DER, and 25 for `script_flags`.
+These are libFuzzer's target-specific retained counts, not a claim that the
+source corpus contained only that many files.
+
+The Core contracts exercised were concrete: BIP324 cipher initialization and
+`CKey::ComputeBIP324ECDHSecret` -> `secp256k1_ellswift_xdh` for hostile peer
+wire values; `pub_key_deserialize` through Core's `CPubKey` parsing, with
+`CPubKey::Verify` as the production consumer; the legacy lax DER parser used
+before ECDSA checking; and `script_flags` through `VerifyScript` and
+`GenericTransactionSignatureChecker::CheckECDSASignature` with witness
+transactions. The BIP324 cases also preserve the party, alias, damaged-wire,
+and invalid-secret distinctions already asserted by the secp EllSwift
+oracles. This is integration evidence for the overlaid library, not a clean
+Core-master reproduction by itself.
+
+No production bug was found and no fix or deterministic regression test is
+claimed by this replay. On unmodified secp master, an acceptance or signature
+equation discrepancy, memory/concurrency failure, or state corruption reached
+from an invalid block or witness through `VerifyScript`, public-key parsing,
+or DER checking would be rated High/Critical according to the demonstrated
+consensus impact. A BIP324 peer-input failure would be rated from its actual
+transport impact and is not consensus-Critical merely because it is
+network-reachable. The clean result does not close the separate Medium
+arithmetic/opaque-state findings or the Low callback result finding already
+listed in this ledger. It also does not make an uncleared nonce Critical when
+the nonce has no standalone cryptographic meaning; secret session randomness
+is a separate contract.
+
+Any future l0rinc cherry-pick, production fix, or serializer/normalization
+change that alters these replays must amend the same commit message and this
+ledger with: the clean-master or minimal-mutation baseline, exact corpus bytes
+or mutation, preconditions and postconditions, observed failure, Core caller,
+master-relative severity, existing test gap, and whether the change preserves,
+changes, or masks the trigger. A candidate patch that merely makes a follow-up
+commit pass is not proof that master was safe; rerun the original master or
+the minimal production mutation before downgrading a finding. No fuzz or
+sanitizer job remains running after this replay.
