@@ -12200,3 +12200,54 @@ The result does not downgrade the earlier Medium findings or promote any
 internal-oracle result to High/Critical. In particular, public nonce objects
 without cryptographic meaning are not classified as Critical merely because
 they were included in a cleanup-oriented stateful replay.
+
+## 2026-07-18 Field Word-Serialization Boundary Oracle
+
+The upstream field serializer rewrite in commit `e217ead` is present on the
+clean master baseline
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`. It packs field limbs into words
+in both the 5x52 and forced-int64 10x26 implementations. The existing field
+fuzzer already compared many arithmetic results and ordinary byte round trips,
+but its 20 tracked corpus inputs did not deterministically exercise every
+26-/52-bit word boundary.
+
+The new `field word serialization boundary\n` seed invokes a focused oracle
+that serializes and compares exact big-endian bytes for one-bit values on both
+sides of every relevant limb boundary (`0, 25, 26, 51, 52, ... , 233, 234`),
+then repeats the checks through `set_b32_mod` and normalization. It also uses
+the fixed 32-byte value
+`123456789abcdef0112233445566778899aabbccddeeff00123456789abcdef01` to
+exercise mixed bits across multiple packed words. The assertion covers both
+field backends and does not rely on the random mutator producing a particular
+bit pattern.
+
+The causal mutation was applied separately to each production serializer: after
+normal packing, an exact match for the fixed value flipped `r[0]`. All 20
+pre-existing corpus inputs passed under the mutation on native 5x52 and
+forced-int64/10x26 ASan/UBSan builds. The new seed aborted with exit 134 on
+both. Disabling only the new trigger/helper made the same mutated builds exit
+0, proving that the new oracle, rather than an older field check, detects the
+packing fault. The mutations were restored before clean verification.
+
+The restored 21-file corpus passed native and forced-int64 ASan/UBSan replays;
+the focused seed passed under forced-int64 MSan; and copied-corpus native and
+forced-int64 two-worker runs used:
+
+```
+-fork=2 -jobs=2 -max_total_time=20 -timeout=60 -rss_limit_mb=0 \
+  -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+Both worker managers exited 0 with no sanitizer diagnostics, timeouts, OOMs,
+crashes, or artifacts. Temporary generated corpus files were removed and the
+tracked production serializer diff was empty before committing.
+
+This is **Informational / Low internal-oracle hardening**, not a clean-master
+production bug. A real serializer regression could corrupt field encodings
+used by public point and scalar boundaries, with severity depending on whether
+the corrupted value reaches a security-sensitive public operation; clean master
+passes and no public failure is claimed here. The new assertion is retained to
+make that future regression fail at the field contract instead of being hidden
+by downstream arithmetic. This finding does not concern public nonce cleanup;
+nonce data without cryptographic meaning is not Critical solely because it is
+retained or cleared.
