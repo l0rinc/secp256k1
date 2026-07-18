@@ -17452,3 +17452,32 @@ failure, Core caller and input origin, master-relative severity, existing test
 gap, verifier commands/results, and whether the change preserves, changes, or
 masks the trigger. A passing generated run is negative evidence only and does
 not downgrade an older finding without its original baseline replay.
+
+## 2026-07-19 Post-arithmetic CTest verification
+
+After commit `94ec9347`, the existing external-default-callback CMake build at
+`/tmp/secp256k1-oracles-external` reported `ninja: no work to do`. The complete
+224-test matrix was then rerun with:
+
+    ctest --test-dir /tmp/secp256k1-oracles-external \
+      --output-on-failure -j2
+
+All 224 tests passed in 184.03 seconds, with no failed test, assertion,
+sanitizer report, runtime error, or leftover process. The run included the
+verified and `noverify` ECMULT/field/group suites, EllSwift encode/decode/XDH,
+ECDSA and recoverable-signature paths, MuSig vectors and API tests,
+static-context and preallocation tests, SHA/HMAC/RFC6979 tests, scratch
+validation, and the checked-size multiplication regression. This is a
+regression-verification result for the already committed source; it is not a
+new production finding or a clean-master proof.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, and `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` with PR #1-#16 reconciled. The
+existing severity ledger is unchanged: invalid-block or invalid-witness
+acceptance, equation, memory, or race failures are rated High/Critical from
+demonstrated Bitcoin Core impact; direct API, wallet, callback, opaque-state,
+and non-cryptographic nonce cleanup findings remain below that boundary
+without a concrete Core trigger. Future changes must preserve the exact
+clean-master or minimal-mutation baseline and state whether a fix preserves,
+changes, or masks the original trigger in both the commit message and ledger.
