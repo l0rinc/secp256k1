@@ -12465,3 +12465,78 @@ consensus input. These are reiterations of existing master-relative findings,
 not new clean-master Critical vulnerabilities. The direct replay also does
 not alter the non-critical assessment of clearing a public nonce buffer whose
 contents carry no standalone cryptographic meaning.
+
+## 2026-07-18 Core Legacy ECDSA Serialized-Composition Oracle
+
+The `api_roundtrip` target now covers the complete serialized legacy ECDSA
+composition used by Bitcoin Core, rather than exercising its public-key and
+signature parsers only as separate operations. Core's path is
+`CheckECDSASignature` in `src/script/interpreter.cpp`, followed by
+`CPubKey::Verify` in `src/pubkey.cpp`: the caller-provided key bytes are parsed,
+the caller-provided DER bytes are passed to Core's lax compatibility parser,
+the signature is normalized in place for low-S, and the static-context
+`secp256k1_ecdsa_verify` result is returned. The script interpreter strips the
+one-byte sighash type before this call; the new fuzzer framing therefore uses
+`[key-length selector][serialized key][32-byte sighash][DER bytes]` and keeps
+the key/signature bytes in the same operation.
+
+For every sufficiently long fuzz input the oracle compares normal and static
+context key parsing and lax-DER parsing, checks that both parsers produce the
+same compact bytes, and preserves Core's ordering by returning before DER
+parsing when the key is invalid. It then compares static and normal verification
+after in-place normalization against an independently implemented low-S
+conversion followed by the public ECDSA equation reference. A gated fixture
+adds an exact known-valid vector with `Q = G`, `z = 0`, and `r = s = x(G)` for
+`d = k = 1`, plus its `s = n - x(G)` high-S complement. The expected compact
+bytes and the successful verification result are asserted before and after the
+normalization boundary. This makes a parser that returns a plausible object,
+or a verifier that silently rejects a valid Core-shaped input, fail immediately.
+
+The fixed trigger is `api_roundtrip/core-ecdsa-serialized-composition`. Before
+this change, none of the 56 tracked `api_roundtrip` inputs preserved arbitrary
+serialized key bytes and DER bytes through the same Core-shaped call sequence;
+the existing DER checks used a generated valid key and the existing key checks
+did not feed their result into lax DER verification. A causal oracle mutation
+was tested after the final assertion was added: changing the fixture's
+`low_compact[63]` by one bit left all 56 pre-existing inputs green (exit 0),
+but made the new trigger abort with exit 134. The mutation was restored before
+the clean replay. This is oracle evidence, not a production bug finding.
+
+Verification on the restored branch used Clang 22 ASan/UBSan with
+`SECP256K1_ASM=OFF`: the fixed trigger and all 57 tracked inputs (56 existing
+plus the new trigger) exited 0. The forced-int64 ASan/UBSan build and the
+forced-int64 MSan build each also passed the fixed trigger and all 57 inputs.
+A two-job, two-worker ASan/UBSan campaign over a private copy of the 57-file
+corpus ran for 12 seconds; job 0 and job 1 each completed 134 executions,
+both with exit 0 and no diagnostic, timeout, OOM, crash, or artifact. No fuzz
+process remained after the campaign, and the source corpus was not modified.
+
+Severity is tied to the unmodified master call path. A disagreement that lets
+an invalid serialized ECDSA result through, or rejects a valid block input,
+would be High or Critical according to its consensus effect because Core can
+reach this verifier from transaction/script bytes. No such disagreement was
+reproduced here, so this commit reports no clean-master vulnerability. The
+lax-DER portions are only reachable for historical pre-BIP66 block validation
+or callers that invoke the library/API outside current consensus validation;
+malformed DER alone is therefore not a new-block Critical finding. The exact
+strict-DER offset rewrite in `a802d20` is a separate library parser change and
+does not provide this coverage: Core's relevant compatibility parser is the
+separate `contrib/lax_der_parsing.c` copy. A later fix must not be used to lower
+the rating of a failure first reproduced on unmodified master. As elsewhere in
+this ledger, clearing a public nonce buffer with no standalone cryptographic
+meaning is not Critical.
+
+The master-relative check was performed in a fresh detached worktree at
+`origin/master` `8c3e6e6d992456d3b9228305ae84a6703273cf70`, with the current
+fuzzer/CMake overlay only. The aggregate callback first stopped on the known
+stale private-key DER export state (`42842d5`), and after that prerequisite was
+temporarily overlaid it reached the known RFC6979 `UINT_MAX` callback failure
+(`5a34922`) and then the known short-buffer output contract (`c16e3d8`). Those
+are earlier master findings, not evidence against this oracle. A temporary
+harness-only early return for this exact trigger skipped the aggregate checks
+without changing production code; the fixture then passed with exit 0 under
+Clang 22 ASan/UBSan against the unmodified master library. The early return and
+all prerequisite overlays were outside the committed changes. This is the
+strongest available master proof for this follow-up: the valid low-S and
+historical high-S Core-shaped inputs agree with the independent equation, and
+there is no new severity rating to assign.
