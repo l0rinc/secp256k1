@@ -408,6 +408,91 @@ static void secp256k1_fuzz_check_xonly_parse(const secp256k1_context *ctx, const
     }
 }
 
+static void secp256k1_fuzz_check_static_xonly_parse_case(const secp256k1_context *ctx, const unsigned char input32[32]) {
+    unsigned char normal_serialized[32];
+    unsigned char static_serialized[32];
+    unsigned char cross_serialized[32];
+    unsigned char zero_xonly[sizeof(secp256k1_xonly_pubkey)] = { 0 };
+    secp256k1_xonly_pubkey normal_xonly;
+    secp256k1_xonly_pubkey static_xonly;
+    secp256k1_xonly_pubkey normal_before;
+    secp256k1_xonly_pubkey static_before;
+    int normal_ret;
+    int static_ret;
+
+    memset(&normal_xonly, 0xA5, sizeof(normal_xonly));
+    memset(&static_xonly, 0xA5, sizeof(static_xonly));
+    normal_ret = secp256k1_xonly_pubkey_parse(ctx, &normal_xonly, input32);
+    static_ret = secp256k1_xonly_pubkey_parse(secp256k1_context_static, &static_xonly, input32);
+    FUZZ_CHECK(normal_ret == secp256k1_fuzz_xonly_parse_reference(input32));
+    FUZZ_CHECK(static_ret == normal_ret);
+    if (!normal_ret) {
+        FUZZ_CHECK(memcmp(&normal_xonly, zero_xonly, sizeof(normal_xonly)) == 0);
+        FUZZ_CHECK(memcmp(&static_xonly, zero_xonly, sizeof(static_xonly)) == 0);
+        return;
+    }
+
+    normal_before = normal_xonly;
+    static_before = static_xonly;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, normal_serialized, &normal_xonly) == 1);
+    FUZZ_CHECK(memcmp(&normal_xonly, &normal_before, sizeof(normal_xonly)) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(secp256k1_context_static, static_serialized, &static_xonly) == 1);
+    FUZZ_CHECK(memcmp(&static_xonly, &static_before, sizeof(static_xonly)) == 0);
+    FUZZ_CHECK(memcmp(normal_serialized, input32, sizeof(normal_serialized)) == 0);
+    FUZZ_CHECK(memcmp(static_serialized, normal_serialized, sizeof(static_serialized)) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(secp256k1_context_static, cross_serialized, &normal_xonly) == 1);
+    FUZZ_CHECK(memcmp(cross_serialized, normal_serialized, sizeof(cross_serialized)) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, cross_serialized, &static_xonly) == 1);
+    FUZZ_CHECK(memcmp(cross_serialized, normal_serialized, sizeof(cross_serialized)) == 0);
+}
+
+static void secp256k1_fuzz_check_static_xonly_codecs(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const secp256k1_xonly_pubkey *valid_xonly, int valid_parity, const unsigned char valid_xonly32[32]) {
+    static const unsigned char all_ones32[32] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+    };
+    secp256k1_xonly_pubkey static_from_pubkey;
+    secp256k1_xonly_pubkey static_from_pubkey_no_parity;
+    secp256k1_xonly_pubkey normal_pubkeys[2];
+    secp256k1_xonly_pubkey static_pubkeys[2];
+    unsigned char serialized[32];
+    int static_parity;
+    size_t i;
+    size_t j;
+
+    FUZZ_CHECK(valid_parity == 0 || valid_parity == 1);
+    static_parity = -1;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(secp256k1_context_static, &static_from_pubkey, &static_parity, pubkey) == 1);
+    FUZZ_CHECK(static_parity == valid_parity);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &static_from_pubkey, valid_xonly) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(secp256k1_context_static, serialized, &static_from_pubkey) == 1);
+    FUZZ_CHECK(memcmp(serialized, valid_xonly32, sizeof(serialized)) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(secp256k1_context_static, &static_from_pubkey_no_parity, NULL, pubkey) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &static_from_pubkey_no_parity, &static_from_pubkey) == 0);
+
+    secp256k1_fuzz_check_static_xonly_parse_case(ctx, valid_xonly32);
+    secp256k1_fuzz_check_static_xonly_parse_case(ctx, secp256k1_fuzz_xonly_two_g_x);
+    secp256k1_fuzz_check_static_xonly_parse_case(ctx, secp256k1_fuzz_pubkey_field_p_plus_one);
+    secp256k1_fuzz_check_static_xonly_parse_case(ctx, all_ones32);
+
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &normal_pubkeys[0], valid_xonly32) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &normal_pubkeys[1], secp256k1_fuzz_xonly_two_g_x) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(secp256k1_context_static, &static_pubkeys[0], valid_xonly32) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(secp256k1_context_static, &static_pubkeys[1], secp256k1_fuzz_xonly_two_g_x) == 1);
+    for (i = 0; i < 2; i++) {
+        for (j = 0; j < 2; j++) {
+            int normal_cmp = secp256k1_xonly_pubkey_cmp(ctx, &normal_pubkeys[i], &normal_pubkeys[j]);
+            int static_cmp = secp256k1_xonly_pubkey_cmp(secp256k1_context_static, &static_pubkeys[i], &static_pubkeys[j]);
+
+            FUZZ_CHECK((static_cmp == 0) == (normal_cmp == 0));
+            FUZZ_CHECK((static_cmp < 0) == (normal_cmp < 0));
+            FUZZ_CHECK((static_cmp > 0) == (normal_cmp > 0));
+        }
+    }
+}
+
 static void secp256k1_fuzz_check_xonly_parity_pair(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey) {
     secp256k1_pubkey negated_pubkey = *pubkey;
     secp256k1_xonly_pubkey xonly;
@@ -881,6 +966,10 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &reparsed, xonly32) == 1);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &xonly, &reparsed) == 0);
+    if (size == sizeof("static xonly public codecs\n") - 1
+        && memcmp(input, "static xonly public codecs\n", sizeof("static xonly public codecs\n") - 1) == 0) {
+        secp256k1_fuzz_check_static_xonly_codecs(ctx, &pubkey, &xonly, keypair_parity, xonly32);
+    }
     if (size == sizeof("xonly tweak affine reference\n") - 1
         && memcmp(input, "xonly tweak affine reference\n", sizeof("xonly tweak affine reference\n") - 1) == 0) {
         secp256k1_fuzz_check_xonly_tweak_affine(ctx, &xonly, xonly32, &keypair);
