@@ -15653,3 +15653,85 @@ safe; rerun the original baseline or its minimal production mutation before
 downgrading a finding. The private corpus and artifact directories were
 removed after the final process check, and no fuzz, sanitizer, compiler, or
 test process remains running.
+
+## 2026-07-18 Recoverable ECDSA/Core compact-signature backend recheck
+
+This pass rechecked the 17 tracked `src/fuzz/corpora/recovery` inputs after
+the Schnorr/Taproot replay. The target exercises the recoverable ECDSA point
+equation independently of recovery, including the `r+n` overflow branch,
+compact parse/serialize and convert round trips, recovery-id boundaries,
+invalid-x and zero-`s` rejection, high-S normalization, input/output aliasing,
+nonce retry and failure cleanup, and opaque output clearing. Its Core-specific
+oracles model `CKey::SignCompact` and `CPubKey::RecoverCompact`, including the
+65-byte header/compression mapping and both compressed and uncompressed SEC1
+serialization. Private corpus copies and artifact directories were used.
+
+The native Clang ASan/UBSan four-worker replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 180s /tmp/secp256k1-oracles-external/bin/fuzz_recovery \
+      /tmp/codex-next-recovery4 -fork=4 -jobs=4 -max_total_time=120 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-recovery4-artifacts/ \
+      -print_final_stats=1
+
+All four jobs loaded 17 seeds and exited 0 after 121-122 seconds. Every
+worker reported `oom/timeout/crash: 0/0/0`; no ASan, UBSan, runtime, or
+`ERROR:` diagnostic appeared; and no artifact was produced. The alternate
+int64 ASan/UBSan backend used two workers for 60 seconds:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/secp256k1-next-asan-int64/bin/fuzz_recovery \
+      /tmp/codex-next-recovery-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-recovery-int64-artifacts/ \
+      -print_final_stats=1
+
+Both int64 jobs exited 0 with `oom/timeout/crash: 0/0/0`, no sanitizer
+diagnostic, and no artifact. The MSan int64 backend used two workers for 45
+seconds:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 120s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_recovery \
+      /tmp/codex-next-recovery-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=20 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-recovery-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan jobs exited 0 with `oom/timeout/crash: 0/0/0`, no MSan/UBSan
+diagnostic, and no artifact. No production bug, deterministic regression
+test, or severity change is claimed by this replay.
+
+The Core caller matters to severity. `CKey::SignCompact` is used by Core's
+message-signing path and creates the compact signature with
+`secp256k1_ecdsa_sign_recoverable`, then checks the recovered public key.
+`CPubKey::RecoverCompact` is used by message verification after base64 and
+header validation; it parses the compact signature, calls
+`secp256k1_ecdsa_recover`, and serializes the recovered key. These are not
+Bitcoin block or witness validation paths. A clean-master cryptographic
+acceptance error there could affect message-authentication callers and a
+memory or availability failure could affect a reachable RPC/service, but it
+is not consensus-Critical without a demonstrated block/witness caller. The
+negative result does not downgrade the separate parser, arithmetic, or
+callback findings, and a nonce without standalone cryptographic meaning is
+not Critical merely because it is uncleared.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`. PRs #1-#16 remain reconciled;
+no new l0rinc commit was cherry-picked. Future fixes or cherry-picks must
+amend the same commit message and this ledger with clean-master or
+minimal-production-mutation proof, exact corpus bytes or mutation,
+preconditions/postconditions, observed failure, Core caller,
+master-relative severity, existing test gap, and whether the change
+preserves, changes, or masks the trigger. A passing follow-up patch is not
+proof that master was safe; rerun the original baseline or mutation before
+downgrading a finding. The private corpus and artifacts were removed after
+the final process check, and no fuzz, sanitizer, compiler, or test process
+remains running.
