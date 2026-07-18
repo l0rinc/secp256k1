@@ -16682,3 +16682,76 @@ whether it preserves, changes, or masks the trigger. A post-fix green replay
 is not proof that master was safe; rerun the original baseline or mutation
 before downgrading a finding. No fuzz, sanitizer, compiler, or test process
 remains running.
+
+## 2026-07-18 MuSig alternate-backend state-machine recheck
+
+The existing native MuSig recheck in commit `5576e52a` covered all 77 tracked
+`src/fuzz/corpora/musig` files with four workers and is retained as the native
+baseline. This follow-up covered the alternate arithmetic and initialization
+state with the same tracked corpus. The target exercises duplicate signer and
+key aggregation, cache and tweak transitions, nonce/session aliases and
+cancellation, consumed secret nonces, zero/overflow scalar boundaries,
+partial-signature verification/aggregation, static-context public paths,
+callback failure cleanup, invalid opaque state, and final-signature equations.
+Its preconditions and postconditions require either the independent transcript
+or point equation, documented rejection, consumed-state barriers, and no stale
+secret or aggregate state after a failed transition.
+
+The forced-int64 ASan/UBSan replay was:
+
+    env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-next-asan-int64/bin/fuzz_musig \
+      /tmp/codex-next-mu-int64 -fork=2 -jobs=2 -max_total_time=60 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-mu-int64-artifacts/ \
+      -print_final_stats=1
+
+Both workers loaded all 77 seed files and exited 0 after about 180-181
+seconds. The configured 60-second fuzzing budget did not truncate the slow
+initial corpus traversal; each worker reported `oom/timeout/crash: 0/0/0`,
+with no ASan, UBSan, runtime, or `ERROR:` diagnostic. The int64 MSan replay
+was:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_musig \
+      /tmp/codex-next-mu-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-mu-msan-artifacts/ \
+      -print_final_stats=1
+
+Both MSan workers loaded 75 effective seed files after fork-mode corpus
+reduction and exited 0 after about 81 seconds with zero OOM, timeout, and
+crash counters. No MSan, UBSan, runtime, or `ERROR:` diagnostic and no
+artifact was produced. Together with the native proof in `5576e52a`, this is
+negative state-machine evidence only: no production bug, deterministic
+regression test, or severity change is claimed.
+
+Core's MuSig2 use is wallet, descriptor, or authorized signing state; Core
+does not construct MuSig opaque caches, sessions, secret nonces, or partial
+signatures from an invalid block, witness, or ordinary peer message. A future
+clean-master MuSig arithmetic, memory, race, or state failure must therefore
+remain below consensus High/Critical unless a concrete Core caller and impact
+is demonstrated. Direct API or wallet availability/integrity impact can still
+be Medium or higher based on proof. A nonce without standalone cryptographic
+meaning is not Critical merely because it is uncleared; secret session
+randomness remains a separate cryptographic contract.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Temporary corpora and artifacts were removed
+after the process check.
+
+Any later MuSig, nonce/session, production fix, or l0rinc cherry-pick must
+amend its commit message and this ledger with the clean-master or minimal
+production-mutation baseline, exact corpus bytes or mutation, preconditions,
+postconditions, observed failure, Core caller, severity on unmodified master,
+existing test gap, verifier commands, and whether it preserves, changes, or
+masks the trigger. A post-fix green replay is not proof that master was safe;
+rerun the original baseline or mutation before downgrading a finding. No fuzz,
+sanitizer, compiler, or test process remains running.
