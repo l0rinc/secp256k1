@@ -10577,3 +10577,37 @@ ASan/UBSan builds. No source patch was taken from this portion of PR #8, and
 there is no master-relative finding or severity change. This explicit negative
 result prevents a future fork replay from treating the type-only difference as
 a new vulnerability.
+
+## 2026-07-18 Continued Stateful Worker Sweep
+
+After the public PR #1--#16 reconciliation, the current `origin/master`
+descendant `87b1d2375d3c2e8c9b628a15d8913be489238d74` was rechecked with a
+longer state-heavy sanitizer sweep. The selected targets were
+`api_roundtrip`, `musig`, `ellswift`, and `ecmult_multi`: these cover the
+opaque object state machines, retry/cleanup paths, EllSwift decode/XDH
+contracts, scratch allocation, and batch multiplication paths most likely to
+surface a bad transition after the fork-derived fixes.
+
+The native 5x52 Clang ASan/UBSan build
+`/tmp/secp256k1-next-asan` and the forced-int64/10x26 Clang ASan/UBSan build
+`/tmp/secp256k1-next-asan-int64` rebuilt those four fuzz targets from the
+current checkout. Each target then ran from a private copy of its tracked
+corpus with:
+
+```
+-fork=4 -max_total_time=180 -timeout=90 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+```
+
+All eight managers exited zero. The artifact directories remained empty, and
+the logs contained only normal libFuzzer progress records with
+`oom/timeout/crash: 0/0/0`. LibFuzzer generated additional units only in the
+disposable copied corpora: native final corpus sizes were 329
+`api_roundtrip`, 113 `musig`, 249 `ellswift`, and 241 `ecmult_multi`; forced
+int64 final corpus sizes were 327, 72, 221, and 282 respectively. None of
+those generated units are claimed as new seeds without a distinct assertion
+failure or coverage purpose.
+
+This is negative evidence only. It does not establish a new clean-master
+production bug, does not change the severity of the existing Medium/latent
+field and malformed-state findings, and does not downgrade any finding merely
+because the current hardened branch remains clean under this worker sweep.
