@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-sign rejection cleanup, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -11876,3 +11876,70 @@ mutation on both backends, including `ecdsa-verify-half-order`,
 `ecdsa-normalize-half-order-boundary`, `ecdsa-arbitrary-verification-equation`,
 and the older production-derived high-S oracle. The mutation was restored, the
 clean replays above passed, and the production diff was empty before committing.
+
+## 2026-07-18 Recoverable ECDSA High Half-Order Oracle
+
+The new `recovery/recoverable-high-half-order` corpus input pins the recovery
+module at the same first high-S boundary, including the recovery-ID transition
+that ordinary ECDSA verification does not model. With private key `d = 1` and
+nonce `k = 1`, the high-S recoverable signature uses:
+
+- `r = x(G)`
+- `s = floor(n/2) + 1`
+- `recid = 0`, because the generator has even Y and `x(G) < n`
+- `z = floor(n/2) + 1 - x(G) mod n`
+
+The oracle parses that high-S recoverable signature, requires recovery to return
+the generator, checks the independent public-point recovery equation, converts
+the signature to ordinary ECDSA, and confirms that normal verification rejects
+the high-S form. It then normalizes the ordinary signature to the exact
+`s = floor(n/2)` compact encoding, verifies the low-S form, parses that low-S
+compact form as recoverable with `recid = 1`, and requires recovery to return
+the same generator through the independent equation.
+
+This complements but does not duplicate `recoverable_high_s`,
+`api_roundtrip/ecdsa-reject-high-half-order`, or
+`api_roundtrip/ecdsa-verify-half-order`. The existing recovery oracle derives a
+high-S twin from a production-generated signature, so it does not force the
+first rejected `s` value or prove the exact `recid 0 -> recid 1` flip at the
+low-S normalization boundary.
+
+The restored verifier set passed with the complete recovery corpus under native
+and forced-int64 ASan/UBSan builds:
+
+```
+/tmp/secp256k1-next-asan/bin/fuzz_recovery \
+  src/fuzz/corpora/recovery -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+/tmp/secp256k1-next-asan-int64/bin/fuzz_recovery \
+  src/fuzz/corpora/recovery -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+The focused forced-int64 MSan external-callback replay also passed:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_recovery \
+  src/fuzz/corpora/recovery/recoverable-high-half-order \
+  -runs=1 -timeout=240 -rss_limit_mb=0 -handle_abrt=0
+```
+
+This is **Informational oracle hardening**, not a clean-master production
+finding. At `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, recovery accepts the high-S
+recoverable boundary, ordinary verification rejects the converted high-S
+signature, and the normalized low-S recoverable form with flipped recid recovers
+the same public key. If master failed this boundary, severity would be **Medium
+canonicality/recovery-state correctness**, rising only for callers that treat
+recoverable-signature canonicalization or exact recovery IDs as critical. The
+observed branch finding does not raise master-relative severity because clean
+master passes.
+
+For causal proof, a temporary production mutation in
+`secp256k1_ecdsa_sig_recover` serialized `s` and returned failure only when it
+exactly equaled the fixed 32-byte encoding of `floor(n/2) + 1`. The focused seed
+aborted with exit 134 on native 5x52 and forced-int64/10x26 ASan/UBSan builds,
+while the 14 pre-existing recovery corpus inputs passed under the same mutation
+on both backends, including `recoverable-compact`, `generator-vector`,
+`recovery-point-equation`, `arbitrary-recovery-equation`, and the older
+production-derived high-S recovery oracle. The mutation was restored, the clean
+replays above passed, and the production diff was empty before committing.
