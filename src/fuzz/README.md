@@ -16755,3 +16755,62 @@ existing test gap, verifier commands, and whether it preserves, changes, or
 masks the trigger. A post-fix green replay is not proof that master was safe;
 rerun the original baseline or mutation before downgrading a finding. No fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-18 ECMULT multi-batch MSan backend recheck
+
+The existing `ecmult_multi` note in commit `2c0d2a96` covered all 29 tracked
+inputs with native and forced-int64 ASan/UBSan, including the exact
+`pippenger window 1261` slow fixture and its threshold triage. This follow-up
+adds the int64 MSan backend. The same oracle covers Strauss/Pippenger batch
+boundaries, scratch allocation/checkpoints and overflow, filtered zero and
+infinity terms, generator retention, callback failure output, direct batch
+helpers, and independent equality/state postconditions. A valid batch must
+match the independent model; invalid allocation/callback transitions must
+reject without stale result or scratch state.
+
+The exact MSan replay was:
+
+    env MSAN_OPTIONS=halt_on_error=1:exit_code=86:report_umrs=1:print_stats=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      timeout 360s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ecmult_multi \
+      /tmp/codex-next-ecmult-msan -fork=2 -jobs=2 -max_total_time=45 \
+      -timeout=30 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 \
+      -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 \
+      -artifact_prefix=/tmp/codex-next-ecmult-msan-artifacts/ \
+      -print_final_stats=1
+
+Both workers loaded all 29 seed inputs and exited 0. One completed after about
+47 seconds; the other took about 138 seconds on the slow deterministic batch.
+Both reported zero OOM, timeout, and crash counters. The only extra output was
+the normal libFuzzer `NEW_FUNC` coverage line for the affine reference; no
+MSan, UBSan, runtime, or `ERROR:` diagnostic and no artifact was produced.
+This is negative backend evidence, not a new production bug, deterministic
+regression test, or severity change.
+
+The existing clean-master scratch-size overflow remains **Medium / confirmed
+internal memory safety with low current Core reachability**, and the callback
+stale-result behavior remains **Low internal/API correctness**. The known slow
+fixture remains an informational harness-performance observation: its exact
+native and forced-int64 replays completed within the long per-input threshold,
+and the fixture is not a caller-controlled `n_points` value from a Bitcoin Core
+block, witness, or peer path. If a future clean-master arithmetic, memory,
+race, or state failure is demonstrated on a consensus-reachable operation, it
+must be rated High/Critical from that concrete Core impact; direct internal or
+API-only failures remain lower without that path. A nonce without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The comparison refs remain `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` and `l0rinc/master`
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; l0rinc PRs #1-#16 remain
+reconciled by equivalent or stronger existing commits, and no cherry-pick was
+justified by this negative pass. Temporary corpora and artifacts were removed
+after the process check.
+
+Any later ecmult, scratch, callback, production fix, or l0rinc cherry-pick
+must amend its commit message and this ledger with the clean-master or minimal
+production-mutation baseline, exact corpus bytes or mutation, preconditions,
+postconditions, observed failure, Core caller, severity on unmodified master,
+existing test gap, verifier commands, and whether it preserves, changes, or
+masks the trigger. A post-fix green replay is not proof that master was safe;
+rerun the original baseline or mutation before downgrading a finding. No fuzz,
+sanitizer, compiler, or test process remains running.
