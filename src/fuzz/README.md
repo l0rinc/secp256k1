@@ -14927,3 +14927,105 @@ build, sanitizer, replay, and deterministic verifier commands. A fork fix is
 never evidence that master was safe. A confirmed production bug must have a
 minimal clean-master reproduction or a clearly documented production mutation
 that models the broken condition, plus a deterministic regression test.
+
+## 2026-07-18 Core BIP324 Arbitrary-Peer EllSwift Oracle
+
+The `ellswift` target now covers the raw-wire precondition at Bitcoin Core's
+BIP324 boundary. Core's path is `BIP324Cipher::Initialize`
+(`/mnt/my_storage/bitcoin/src/bip324.cpp:40`) ->
+`CKey::ComputeBIP324ECDHSecret` (`/mnt/my_storage/bitcoin/src/key.cpp:327-344`)
+-> `secp256k1_ellswift_xdh` with the built-in
+`secp256k1_ellswift_xdh_hash_function_bip324` callback and the static context.
+The local key and local EllSwift encoding are valid, but the remote 64-byte
+EllSwift value is handshake input and is not checked against a private key
+before this call. Core maps initiator to `(our, their, 0)` and responder to
+`(their, our, 1)`; the helper checks both mappings with unrelated raw peer
+bytes.
+
+The exact seed is the 32-byte ASCII input
+`core BIP324 arbitrary peer wire\n`, stored at
+`src/fuzz/corpora/ellswift/core-bip324-arbitrary-peer-wire`. The helper is
+`secp256k1_fuzz_check_core_bip324_raw_peer_wire`. Its preconditions are two
+valid generated local keys/encodings and two raw 64-byte peer values derived
+from the seed. It asserts that each raw peer differs from its local encoding,
+then requires dynamic and static `secp256k1_ellswift_xdh` to return success.
+The independent postcondition is
+`secp256k1_fuzz_check_ellswift_bip324_hash_reference_party`: it obtains only
+the shared X coordinate through the custom X-only callback and computes
+`SHA256(taghash || taghash || ell_a64 || ell_b64 || shared_x)` with the
+standalone SHA256 model. The built-in BIP324 output must match that model and
+the dynamic/static outputs must match each other. This is stronger than the
+existing arbitrary-wire custom-hash check and complements the existing
+point-equivalent alias oracle, which does not exercise an arbitrary raw peer
+through Core's exact argument mapping.
+
+No clean-master production bug was found. An exact `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70` control, using the detached
+production tree and a narrowly isolated harness overlay, passed the seed under
+Clang ASan/UBSan:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+timeout 60s /tmp/secp256k1-origin-core-asan-build/bin/fuzz_ellswift \
+  /tmp/secp256k1-origin-recheck-20260718/src/fuzz/corpora/ellswift/core-bip324-arbitrary-peer-wire \
+  -runs=1 -timeout=30 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+```
+
+The origin control exited 0 in 72 ms with one executed unit and no sanitizer
+diagnostic. The early return in that disposable harness was only to skip older
+branch-only zero-`u` barriers; production remained clean origin/master. The
+restored current branch also passed the seed in native ASan/UBSan, forced
+int64/10x26 ASan/UBSan, and int64 MSan. Its 19-file private corpus replay
+(18 tracked seeds plus this seed) used two fork workers for each backend;
+every manager and worker exited 0 with no sanitizer, OOM, timeout, crash, or
+artifact. The final replay commands were:
+
+```
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+timeout 120s /tmp/secp256k1-oracles-external/bin/fuzz_ellswift \
+  /tmp/ellswift-bip324-final-native -fork=2 -jobs=2 -runs=1 \
+  -timeout=20 -rss_limit_mb=0 -handle_abrt=0 \
+  -artifact_prefix=/tmp/ellswift-bip324-final-native/artifacts/ -print_final_stats=1
+
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+timeout 120s /tmp/secp256k1-next-asan-int64/bin/fuzz_ellswift \
+  /tmp/ellswift-bip324-final-int64 -fork=2 -jobs=2 -runs=1 \
+  -timeout=20 -rss_limit_mb=0 -handle_abrt=0 \
+  -artifact_prefix=/tmp/ellswift-bip324-final-int64/artifacts/ -print_final_stats=1
+
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stats=1:symbolize=1 \
+timeout 120s /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ellswift \
+  /tmp/ellswift-bip324-final-msan -fork=2 -jobs=2 -runs=1 \
+  -timeout=30 -rss_limit_mb=0 -handle_abrt=0 \
+  -artifact_prefix=/tmp/ellswift-bip324-final-msan/artifacts/ -print_final_stats=1
+```
+
+Causal oracle proof used a temporary production mutation in
+`ellswift_xdh_hash_function_bip324_impl` immediately after its NULL checks:
+when `ell_a64[0:2]` was `E5 7D` and `ell_b64[0:2]` was `21 04`, it returned a
+zeroed 32-byte output. Those bytes are the party-0 local/generated and raw
+peer values for this exact seed. The private copy of exactly the 18 tracked
+pre-existing seeds passed with two workers and exit 0; the one new seed exited
+134. The captured GDB backtrace stopped at the independent transcript check
+in `secp256k1_fuzz_check_ellswift_bip324_hash_reference_party` (`ellswift.c:145`)
+called by the new helper. The mutation and all temporary isolation changes
+were restored before commit; no production fix is claimed.
+
+This is **Informational/Low oracle hardening**, not a severity-rated master
+finding. A future clean-master failure here must be rated from the actual
+BIP324 peer impact: a cryptographic transcript, persistent availability, or
+memory/concurrency failure could be material, but this function is not invoked
+by invalid-block or witness consensus validation and is not automatically
+Critical merely because a peer controls 64 bytes. Existing tests missed this
+boundary because Core's `bip324_ecdh` fuzzer generates both encodings from
+private keys, while the standalone target's arbitrary-wire model used a custom
+X-only callback rather than the built-in BIP324 transcript. This change does
+not alter production behavior or downgrade the existing clean-master ledger.
+Any later EllSwift/BIP324 fix, cherry-pick, or callback change must state
+whether it preserves, changes, or masks this exact seed and mutation, and must
+carry the Core path, master-relative severity, failure output, and verifier
+commands into its amended commit message and notes. The l0rinc comparison head
+remains `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`; no fork patch was used.
