@@ -13496,3 +13496,87 @@ contains the same `secp256k1_fe_add` and second `secp256k1_gej_eq_x_var` path;
 the branch-only DER offset refactor in this audit does not change that
 verifier. This control confirms that the retained finding is oracle coverage,
 not a production failure already masked by a later branch fix.
+
+## 2026-07-18 Core ECDSA SEC1 Serialized-Key Composition Oracle
+
+The new `api_roundtrip/core-ecdsa-sec1-encoding-composition` seed is a 37-byte
+ASCII dispatch input. It builds the post-sighash bytes passed to Core's
+`CPubKey::Verify`: selector `1`, a 65-byte SEC1 key, a zero 32-byte message,
+and canonical DER for `(r,s)=(x(G),x(G))`. It carries three valid encodings
+through the same serialized Core-shaped helper: uncompressed `G` (`0x04`),
+hybrid-even `G` (`0x06`), and hybrid-odd `-G` (`0x07`). Since `z=0` and
+`r/s=1`, the reconstructed point is `G` or `-G`, both of which have the
+serialized x-coordinate `r`.
+
+The relevant Bitcoin Core path is
+`EvalChecksigPreTapscript`/`CHECKMULTISIG` -> `CheckSignatureEncoding` ->
+`GenericTransactionSignatureChecker::CheckECDSASignature` ->
+`CPubKey::Verify` -> `secp256k1_ec_pubkey_parse` /
+`secp256k1_ecdsa_verify`. The key bytes are attacker-controlled script data.
+Legacy non-segwit validation can reach uncompressed and historical hybrid
+keys when the standard-only strict-encoding policy flag is absent; witness v0
+has a compressed-key policy/consensus boundary. The fixture therefore keeps
+the distinction between a parser-only SEC1 round trip and the serialized
+consensus-era Core call ordering. The earlier raw SEC1 oracle and 7G
+uncompressed fixture do not prove this expected-success composition.
+
+The helper now asserts that an expected-success fixture's normal and static
+public-key parses both return success instead of silently returning on a
+rejected key. It then compares lax-DER bytes, dynamic/static normalization and
+verification, and the independent public-point equation and SEC1 parser model.
+This makes a parser regression fail at the Core adapter rather than weakening
+the oracle into a coverage-only call.
+
+Causal proof used this exact temporary production mutation in
+`src/eckey_impl.h`: after `secp256k1_ge_set_xy`, return failure only when the
+wire tag is hybrid-even (`0x06`) and the x-coordinate is exactly G's
+`79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798`
+(the mutation used these 32 contiguous bytes). This models one valid-key
+parser regression without changing unrelated
+SEC1 inputs. The first mutated replay exposed that the old
+`secp256k1_fuzz_check_pubkey_roundtrip` also reaches hybrid-even G from the
+`ascii-near-der` corpus path. For isolation, only those pre-existing raw
+hybrid assertions were bypassed and no invalid parsed object was compared; the
+isolation was restored before clean verification. The 59 pre-existing files
+plus the empty input completed 60 runs with exit 0 on both native and
+forced-int64 ASan/UBSan builds. The new seed then exited 134 on both builds in
+the Core serialized composition helper. This proves the seed distinguishes the
+new adapter contract from the older raw parser contract.
+
+As a clean-master control, a fresh library build at exact `origin/master` was
+linked to a public-API probe containing the same DER and zero message. It
+printed `parsed_key=1 serialized=1 parsed_sec1=1 parsed_sig=1 verified=1` for
+each of `uncompressed-G`, `hybrid-even-G`, and `hybrid-odd-minus-G`, then
+exited 0. This confirms that the current master accepts all three valid
+encodings and verifies the same signature; the new seed is not reporting a
+production failure already masked by this branch.
+
+This is **Informational / Low oracle hardening**, not a clean-master production
+finding. The exact audit `origin/master` ref is
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; the reconciled `l0rinc/master`
+ref is `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, already an ancestor, and no
+fork fix was used to soften this result. A real mismatch on unmodified master
+would be re-rated High/Critical only if the demonstrated Core call path let an
+attacker reject a valid historical block, accept an invalid one, or trigger a
+memory/concurrency failure. No such mismatch was found here. Any later
+cherry-pick that changes SEC1 parsing or the Core adapter must preserve this
+master-relative comparison and the raw-oracle isolation note. Existing SEC1
+findings are reiterated rather than reclassified. A public nonce buffer with
+no standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+Verification on the restored tree:
+
+- The focused seed and all 60 tracked files completed with exit 0 on native
+  and forced-int64 ASan/UBSan; the corpus replay executed 61 inputs including
+  libFuzzer's empty input.
+- External forced-int64 MSan replayed a private copy of all 60 files, 61 runs
+  including the empty input, with no diagnostic. The tracked corpus was never
+  used as a writable MSan corpus.
+- The Coverage build ran all 60 tracked inputs one at a time with status 0.
+  `gcov -b -c` recorded 100.00% of 48 `eckey_impl.h` lines and 38 branches,
+  and 98.52% of 135 `ecdsa_impl.h` lines and 100.00% of 106 branches.
+- Native and forced-int64 `-fork=2 -jobs=2 -max_total_time=12` campaigns both
+  had manager and worker exit 0; worker logs reported
+  `oom/timeout/crash: 0/0/0`. Both used private corpus copies, and no fuzz
+  process or tracked-corpus modification remained.
