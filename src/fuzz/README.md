@@ -16,7 +16,7 @@ Targets:
 - `fuzz_ecmult_const`: constant-time multiplication, fixed generator-times-two and finite-base zero-scalar infinity-Z vectors, affine generator conversion, NULL-generator equivalence, direct odd-multiples-table omitted-Z reconstruction, and normalized/non-normalized rational x-only fractions
 - `fuzz_ecmult_multi`: internal scratch/no-scratch multi multiplication consistency, independent serialized-coordinate result equality, false-positive equality barriers, callback batching/failure barriers including fixed sixteen-point direct and distinct three-batch Pippenger transcripts, all-filtered Strauss/Pippenger identity paths, leading all-filtered Strauss/Pippenger batch generator carry, scratch accounting and checkpoint-prefix preservation, checked allocation multiplication, and defined scalar-state transitions
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, a fixed generator-times-two byte-equation oracle, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
-- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
+- `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, a fixed decoded-point scalar-one XDH vector, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, static-context public tweaking, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, a fixed generator recovery vector, independent recovery point equations, static-context parse/serialize/convert/recover/verify, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
@@ -10746,3 +10746,47 @@ counts were 200 and 206 respectively.
 This pass records negative evidence only. It does not prove clean master
 defect-free, does not add or remove any production finding, and does not change
 the existing master-relative severity ledger.
+
+## 2026-07-18 EllSwift Static-Create Rejection Oracle
+
+The EllSwift static-context surface was re-audited after the Schnorr/recovery
+pass. `secp256k1_ellswift_encode`, `secp256k1_ellswift_decode`, and
+`secp256k1_ellswift_xdh` are public-data paths that the existing
+`ellswift/static-context-ellswift-barrier` corpus input already exercises on
+`secp256k1_context_static`. `secp256k1_ellswift_create` is different: it derives
+a public key from a secret key and therefore requires generator
+precomputation. The fuzzer now checks that this static-context call rejects in
+the non-aborting external-default-callback build and clears the fixed 64-byte
+encoding output before returning.
+
+This check is gated by `USE_EXTERNAL_DEFAULT_CALLBACKS` because ordinary builds
+intentionally abort through the default illegal callback on the static singleton.
+The branch was verified in the forced-int64/10x26 MemorySanitizer external-
+callback build `/tmp/secp256k1-msan-int64-ext2`, where
+`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON`. The focused verifier was:
+
+```
+MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86 \
+  /tmp/secp256k1-msan-int64-ext2/bin/fuzz_ellswift \
+  src/fuzz/corpora/ellswift/static-context-ellswift-barrier \
+  -runs=1 -timeout=180 -rss_limit_mb=0 -handle_abrt=0
+```
+
+Clean replay exited zero. For the mutation proof, the precondition cleanup
+`memset(ell64, 0, 64);` in `secp256k1_ellswift_create` was temporarily replaced
+with a no-op comment. Rebuilding the same external-callback fuzzer and replaying
+the same corpus input aborted with status 134 at the new stale-output assertion,
+with no MemorySanitizer diagnostic. The mutation was restored and the focused
+replay passed again.
+
+The ordinary native 5x52 and forced-int64/10x26 ASan/UBSan `fuzz_ellswift`
+binaries also rebuilt and replayed the 16 tracked EllSwift corpus inputs with
+exit zero. Those builds compile out the static-create rejection check because
+their default illegal callback aborts by design, so they are compile/regression
+coverage for this edit rather than proof of the gated branch.
+
+This is **Informational oracle hardening**. The master branch already performs
+the fixed-output cleanup; the new oracle prevents the existing static-context
+seed from proving only the permitted public-data paths while missing the
+rejected secret-derived path. It does not change any existing master-relative
+severity rating.
