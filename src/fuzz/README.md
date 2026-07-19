@@ -19527,3 +19527,193 @@ applicable commit for this negative target. Existing scratch-wrap, 10x26
 carry, and SHA/HMAC/RFC6979 memory-hygiene findings retain their recorded
 Medium ratings. Uncleared nonce data without standalone cryptographic meaning
 is not Critical merely because it is uncleared.
+
+## 2026-07-19 Core UTXO cache master/overlay differential replay
+
+The `coinscache_sim` target is a model differential oracle for Core's
+`CCoinsViewCache` hierarchy. It precomputes 256 deterministic outpoints and
+256 coins, then drives up to four real cache levels over a bottom view with
+the same operations as a small `NONE`/`UNSPENT`/`SPENT` model. The focused
+contracts are:
+
+* `PeekCoin`, `GetCoin`, `HaveCoin`, `AccessCoin`, and
+  `HaveCoinInCache` must agree with the visible model coin, spentness,
+  script, value, coinbase flag, and dynamic height;
+* `AddCoin` with and without possible overwrite, `SpendCoin` with and without
+  move-out, and `Uncache` must preserve the cache-level visibility and
+  spentness rules;
+* adding/removing cache levels, `Flush`, `Sync`, reset guards, and height
+  changes must preserve the model's layered state and the bottom view;
+* each production cache must pass `SanityCheck`, and final cache size and
+  visible coin comparisons must hold at every remaining level; and
+* the `CoinsViewOverlay::StartFetching` path, when present, must not change
+  the observable cache contract or leak a failed/reset fetch into its parent.
+
+This target already had narrow production-side checks in `CCoinsViewCache`
+and the bottom-view `BatchWrite` mock, plus harness-side postconditions after
+mutating operations and at final teardown. No broader "accepted means valid"
+oracle was added: a cache operation is checked against the actual layered
+contract, including the distinction between a spent sentinel and an absent
+entry. No production fix is claimed from the negative replay.
+
+The master production input origin is an untrusted block or transaction. A
+peer block follows `PeerManagerImpl::ProcessBlock` to
+`ChainstateManager::ProcessNewBlock`, `ActivateBestChain`, and the atomic
+`m_connect_block_view`/`CreateResetGuard`/`Chainstate::ConnectBlock` boundary.
+On the later overlay checkout, `StartFetching` is inserted at this same
+boundary. Inside `ConnectBlock`, UTXO-dependent consensus checks read the cache through
+`Consensus::CheckTxInputs`, and `UpdateCoins` spends inputs and adds outputs.
+Reorganizations and validation checks use `Chainstate::DisconnectBlock` and
+undo data. Peer or RPC transactions reach `ChainstateManager::ProcessTransaction`
+and `AcceptToMemoryPool`; invalid transactions explicitly uncache fetched
+prevouts to prevent a remotely driven coins-cache memory DoS. These callers
+make a real master cache corruption, wrong spend/creation result, or failed
+reset potentially consensus-critical, but this isolated simulator does not
+deserialize a peer block or run `ConnectBlock` itself.
+
+The exact Core master baseline is checkout
+`/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Its target source
+`src/test/fuzz/coinscache_sim.cpp` is SHA-256
+`b4bd1505b534267ec448a19ca130bf373fec8193f0f5e1b0244bb2289a480f09`.
+The original corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/coinscache_sim`: 305 files and
+5,153,077 bytes. The four unchanged seed partitions were 77/76/76/76 files
+and 251,934/277,059/4,391,656/232,428 bytes. Generated corpus entries are
+excluded from those counts.
+
+The exact master corpus-first command was:
+
+    timeout 240s env FUZZ=coinscache_sim \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-coinscache-master-build/bin/fuzz corpus \
+      -runs=305 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix="$PWD/artifacts/" -print_final_stats=1
+
+The master sanitizer binary is SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`.
+All 305 seeds ran with exit 0: 306 executions in 2 seconds, coverage 1200,
+features 14478, and peak RSS 153 MiB. The artifact directory was empty and
+there was no assertion, ASan, UBSan, runtime, timeout, OOM, or crash
+diagnostic.
+
+Each of four private master worker directories then ran:
+
+    timeout 540s env FUZZ=coinscache_sim \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-coinscache-master-build/bin/fuzz corpus \
+      -workers=1 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All four master workers exited zero, with empty artifact directories and no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       23340       1200      14656     431        161 MiB
+    1       23041       1200      14634     435        162 MiB
+    2       11594       1199      14879     401        186 MiB
+    3       30051       1199      14686     502        161 MiB
+
+To check the oracle's ability to catch a broken production transition, a
+temporary, uncommitted mutation removed only
+`CCoinsCacheEntry::SetDirty(*it, m_sentinel); ++m_dirty_count;` from the
+non-fresh branch of `CCoinsViewCache::SpendCoin` in the master worktree.
+The full 305-seed replay aborted with exit 134 at `src/coins.cpp:337`, where
+`SanityCheck` requires a spent entry to be dirty and non-fresh. Isolating the
+first seed that fails gave:
+
+    input: /mnt/my_storage/qa-assets/fuzz_corpora/coinscache_sim/008ef483f6cc4fd21a53e596b0032cfd8168c32a
+    size: 2830 bytes
+    SHA-256: fa8cda5dbb1dc5c2de05ff30c9d8bf1d06e93576e98891599442056c345d0b07
+    mutation result: exit 134, coinscache_sim.cpp:353 `realcoin.IsSpent()` assertion
+
+The exact seed passed with exit 0 in 8 ms after restoring the production
+code and rebuilding the master binary. The mutation was not committed; the
+master worktree is clean. This proves the oracle catches a modeled cache-state
+regression, not that the mutation was present on master.
+
+The existing `validation_chainstatemanager_tests.cpp` and cache/overlay unit
+tests cover focused cache contents, reset, block-connect, disconnect, and
+memory-accounting cases. They do not replace the fuzzer's arbitrary sequence
+of cache levels, fresh/spent transitions, flush mode, reset timing, and
+uncache operations. The master target has no peer-wire block deserialization,
+so this evidence also does not replace a direct `ProcessNewBlock` replay.
+
+The current comparison checkout is `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`,
+41 commits ahead and 7 behind Core `origin/master`. Its target source is
+SHA-256 `c2325c5695660cebfc8192756286f358a292d60c192f64d50ec31f1d3af143c4`.
+The 69-line harness delta and 238-line `CoinsViewOverlay` implementation
+delta are material: the checkout contains the l0rinc co-authored parallel
+prevout-fetch series, including `fccdc098d3f99ce69c865cffb9769be82af2a8be`,
+`b3b0d49aadf8e60fbc96ff18300562e73f4bea00`,
+`67cad6779e9bac7bb804a79aedf4b0aeda451647`,
+`ed9688ff2d705b5120f4eea0e2149bd7bf29301c`,
+`6e82d955aa0bada2c37ca717f53ec1bd5e140781`,
+`c53eedff90ea3b0fac66c2d9773f486ed21983a`,
+`051a98bb4da3a0f0d2b63c169829b77f1a9b6341`, and
+`b2d5ec4947d53a5f94b1d1fb1c83bd35d144aee5`.
+Those commits are treated as a later implementation under audit, not as a
+patch that can soften a master result. No additional cherry-pick was made by
+this documentation commit because the relevant l0rinc history is already
+present in the comparison checkout and reconciled in the branch ledger.
+
+For completeness, the same original seed partitions were replayed against
+the overlay checkout. The audit binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`; its
+corpus-first pass exited zero after 306 runs with coverage 2023, features
+20394, and peak RSS 210 MiB. The comparison binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e`; its
+corpus-first pass exited zero after 307 runs with coverage 2023, features
+21027, and peak RSS 210 MiB. Both pass artifact directories were empty.
+
+The four overlay audit workers exited zero with empty artifacts and no
+diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       8602        2023      20727     465        235 MiB
+    1       7812        2026      20950     518        249 MiB
+    2       7614        2023      21181     530        269 MiB
+    3       10639       2024      20940     562        239 MiB
+
+The four overlay comparison workers also exited zero with empty artifacts and
+no diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       8275        2023      21142     507        238 MiB
+    1       9269        2025      21125     532        261 MiB
+    2       6497        2023      21467     513        272 MiB
+    3       9581        2023      21355     493        235 MiB
+
+The overlay workers were launched independently with the same command shape
+as the master workers. The outer reporting shell returned 127 after all child
+workers finished because its post-`wait` `set -u` reporting line referenced
+an unset `kind` variable. Every child log records `WORKER_n_EXIT_CODE=0`, the
+libFuzzer `DONE` line, and the final statistics above; this wrapper mistake is
+not a fuzzer failure and is recorded so the evidence is not overstated.
+
+The master and overlay runs found no production discrepancy, fix, or
+deterministic regression test. They are not equivalent proof: the master run
+covers the old serial cache path, while the overlay run covers the later
+parallel-fetch/reset implementation. A future failure must retain the exact
+master or overlay commit set, corpus input or minimal mutation, cache-level
+preconditions, failed postcondition, Core caller/input origin, assertion or
+sanitizer stack, existing-test gap, and verifier commands. Reproduce it on
+unmodified master before assigning severity; if a later l0rinc or minor fix
+changes the result, record whether it masks, alters, or preserves the master
+trigger in the same commit message and this ledger.
+
+Severity is master-relative. A cache bug reachable from an invalid peer block
+that accepts an invalid UTXO transition, rejects a valid consensus block,
+corrupts durable chainstate, or causes remotely reachable memory-safety/race
+impact may be High or Critical according to the strongest proof. A cache-size,
+request, or model-only discrepancy without a concrete Core consequence is
+lower; an assertion found only by the deliberate mutation is evidence that the
+oracle works, not a vulnerability finding. This target contains no
+cryptographic nonce, so nonce-clearing severity is not applicable; uncleared
+data without standalone cryptographic meaning is not Critical merely because
+it was not cleared.
