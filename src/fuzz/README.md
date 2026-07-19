@@ -24323,6 +24323,169 @@ Existing findings remain reiterated at their master-relative ratings:
 
 No temporary production mutation remains, and no fuzz jobs were left running.
 
+## 2026-07-19 latest-master compact-block reconstruction status oracle
+
+This entry records the compact-block reconstruction target after rebuilding the
+audit stack on Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The focused Core commit is
+`5c2e7c95ea3f12e9180b5f9cbbe42ea89ad76d17`, whose parent is the committed
+latest-master block oracle `5a26a558fc14e68988b4617ad375249f105bfa49`.
+Equivalent l0rinc feature commits already present upstream were not duplicated.
+
+### Target and contract
+
+`src/test/fuzz/partially_downloaded_block.cpp` already checked successful
+reconstruction and the mocked short-ID collision path, but its switch allowed
+`READ_STATUS_INVALID` without checking the status implied by the harness state.
+The new postcondition is intentionally limited to the total production case
+where `InitData()` returned `READ_STATUS_OK`:
+
+* skipped unavailable transactions require `FillBlock()` to return
+  `READ_STATUS_INVALID`;
+* a complete transaction list with the mocked mutation result requires
+  `READ_STATUS_FAILED`;
+* a complete transaction list with no mocked mutation requires
+  `READ_STATUS_OK`.
+
+When `InitData()` returns `READ_STATUS_INVALID`, the harness still calls
+`FillBlock()` to exercise cleanup and exploratory coverage. That continuation
+is deliberately left unconstrained because production handles the InitData
+status before requesting block transactions.
+
+The original target source SHA-256 is
+`09e30070ee44e6b9f7452507ea20911638659b8d4a647f948d8c060ad42f61b4`.
+The enhanced target source SHA-256 is
+`9c25e837ce502e3e04c7ccb521d3f4a112b626ba5a61fa0424afe1ada52fdc24`.
+The final `src/blockencodings.cpp` SHA-256 is
+`a87feb8df352ae9c868af6bacb5193261795153249e0a15ca33a05d686291838`,
+identical to master. The final sanitizer fuzz binary SHA-256 is
+`0971b5c0e1250217fb73aefba5e3180901651ba9592c6b3f81d951d569301d6c`.
+No production file is changed by the Core commit.
+
+### Corpus, sanitizer, and worker evidence
+
+The immutable private snapshot is
+`/tmp/secp256k1-current-partially-downloaded-block-corpus-20260719`: 909
+files and 148,804,324 bytes. The deterministic proof input is
+`066fae6f4fd5788daaceb7717aa1020e3bad7a50`, 2,459 bytes, SHA-256
+`ffad41f9a22c04782615d085d8caea44fbd2f5300df34124fedc16dce45848a9`.
+
+The final corpus replay used `FUZZ=partially_downloaded_block`,
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1`,
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`, and:
+
+```text
+-merge=0 -runs=909 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -print_final_stats=1
+```
+
+It exited zero after 910 executions with coverage 5,300, feature count
+53,423, zero new units, peak RSS 799 MiB, and no sanitizer, assertion,
+timeout, OOM, crash, or artifact output. Four concurrent workers started from
+separate copies of the untouched snapshot, so generated units stayed local:
+
+| worker | executions | coverage | features | new units | final local files | peak RSS | exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 1,927 | 5,300 | 54,117 | 91 | 999 | 850 MiB | 0 |
+| 1 | 1,939 | 5,300 | 54,416 | 86 | 991 | 847 MiB | 0 |
+| 2 | 1,999 | 5,300 | 54,022 | 99 | 1,004 | 853 MiB | 0 |
+| 3 | 2,086 | 5,300 | 53,839 | 93 | 999 | 853 MiB | 0 |
+
+All worker artifact directories were empty. An earlier worker attempt failed
+only because the shared tmpfs reached 100 percent and Bitcoin Core's test
+setup reported `Disk space is too low`; it produced no finding and its
+disposable copies were removed. Final logs are retained at
+`/tmp/secp256k1-current-partially-downloaded-block-final-replay-20260719/replay.log`
+and under
+`/tmp/secp256k1-current-partially-downloaded-block-final-workers-20260719/worker-{0,1,2,3}`.
+
+### Differential mutation proof
+
+At `src/blockencodings.cpp:234`, the disposable production mutation changed:
+
+```text
+return READ_STATUS_OK;
+```
+
+to:
+
+```text
+return READ_STATUS_INVALID;
+```
+
+The exact original harness plus this mutation replayed the proof input and
+exited zero because its switch did not constrain the invalid status. The
+enhanced harness plus the identical mutation, run with `-handle_abrt=0`,
+exited 134 at `src/test/fuzz/partially_downloaded_block.cpp:129` on:
+
+```text
+assert(fill_status == READ_STATUS_OK);
+```
+
+Restoring the production return, rebuilding, and replaying the identical seed
+with the enhanced target exited zero. This is the strongest available proof
+that the new oracle matters while making no claim that master is broken. No
+production fix or deterministic regression test is claimed because master
+passed; the mutation is an oracle-validation device only.
+
+### Rejected broader oracle
+
+The first attempted matrix incorrectly required `FillBlock()` to return
+`READ_STATUS_INVALID` whenever `InitData()` returned `READ_STATUS_INVALID`.
+The clean corpus found a minimized 98-byte diagnostic input at
+`/tmp/secp256k1-current-partially-downloaded-block-replay-20260719/artifacts/crash-114bc4d5d590071d4e636580ce9f24596f229dd3`,
+SHA-256
+`3c93d1c8a611f9ce1e448ee7abfecb53e7051b030c9d5babdf8fd6acbe13858c`.
+The diagnostic tuple was `init=READ_STATUS_INVALID`,
+`fill=READ_STATUS_OK`, `skipped_missing=false`,
+`fail_block_mutated=false`, `block_tx=1`, `compact_tx=1`, and `missing=1`.
+`InitData()` can return invalid after partial state setup, while the
+exploratory harness can still supply enough data for `FillBlock()` to succeed.
+That assertion was removed and the event is explicitly not a production
+finding.
+
+### Core caller graph and severity on master
+
+Compact-block announcements and block transaction replies enter
+`PeerManagerImpl::ProcessCompactBlockTxns`, where
+`PartiallyDownloadedBlock::InitData()` and `FillBlock()` status controls peer
+punishment, full-block fallback, in-flight cleanup, and eventual
+`ChainstateManager::ProcessNewBlock`. The fuzzer's status model does not bypass
+Core's header, block, or consensus checks.
+
+On exact unmodified master this is **no confirmed production finding**. The
+oracle gap is **Low/Medium discovery value**, not a vulnerability rating. A
+peer-triggerable status regression causing sustained compact-block relay,
+availability, or resource impact needs caller-level proof before **High**.
+Consensus divergence, persistent chain-state corruption, or remotely
+reachable memory safety needs direct caller-level proof before **Critical**.
+An invalid block or malformed compact block alone is not Critical.
+
+The Core commit and this ledger reiterate the existing findings:
+`ecmult_multi` scratch-size wrapping is **Medium** with low demonstrated
+Bitcoin Core reachability; forced 10x26 magnitude-32 normalization is latent
+**Medium** internal correctness; SHA, HMAC, and RFC6979 retention is
+**Medium** memory hygiene; and an uncleared nonce with no cryptographic meaning
+is not **Critical** by itself.
+
+### Cherry-pick and masking rules
+
+No additional l0rinc commit applies specifically to this target. If a later
+fix or cherry-pick changes this behavior, the same commit or an amended commit
+message must preserve the exact clean-master seed, mutation, source and binary
+hashes, assertion stack and exit status, Core caller and input origin, test
+gap, verifier commands, severity on master, and an explicit
+`preserved`/`changed`/`masked` classification. A patch that happens to make a
+follow-up seed pass must not downgrade a more severe master trigger until the
+original seed or an equivalent production mutation is replayed. The rejected
+broader oracle and its status tuple must remain visible. Every claimed fix
+requires deterministic or caller-level proof; this commit claims only oracle
+hardening.
+
+Verifiers passed: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8`,
+`clang-format --dry-run --Werror src/test/fuzz/partially_downloaded_block.cpp`,
+and `git diff --check`. No temporary production mutation remains and no fuzz
+job was left running.
+
 ## 2026-07-19 latest-master block serialization and consensus oracle
 
 This entry records the block target after rebuilding the audit stack on Bitcoin
