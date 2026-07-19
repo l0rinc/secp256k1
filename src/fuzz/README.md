@@ -19402,3 +19402,128 @@ commit was applied by this negative campaign. Existing scratch-wrap, 10x26
 carry, and SHA/HMAC/RFC6979 memory-hygiene findings retain their recorded
 Medium ratings. Uncleared nonce data without standalone cryptographic meaning
 is not Critical merely because it is uncleared.
+
+## 2026-07-19 Core transaction-request scheduler model replay
+
+The `txrequest` target compares Core's `TxRequestTracker` with a deliberately
+small state model. Its source is `src/test/fuzz/txrequest.cpp`, SHA-256
+`b33fa73aee1dce43c8229bbb80aa6d590b4abe35d363267f237bdcead4ad3ae7` in both
+the audit and comparison checkouts. It is identical to the Core
+`origin/master` source at `ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+The harness uses 16 deterministic transaction hashes and 16 peer IDs. Its
+model tracks `NOTHING`, `CANDIDATE`, `REQUESTED`, and `COMPLETED` states,
+candidate priority, insertion sequence, preferred status, txid versus wtxid,
+request/expiry times, and the set of future events. Fuzzed commands advance
+time forward or backward, jump to the next event, add immediate or delayed
+preferred/non-preferred announcements, request a transaction, receive a
+response, forget a hash, and disconnect a peer.
+
+The focused preconditions and postconditions are:
+
+* every `GetRequestable` result matches the model's eligible peer, txid/wtxid,
+  priority, and insertion ordering;
+* every expired request is reported with the correct peer and identifier, and
+  is transitioned to completed in both implementations;
+* `GetCandidatePeers` contains exactly the model's live candidate/requesting
+  peers, while `Count`, `CountInFlight`, `CountCandidates`, and `Size` match
+  the model after each final state;
+* duplicate announcements, response completion, `ForgetTxHash`, and
+  `DisconnectedPeer` cannot leave stale candidates or requests; and
+* the production `PostGetRequestableSanityCheck` and `SanityCheck` pass after
+  each query and at the end of the input.
+
+The production input origin is unauthenticated peer transaction relay in
+Bitcoin Core. `PeerManagerImpl` routes peer `INV` announcements and orphan
+parent candidates through `TxDownloadManager::AddTxAnnouncement`, which
+computes delays for preferred peers, txid relay while wtxid peers exist, and
+overloaded peers before calling `TxRequestTracker::ReceivedInv`. During
+`SendMessages`, `TxDownloadManager::GetRequestsToSend` calls
+`GetRequestable`, filters through `AlreadyHaveTx`, and marks selected entries
+in flight with `RequestedTx` before emitting `MSG_TX` or `MSG_WTX` `GETDATA`.
+Peer `TX` and `NOTFOUND` messages complete requests through
+`ReceivedResponse`; accepted/rejected mempool transactions, orphan handling,
+and peer disconnects call the forget/cleanup paths. Invalid transaction bytes
+are still parsed and validated by surrounding Core code, so a tracker result
+alone is not a consensus-validation bypass. A demonstrated remote request
+starvation or sustained relay/node-availability failure may be Medium or High
+on master; remotely reachable memory-safety, race, or shared-state corruption
+with broad node impact may be High or Critical. A model-only ordering,
+duplicate, or accounting discrepancy without a concrete Core consequence is
+lower severity. This target has no block-validation path, so an invalid block
+cannot make this isolated scheduler oracle Critical without a demonstrated
+downstream impact.
+
+The original corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/txrequest`. It contained 378 files and
+8,769,842 bytes. Each audit and comparison run used four independent fresh
+partitions, with original seed counts of 95/95/94/94 files and
+3,499,097/862,889/2,445,814/1,962,042 bytes. Generated corpus files were
+excluded from those counts.
+
+The audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`. From
+each private worker directory, the exact command was:
+
+    timeout 540s env FUZZ=txrequest \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz corpus \
+      -workers=1 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All four audit workers exited zero. Their final results were:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       4550        2640      27994     383        360 MiB
+    1       9393        2640      27232     493        199 MiB
+    2       5211        2640      27538     370        267 MiB
+    3       3508        2640      27377     383        364 MiB
+
+Every audit artifact directory was empty. There was no assertion, ASan,
+UBSan, runtime, timeout, OOM, or crash diagnostic.
+
+The comparison binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e`. It ran
+the identical command and fresh partitions. All comparison workers exited
+zero:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       4618        2640      27550     412        386 MiB
+    1       8770        2640      27092     493        191 MiB
+    2       4261        2640      27490     340        252 MiB
+    3       3804        2640      27157     364        314 MiB
+
+Their artifact directories were empty and no diagnostic was emitted. The
+comparison executable came from Core checkout
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, which is 41 commits ahead and 7
+behind Core `origin/master`; it was not built from a separate pristine master
+checkout. The target source is master-identical, so this is useful
+differential evidence but is not claimed as a clean-master reproduction.
+
+This is a negative replay: no production or fuzzer assertion, mutation, fix,
+or deterministic regression test is claimed. Existing Core tx-request,
+orphanage, mempool, and network tests cover important individual transitions,
+but do not replace arbitrary interleavings of time travel, duplicate
+announcements, preferred-peer changes, expiry, responses, and disconnects.
+The target models `TxRequestTracker` directly; it does not prove the
+surrounding `TxDownloadManager` delay calculations, `AlreadyHaveTx` filters,
+or `PeerManagerImpl` locking and message batching. A future failure must keep
+the exact corpus input or mutation, state preconditions, failed postcondition,
+Core caller/input origin, stack or assertion, existing-test gap, and verifier
+commands. Reproduce it on unmodified master or identify the minimal
+production mutation that models the broken condition before calling it a
+production bug.
+
+Severity and masking rules are part of this record: a later minor fix or an
+l0rinc cherry-pick must not hide a more severe master trigger. Preserve the
+clean-master or minimal-mutation replay and state whether each cherry-pick
+masks, alters, or preserves it in the same commit message and this ledger.
+The l0rinc history already reconciled on this branch had no additional
+applicable commit for this negative target. Existing scratch-wrap, 10x26
+carry, and SHA/HMAC/RFC6979 memory-hygiene findings retain their recorded
+Medium ratings. Uncleared nonce data without standalone cryptographic meaning
+is not Critical merely because it is uncleared.
