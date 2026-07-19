@@ -19291,3 +19291,114 @@ Existing scratch-wrap, 10x26 carry, and SHA/HMAC/RFC6979 memory-hygiene
 findings retain their recorded Medium ratings. Uncleared nonce data without
 standalone cryptographic meaning is not Critical merely because it is
 uncleared.
+
+## 2026-07-19 Core orphanage model-differential replay
+
+The `txorphanage_sim` target compares Core's real `TxOrphanage` implementation
+with a deliberately simple announcement model. Its source is
+`src/test/fuzz/txorphan.cpp`, SHA-256
+`7218f9020bb8766f4b14d7434da2cb8b0388797502d94105798fd780aaa6845f` in both
+the audit and comparison checkouts. It matches Core `origin/master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+Each input constructs up to 16 transactions with randomized dependency
+topology, duplicate txids with distinct wtxids, witness variants, and up to 16
+peers. It then performs up to 200 additions, announcements, transaction and
+peer erasures, block erasures, child-workset promotion, reconsideration reads,
+and eviction trims. The real object is checked against the model for:
+
+* `AddTx` and `AddAnnouncer` return values and duplicate `(wtxid, peer)`
+  behavior;
+* `EraseTx`, `EraseForPeer`, and `EraseForBlock` removal semantics, including
+  transactions spending outputs in an erased block;
+* `AddChildrenToWorkSet` selecting every direct child that is not already
+  reconsiderable, without selecting unrelated or duplicate announcements;
+* `GetTxToReconsider` returning only a matching reconsiderable transaction for
+  the requested peer and clearing its reconsiderable state;
+* every inspector: orphan existence, returned transaction, announcers,
+  per-peer usage/counts, global usage/counts, latency scores, peer limits, and
+  reconsideration availability;
+* global and per-peer limits after each command, plus the final internal
+  `SanityCheck`.
+
+The production input origin is an unauthenticated peer's transaction relay
+behavior. Core's `PeerManagerImpl` passes peer `INV` announcements into
+`TxDownloadManager::AddTxAnnouncement`, passes received transactions through
+`ReceivedTx`, and uses the orphanage to retain missing-input transactions and
+later reconsider their children. Block connection, tip changes, rejection
+classification, peer disconnect, and `NOTFOUND` processing erase or promote
+orphan state. Therefore invalid witness/transaction combinations, duplicate
+txids, missing parents, and malicious multi-peer announcement patterns can
+reach the real orphanage. This target does not itself validate consensus or
+script correctness; the model is an internal state-consistency oracle.
+
+The original corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/txorphanage_sim`. It contained 1,123
+files and 313,410 bytes. The audit and comparison replays used identical fresh
+partitions of 281, 281, 281, and 280 files with 66,859, 83,175, 80,058, and
+83,318 bytes. Generated corpus files are excluded from those seed counts.
+
+The audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`. Each
+worker ran the following from a private worker directory, with
+`FUZZ=txorphanage_sim` and a separate corpus/artifact path:
+
+    timeout 540s env FUZZ=txorphanage_sim \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz corpus \
+      -workers=1 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All audit workers exited zero, with empty artifact directories and no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       71026       4414      39176     1208       187 MiB
+    1       68221       4414      39588     1165       188 MiB
+    2       70449       4413      39349     1146       186 MiB
+    3       67567       4413      39688     1152       186 MiB
+
+The comparison binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e`. It ran
+the identical command and fresh partitions. All comparison workers exited
+zero with empty artifact directories and no diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       72233       4414      39259     1254       190 MiB
+    1       68759       4414      39338     1191       190 MiB
+    2       72137       4413      39349     1173       188 MiB
+    3       68848       4413      39482     1167       189 MiB
+
+The comparison executable came from Core checkout
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, 41 commits ahead and 7 behind
+Core `origin/master`; it was not rebuilt from a separate pristine master
+checkout. The target source is master-identical, so this is useful differential
+evidence but is not claimed as clean-master reproduction.
+
+No production or fuzzer assertion, mutation, fix, or deterministic regression
+test is claimed from this negative replay. `orphanage_tests.cpp` covers many
+direct eviction, duplicate-wtxid, peer, block-erasure, and reconsideration
+cases; this simulation adds a model comparison over arbitrary topology and
+operation order, but neither corpus pass proves all states safe. A future
+failure must retain the exact transaction topology, wtxid/txid mutation,
+peer/command sequence, limit values, model mismatch or sanitizer stack,
+existing-test gap, and verifier commands. Reproduce it on unmodified master or
+identify the minimal production mutation that models the broken condition.
+
+Severity follows the actual Core caller. An orphanage defect that lets a
+remote peer cause shared-state corruption, invalid transaction acceptance or
+relay, memory-safety failure, race, or sustained node unavailability may be
+High or Critical according to demonstrated impact. A model-only ordering
+difference, expected eviction, duplicate announcement, or accounting
+discrepancy without a concrete Core consequence is lower. A later minor fix or
+l0rinc cherry-pick must not hide a more severe master trigger: preserve the
+clean-master or minimal-mutation replay and state whether the change masks,
+alters, or preserves it in the same commit message and this ledger. No l0rinc
+commit was applied by this negative campaign. Existing scratch-wrap, 10x26
+carry, and SHA/HMAC/RFC6979 memory-hygiene findings retain their recorded
+Medium ratings. Uncleared nonce data without standalone cryptographic meaning
+is not Critical merely because it is uncleared.
