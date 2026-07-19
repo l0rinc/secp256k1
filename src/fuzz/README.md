@@ -21149,6 +21149,154 @@ source and binary SHA-256 checks; empty artifact directories; `git diff
 jobs remain. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
 
+## 2026-07-19 Latest-master four-target cross-backend worker recheck
+
+This is a fresh corpus-first replay of the four highest-risk stateful/public
+targets after the latest master refresh. It is a negative result, not a claim
+that the existing oracle ledger or production code is complete. The clean
+source baseline contains `origin/master` at `8c3e6e6d992456d3b9228305ae84a6703273cf70`,
+including `e217ead` (`field: serialize elements by word`), as its merge base.
+No l0rinc commit was cherry-picked after this baseline, and no production file
+was changed for this replay.
+
+### Target and corpus anchors
+
+The tracked source/corpus anchors were:
+
+| target | source SHA-256 | files | bytes | sorted relative-path manifest |
+| --- | --- | ---: | ---: | --- |
+| `api_roundtrip` | `f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5` | 63 | 2,933 | `06df09d6853d275cb1b6ce8a3379dbf13f6bb42b2c4cf58fdb257d0ed7739fbf` |
+| `ecmult_multi` | `aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21` | 29 | 1,028 | `e125fff7a4d0bb3926e4d0276d4357addbec772fc4a61a4fee3207de58223da1` |
+| `musig` | `5a51df8eabf397b01f7ab496a23ade8123afe5256b8b5b590ae20d547a9ef831` | 77 | 2,946 | `56691f8e7b9aa04e6c917cec95c9417e6471a4fe77da475a7d0fcbe98603f73f` |
+| `xonly_tweak` | `f7910e0c16f3c682acd0892fe7de9a1df6d4d216084161a9da42993a624ed870` | 20 | 712 | `d458c67584b6c7cd0cff0604f50f638e2ef03b54e1bf03b5eeda21e37c5c9c64` |
+
+Each original corpus was copied to a disposable directory before execution;
+the tracked counts, byte totals, and manifests above were unchanged. The
+post-run evolved copies contained 141/29/77/20 files for the native targets
+and 83/29/77/20 files for the forced-`int64` targets, respectively.
+
+### Build and worker commands
+
+The refreshed Clang ASan/UBSan binaries were built from this worktree with:
+
+```sh
+cmake --build /tmp/secp256k1-next-asan \
+  --target fuzz_api_roundtrip fuzz_ecmult_multi fuzz_musig fuzz_xonly_tweak -j8
+cmake --build /tmp/secp256k1-next-asan-int64 \
+  --target fuzz_api_roundtrip fuzz_ecmult_multi fuzz_musig fuzz_xonly_tweak -j8
+```
+
+The resulting binary hashes were:
+
+```text
+native api_roundtrip a6748b4566c221c7a636348c641993489465dacd19b152825240a8ab9ef0e886
+native ecmult_multi  602b36b60700ab84273a6c0a38640274f5ae2dff0bea5ab9c3c9de398bf2d8c1
+native musig         c624b52264d8d2679206c5fce4bc73c4abdea36de2d669e00beb0d14a85af9e9
+native xonly_tweak   f3143946844677a9e735b5f13420eb89eb222cca467edfec8ae8cd7f4e60bdc6
+int64  api_roundtrip 2ce31e887697e3b7dabd45bd538f0745faa1fb9774dc6d59b0334c8a6cf406c1
+int64  ecmult_multi  1f507600429a050da6e2d470ebec9bc1f94b2fcc9793f2715b63b02145e028bc
+int64  musig         42f90882a171835019c1013d8fe6a778c898b40a3d5b1a34d6cac74d9eb5e5e4
+int64  xonly_tweak   55600f08d6c1268c03d5bc46b33c4db3a0edef6a9897cfe94bbd403599fa6441
+```
+
+For every target/backend, the isolated command was:
+
+```sh
+timeout 200s env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+  <binary> corpus -workers=4 -jobs=4 -max_total_time=25 -timeout=60 \
+  -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=artifacts/ \
+  -print_final_stats=1
+```
+
+The first attempt shared one working directory between managers. Its shell
+statuses were zero, but libFuzzer's relative `fuzz-*.log` files interleaved;
+those logs were discarded. The retained replay gave each target its own
+working directory, four worker logs, and separate artifact directory.
+
+### Results and failure classification
+
+The four worker final-stat records were summed per target. `new` is the sum of
+`stat::new_units_added`; RSS is the largest worker value:
+
+| backend/target | executions | new units | peak RSS | result |
+| --- | ---: | ---: | ---: | --- |
+| native `api_roundtrip` | 533 | 78 | 48 MiB | clean |
+| native `ecmult_multi` | 120 | 0 | 55 MiB | clean; slow-unit only |
+| native `musig` | 312 | 0 | 54 MiB | clean |
+| native `xonly_tweak` | 84 | 0 | 44 MiB | clean |
+| forced-`int64` `api_roundtrip` | 313 | 20 | 47 MiB | clean |
+| forced-`int64` `ecmult_multi` | 120 | 0 | 55 MiB | clean; slow-unit only |
+| forced-`int64` `musig` | 312 | 0 | 55 MiB | clean |
+| forced-`int64` `xonly_tweak` | 84 | 0 | 44 MiB | clean |
+
+All 32 workers emitted `Done` and exit status 0. Diagnostic scans found no
+ASan, UBSan, assertion, deadly-signal, runtime-error, or abort text. There
+were no crash artifacts. `ecmult_multi` wrote the same 22-byte libFuzzer
+`slow-unit` marker on both backends, containing `pippenger window 1261`; the
+worker reports a 14-15 second slowest unit but completed normally. This is a
+resource/performance observation, not a memory-safety or correctness finding.
+No fuzz process remained after verification.
+
+### Bitcoin Core boundary and severity
+
+`api_roundtrip` overlaps Core's actual public API callers: DER/SEC1 ECDSA
+verification in `src/pubkey.cpp:283-298`, script and witness dispatch through
+`src/script/interpreter.cpp:349-380,1696-1750,1972`, wallet signing and
+recoverable signing in `src/key.cpp:208-269`, and Schnorr/keypair/tweak paths
+in `src/key.cpp:409-439` and `src/pubkey.cpp:236-279`. A clean-master bug in
+one of those paths must be replayed with the exact transaction, witness, or
+wallet input before assigning severity. A malformed block or peer-supplied
+signature that causes consensus verification to accept invalid data, corrupt
+memory, or hang is potentially High/Critical, but this clean replay found no
+such behavior.
+
+`xonly_tweak` models Taproot key parsing, tweak, parity, and signature
+contracts. Core consumes these through Taproot script verification and
+`XOnlyPubKey` helpers; invalid witness bytes can reach rejection boundaries,
+but the fuzzer's generated valid-key/tweak states are not proof of an invalid
+block exploit. No production finding was found, so no High/Critical rating is
+claimed.
+
+`musig` maps to Core's wallet/descriptor/PSBT signing path: `src/musig.cpp`,
+`src/script/sign.cpp:117-213,282-368`, and the participant/nonce/partial-signature
+fields parsed in `src/psbt.h:218-265,863-897`. It is not used to accept a
+consensus block. A malformed local opaque MuSig state or a PSBT/API mismatch
+remains Medium at most absent a demonstrated wallet key loss, signature
+misbinding, or resource impact; a nonce that has no standalone cryptographic
+meaning is not Critical merely because it is not cleared.
+
+`ecmult_multi` is an internal arithmetic path behind public key, signing,
+verification, and MuSig operations. The existing `SIZE_MAX` scratch-constructor
+wrap remains **Medium confirmed internal memory safety with low current Core
+reachability**: current Core MuSig aggregation reaches the no-scratch public
+aggregation path and does not expose that constructor to block/witness bytes.
+The separate 10x26 magnitude-32 carry loss remains **Medium latent
+correctness**, not a demonstrated remote key or signature vulnerability.
+
+Across all four targets, the authoritative classification is **no new
+production bug, no fix, and no deterministic regression test**. Existing
+opaque-state, callback/API, SHA/HMAC/RFC6979-retention, scratch, and field
+findings retain the severities in the current-master ledger. A later minor
+fix, cherry-pick, or oracle change must not downgrade a worse behavior that
+exists on unmodified master: preserve the exact clean-master corpus/seed,
+mutation and stack if any, Core caller/input origin, severity, deterministic
+test, verifier commands, and whether the change preserves, changes, or masks
+the master behavior. This replay used no production mutation because no
+failure occurred; the independent mutation proofs already recorded for these
+oracles remain the proof that their assertions are live.
+
+### Verification record
+
+Verification consisted of the two build commands and the exact worker command
+above for all eight target/backend combinations, SHA-256 checks for all eight
+binaries, original corpus count/byte/manifest checks, four per-target worker
+log checks, sanitizer/assertion diagnostic scans, artifact inspection,
+`pgrep` confirmation, and `git diff --check`. The only artifact was the
+classified `slow-unit` marker. The source worktree stayed clean before this
+documentation entry, and no new l0rinc cherry-pick or production behavior
+change is claimed.
+
 ## 2026-07-19 Core UTXO total-supply and coinstats replay
 
 The `utxo_total_supply` target is a chainstate exercise rather than a
