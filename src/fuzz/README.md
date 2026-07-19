@@ -24013,3 +24013,144 @@ failure stack/status, Core caller and input origin, master-relative severity,
 test gap, verifier commands, and whether it `preserve`s, `changes`, or
 `masks` the behavior. No temporary production mutation remains and no fuzz
 process is running.
+
+## 2026-07-19 Core BIP157 block-filter contract oracle
+
+This is a harness-only oracle improvement, not a production bug claim. The
+companion Core commit is `4b90f5b796` (`fuzz: assert block filter hash and
+round-trip contracts`). The old `blockfilter` target deserialized a
+`BlockFilter`, called `ComputeHeader`, `GetHash`, encoding, and GCS matching,
+and discarded the results. It now checks the production contracts that can
+silently drift:
+
+* `GetHash() == Hash(GetEncodedFilter())`;
+* `ComputeHeader(previous) == Hash(GetHash(), previous)`;
+* serializing and deserializing preserves filter type, block hash, encoded
+  filter, hash, header, and consumes the complete serialized stream; and
+* `MatchAny(elements)` equals the OR of `Match(element)` for the same set.
+
+### Baseline and provenance
+
+The exact upstream Core baseline was
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`; the audit parent was
+`ccf346df93f190950fa9715f3420283cf9be9f5c`. The original tracked
+`src/test/fuzz/blockfilter.cpp` SHA-256 was
+`4b52a1cc5cbb487777c85209d1b8a0412a5e506ccd5bf4ee275374cb78b4f143`; the
+patched source SHA-256 is
+`a0128bafcb47afa5219810c661f80be37f5a76f09c7b2c3bc0ea7aa8c27ce56b`.
+The production `src/blockfilter.cpp` SHA-256 is
+`f9cd087f8112e8bce1882585f440c2b188a3cc8838621f6350f3800f4a197140` in both
+the audit checkout and exact master; no production code is changed. The
+restored audit sanitizer fuzzer SHA-256 is
+`4740610133c3505ab731dbd00cbccfb31cb72444be959032da760c01e644059f`.
+
+The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/blockfilter`: 484 files and
+23,348,818 bytes before replay. The deterministic proof seed was
+`0141ec0ece3f9b8af4e5caeeea5fbbde364b1a08`, 132 bytes, SHA-256
+`c8f42b4714e415965bcefe775cf6d403f6ef6ed0a70bdfdeba9a7fd928697a37`.
+
+### Differential mutation proof
+
+In the disposable audit production checkout, the only mutation changed
+`src/blockfilter.cpp:250` from
+
+    return Hash(GetEncodedFilter());
+
+to
+
+    return uint256{};
+
+This is a minimal model of a wrong filter-hash implementation. Running the
+fixed seed with
+
+    FUZZ=blockfilter /tmp/bitcoin-secp256k1-audit-build/bin/fuzz <seed> \
+      -runs=1 -timeout=30 -rss_limit_mb=0 -handle_abrt=0
+
+aborted with exit 134 at
+`src/test/fuzz/blockfilter.cpp:30`, on
+`assert(block_filter->GetHash() == expected_hash)`. The restored production
+source was rebuilt and the identical command exited 0. The old
+coverage-only target also exited 0 under this wrong-hash mutation, proving
+that the new assertion matters. This is mutation sensitivity evidence, not a
+clean-master production failure, so no production fix or vulnerability is
+claimed.
+
+### Corpus and worker verification
+
+The corpus-first command shape was:
+
+    timeout 240s env FUZZ=blockfilter \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz <private-corpus> \
+      -merge=0 -runs=484 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=<private-artifacts>/ -print_final_stats=1
+
+It completed 969 executions with coverage 1,125, 9,874 features, no new
+units, and 541 MiB peak RSS. It exited 0 with an empty artifact directory and
+no assertion, ASan, UBSan, runtime, timeout, OOM, or crash diagnostic.
+
+The worker command was:
+
+    timeout 180s env FUZZ=blockfilter \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz corpus \
+      -workers=1 -jobs=1 -max_total_time=60 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+Four isolated workers used disjoint 121-file partitions of the original
+corpus. All exited 0, left artifacts empty, and emitted no diagnostic. Their
+results are executions/coverage/features/new-units/peak-RSS MiB:
+
+    worker 0: 3135/1121/9962/229/573
+    worker 1: 2509/1125/9683/199/544
+    worker 2: 1983/1120/9609/128/590
+    worker 3:  495/1118/9657/46/356
+
+An additional shared `-workers=4 -jobs=1` coordinator run also exited 0 with
+2,315 executions, coverage 1,125, 10,232 features, 70 new units, and 665 MiB
+peak RSS. The verifier was
+`cmake --build /tmp/bitcoin-secp256k1-audit-build --target fuzz -j8`, followed
+by `git diff --check` and a `pgrep` check confirming no fuzz jobs remained.
+
+### Core caller boundary and severity
+
+The production path is `BlockFilterIndex::CustomAppend` at
+`src/index/blockfilterindex.cpp:259`, which computes and stores filter data;
+`ReadFilterFromDisk` at `:160` verifies the stored hash. Local/authenticated
+`getblockfilter` begins at `src/rpc/blockchain.cpp:2967`. Peer
+`getcfilters` and `getcfheaders` requests reach
+`PeerManagerImpl::ProcessGetCFilters` at `src/net_processing.cpp:3458`.
+This is an index and filter-client path. A `BlockFilter` is generated from
+an accepted/indexed block and is not an unauthenticated invalid-block
+consensus boundary.
+
+A real wrong-hash defect on master is Medium filter-index/client correctness
+or availability. It could be High only with demonstrated wallet privacy or
+security impact. It is not Critical merely because invalid blocks exist in a
+separate validation path. No clean-master production failure, deterministic
+regression test, or production fix was found. Existing unit tests cover basic
+filter behavior and serialization, but the old fuzzer did not assert these
+identities.
+
+### Cherry-pick and masking record
+
+No l0rinc commit was cherry-picked for this target, and no later overlay
+changes the production block-filter source. If a minor fix, production fix,
+oracle edit, or l0rinc cherry-pick changes this behavior, its commit message
+and this ledger must retain the exact master/audit parent, corpus and seed,
+mutation, preconditions, postconditions, failure stack/status, Core caller
+and input origin, master-relative severity, deterministic proof, test gap,
+verifier commands, and whether the change `preserve`s, `changes`, or `masks`
+the clean-master behavior. A green follow-up branch cannot downgrade a more
+severe master trigger until the original seed or an equivalent minimal
+production mutation is rerun. Existing findings remain reiterated at their
+recorded ratings: `ecmult_multi` scratch-size wrapping is Medium with low
+demonstrated Core reachability; forced-10x26 magnitude-32 normalization is
+Medium latent internal correctness; SHA/HMAC/RFC6979 retention is Medium
+memory hygiene; and an uncleared nonce with no cryptographic meaning is not
+Critical by itself. No temporary production mutation remains and no fuzz
+jobs were left running.
