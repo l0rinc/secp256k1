@@ -17777,3 +17777,60 @@ severity on master, existing-test gap, verifier commands/results, and whether
 the change preserves, changes, or masks the trigger. If a minor fix makes a
 follow-up green, rerun the original baseline before lowering severity and
 document that masking relationship in the same commit and ledger.
+
+## 2026-07-19 Bitcoin Core wallet-signing worker replay
+
+The Core `script_sign` target was replayed against the audit-linked binary
+from the earlier Core campaigns. Its fresh corpus copy was
+`/tmp/secp256k1-next-audit-core-corpora-wallet/script_sign`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/script_sign`; artifacts were directed
+to `/tmp/secp256k1-next-audit-core-artifacts-wallet/script_sign/`. The exact
+command was:
+
+    timeout 180s env FUZZ=script_sign \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-audit-core-corpora-wallet/script_sign \
+      -workers=4 -jobs=1 -max_total_time=60 -timeout=30 \
+      -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-audit-core-artifacts-wallet/script_sign/ \
+      -print_final_stats=1
+
+The target loaded 5,310 seeds and completed 6,644 executions, reaching 6,010
+coverage points and 38,758 features. It exited zero with no assertion, ASan,
+UBSan, runtime, timeout, OOM, or crash artifact. Peak RSS was approximately
+786 MB under four sanitized workers. No tracked corpus was used as a mutation
+output directory.
+
+The fuzzer exercises `CKey` validity and derivation, `CPubKey` and key-origin
+serialization, `SignatureData` merging, `SignSignature`, `SignTransaction`,
+`ProduceSignature`, and signature-hash creation for BASE and WITNESS_V0
+states. These are wallet, PSBT, descriptor, and authorized-signing callers;
+the target does not make a private-key or signing-provider failure reachable
+from an invalid block or witness. A future failure in this target therefore
+starts as wallet/API severity. It is promoted only if a separate Core call
+path demonstrates a consensus, remote-peer, integrity, or node-availability
+consequence on unmodified master.
+
+No production finding, fix, deterministic regression test, or severity change
+is claimed. Existing findings remain: scratch-wrap is **Medium confirmed
+internal memory safety with low current Core reachability**; the 10x26
+magnitude-32 carry issue is **Medium latent correctness**; SHA/HMAC/RFC6979
+finalizer retention is **Medium memory hygiene** without a standalone read
+primitive; and direct wallet, callback, opaque-state, cache, and local API
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. Any
+future wallet oracle, production fix, optimization, cherry-pick, or finding
+must include the exact unmodified-master or minimal-production-mutation
+baseline, corpus or mutation, preconditions, postconditions, failure and
+stack, Core caller and input origin, master-relative severity, existing-test
+gap, verifier commands/results, and whether a change preserves, changes, or
+masks the trigger. If a minor fix makes a follow-up green, rerun the original
+baseline before lowering severity and record the masking relationship in the
+same commit message and ledger.
