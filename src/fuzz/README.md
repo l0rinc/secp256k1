@@ -21488,3 +21488,135 @@ were empty; the exact master binary returned to SHA
 hashes remained unchanged; no fuzz process was left running; and the audit
 branch remained free of source changes. No production behavior change,
 regression test, or new l0rinc cherry-pick is claimed by this entry.
+
+## 2026-07-19 Core txgraph exact-master oracle replay
+
+This entry fills the previously undocumented `txgraph` target and reiterates
+the severity of the existing findings against unmodified Bitcoin Core master.
+It is a negative replay, not a claim that a coverage increase is a bug. The
+clean-master result is recorded before any future cherry-pick, minor fix, or
+oracle strengthening can mask a master-relative behavior.
+
+### Source, corpus, and build anchors
+
+The clean baseline was `/tmp/bitcoin-coinscache-master` at exact master commit
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target and production hashes
+were:
+
+    src/test/fuzz/txgraph.cpp  3b9a6b85800a39b0a62c23fe910f87e7b2a0bb46963fc54b9e81b2494fde20df
+    src/txgraph.cpp            6019e0c9ece5c336874f25c6d9805b742c1e7c8103c2478bebc66e8a9a853ae9
+    src/txgraph.h              f3f1280ac3893b007025d335aa0b4784c38041c11baa4185be01b9fc130d511c
+    src/txmempool.cpp           68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651
+
+The audit and comparison worktrees were both at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; these four source hashes matched
+the exact-master hashes. The sanitizer fuzzer binaries were unchanged by the
+campaigns and had these SHA-256 values:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5
+
+The original `txgraph` corpus contained 3,234 files and 1,466,623 bytes. Its
+sorted absolute-path SHA-256 manifest was
+`115d512a4728bdee5e361e2cdaf8fb780832ebc926077ddbd44823996d3bded5`. Each
+campaign used an isolated copy, so libFuzzer additions did not alter the
+original corpus.
+
+### Oracle and state transitions
+
+`FUZZ_TARGET(txgraph)` constructs a real `TxGraph` and a simpler
+`SimTxGraph`, then compares returned results and performs a complete final
+comparison. It chooses cluster-count, cluster-weight, and acceptable-cost
+limits; allocates unique nonzero simulated transaction identifiers; and keeps
+the simulation's main graph, optional staging graph, removed references, and
+live block builders synchronized with the real graph.
+
+The harness preconditions reject dependency cycles, keep transactions within
+the model's bounded capacity, distinguish main from staging, and close
+ancestor/descendant sets before removal or reference destruction. Its
+postconditions compare add/dependency/removal outcomes, fee updates, ancestor
+and descendant queries, clusters and fee diagrams, staging commit/abort,
+trim, `DoWork`, block-builder chunks, and `SanityCheck`. It also exercises
+references that outlive removal, where destroying a `TxGraph::Ref` has an
+observable graph effect. These are focused state-contract assertions rather
+than an “accepted means valid” oracle: the model only constructs operations
+that are legal for the graph API, and the final comparison is against an
+independent implementation.
+
+The campaign command shape was:
+
+    timeout 420s env FUZZ=txgraph ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+The exact-master replay loaded all 3,234 seeds and completed 34,196
+executions in 301 seconds: cov 10,185, features 103,125,
+`new_units_added=636`, peak RSS 557 MiB. The audit-linked replay completed
+34,422 executions in 301 seconds: cov 10,182, features 101,322,
+`new_units_added=588`, peak RSS 561 MiB. The comparison replay completed
+34,750 executions in 301 seconds: cov 10,182, features 102,062,
+`new_units_added=598`, peak RSS 558 MiB. All three exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact. The four
+worker processes were gone after verification and all three artifact
+directories were empty. Coverage and feature totals are not correctness
+comparisons across differently linked builds.
+
+### Bitcoin Core reachability and severity
+
+`TxGraph` is the graph layer inside `CTxMemPool`, which Core documents as
+handling in-mempool parents/children, fee and size data, cluster limits,
+optimal block ordering, and removal after reorg. Peer transactions reach the
+mempool through `net_processing.cpp:4529` -> `validation.cpp:4458-4468`
+(`ChainstateManager::ProcessTransaction`) -> `AcceptToMemoryPool` at
+`validation.cpp:1781-1810`. `CTxMemPool::ChangeSet` starts, commits, or aborts
+graph staging; `StageAddition`/`ProcessDependencies` add transactions and
+edges; `Apply` commits and calls `DoWork`. Block connection removes confirmed
+transactions and conflicts in `txmempool.cpp:405-430`, reorg cleanup removes
+descendant closures in `txmempool.cpp:360-385`, and `CTxMemPool::check`
+asserts graph size and `SanityCheck` at `txmempool.cpp:433-450`. Mining uses
+`GetBlockBuilder`, while RPC queries are local/authenticated.
+
+The fuzzer's input is an abstract graph-operation sequence, not a raw invalid
+block and not a full peer transaction through `AcceptToMemoryPool`. Its block
+builder and reorg operations model lifecycle behavior, but do not prove that
+an invalid wire block can reach `TxGraph` through consensus validation. Thus
+this clean replay found no production bug, failure stack, mutation, fix, or
+deterministic regression test. A policy ordering or cluster discrepancy is
+Low/Medium until a concrete Core consequence is shown. A peer-reachable graph
+corruption, use-after-free, or sustained remote DoS is High only with a
+reproducer and caller proof. Invalid-block acceptance or remotely triggerable
+memory safety is Critical only with proof through the relevant Core caller;
+the fact that Core uses `TxGraph` does not itself promote severity.
+
+Existing `src/test/txgraph_tests.cpp` covers deterministic trim, staging, and
+block-builder/chunk constructions. It does not exhaust arbitrary interleavings
+of dependencies, removals, staging lifetimes, reference destruction, trim,
+`DoWork`, and block builders, which is the remaining value of this oracle.
+
+### Findings, fixes, and masking ledger
+
+No production source was mutated in this replay, so there is no confirmed
+finding, fix, stack trace, or regression test to claim. The earlier findings
+remain reiterated at their master-relative severities: scratch allocation
+wrap is **Medium confirmed internal memory safety with low current Core
+reachability**; the 10x26 magnitude-32 carry issue is **Medium latent
+correctness**; SHA/HMAC/RFC6979 finalizer retention is **Medium memory
+hygiene** without a standalone read primitive; and direct API, wallet,
+callback, opaque-state, cache, and harness-performance issues remain below
+High/Critical without a demonstrated Core trigger. A nonce with no standalone
+cryptographic meaning is not Critical merely because it is not cleared.
+
+The l0rinc commits affecting this area were already reconciled; the target and
+production hashes show no additional l0rinc behavior in these builds. If a
+future cherry-pick or minor fix changes a trigger, its commit message and this
+ledger must preserve the clean-master seed/corpus result, the exact assertion
+and failure condition, and any minimal production mutation. The note must say
+whether the change preserves, changes, or masks the master behavior; a benign
+follow-up patch that happens to stop a failure must not erase a more severe
+master finding. Every claimed fix still requires a deterministic replay,
+regression test, and verifier commands against the relevant caller path.
+
+Verifier commands included the exact corpus count/manifest, source and binary
+SHA checks, the three four-worker sanitizer commands above, empty-artifact
+checks, `ps` confirmation that no fuzz process remained, and `git diff --check`.
+No production behavior change or new l0rinc cherry-pick is claimed by this
+entry.
