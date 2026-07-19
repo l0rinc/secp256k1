@@ -17834,3 +17834,79 @@ gap, verifier commands/results, and whether a change preserves, changes, or
 masks the trigger. If a minor fix makes a follow-up green, rerun the original
 baseline before lowering severity and record the masking relationship in the
 same commit message and ledger.
+
+## 2026-07-19 Extended high-risk library worker campaign
+
+To increase discovery depth after the one-minute campaigns, the three
+highest-risk library targets were replayed for five minutes with eight
+libFuzzer workers and value profiling. `fuzz_musig` and `fuzz_ellswift` used
+the external-default-callback build at `/tmp/secp256k1-oracles-external`;
+`fuzz_ecmult_multi` used the forced-int64 10x26 ASan/UBSan build at
+`/tmp/secp256k1-next-asan-int64`. Each committed corpus was copied to
+`/tmp/secp256k1-next-long-corpora/<target>` and each artifact directory was
+under `/tmp/secp256k1-next-long-artifacts/<target>`.
+
+The exact commands were:
+
+    timeout 420s /tmp/secp256k1-oracles-external/bin/fuzz_musig \
+      /tmp/secp256k1-next-long-corpora/musig -workers=8 -jobs=1 \
+      -max_total_time=300 -timeout=30 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/musig/ \
+      -print_final_stats=1
+    timeout 420s /tmp/secp256k1-oracles-external/bin/fuzz_ellswift \
+      /tmp/secp256k1-next-long-corpora/ellswift -workers=8 -jobs=1 \
+      -max_total_time=300 -timeout=30 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/ellswift/ \
+      -print_final_stats=1
+    timeout 420s /tmp/secp256k1-next-asan-int64/bin/fuzz_ecmult_multi \
+      /tmp/secp256k1-next-long-corpora/ecmult_multi -workers=8 -jobs=1 \
+      -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/ecmult_multi/ \
+      -print_final_stats=1
+
+`fuzz_musig` loaded 77 seeds and completed 257 executions, reaching 4,303
+coverage points and 27,572 features. `fuzz_ellswift` loaded 19 seeds and
+completed 1,722 executions, reaching 2,737 coverage points and 18,968
+features. The forced-int64 `fuzz_ecmult_multi` loaded 29 seeds and completed
+381 executions, reaching 5,609 coverage points and 42,267 features. All three
+jobs ran for approximately 301 seconds and exited zero. There was no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The multi-scalar run emitted one 22-byte slow unit,
+`slow-unit-f3185a099d358ac90b3dc1d4ba06a267f27e7b80`, containing the exact
+string `pippenger window 1261`. This is an intentional harness boundary: it
+allocates 1,261 points to pin the endomorphism-aware window-9 transition and
+then checks both success and a callback failure at the final point. It is not
+a random Core wire input. The current Core MuSig aggregation caller uses the
+no-scratch simple path and is wallet/descriptor/authorized-signing state, so
+the 11-second slow unit is recorded as **fuzzer-harness performance evidence**
+with no production severity. A future single-call Core reproduction with a
+bounded invalid-block or witness input would be rated from its demonstrated
+node-availability or consensus impact instead.
+
+No production finding, fix, deterministic regression test, or severity change
+is claimed from this extended campaign. The existing ledger remains: scratch-
+wrap is **Medium confirmed internal memory safety with low current Core
+reachability**; the 10x26 magnitude-32 carry issue is **Medium latent
+correctness**; SHA/HMAC/RFC6979 finalizer retention is **Medium memory
+hygiene** without a standalone read primitive; and direct MuSig, callback,
+opaque-state, wallet, and local performance observations remain below
+consensus High/Critical without a concrete Core trigger. A nonce without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. Any
+future long campaign, oracle, optimization, cherry-pick, slow-unit change,
+or production fix must record the exact unmodified-master or minimal-
+production-mutation baseline, corpus bytes or mutation condition,
+preconditions, postconditions, observed failure and stack, Core caller and
+input origin, master-relative severity, existing-test gap, verifier commands
+and results, and whether the change preserves, changes, or masks the trigger.
+If a minor fix makes a follow-up green, rerun the original baseline before
+lowering severity and document that masking relationship in the same commit
+message and ledger.
