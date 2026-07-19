@@ -21903,6 +21903,137 @@ empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
 
+## 2026-07-19 `primitives_transaction` equality and cached-hash oracle replay
+
+This entry records the previously undocumented `primitives_transaction`
+target. It exercises the value objects and immutable transaction conversion
+that many higher-level fuzzers consume, while keeping primitive-semantic
+failures separate from consensus-validation failures.
+
+### Source, corpus, and build anchors
+
+The authoritative baseline was exact Bitcoin Core master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Relevant source hashes were:
+
+    src/test/fuzz/primitives_transaction.cpp  b291fdc3c6ba41d5fe0987536e46a1e2fba59ef1a20bcd8f2727c9f5cd598c06
+    src/primitives/transaction.cpp            82fdf15e4e4e08c60511428910bec05170cae594445d1b8b67e9fa9739d8fb9e
+    src/primitives/transaction.h              a4bf6b49b3bf49dac77e42ee539932689a378f9f6e2320324a5a52746ce9ef00
+
+All three hashes matched in the audit and comparison worktrees at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. No l0rinc cherry-pick changed the
+primitive implementation or this target in the compared builds.
+
+The original `primitives_transaction` corpus had 516 files and 44,129,438
+bytes. Its sorted relative-path SHA-256 manifest was
+`11976cc5109777df0eda94807fc78bb2efa77b8a4bc630f04cfa54f218a45703`.
+Each run used a separate copied corpus; the original count, byte total, and
+manifest were unchanged after fuzzing.
+
+### Harness contract and deliberate gaps
+
+For each input, the harness consumes a script and an optional deserializable
+outpoint, constructs a `CTxIn`, and then consumes two outputs. It asserts the
+basic equality contract for `CTxOut`: exactly one of `operator==` and
+`operator!=` must be true. It then independently deserializes two mutable
+transactions with `TX_WITH_WITNESS`, converts each to `CTransaction`, and
+asserts the same equality/inequality complement for immutable transactions.
+`CTransaction::operator==` is witness-hash based, so this also exercises the
+constructor's cached txid/wtxid initialization for arbitrary successful
+deserializations.
+
+The constructed `CTxIn` is intentionally only a constructor smoke path; this
+target does not yet assert a serialization round trip or inspect it after
+construction. It also does not assert mutable/immutable txid equivalence,
+wtxid preservation across `TX_WITH_WITNESS` serialization, hash stability
+across repeated calls, `GetValueOut`, `ComputeTotalSize`, coinbase rules,
+duplicate-input rejection, or script/UTXO validity. Those are meaningful
+follow-up oracles, but adding them without accounting for serialization
+parameters or consensus preconditions would create an overbroad
+"accepted means valid" assumption. The existing `transaction` and
+`decode_tx` targets cover adjacent parser behavior; this replay establishes
+the primitive target's current baseline before strengthening those contracts.
+
+The command shape was:
+
+    timeout 420s env FUZZ=primitives_transaction ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results were:
+
+    exact master  19,775 executions in 301 s; cov 883, ft 15,194,
+                 new_units_added 636, peak RSS 664 MiB
+    audit build   17,669 executions in 301 s; cov 880, ft 14,824,
+                 new_units_added 563, peak RSS 678 MiB
+    comparison    17,060 executions in 301 s; cov 880, ft 14,897,
+                 new_units_added 592, peak RSS 703 MiB
+
+All three runs reached the normal `DONE` summary and exited without an
+assertion, ASan, UBSan, runtime, timeout, OOM, or leak diagnostic. Artifact
+directories were empty and no fuzz worker remained. The observed RSS is a
+campaign measurement, not a failure; `-rss_limit_mb=0` was intentional while
+the corpus contained inputs near the fuzzer's one-megabyte mutation limit.
+The fuzz binary hashes after replay remained:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c98803de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Bitcoin Core callers and master-relative severity
+
+The primitive objects are directly reached from the peer transaction path:
+`net_processing.cpp:4479-4483` deserializes `TX_WITH_WITNESS`, then computes
+both txid and wtxid before handing the object to later transaction handling.
+Mempool admission uses the same immutable transaction representation through
+`ChainstateManager::ProcessTransaction` at `validation.cpp:4458-4469` and
+`MemPoolAccept::AcceptSingleTransactionInternal` at
+`validation.cpp:1323-1367`. Consensus-independent checks such as empty
+inputs/outputs, output ranges, and duplicate inputs are applied by
+`consensus/tx_check.cpp:11-59`; block connection separately invokes those
+checks for block transactions. RPC raw-transaction and mempool paths also
+construct `CMutableTransaction` and `CTransaction` from local input.
+
+No failure was found, so no production bug, mutation, fix, or deterministic
+regression test is claimed. Severity remains tied to exact master rather than
+to the fact that a primitive is security-adjacent: an equality or cached-hash
+bug confined to an internal/API caller would be Low/Medium; a peer-reachable
+mempool identity or resource failure would require a concrete reproducer and
+could be High; a demonstrated invalid-block acceptance, consensus divergence,
+or remotely reachable memory-safety failure through the actual block or
+transaction caller would be Critical. This harness alone does not establish
+any of those stronger outcomes, and it cannot turn a malformed block into a
+consensus finding merely because deserialization succeeded.
+
+`src/test/transaction_tests.cpp` already covers successful witness
+serialization, basic transaction validity, duplicate-input rejection, and
+transaction weight/script behavior. The fuzz target adds arbitrary object
+construction and equality combinations, but the remaining hash/cache and
+round-trip gaps are not exhaustive proofs and should be addressed with
+focused assertions or deterministic tests only when their contracts are
+explicit. Existing master-relative findings remain: scratch allocation wrap
+is **Medium confirmed internal memory safety with low current Core
+reachability**; 10x26 magnitude-32 carry loss is **Medium latent
+correctness**; SHA/HMAC/RFC6979 finalizer retention is **Medium memory
+hygiene** without a standalone read primitive; and direct API, wallet,
+callback, opaque-state, cache, and harness-performance issues remain below
+High/Critical without a demonstrated Core trigger. A nonce with no standalone
+cryptographic meaning is not Critical merely because it is not cleared.
+
+### Findings, fixes, cherry-picks, and masking context
+
+The run used no source mutation. If a future primitive assertion fails only
+after a cherry-picked or follow-up change, the commit must preserve the
+clean-master input/seed condition, exact assertion and failure stack, Core
+caller and input origin, and severity on unmodified master. A minor fix that
+prevents a later failure must be described as behavior-changing or masking;
+it must not erase a more severe clean-master result. Any confirmed fix needs
+a minimized deterministic transaction or block test, the strongest available
+caller-level proof, and verifier commands recorded in the same commit.
+
+Verification included source and binary SHA checks, the relative-path corpus
+manifest/count/byte checks, three four-worker sanitizer campaigns, normal
+`DONE` summaries, diagnostic scans, empty-artifact checks, process cleanup,
+and `git diff --check`. No new l0rinc cherry-pick or production behavior
+change is claimed by this entry.
+
 ## 2026-07-19 Core ephemeral_package_eval policy oracle replay
 
 This entry completes the package-evaluation pair by replaying the
