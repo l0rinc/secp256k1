@@ -25536,6 +25536,112 @@ nonce with no cryptographic meaning is not **Critical** by itself.
 No temporary production mutation remains, and no fuzz jobs were left running.
 
 
+## 2026-07-20 Core process_message block-storage result oracle on latest master
+
+Commit `1df24a61f7` strengthens `src/test/fuzz/process_message.cpp` and fixes
+the production result flag ordering in `src/validation.cpp`. The audit parent
+is `47c2ee0313`; exact `origin/master` is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The original target SHA-256 is
+`be69865043362edf633addb77bace8d08950e00dc682fe4c9a3185c8686a69f5`; the
+final target SHA-256 is
+`d5ab03af657f68c9e79ea743439cfb902d5a5b8b718150a5879dd157e0218a54`.
+Clean production hashes before the change were
+`net_processing.cpp=a3f72ab4671a01e2f8a42b661f25b39feaf7bdce0d9c21a19e5bc51dea704faf`,
+`validation.cpp=1b49bd6539860b5e06c93e5ec73a2735ca4521fb8c28fcd4b50268c44a0018ab`,
+and `blockstorage.cpp=2e5c4c9dc606e1cf42d81dc4fd6bba6a3edfb97f7f857422af96c828f09246b0`.
+Final hashes are
+`net_processing.cpp=3abd669d8176c2779b53d7b81007113779958cd0d0a76da0347cd4f85ca69078`,
+`validation.cpp=6f00f58f3cc9623fb02cfa8c776654e617b6a88e87c2b075bb855116b9ebfefc`,
+and unchanged `blockstorage.cpp=2e5c4c9dc606e1cf42d81dc4fd6bba6a3edfb97f7f857422af96c828f09246b0`.
+
+### Contracts and production fix
+
+`PeerManagerImpl::ProcessBlock` now checks that `new_block` implies that the
+exact block index has `BLOCK_HAVE_DATA` before it refreshes
+`CNode::m_last_block_time` or removes in-flight requests. `AcceptBlock` now
+sets `fNewBlock` only after `WriteBlock` or `UpdateBlockInfo` and
+`ReceivedBlockTransactions` succeed. The fuzzer counts data-bearing block
+indexes before and after one message and asserts that peer block time changes
+only when that count increases. It also resets the reusable chain manager when
+data-bearing state changes without growing the block-index map.
+
+### Exact differential proof
+
+The master-ordering proof temporarily inserted
+`if (nHeight > 200) return FlatFilePos();` immediately after the
+`BlockManager::WriteBlock` lock. This models a local block-file allocation or
+write failure after the setup chain, without claiming that an attacker can
+force arbitrary disk failure. A temporary `FORCE_VALID_BLOCK=1` harness mode
+constructed and mined a valid next regtest block from the active tip, pinned
+the fake clock to `1610000000s`, and serialized it as a network `block`
+message. Both temporary mutations were removed before the final build.
+
+The deterministic 242-byte artifact is
+`/tmp/bitcoin-current-process-message-corpus-frozen-20260720/fe09fbd95d96bdc7e63987230155c40be888d0f1`,
+SHA-256
+`5c18e30a6220d8ad9eec3942473c9c6d8226dc4ea9769618e6c5fd93ebcfabc5`.
+With master ordering, the exact replay aborted at
+`net_processing.cpp:3474` with exit 134; proof log SHA-256 is
+`73bb76c4e18184ff07bb926f926ed44e047a36ab022f0d03860666a3d46732a9`.
+With the committed ordering, the same artifact exited 0; proof log SHA-256 is
+`79ad4aedbfdee00114f6a6e8145e4c4f81adcdaa1d1991fc90cc39d0c72212cc`.
+The final ASan/UBSan fuzz binary SHA-256 is
+`adfd471c271cba13c01649c432935e9afe86d8b065bf12a6a3b559d29a88cc4e`.
+
+### Corpus, caller reachability, and severity
+
+The immutable QA snapshot is
+`/tmp/bitcoin-current-process-message-corpus-frozen-20260720`: 2,386 files,
+74,604,086 bytes, 197 block-prefixed inputs, and sorted per-file-content
+manifest SHA-256
+`cf01d683502a25d6043a0abd712984d99a26a588b3a6850c645dde9fff5d20a`.
+A separate working copy started at exactly that baseline. Four ASan/UBSan
+workers ran 33,092 executions in 301 seconds with `-merge=0`, 109 executions
+per second, 826 MiB peak RSS, 759 new units, exit 0, and no artifacts. The
+working copy grew only from libFuzzer-generated units; the immutable baseline
+was restored and left unchanged. The build and `git diff --check` passed, and
+no fuzz processes remain.
+
+The actual Core path is the network `block` branch of
+`PeerManagerImpl::ProcessMessage` at `src/net_processing.cpp:4883`, which
+calls `ProcessBlock` at line 3465. Bitcoin Core has already passed
+`CheckBlock` and contextual checks before it calls `WriteBlock`, so malformed
+or invalid block bytes do not reach this failure path. On master, a local
+block-file allocation or I/O failure can return false while leaving
+`new_block` true; Core then falsely refreshes peer recency and treats the
+block as stored. The time feeds extra-peer/full-peer eviction decisions, and
+the result flag controls request bookkeeping, but the block is not marked with
+`BLOCK_HAVE_DATA` and is not consensus-accepted.
+
+Severity on master is **Low**: the trigger requires local storage failure plus
+a valid/processable block, and the demonstrated effect is operational peer
+accounting rather than consensus corruption, memory safety, or a remotely
+induced availability break. This is not Critical, and an invalid fuzzer input
+must not be used to raise the rating. No standalone unit test was added because
+the only reproducible trigger requires the documented test-only write-failure
+mutation; the exact artifact replay is the deterministic regression proof.
+
+### Cherry-pick, masking, and reiterated findings
+
+The l0rinc fork pull-request list was reviewed. No process_message-specific
+commit applies, so none was cherry-picked and no follow-up behavior was
+masked. Any later fix or cherry-pick that makes this replay green must state
+whether it preserves, changes, or masks the master behavior, and retain the
+exact artifact, source/binary hashes, assertion/status, Core input origin,
+caller boundary, severity, test gap, and verifier commands.
+
+Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; SHA,
+HMAC, and RFC6979 retention is **Medium** memory hygiene; connman and
+node-eviction oracle campaigns found no confirmed production bug on master.
+An uncleared nonce with no cryptographic meaning is not **Critical** by itself.
+Invalid blocks are not Critical unless an exact Bitcoin Core caller-level
+replay demonstrates a harmful consequence.
+
+No temporary production mutation remains, and no fuzz jobs were left running.
+
+
 ## 2026-07-19 Core connman lifecycle and accounting oracle on latest master
 
 Commit `codex/fuzz-oracles-current` adds independent state checks to
