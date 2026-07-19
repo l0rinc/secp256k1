@@ -17481,3 +17481,114 @@ and non-cryptographic nonce cleanup findings remain below that boundary
 without a concrete Core trigger. Future changes must preserve the exact
 clean-master or minimal-mutation baseline and state whether a fix preserves,
 changes, or masks the original trigger in both the commit message and ledger.
+
+## 2026-07-19 Bitcoin Core invalid-input boundary replay
+
+This replay exercised the Bitcoin Core call paths that can make a secp256k1
+failure remotely relevant. It is negative integration evidence only. It does
+not prove that either master branch is safe, and it does not replace a
+clean-master or minimal-production-mutation reproduction for a finding.
+
+The reference Core binary was `/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`.
+It was built from Core HEAD `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` and
+contains the secp256k1 subtree at `9caae506829db8a05e09e0606bc5d0cbc1bdc434`.
+The audit binary was built in the disposable Core worktree
+`/tmp/bitcoin-secp256k1-audit` at the same Core commit, after replacing its
+`src/secp256k1` tree with the audit branch source at `eab2def1`. Its CMake
+configuration and build were:
+
+    cmake -S /tmp/bitcoin-secp256k1-audit \
+      -B /tmp/bitcoin-secp256k1-audit-build \
+      -DSANITIZERS=undefined,address,fuzzer
+    cmake -S /tmp/bitcoin-secp256k1-audit \
+      -B /tmp/bitcoin-secp256k1-audit-build \
+      -DFUZZ_BINARY_LINKS_WITHOUT_MAIN_FUNCTION:INTERNAL=1
+    cmake --build /tmp/bitcoin-secp256k1-audit-build --target fuzz -j2
+
+The second configure command preserves the sanitizer setting and supplies
+the known-good libFuzzer linkage mode. The resulting binary contained ASan,
+UBSan, and libFuzzer instrumentation. The original QA corpus root was
+`/mnt/my_storage/qa-assets/fuzz_corpora`; each target was copied to a fresh
+disposable directory before replay so generated libFuzzer mutations could not
+modify committed seeds.
+
+Each target used the following exact argument set, with `<target>` substituted
+by the target name and the corresponding corpus and artifact directories:
+
+    timeout 180s env FUZZ=<target> \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      <fuzz-binary> <corpus-directory> \
+      -workers=4 -jobs=1 -max_total_time=60 -timeout=30 \
+      -rss_limit_mb=0 -artifact_prefix=<artifact-directory>/ \
+      -print_final_stats=1
+
+The reference runs used `/tmp/secp256k1-next-core-corpora/<target>` and
+`/tmp/secp256k1-next-core-artifacts/<target>/`. The audit runs used fresh
+copies in `/tmp/secp256k1-next-audit-core-corpora/<target>` and
+`/tmp/secp256k1-next-audit-core-artifacts/<target>/`. The reference seed
+counts below were captured before that run's generated corpus additions; all
+audit counts came from fresh copies of the untouched QA corpus.
+
+    target                 seeds  reference: runs/cov/ft       audit: runs/cov/ft
+    bip324_ecdh             1533    29797 / 5117 / 13839       175182 / 430 / 822
+    ellswift_roundtrip      1755    29453 / 6007 / 18038       184788 / 471 / 515
+    eval_script              1675   249862 / 1426 / 9720       203673 / 1334 / 9009
+    signature_checker        1495   230441 / 1831 / 11755      197088 / 1740 / 11004
+
+All eight jobs exited zero. The four audit logs were
+`/tmp/secp256k1-next-audit-core-{bip324_ecdh-fresh,ellswift_roundtrip,eval_script,signature_checker}.log`;
+their artifact directories were empty. There was no assertion, ASan, UBSan,
+runtime-error, timeout, OOM, or crash artifact. The audit coverage and
+feature counts are not directly comparable with the reference counts because
+the two Core binaries were different builds with different linked source and
+instrumentation layouts.
+
+The relevant Core input origins and severity boundary are:
+
+* `bip324_ecdh` and `ellswift_roundtrip` cover peer-controlled EllSwift/BIP324
+  handshake material, including the path
+  `BIP324Cipher::Initialize -> CKey::ComputeBIP324ECDHSecret ->
+  secp256k1_ellswift_xdh`. A clean-master failure reachable from a remote
+  handshake is rated from the demonstrated result: a reliable node crash or
+  connection-wide denial of service is High or Critical as appropriate, while
+  a local API-only discrepancy is not promoted by this target.
+* `eval_script` exercises invalid script, transaction, and witness bytes via
+  the script interpreter and `EvalChecksigPreTapscript`. An acceptance,
+  equation, memory-safety, or race failure reachable from an invalid block or
+  witness is rated High/Critical from its demonstrated consensus or node
+  impact. A model-only arithmetic state that cannot be constructed by Core
+  remains the existing Medium latent-correctness issue.
+* `signature_checker` exercises invalid transaction signatures through Core's
+  `SignatureChecker`, `CPubKey`, ECDSA, Schnorr, and Taproot paths. The same
+  master-relative rule applies: signature acceptance or rejection divergence
+  on a consensus-relevant input is potentially High/Critical; wallet, direct
+  API, and authorized-signing behavior is lower without a concrete Core
+  consequence.
+
+No new production finding is claimed. The prior ledger remains: the scratch
+wrap is **Medium confirmed internal memory safety with low current Core
+reachability**; the 10x26 magnitude-32 carry defect is **Medium latent
+correctness**; SHA/HMAC/RFC6979 finalizer retention is **Medium memory
+hygiene** without a standalone read primitive; and direct callback, opaque
+state, wallet, and local lifecycle findings remain below consensus
+High/Critical without a demonstrated Core trigger. The pre-`bb87febf` static
+MuSig partial-sign compatibility failure is a **Medium wallet/API finding**,
+not an invalid-block vulnerability; the current branch carries a differential
+static/dynamic oracle for it. A nonce with no standalone cryptographic meaning
+is not Critical merely because it is uncleared.
+
+The baseline is `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` is
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. For
+every future finding, fix, cherry-pick, or follow-up commit, the commit body
+and this ledger must preserve: the exact unmodified-master or minimal
+production-mutation baseline; corpus bytes or mutation condition; production
+and harness preconditions/postconditions; observed failure and stack; Core
+caller and input origin; severity on master; existing-test gap; verifier
+commands and results; and whether the change preserves, changes, or masks the
+trigger. If a minor fix makes a later test pass, rerun the original baseline
+and explain that masking relationship rather than lowering severity. A
+confirmed production bug requires the strongest available proof and a
+deterministic regression or functional test; no such fix is claimed for this
+negative replay.
