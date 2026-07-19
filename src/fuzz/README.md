@@ -24323,13 +24323,580 @@ Existing findings remain reiterated at their master-relative ratings:
 
 No temporary production mutation remains, and no fuzz jobs were left running.
 
+## 2026-07-19 Core banman independent ban-map oracle and invalid-subnet fix
+
+Commit a6e9b80aaf strengthens FUZZ=banman on exact latest Bitcoin Core master
+and fixes a confirmed production map-key bug found by the new oracle. The
+audit parent is 03aecef0eca6da8f9e33236f5bd9e8e1ce59170c and exact
+origin/master is 18c05d93016b28a9afd4c716dfe00b6e0accb30b. The original
+src/test/fuzz/banman.cpp SHA-256 is
+8a414c6ff101d79ede0b69fdd72effe1655a2d3998912c1484a9ea6894bdba75; the
+enhanced source SHA-256 is
+7436e3cf637c22cd88007b1b5766e25ecdd5e387d29766b892d9d5aa6ab812fe.
+
+The old target exercised BanMan operations but had no independent per-command
+model. Its final persistence assertion was disabled after invalid input, so a
+later invalid unban could mutate the real map without being checked. The new
+model tracks ban creation and replacement, expiry, clear, exact unban return
+values, address/subnet membership, dirty writes, clock changes, and the
+reloaded map. It checks the production map after construction and every
+relevant operation. Invalid Ban inputs retain the existing intentionally
+invalid domain handling; invalid Unban queries remain enabled and must return
+false without changing the modeled map.
+
+### Clean-master finding and exact corpus proof
+
+The immutable corpus snapshot is
+/tmp/bitcoin-current-banman-corpus-20260719, containing 1,567 files and
+20,624,194 bytes. Its filename/size manifest SHA-256 is
+c00b9946f8ec983934522d334afcfbb54336f55227f8255f3ed0e0e6d3793201.
+
+The exact 537-byte corpus input is
+/tmp/bitcoin-current-banman-corpus-20260719/07267bdf8372ba1553716a014a86a60b3a518b89
+with SHA-256
+37b9c7ee01951841a5c4b1e346bae300ff3bcdbf72115c703a4760795f779b71. The
+path, size, and SHA-256 uniquely identify the immutable input; xxd -p can
+reproduce its exact bytes. No generated mutation is needed.
+
+The original-harness ASan/UBSan/libFuzzer binary SHA-256 is
+8efafda834530e97ceb61268da79d55256b005e7d35a4abc843fd47ff7564028. It
+accepts this input and exits 0 after 8 ms. The enhanced pre-fix binary
+SHA-256 is
+5181d05ac6294977a41d0bcfcfdfe5c20f6a3df4fd554986181f2ff963fbb100; the
+same input deterministically aborts at src/test/fuzz/banman.cpp:200 on the
+invalid-Unban assertion actual == expected. The libFuzzer abort diagnostic is
+printed and the bounded wrapper exits 124. This is a clean-master production
+failure, not a sanitizer-only result and not a harness-only mutation.
+
+The production root cause is CSubNet ordering. Default-invalid CSubNet() has
+the default :: network and a zero mask. Valid ::/0 has the same network and
+mask. CSubNet::operator== includes valid, but the old operator< compared only
+network and mask. std::map<CSubNet, CBanEntry> therefore treated invalid and
+valid wildcard subnets as equivalent. BanMan::Unban(invalid_subnet) could
+erase the valid IPv6 wildcard ban and return true. The fuzzer observed the
+later state loss after a valid wildcard ban followed by an invalid unban.
+
+The production fix orders valid before network and mask. It preserves ordering
+for pairs with equal validity and changes only the accidental invalid/valid
+equivalence. The pre-fix src/netaddress.cpp SHA-256 is
+743d1f336bf35ff4506a9bce8fc534031a304b0b86f4566c5b1260e19876b3ad; the fixed
+SHA-256 is
+9c4791d18748f6976a2fe026469d5818db95a50e90f86349a3250d441ed42522. The
+production src/banman.cpp remains unchanged at SHA-256
+09032596d182a7ff35fb2d179ced495a96efca63635817c2f54012ad6f3839fd.
+
+The old full-corpus baseline completed 1,568 runs with coverage 3,476 and
+feature count 35,544, exit 0, and no artifacts. That old oracle did not
+detect the exact production state corruption. No existing deterministic test
+covered invalid CSubNet ordering or invalid BanMan unban behavior.
+
+### Production fix and deterministic regression
+
+src/test/netbase_tests.cpp adds subnet_ordering. It constructs default-invalid
+CSubNet() and valid ::/0, checks that they are not equal, and proves a map
+containing ::/0 neither finds nor erases it using the invalid key. The fixed
+test source SHA-256 is
+d5fd23210d980342e5b12f6433b6b347ea61f00b418e5a516e7c364c7d7bd984c; the
+ASan/UBSan test_bitcoin binary SHA-256 is
+70b022377fbcfa0249ee0f16525098e6d71976e78cb55ef7c7a8f8ca04a22f3.
+Both netbase_tests and banman_tests pass under ASan/UBSan.
+
+### Bitcoin Core caller boundary and master-relative severity
+
+The setban RPC parses LookupHost or LookupSubNet and rejects invalid input
+before it calls BanMan::Unban in src/rpc/net.cpp. The GUI/interface path in
+src/node/interfaces.cpp can pass a stored CSubNet directly, but the stored
+banlist entries are valid after parsing and invalid persisted entries are
+dropped. No peer message, block, witness, consensus, chainstate, or remote
+availability path was demonstrated for the invalid-subnet unban condition.
+Invalid block bytes cannot trigger this BanMan API contract.
+
+The confirmed master-relative rating is Low / nice-to-have API and local
+ban-policy integrity, not Critical. An embedding or future internal caller
+that passes an invalid CSubNet can remove a local wildcard ban, so fixing the
+production contract is justified. The evidence does not support a remotely
+triggerable, consensus, or Bitcoin Core availability vulnerability. A future
+caller-level proof must reassess severity on unmodified master; malformed
+input alone is not Critical.
+
+### Fixed-corpus and worker verification
+
+The fixed sanitizer fuzz binary SHA-256 is
+b0a70386b772b05cd670ede3a4c60d10e17306a4381334bae075f7629f2c33e9. The
+exact seed passes with exit 0. The fixed full-corpus replay completed 1,568
+runs with coverage 3,781, feature count 37,645, peak RSS about 740 MiB, exit
+0, and no artifacts.
+
+Four independent ASan/UBSan replays each completed all 1,568 inputs and exited
+0 with no artifacts. Coverage was 3,781 in every worker; feature counts were
+38,100, 37,661, 38,115, and 37,582; peak RSS was 761, 759, 752, and 758 MiB.
+The verifier set was the exact seed replay, both focused Boost suites, full
+corpus replay, four independent worker replays, source and binary SHA-256
+checks, and git diff --check. No fuzz jobs remain running.
+
+### Cherry-pick, masking, and reiterated findings
+
+No target-specific l0rinc fork commit applies to this BanMan/CSubNet finding;
+the previously reconciled l0rinc PR commits remain represented by the audit
+parent. The production comparator fix changes the exact clean-master seed
+from a failing invalid-unban mutation to a non-mutating false result. Any
+later cherry-pick, minor fix, or follow-up that makes the seed green must state
+whether it preserves, changes, or masks the pre-fix master behavior. A later
+finding that depends on invalid/valid CSubNet map equivalence must be replayed
+against unmodified master or an exact comparator reversion before its severity
+is downgraded. If a potential fix changes the behavior used by a follow-up,
+the same commit message and this ledger must retain the original seed, binary
+hashes, failure stack/status, caller boundary, and preserve/change/mask result.
+
+Existing findings remain reiterated at their master-relative ratings:
+
+- ecmult_multi scratch-size wrapping: Medium, with low demonstrated Bitcoin
+  Core reachability.
+- Forced 10x26 magnitude-32 normalization: Medium latent internal correctness
+  risk.
+- SHA, HMAC, and RFC6979 retention: Medium memory hygiene.
+- An uncleared nonce with no cryptographic meaning is not Critical by itself.
+
+No temporary production mutation or debug instrumentation remains.
+
+## 2026-07-19 Core versionbits independent period-state oracle on latest master
+
+Commit `03aecef0eca6da8f9e33236f5bd9e8e1ce59170c` strengthens `FUZZ=versionbits`
+on exact latest Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b` with audit parent
+`ca622dcb38`. The old target derived both expected state and expected
+transition height from `AbstractThresholdConditionChecker`, so production
+state/cache logic could agree with itself while violating the BIP9 state
+machine. The new `ModelStateFor()` walks completed period ends independently
+and models `DEFINED`, `STARTED`, `LOCKED_IN`, `ACTIVE`, and `FAILED`, including
+signaling counts, timeout, minimum activation height, and the
+`ALWAYS_ACTIVE`/`NEVER_ACTIVE` cases. `ModelCondition()` independently checks
+the version top bits and deployment bit. The model is checked at setup, after
+each block in the final period, and after the final transition.
+
+### Provenance and clean replay
+
+- Original `src/test/fuzz/versionbits.cpp` SHA-256:
+  `dd15d4afd8de9684696401c97c1795a2d1c1afe80ed464190fa2104ea6dab6af`.
+- Enhanced fuzzer SHA-256:
+  `c2085e53a0a41406f08a0270ccbd8bb4ca99154b0aad882acda1b7ff5d171a5d`.
+- Production `src/versionbits.cpp` remains byte-for-byte unchanged from
+  master, SHA-256
+  `4394f6fdf7656e0e6e4eb90a11c44875dab506345bde9a54d84ed9337d524ec8`.
+- Immutable corpus snapshot:
+  `/tmp/bitcoin-current-versionbits-corpus-20260719`, 207 files and 131,435
+  bytes. Its manifest SHA-256 is
+  `04324228d0c6dc12d06af3195d90e880493ce5fbab4834b1dffa1f92ae1cb6bf`.
+- The old target baseline completed 208 executions with coverage 644, feature
+  count 5,364, zero new units, zero artifacts, and exit 0.
+- Final clean sanitizer binary SHA-256:
+  `540a5d1f545befe915eb54ef4e98b097ee1740d766dd85c30457a3d2c2dd6d18`.
+  Exact replay completed 208 executions with coverage 713, feature count
+  5,968, zero new units, zero artifacts, and exit 0.
+- Four isolated sanitizer workers each replayed all 207 inputs (208 runs),
+  exited 0, and produced no artifacts, with peak RSS 1,263 MiB. Their
+  coverage/feature counts were `714/6177`, `713/6089`, `714/6211`, and
+  `714/5897`; their libFuzzer corpus sizes were `200/128 KiB`, `198/127 KiB`,
+  `199/128 KiB`, and `194/127 KiB`. The differences are worker-seed corpus
+  minimization, not failures.
+
+### Differential oracle proof
+
+The strongest proof used a disposable production mutation in
+`src/versionbits.cpp`. It changed the final `GetStateSinceHeightFor()` return
+from `pindexPrev->nHeight + 1` to:
+
+```cpp
+pindexPrev->nHeight + 1 -
+    (initialState == ThresholdState::STARTED ? nPeriod : 0)
+```
+
+The mutation was restored before commit. The mutated current enhanced binary
+SHA-256 was
+`1bd6921fcdbe59eb8135303f49b098ca58a0ef36323327474086940ca994559a`; the
+mutated old-harness binary SHA-256 was
+`e9ca8d025bc137e6d379c6fe57398a9a60ffa40545f3acbfbc4b75c77f3c4277`.
+
+The exact existing corpus input
+`/tmp/bitcoin-current-versionbits-corpus-2048-20260719/006089521ed4d5aac68fe4d492c98d76c49b9880`
+is 14 bytes, SHA-256
+`61e13ec20ffa39600a21b7f6738073cc68d86556d064d89188bd27c607a49489`, hex
+`0000140000c100bd00cece329744e2b94254003054b494cfbbbd7ec635f2`.
+The old harness accepts this input with the mutation and exits 0. The
+enhanced harness fires
+`src/test/fuzz/versionbits.cpp:276`,
+`assert(exp_since == exp_model.since)`, with a libFuzzer SIGABRT diagnostic;
+the bounded wrapper exits 124 while libFuzzer's abort handler is terminated.
+After restoring production code, the same clean replay exits 0. This is
+deterministic proof that the independent model detects a modeled bad
+transition that the old self-relative oracle accepts. It is not evidence that
+the exact master branch contains this mutation.
+
+Earlier mutation variants were rejected because the old harness also caught
+them through its within-period state/since checks. They are not evidence and
+are not committed. No temporary production mutation remains.
+
+### Bitcoin Core callers and master-relative severity
+
+`AbstractThresholdConditionChecker` feeds `VersionBitsCache::Info()` for
+`getdeploymentinfo`, `GBTStatus()` and `ComputeBlockVersion()` for block
+templates and mining, `IsActiveAfter()` for configurable `DeploymentPos`
+callers, and `CheckUnknownActivations()` during chain-tip updates. Current
+mainnet, testnet, and signet default `TESTDUMMY` are `NEVER_ACTIVE`; regtest
+enables `TESTDUMMY`, while the currently enforced DERSIG, CLTV, CSV, and
+SEGWIT rules use buried heights rather than this dynamic cache. The fuzzer
+constructs synthetic deployment parameters and does not feed an invalid
+serialized block into validation.
+
+There is no clean-master production finding. The master-relative rating for
+this result is **Low / nice-to-have oracle coverage**, not a consensus
+vulnerability. A future live dynamic deployment could make a state error
+materially affect rule signaling or activation, but High or Critical requires
+a reproduced caller-level consequence on unmodified master. An invalid block
+alone is not Critical. No production fix or deterministic production
+regression test is claimed because clean master did not fail; this is a
+deterministic fuzzer-oracle regression proof.
+
+### Cherry-pick, masking, and reiterated findings
+
+No target-specific l0rinc fork commit applies here; relevant prior fork
+commits remain reconciled by the audit parent and this ledger. This commit
+changes only the fuzzer and preserves clean-master production behavior. No
+follow-up fix or cherry-pick masks a clean-master trigger. Any later commit
+that changes this seed, mutation, caller reachability, or severity must amend
+its message and this ledger with the exact `preserve`/`change`/`mask` effect
+and repeat the original master replay before downgrading a finding.
+
+Existing findings remain reiterated at their master-relative ratings:
+
+- `ecmult_multi` scratch-size wrapping: **Medium**, with low demonstrated
+  Bitcoin Core reachability.
+- Forced 10x26 magnitude-32 normalization: **Medium** latent internal
+  correctness risk.
+- SHA, HMAC, and RFC6979 retention: **Medium** memory hygiene.
+- An uncleared nonce with no cryptographic meaning is not **Critical** by
+  itself.
+
+Verifiers were `ninja -C /tmp/bitcoin-secp256k1-audit-current-build bin/fuzz`,
+the exact corpus replay, four isolated worker replays, source and binary
+SHA-256 checks, and `git diff --check`. No fuzz jobs were left running.
+
+## 2026-07-19 Core txorphanage per-transition index oracle on latest master
+
+Commit `ca622dcb38` strengthens `FUZZ=txorphanage_sim` on exact latest Bitcoin
+Core master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`, with audit parent
+`ce0818d4cdda7b7627e16b14edfc5a3dadc36037`. It calls
+`TxOrphanageImpl::SanityCheck()` after every modeled command, while retaining
+the aggregate-limit checks and exhaustive teardown comparison. The old target
+checked cached/index contents only at teardown, allowing a later erase or trim
+to hide an intermediate mismatch. The original fuzzer SHA-256 is
+`8b38ec916e209c8643436a54bb91594e2bf5b4556202f09c55487360bcf22866`; the
+enhanced SHA-256 is
+`0689cbe0fa6babed429447dde57541b48f60d557a0564f39c4738c4415933e39`. The
+production `src/node/txorphanage.cpp` SHA-256 is unchanged at
+`7428f6933303e8237711a37cdabb3bba71745ccc7dd4b8cc0f5e39127847203a`.
+
+The immutable corpus snapshot
+`/tmp/bitcoin-current-txorphanage-sim-corpus-20260719` contains 591 files and
+90,142,447 bytes. The final clean sanitizer binary SHA-256 is
+`d28a7f1221666f44b7eff89689b179c4bce187f20e76e12f04f8f65385fa1c7c`. Exact
+clean replay completed 1,183 executions with coverage 4,322, feature count
+22,084, zero new units, 564 MiB peak RSS, and exit 0. Four isolated workers,
+each using its own copy of all 591 corpus files, completed 1,183 executions
+with coverage 4,322, feature count 22,084, zero new units, exit 0, and peak RSS
+563/563/563/564 MiB. The clean proof artifact also exited 0.
+
+The strongest differential proof uses a disposable production mutation at
+`src/node/txorphanage.cpp:562`: skip
+`m_reconsiderable_wtxids.insert(wtxid)` in `AddChildrenToWorkSet`. A
+corpus-guided search seeded from the exact snapshot and bounded with
+`-max_len=5000` produced a 150-byte artifact
+`/tmp/bitcoin-current-txorphanage-sim-reconsider-fuzz-20260719/crash`, SHA-256
+`8fb4a5f258ace46d56b92af4f90786255b27d7108a7b0b85b41c389283285f28`, hex
+`ffff0d0dca0d0d0d0d240d12ff0dff7af90100fb0005fb000201ffffffffffffff00002b0000ffffff7fffffffff00890005fb000001fffffffffffffffff9ff01001600fb00000105fb000001fffff7fffffffffffffff9ffffff1600fb00000105ff000000fffffffffff7fffffffffffffff9ffffff1600fb00000105fb400001ffffffffffffff01020abaad4143ff0bc80b432b`.
+The old teardown-only harness with that mutation exits 0 (mutated binary
+`5d21d23baa9ab78c31a5e52268ad2e2b419c9591d1ded9bc31ab129dd2d935c6`); the
+enhanced harness aborts with libFuzzer exit 77 at
+`src/node/txorphanage.cpp:730`, called by `src/test/fuzz/txorphan.cpp:733`,
+because `m_reconsiderable_wtxids` differs from its reconstructed set (mutated
+binary `2899936a3519e278acfd1fa739e6d9d495181dd7191865a4ef68f435476bb89e`).
+Restoring the production line makes the enhanced replay exit 0. The mutation
+is not committed.
+
+Bitcoin Core callers are peer transaction/orphan paths: a valid mempool
+acceptance reaches `TxDownloadManagerImpl::MempoolAcceptedTx` and
+`AddChildrenToWorkSet`; `PeerManagerImpl::ProcessOrphanTx` consumes
+`GetTxToReconsider` and submits the transaction to
+`ChainstateManager::ProcessTransaction`; `BlockConnected` calls
+`EraseForBlock`. These are relay/orphan-management contracts. `BlockConnected`
+receives a connected block, so an invalid block does not reach this exact call
+in normal Core processing. Master has no production failure here. The modeled
+skipped insertion is therefore Low/Medium for bounded orphan reconsideration,
+relay liveness, or resource-accounting impact, not consensus, chainstate,
+memory safety, invalid-block, or Critical without direct caller-level proof.
+
+No l0rinc fork commit applies specifically to this oracle. Reiterated findings
+remain: the txdownloadman and txrequest proofs are relay-state oracle gaps, not
+master production bugs; ecmult_multi scratch-size wrapping is Medium with low
+demonstrated Core reachability; forced 10x26 magnitude-32 normalization is
+latent Medium internal correctness; SHA/HMAC/RFC6979 retention is Medium
+memory hygiene; and an uncleared nonce with no cryptographic meaning is not
+Critical by itself. Any later fix, minor fix, oracle edit, or l0rinc cherry-pick
+must preserve the exact master seed/corpus condition, mutation, preconditions,
+postconditions, stack/status, hashes, Core caller/input origin, test gap, and
+master-relative severity, and amend its commit message and this ledger to say
+whether it preserves, changes, or masks the behavior.
+
+Verifiers: `ninja -C /tmp/bitcoin-secp256k1-audit-current-build bin/fuzz`, exact
+corpus replay, four isolated worker replays, clean proof-artifact replay,
+source/binary SHA-256 checks, and `git diff --check`. No temporary production
+mutation remains and no fuzz jobs were left running.
+
+## 2026-07-19 Core txrequest transition oracle on latest master
+
+Commit `ce0818d4cdda7b7627e16b14edfc5a3dadc36037` strengthens the direct
+`FUZZ=txrequest` model on exact latest Bitcoin Core master. The target already
+had a bounded reference model, `GetRequestable` result comparison, expiration
+comparison, and a teardown `SanityCheck`; the gap was that aggregate model
+checks ran only after the entire command stream. The enhanced target checks
+the model immediately after every decoded command, so a later cleanup command
+cannot hide a stale intermediate state.
+
+### Provenance and contracts
+
+- Exact latest master: `18c05d93016b28a9afd4c716dfe00b6e0accb30b`.
+- Audit parent: `59e10b6a4cb94064318c7f63ac449d8c7346a830`.
+- Original `src/test/fuzz/txrequest.cpp` SHA-256:
+  `1d76be7f2db527b6da8922896a1fd3fcf9e011111382aa50eec16ec693005aae`.
+- Enhanced fuzzer source SHA-256:
+  `f29721d4e10c0c1b1b403ed497de6af66cac7e5aa2280f09b6fdb20c3f483770`.
+- Production `src/txrequest.cpp` is unchanged from master, SHA-256:
+  `fd2ced81edace3dce3a5b2c7b7b3c5988a6fe3037a716efa2ff1db0b2678751a`.
+- Final UBSan/ASan/libFuzzer binary SHA-256:
+  `7763ba05cd163ceab370e3167e7e12987550d8671fd0723e147f1fff8cc5c5bb`.
+
+The new `CheckModel()` compares `Count`, `CountInFlight`, `CountCandidates`,
+`Size`, and the candidate-peer index against the reference model after each
+transition. Candidate-peer queries were moved out of an accidental redundant
+peer loop and are now performed once per transaction hash. The existing full
+`SanityCheck()` remains at teardown, and `GetRequestable` still checks the
+selected order and expired `(peer, GenTxid)` results immediately.
+
+### Corpus and sanitizer evidence
+
+The immutable private snapshot
+`/tmp/bitcoin-current-txrequest-corpus-20260719` contained 378 files and
+8,769,842 bytes. The exact clean-master replay exited zero after 379
+executions with coverage 2,641, feature count 19,396, zero new units, and
+392 MiB peak RSS. The enhanced replay exited zero after 379 executions with
+coverage 2,647, feature count 19,633, zero new units, 741 MiB peak RSS, and a
+21-second slowest unit. Neither replay produced an artifact or diagnostic.
+
+Four isolated sanitizer workers each started from a separate copy of the
+same 378-file snapshot, using `-max_len=4096` and `-max_total_time=20`.
+They exited zero with no artifacts and completed 582, 648, 629, and 706
+executions; all reached coverage 2,647. Peak RSS was 609, 606, 608, and 607
+MiB respectively. The long-corpus replay and workers were run with the
+production mutation restored; no fuzz job remained running.
+
+### Differential mutation proof
+
+The deterministic proof input is 14 bytes, hex
+`0500000200090000000a00000400`, SHA-256
+`5dfdcce96e59cabb62f86ae0075a89f925c1aca32eaa6b1b1e4b2446cdc65e9d`.
+It announces a transaction, makes the request, delivers a response, and then
+forgets the transaction.
+
+The disposable production mutation at `src/txrequest.cpp:676` changed
+`if (it != end()) MakeCompleted(...)` to
+`if (false && it != end()) MakeCompleted(...)`, modeling a lost
+`ReceivedResponse` state transition. With that identical mutation, the old
+teardown-only harness exited 0 because the later `ForgetTxHash` erased the
+hidden stale request. The enhanced harness exited 134 at
+`src/test/fuzz/txrequest.cpp:301` immediately after the response on the
+`Count` postcondition. The old mutated binary SHA-256 was
+`69b23b1c10ccc8b3f60f4d1e0c35b4396f806dc5fe0cdd7d06822ba222b5e409`; the
+enhanced mutated binary SHA-256 was
+`27ceac770bd315176c35da75c6349c835fd88295a62d466b6e176f8eab1d3beb`.
+Restoring production code and rebuilding made the enhanced target exit zero
+on the identical input. This proves the oracle gap; it does not claim that
+unmodified master contains this regression.
+
+### Core caller graph and severity on master
+
+Bitcoin Core reaches this state through peer transaction relay: `PeerManagerImpl`
+calls `TxDownloadManager::ReceivedNotFound` for `notfound` messages and
+`TxDownloadManager::ReceivedTx` for transaction messages, both of which feed
+`TxRequestTracker::ReceivedResponse`. The input is a peer relay event, not an
+invalid block or a consensus-validation transition.
+
+On unmodified master there is no confirmed production bug, so this is oracle
+hardening rather than a vulnerability report. The modeled regression would be
+**Low/Medium** master-relative severity: a bounded transaction-relay liveness
+or DoS issue from a stale in-flight request slot until expiry. It is not a
+consensus, chainstate, memory-safety, invalid-block, or Critical finding.
+High would require caller-level proof of sustained bandwidth or availability
+impact; Critical would require direct consensus, chainstate, or memory-safety
+proof. No production fix or deterministic regression test is claimed because
+master passes.
+
+### Cherry-pick, masking, and existing findings
+
+No additional l0rinc commit applies specifically to this target; this commit
+changes only the fuzz oracle. Any later fix, minor behavior change, or
+cherry-pick must preserve the exact master seed/corpus condition, mutation,
+preconditions, postconditions, source and binary hashes, failure stack/status,
+Core caller and input origin, test gap, verifier commands, and severity. The
+same commit or an amended commit message must classify the result as
+`preserved`, `changed`, or `masked`. A patch that makes this seed pass must
+not downgrade a more severe master trigger until the original seed or an
+equivalent minimal production mutation is replayed. Existing findings remain
+reiterated: `ecmult_multi` scratch-size wrapping is Medium with low
+demonstrated Core reachability; forced 10x26 magnitude-32 normalization is a
+latent Medium correctness concern; SHA, HMAC, and RFC6979 retention is Medium
+memory hygiene; and an uncleared nonce with no standalone cryptographic
+meaning is not Critical by itself.
+
+Verifiers: `ninja -C /tmp/bitcoin-secp256k1-audit-current-build bin/fuzz`,
+the exact corpus replay, four isolated worker replays, the clean proof-input
+replay, SHA-256 checks, `git diff --check`, and a post-run process scan.
+
+## 2026-07-19 Core txdownloadman state-transition oracle
+
+Commit `59e10b6a4c` strengthens `FUZZ=txdownloadman` and
+`FUZZ=txdownloadman_impl` on latest Bitcoin Core master. The change is both
+harness-side and production-side: the implementation now has non-fatal
+`Assume` postconditions at the `ReceivedTx` result boundary and at the
+deduplicated parent-list boundary, while the harness independently checks the
+same contracts after each modeled transition.
+
+### Target and contracts
+
+The old wrapper target discarded the first `ReceivedTx` result, then checked
+only the second result. The old implementation target checked the orphanage
+and request tracker only at teardown, and did not call
+`PostGetRequestableSanityCheck` after `GetRequestsToSend`. The enhanced target
+now verifies:
+
+* consecutive `ReceivedTx` calls have the same validation decision and the
+  same package contents and senders;
+* a result never asks the caller to validate both a transaction and a package;
+* `MempoolRejectedTx` returns no more parent IDs than the transaction has
+  inputs, with sorted and unique parent IDs;
+* every request scheduling transition satisfies the TxRequestTracker time
+  index immediately; and
+* orphanage and TxRequestTracker invariants hold after every operation, not
+  only after teardown.
+
+### Provenance and hashes
+
+The exact latest-master base is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; the audit parent is
+`01086e700fda31f6062fe15971cfeac41e0a2aa5`. The original fuzz target SHA-256
+is `21c82d113d0857b6da160ec1cc86022ebf1ca8f97e2fd11f8aeb218ed0c1e37d` and
+the enhanced target SHA-256 is
+`1c258ac5bcdf40d0cfb84042444f1f83296df2190c5431bda1c9e3b436975d6f`. The
+original production `src/node/txdownloadman_impl.cpp` SHA-256 is
+`dcb847d6e6c288e4c02103ee5aa4e6925d22e9da52123455af163719f6d79a1f`; the
+final SHA-256 is
+`f83937f16c8c19a961aab318505478f79db70a51d85565dde308767599925fbe`. The
+final sanitizer fuzz binary SHA-256 is
+`e0f3d837864f8876f3b738849daf6987c9bf64797a1a9bd0f95af6c0c42bf343`.
+The production change is limited to the recorded non-fatal postconditions.
+
+### Corpus and sanitizer evidence
+
+The immutable private corpus snapshot
+`/tmp/secp256k1-current-txdownloadman-corpus-20260719` contains 1,156 files
+and 5,687,270 bytes. The final exact replay used ASan and UBSan with
+`-merge=0 -runs=1156 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`.
+`txdownloadman` exited zero after 1,157 executions with coverage 5,762,
+52,072 features, zero new units, and 568 MiB peak RSS. `txdownloadman_impl`
+exited zero after 1,157 executions with coverage 6,132, 48,091 features,
+zero new units, and 555 MiB peak RSS. Both artifact directories were empty.
+
+Four isolated one-worker sanitizer runs per target started from separate
+copies of the untouched snapshot. All eight exited zero with empty artifact
+directories and no sanitizer, assertion, timeout, OOM, or crash diagnostic.
+Wrapper workers completed 1,399, 1,400, 1,398, and 1,398 executions with
+peak RSS 595, 584, 586, and 586 MiB. Implementation workers completed
+5,977, 5,771, 5,771, and 5,771 executions with peak RSS 557, 560, 560, and
+560 MiB. The earlier worker setup was isolated explicitly so generated units
+could not alter another worker's clean-master seed set.
+
+### Differential mutation proof
+
+The strongest proof used proof input
+`0920e7ee7e8a3373404da05542e77ab02c8a579f`, 577 bytes, SHA-256
+`4c05adfbbdb66040c057e85973d0841370f223617b0b6ca01aaefd6b443570b9`.
+The disposable production mutation at
+`src/node/txdownloadman_impl.cpp:278` changed
+`current_time + GETDATA_TX_INTERVAL` to
+`current_time - GETDATA_TX_INTERVAL`, making every newly requested item
+already expired.
+
+The exact old harness against the final production mutation exited zero. The
+enhanced harness against the identical mutation exited 134 at
+`txrequest.cpp:354` on `assert(ann.m_time > now)`. The old mutated binary
+SHA-256 is
+`a8bd9d6f74dfbc62ca010dfaa39b3592dcd3c30e87d83c1ff63d6b670c68d0da`; the
+enhanced mutated binary SHA-256 is
+`40b6688ac9a7555e6943d4584c86ba94b4e8233ff9fe695750bbbae75768369`. The
+production expression was restored, the final binary rebuilt, and the same
+seed exited zero. This proves a previously silent oracle gap; it is not a
+claim that the unmodified master branch has this expiry bug.
+
+### Core caller and severity on master
+
+The real input origin is peer transaction relay. `PeerManagerImpl` reaches
+`TxDownloadManager` from `ProcessMessage` through `AddTxAnnouncement`,
+`ReceivedTx`, and `ReceivedNotFound`; `GetRequestsToSend` is consumed while
+constructing peer `GETDATA` messages. `ReceivedTx` controls whether Core
+calls `ChainstateManager::ProcessTransaction` or processes a 1-parent-1-child
+package. `MempoolRejectedTx` feeds `ProcessInvalidTx`, compact-extra
+bookkeeping, orphan resolution, and rejection filters.
+
+The unmodified master corpus found no production failure, so this commit has
+no production bug, fix, or deterministic regression test. The oracle result is
+**Low/Medium** discovery value. A real peer-triggerable request or orphan
+state regression causing sustained bandwidth or availability impact requires
+caller-level proof before **High**. Consensus divergence, persistent
+chainstate corruption, or remotely reachable memory safety requires direct
+proof before **Critical**. Invalid transaction input alone cannot turn this
+manager into a Critical consensus finding.
+
+### Cherry-pick and masking record
+
+No additional l0rinc commit applies specifically to this target; equivalent
+upstream feature work is already present on latest master. Any later minor
+fix, production fix, oracle edit, or l0rinc cherry-pick must preserve the
+exact unmodified-master seed and corpus condition, mutation, preconditions,
+postconditions, failure stack and status, source and binary hashes, Core
+caller and input origin, test gap, and severity on master. The amended commit
+message and this ledger must say whether the later change preserves, changes,
+or masks the behavior. A follow-up that accidentally hides a more severe
+master trigger cannot downgrade it without replaying the original seed or an
+equivalent minimal production mutation.
+
+Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; SHA,
+HMAC, and RFC6979 retention is **Medium** memory hygiene; and an uncleared
+nonce with no standalone cryptographic meaning is not **Critical** by itself.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j8`, `git diff --check`, exact corpus replay, eight isolated worker
+replays, final proof-seed replay, source and binary SHA-256 checks, and a
+post-run process scan. No temporary production mutation remains and no fuzz
+jobs were left running.
+
 ## 2026-07-19 latest-master compact-block reconstruction status oracle
 
 This entry records the compact-block reconstruction target after rebuilding the
 audit stack on Bitcoin Core master
 `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The focused Core commit is
-`5c2e7c95ea3f12e9180b5f9cbbe42ea89ad76d17`, whose parent is the committed
-latest-master block oracle `5a26a558fc14e68988b4617ad375249f105bfa49`.
+`01086e700fda31f6062fe15971cfeac41e0a2aa5`, whose parent is the committed
+latest-master block oracle `f8fb95fdd47f58c459db5fb344f235c7b57e0446`.
 Equivalent l0rinc feature commits already present upstream were not duplicated.
 
 ### Target and contract
@@ -24490,8 +25057,8 @@ job was left running.
 
 This entry records the block target after rebuilding the audit stack on Bitcoin
 Core master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The focused Core commit
-is `5a26a558fc14e68988b4617ad375249f105bfa49`, whose parent is the committed
-latest-master transaction oracle `6f10154059ae35513b0b1a50ee28a559e2b1725e`.
+is `f8fb95fdd47f58c459db5fb344f235c7b57e0446`, whose parent is the committed
+latest-master transaction oracle `63ba75b2d203ac08bdf8d89e9f0264028eb7b151`.
 The clean branch was assembled from latest master and focused audit commits;
 equivalent l0rinc feature commits already present upstream were not duplicated.
 
@@ -24652,8 +25219,8 @@ was left running.
 
 This entry records the transaction target after rebuilding the audit stack on
 Bitcoin Core master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The focused Core
-commit is `6f10154059ae35513b0b1a50ee28a559e2b1725e`, whose parent is the
-latest-master block-index oracle commit `4badfca78efbc4065bb9ecdaab87a096abfe7284`.
+commit is `63ba75b2d203ac08bdf8d89e9f0264028eb7b151`, whose parent is the
+latest-master block-index oracle commit `dc9b5dba00d5a1ce7f326ca8004a1cfc09ea880d`.
 The clean branch was assembled from latest master and the focused audit commits;
 equivalent l0rinc feature commits already present upstream were not replayed as
 duplicates.
@@ -24827,8 +25394,8 @@ production call.
 - The dirty fork overlay was left untouched. A disposable clean worktree was
   created from current master, and the focused audit commits were cherry-picked
   onto it. Equivalent l0rinc feature commits already present upstream were not
-  duplicated. The committed rebased audit parent is `fdf15a5e6b`; the code
-  commit for this entry is `4badfca78e`.
+  duplicated. The committed rebased audit parent is `9af859458b`; the code
+  commit for this entry is `dc9b5dba00`.
 - Original target source SHA-256:
   `e14452b44c84b4f76718294512ece35f3a03b209c16913b913355924c60a0664`.
 - Patched target source SHA-256:
@@ -24959,6 +25526,202 @@ and input origin, test gap, verifier commands, and whether behavior is
 `preserved`, `changed`, or `masked`. A follow-up that hides a more severe
 master trigger cannot downgrade it without replaying the original seed or an
 equivalent mutation.
+
+Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; SHA,
+HMAC, and RFC6979 retention is **Medium** memory hygiene; and an uncleared
+nonce with no cryptographic meaning is not **Critical** by itself.
+
+No temporary production mutation remains, and no fuzz jobs were left running.
+
+
+## 2026-07-19 Core connman lifecycle and accounting oracle on latest master
+
+Commit `codex/fuzz-oracles-current` adds independent state checks to
+`src/test/fuzz/connman.cpp`. The audit parent is
+`a6e9b80aaf374bb6e1c30e81a085ec97599f80b3`; exact `origin/master` after a
+fresh fetch is `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The original target
+SHA-256 is
+`07482990d44e47a8b90f683db67e8fe0adb0bedf85aad621707840c9e8587ed4`; the
+final enhanced target SHA-256 is
+`a00c63aed7ae83ffefd8c78d034889cecf1c3f38fcf56a1957be500968978678`.
+Production `src/net.cpp` and `src/net.h` were unchanged, with SHA-256
+`a29e9e5eb6591ee3e4d9aac049905909371489b99ab726e6cd63221389d17754` and
+`3707d357023e67ddbdbeb3b77fb1d0cbc62f0ce06be8f2d89c071e6090ffbd90`.
+
+### Contracts added and rejected oracle
+
+The harness now models the ordered `AddedNodeParams` list and checks exact
+parameter preservation across successful add, duplicate rejection, removal,
+`GetAddedNodeInfo(true)`, and the stable ordered-subset contract of
+`GetAddedNodeInfo(false)`. It independently checks the 24-entry
+`AddedNodesContain` bound, node direction counts, full-outbound and extra
+full/block-relay counts, `ForEachNode` fully-connected filtering,
+`CheckIncomingNonce`'s pre-handshake/non-inbound/non-private-broadcast rule,
+all `DisconnectNode` return and flag side effects, and `ForNode`'s
+fully-connected callback gate. It also asserts `SetTryNewOutboundPeer`,
+network activity, outbound-byte accounting, and historical-target monotonicity
+contracts.
+
+An initial stronger check compared `GetAddedNodeInfo(false)` with the
+connected flags from a separate `GetAddedNodeInfo(true)` call. It failed only
+in the harness: the existing `g_dns_lookup` mock consumes a new fuzzed address
+on every lookup, so two calls can assign different connected status to a
+hostname. The generated 4,047-byte artifact
+`/tmp/bitcoin-current-connman-oracle-artifacts-20260719/crash-25d4438153e7b0e18d52b12aaa46f146005b0765`
+has SHA-256
+`11f6480fffc5d932f4e43469eefabd40677e06246d9a81847cb38929e0829463` and
+triggered the rejected assertion at the old
+`AssertDisconnectedAddedNodeInfo` line 55 during the `-runs=0` corpus-plus-
+mutation pass. The narrowed ordered-subset oracle replays that exact artifact
+with exit 0. This is a stale/overbroad fuzzer oracle, not a production finding;
+the artifact is retained only as audit evidence and is not a corpus addition.
+
+### Corpus, caller boundary, and severity
+
+The corpus snapshot is
+`/tmp/bitcoin-current-connman-corpus-20260719`, with 3,391 files and
+52,487,798 bytes. The relative-path/size manifest SHA-256 is
+`d5841b07e3944c24a625221c13f4b1bcb04500c1abc0273eb2462ea7d15dc86f`.
+
+The original clean-master binary was SHA-256
+`b0a70386b772b05cd670ede3a4c60d10e17306a4381334bae075f7629f2c33e9`.
+Its baseline replay completed 3,421 executions, coverage 11,178, 83,886
+features, about 823 MiB peak RSS, and exit 0. The final enhanced binary is
+SHA-256 `5a18d449c07ba53ccda494b00239f2d95efe029887ea2381d6dccba39a40285`.
+The final replay completed 3,421 executions, coverage 11,615, 87,412
+features, about 862 MiB peak RSS, and exit 0; its artifact directory was
+empty. Four independent ASan/UBSan workers each completed 3,421 executions,
+coverage 11,615, exit 0, and no artifacts. Their feature/RSS results were
+86,943/863 MiB, 86,478/873 MiB, 87,131/876 MiB, and 87,476/866 MiB.
+`git diff --check` passed and no fuzz process remains.
+
+No production bug reproduced on unmodified master, so this commit claims no
+production fix and no deterministic regression test. The configured build is
+fuzz-only; `ctest -R '^net_peer_connection_tests$'` found no registered test
+binary. Existing `net_peer_connection_tests.cpp` covers basic addnode
+behavior, while the new oracle covers repeated state transitions and invalid
+synthetic node combinations.
+
+The relevant Bitcoin Core callers are authenticated local RPC/configuration
+paths for `AddNode`, `RemoveAddedNode`, `GetAddedNodeInfo`, and disconnect
+operations (`src/rpc/net.cpp`), connection-count RPC/interface paths, inbound
+VERSION self-connection handling at `src/net_processing.cpp:3686`, and peer
+eviction at `src/net_processing.cpp:5325` and `5365`. The nonce is an
+anti-self-connection value, not a cryptographic secret; failure to clear a
+nonce with no cryptographic meaning is not Critical by itself. Invalid block
+bytes cannot reach the addnode-list or these connman bookkeeping APIs. On
+master the result is therefore **no confirmed production finding**; any future
+local/API bookkeeping mismatch is Low/nice-to-have until a Core caller-level
+impact is demonstrated. A remotely supplied VERSION or peer address can only
+raise severity when an exact production replay shows a disconnect, resource,
+privacy, or availability consequence. Invalid synthetic fuzzer state alone is
+not Critical.
+
+### Cherry-pick, masking, and reiterated findings
+
+The l0rinc fork pull-request list was reviewed. No target-specific l0rinc
+commit applies to Core `connman`; the previously reconciled l0rinc commits are
+represented by the audit parent, so none is cherry-picked here. A later minor
+fix or cherry-pick that makes a follow-up input green must state whether it
+preserves, changes, or masks this clean-master behavior and must retain the
+exact seed, source/binary hashes, assertion/status, Core input origin, caller
+boundary, severity, test gap, and verifier commands. No temporary production
+mutation or debug instrumentation was used.
+
+Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; SHA,
+HMAC, and RFC6979 retention is **Medium** memory hygiene; and an uncleared
+nonce with no cryptographic meaning is not **Critical** by itself.
+
+
+## 2026-07-20 Core node-eviction protection oracle on latest master
+
+Commit `47c2ee0313` adds protection and metamorphic contracts to
+`src/test/fuzz/node_eviction.cpp`. The audit parent is `8aff8bc062`; exact
+`origin/master` is `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The original
+target SHA-256 is
+`19047c27d7e76fa75e1ba9b34d319ebfaf566a25134139a48b2d6c712e3df8ce`; the
+final target SHA-256 is
+`0850e4019d3c6036e9f9979ecf22d6c197efe4e3ee28f23b9267f8db1bf7c895`.
+Clean production `src/node/eviction.cpp` and `src/node/eviction.h` SHA-256
+values are
+`8ef03ed1499e08fa32de824b908f7529b74943d98e64b40bca130d19a3980ac6` and
+`4d140c3f4d5c7eff6ae88083d31803febcfbce29e3518aa3fc435a916832b55e`.
+
+### Contracts and exact differential proof
+
+The harness now asserts that selection is empty when no non-noban inbound
+candidate exists, that a selected ID belongs to an eligible inbound
+candidate, and that adding a fresh no-ban inbound or outbound candidate does
+not change the result. The fresh IDs prevent duplicate-ID artifacts from
+weakening the metamorphic check. The old target only asserted that a selected
+ID appeared in the original vector.
+
+The corpus snapshot is
+`/tmp/bitcoin-current-node-eviction-corpus-20260720`, with 447 files and
+19,449,906 bytes. Its relative-path/size manifest SHA-256 is
+`26123920a0dd8b4e587f1491f41f2ea96f4f6a1457ed27cf7bb77adbc67cd2e3`.
+
+The deliberate production mutation changed only `ProtectNoBanConnections`
+from `return n.m_noban` to `return false`; mutated `eviction.cpp` SHA-256 was
+`58e1b48045333e46156c5ebfcacb14261563371c22f4fa345d0c24b2f156856c`. The
+857-byte minimized artifact is
+`/tmp/bitcoin-current-node-eviction-mutation-artifacts-20260720/crash-c985e862797d125975517cac6cb756109a64982e`,
+SHA-256
+`a5f83542aae21d1a4bb52e67141a09ddcbc786b70841b437d49981cadebd46c7`.
+The enhanced mutated binary SHA-256 was
+`a38ba1c6fd662260994539b8b285d01d25792d9691e7da23eb1609f93e8ff287`; it
+aborted with exit 134 at `AssertEvictionContracts` line 64. The original
+membership-only control binary SHA-256 was
+`b9f1ec2c3ded2d8d7eb1c86aa0315f94b8cad05864dafc33e70032f884946788`; it
+accepted the exact artifact with exit 0. After restoring production, the
+final clean binary SHA-256 was
+`8faedc50acea971ff4693226154f209489f7a1d97559e3dfd2ab85247e1c8bb5` and
+replayed the same artifact with exit 0. The mutation replay used the
+pre-format source hash `098ee9f855ae4ac4ee41194818d5caf50f87418328f79f280af64b341a208d40`;
+formatting changed only source whitespace and the final binary hash stayed
+the same.
+
+### Corpus, callers, and severity on master
+
+The final clean corpus replay exited 0 after 448 runs with coverage 966,
+11,263 features, and 239 MiB RSS; its artifact directory was empty. Four
+independent ASan/UBSan workers using seeds 7002-7005 each exited 0 after 448
+runs and produced no artifacts. Their feature/RSS results were
+11,368/239 MiB, 11,389/239 MiB, 11,261/241 MiB, and 11,491/241 MiB.
+`clang-format --dry-run --Werror`, `git diff --check`, and the fuzz-only
+build passed. The configured build registers no deterministic CTest targets.
+Existing `net_peer_eviction_tests.cpp` covers deterministic ranking cases,
+but the old fuzz harness did not assert the protection boundaries or these
+metamorphic invariants.
+
+The real Core path is `CConnman::AttemptToEvictConnection` at
+`src/net.cpp:1694`, which collects live-peer candidates and calls
+`SelectNodeToEvict`; when inbound slots are full, the caller at
+`src/net.cpp:1831` drops a new connection if no peer can be evicted. Candidate
+permission, connection type, and peer-stat fields are derived from live Core
+state. Raw invalid block bytes do not directly call this selector and cannot
+set `m_noban` or connection type. On unmodified master this is **no confirmed
+production finding** and no production fix or deterministic regression test
+is claimed. The oracle guards a real availability, trusted-peer, and
+eclipse-resistance contract, but a future severity claim needs a master
+regression plus a Core-reachable consequence; this proof alone is not
+Critical. Existing findings keep their master-relative ratings. An uncleared
+nonce with no cryptographic meaning is not Critical by itself, and an invalid
+block is not Critical unless Core can carry it to the harmful state.
+
+### Cherry-pick, masking, and reiterated findings
+
+The l0rinc fork pull-request list was reviewed. No node-eviction-specific
+commit applied, so no follow-up behavior was imported, masked, or altered.
+Any later fix or cherry-pick must preserve the exact clean-master artifact or
+state whether it changes or masks it, and must retain the source/binary
+hashes, assertion and status, Core input origin, caller boundary, severity,
+test gap, and verifier commands. The temporary mutation was reverted and no
+fuzz jobs remain running.
 
 Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
 **Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
