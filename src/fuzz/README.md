@@ -3287,6 +3287,167 @@ source/binary SHA-256 checks, original corpus count/byte/manifest checks,
 four-worker final-stat scans, sanitizer/assertion diagnostic scans, artifact
 inspection, process cleanup, and `git diff --check`.
 
+## 2026-07-19 MemorySanitizer callback and lifecycle cross-backend replay
+
+This is a fresh MemorySanitizer replay of the callback, context-lifecycle,
+hash-finalization, ECDH, and EllSwift targets. It follows the latest clean
+libsecp baseline `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, including `e217ead` (`field:
+serialize elements by word`). No l0rinc commit was added after that baseline
+and no production source was modified for this campaign.
+
+### Target and corpus anchors
+
+The tracked target sources and original corpora were:
+
+| target | source SHA-256 | files | bytes | sorted relative-path manifest |
+| --- | --- | ---: | ---: | --- |
+| `context` | `2a6600270e4b1d3a8b27d42ff8f3c440e3d497a0f27468771334b7bb4fd609e9` | 13 | 722 | `4a7f30fdc903bcc0f5624e3b23183f6b8117fdfd7088223c1a826dbce814eea1` |
+| `ecdh` | `034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79` | 9 | 283 | `ec8b69a36ab826af8adadafcc364b09ee29f9d05d8b726f33d2a385d1df67b7d` |
+| `ellswift` | `20c746ada0051d972528565e762a3ad9be27b0bf6c11dc91680da07a6dc2ac06` | 19 | 792 | `870e2c524784b964a625a46e8954a6000089b9482fe977d8b7ee6a3fd12572ce` |
+| `hash` | `f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc` | 10 | 446 | `15c5706349567e5ed437bf11dcd3d3fd3811abcc0434dff47a74be7296388dd2` |
+
+Every corpus was copied to a target-specific private directory. The tracked
+corpus counts, byte totals, and manifests above were unchanged.
+
+### Sanitizer builds and command
+
+Both builds used Clang MemorySanitizer with origin tracking, assembly disabled,
+and the libFuzzer runtime:
+
+```text
+native  /tmp/secp256k1-msan-musig
+        -O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2
+        -fno-omit-frame-pointer; wide multiply=OFF; external callbacks=OFF
+int64   /tmp/secp256k1-msan-int64-ext2
+        -O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2
+        -fno-omit-frame-pointer; wide multiply=int64; external callbacks=ON
+```
+
+The target binaries were refreshed with:
+
+```sh
+cmake --build /tmp/secp256k1-msan-musig \
+  --target fuzz_context fuzz_ecdh fuzz_ellswift fuzz_hash -j8
+cmake --build /tmp/secp256k1-msan-int64-ext2 \
+  --target fuzz_context fuzz_ecdh fuzz_ellswift fuzz_hash -j8
+```
+
+The resulting hashes were:
+
+```text
+native context   f46632a8e13f978795e3b03e016cd9eda100a7620889aa23d3534999164bfa0c
+native ecdh      dc17fa5d1c2c20bacfa4e0b0a752d18d1b88409a96783e0ad62a829cb44b49b5
+native ellswift  bb25ae426b1f30840d456dabcf3b62e90e41436dcbb9f2baf8fb4a9eccb85143
+native hash      775402c314343a6a2e3a6cdc268e40ec7f6c8b1ba72e12c235dc160c786e05f3
+int64  context   c14c78560fe13afbaf522514d2aaf4bc8796bd511bdbda3b74b700c7bbf79154
+int64  ecdh      d952f599892c56f7d537fcfe776e2f0c2b3297d49d67ff5086e863eefdf89bb3
+int64  ellswift  cc0cfcf5b65f441c87a34dc2908efd70f9fc6563ce994de72c6cddd00471c596
+int64  hash      f0edfc6c38463bdf9355efaf74f77a03c09f44b64c71f8b9f6b0d23f58c1332a
+```
+
+Each target/backend was run from its own directory with:
+
+```sh
+timeout 240s env \
+  MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86:print_stats=1:symbolize=1 \
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  <binary> corpus -workers=4 -jobs=4 -max_total_time=20 -timeout=60 \
+  -rss_limit_mb=0 -handle_abrt=0 -use_value_profile=1 \
+  -artifact_prefix=artifacts/ -print_final_stats=1
+```
+
+### Results and classification
+
+The four worker final-stat records were summed per target; RSS is the largest
+worker value:
+
+| backend/target | executions | new units | peak RSS | result |
+| --- | ---: | ---: | ---: | --- |
+| native `context` | 541 | 126 | 68 MiB | clean |
+| native `ecdh` | 587 | 153 | 69 MiB | clean |
+| native `ellswift` | 257 | 49 | 68 MiB | clean |
+| native `hash` | 16,928 | 439 | 69 MiB | clean |
+| forced-`int64` `context` | 346 | 77 | 69 MiB | clean |
+| forced-`int64` `ecdh` | 411 | 99 | 68 MiB | clean |
+| forced-`int64` `ellswift` | 144 | 19 | 69 MiB | clean |
+| forced-`int64` `hash` | 17,055 | 403 | 68 MiB | clean |
+
+All 32 workers emitted `Done` and exited zero. No log contained a
+MemorySanitizer, UBSan, assertion, deadly-signal, runtime-error, or abort
+diagnostic. No timeout, OOM, or artifact occurred, and no fuzz process
+remained. The high hash execution count reflects the small, fast SHA state
+machine; it is not a claim that the other targets received equivalent path
+depth.
+
+This is negative sanitizer evidence, not proof that unmodified master is
+defect-free. No production failure occurred, so there is no mutation, fix, or
+deterministic regression test to claim in this entry.
+
+### Core caller boundary and severity
+
+`context` covers the lifecycle behind Core's signing context. Exact Core
+master creates and randomizes the signing context at `src/key.cpp:453-468`;
+the static context also supports public verification. A context lifecycle or
+callback failure here is a local/API or wallet availability issue unless a
+concrete Core caller turns it into invalid signature acceptance, key exposure,
+or remote resource exhaustion. No such path was found. The existing direct
+callback and opaque-state findings therefore remain below High/Critical
+without caller-level proof.
+
+`ecdh` is the optional public ECDH module and is not the module Core uses for
+BIP324. Core's actual handshake path is
+`src/bip324.cpp:41` -> `CKey::ComputeBIP324ECDHSecret` at
+`src/key.cpp:327-344` -> `secp256k1_ellswift_xdh`. A failure in the optional
+ECDH target is consequently not an invalid-block or witness finding. A
+confirmed BIP324 EllSwift mismatch could affect peer handshake
+interoperability or availability at the transport boundary, generally
+Medium until a concrete remote resource or cryptographic consequence is
+shown, not Critical consensus impact.
+
+`ellswift` does model that Core BIP324 path. Its serialized peer input is the
+64-byte EllSwift value consumed by `CKey::ComputeBIP324ECDHSecret`, and its
+party mapping and wire-transcript checks are already independently recorded
+in the ledger. A real clean-master failure that changes a peer's derived
+transport secret requires the exact handshake reproducer; this MSan replay
+found none.
+
+`hash` is an internal primitive used by RFC6979, BIP340/Schnorr challenge
+construction, MuSig transcripts, and EllSwift callbacks. It has no direct
+wire parser of its own. A clean-master hash error must be propagated through
+the actual Core signing or verification caller before severity is assigned:
+invalid block/witness signature acceptance could be Critical, while the
+existing SHA/HMAC/RFC6979 post-finalization retention finding is **Medium
+memory hygiene** without a standalone read primitive. A public or
+non-cryptographic nonce buffer is not Critical solely because it is uncleared.
+
+The rest of the master-relative ledger is unchanged: scratch allocation wrap
+is **Medium confirmed internal memory safety with low current Core
+reachability**, and 10x26 magnitude-32 carry loss is **Medium latent
+correctness**. These clean MSan results do not downgrade those findings and
+do not upgrade any callback or lifecycle issue without a demonstrated Core
+caller.
+
+### Mutation, cherry-pick, and verification record
+
+No source mutation was used because all clean-master replays passed. The
+existing independent SHA, callback-point, context, ECDH, and EllSwift mutation
+proofs remain the causal evidence for the current oracle assertions; this
+campaign adds cross-backend uninitialized-state evidence only. If a later
+l0rinc cherry-pick, minor fix, or oracle change alters a result, retain the
+unmodified-master seed, exact mutation and stack if any, caller/input origin,
+master-relative severity, deterministic regression test, verifier commands,
+and an explicit preserve/change/mask statement in the same commit message.
+A change that merely prevents a later failure cannot erase a more severe
+clean-master result. Any confirmed fix still needs the strongest available
+Core or API-level reproducer.
+
+Verification included both MSan build commands, all eight isolated worker
+commands, source/binary SHA checks, original corpus count/byte/manifest
+checks, per-worker final-stat scans, MSan/UBSan diagnostic scans, artifact and
+process cleanup, and `git diff --check`. No new l0rinc cherry-pick or
+production behavior change is claimed.
+
 For causal proof, a temporary production-code mutation changed the update for
 different magnitudes to the exact expression
 `r->magnitude = (a->magnitude > r->magnitude ? a->magnitude : r->magnitude) + 1`.
