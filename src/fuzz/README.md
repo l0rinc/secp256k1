@@ -18174,6 +18174,85 @@ preconditions, postconditions, failure and stack, Core caller/input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger.
 
+## 2026-07-19 Extended Core mempool state-transition replay
+
+The Core `tx_pool` target was selected for its broader state-machine and
+peer-transaction reachability. It uses fuzzed transactions and real
+`AcceptToMemoryPool` validation, including script/signature checks, mempool
+dependency changes, fee and policy settings, transaction prioritization,
+block-template assembly, removal for a simulated block, re-addition after a
+simulated reorg, recursive removal, eviction, expiry, and final mempool
+invariant checks. The original 5,658-file corpus from
+`/mnt/my_storage/qa-assets/fuzz_corpora/tx_pool` was copied separately for the
+two builds. Four workers were used because each worker owns a chainstate and
+mempool model.
+
+The audit-linked ASan/UBSan run used
+`/tmp/secp256k1-next-long-core-corpora/tx_pool` and artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/tx_pool/`:
+
+    timeout 420s env FUZZ=tx_pool \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/tx_pool \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/tx_pool/ \
+      -print_final_stats=1
+
+It loaded 5,658 seeds and completed 29,195 executions in 301 seconds,
+reaching 15,857 coverage points and 126,013 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The same original corpus was replayed against the embedded-master binary
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, using
+`/tmp/secp256k1-next-long-core-corpora/tx_pool-master-clean` and artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/tx_pool-master-clean/`:
+
+    timeout 420s env FUZZ=tx_pool \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/tx_pool-master-clean \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/tx_pool-master-clean/ \
+      -print_final_stats=1
+
+The clean-master run loaded 5,658 seeds and completed 27,092 executions in
+301 seconds, reaching 19,734 coverage points and 146,283 features. It exited
+zero with no assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+Coverage totals are not comparable because the binaries have different
+source and instrumentation states.
+
+The target's input origin is a peer-like transaction entering the mempool,
+not a complete block-validation harness. A future failure that changes
+transaction/script acceptance, corrupts dependency or reorg state, or causes
+a remote crash/DoS during `AcceptToMemoryPool` would be severity-rated from
+the demonstrated node-availability and consensus-adjacent impact, potentially
+High. A policy-only discrepancy or harness invariant without a concrete Core
+production consequence remains lower. No production finding, fix,
+deterministic regression test, or severity change is claimed from this
+negative replay.
+
+Existing findings remain: scratch-wrap is **Medium confirmed internal memory
+safety with low current Core reachability**; the 10x26 magnitude-32 carry
+issue is **Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention
+is **Medium memory hygiene** without a standalone read primitive; and direct
+API, wallet, callback, opaque-state, cache, and harness-performance
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+Any future mempool, validation, signature, reorg, optimization, cherry-pick,
+or production fix must amend the same commit message and ledger with the
+exact clean-master or minimal-production-mutation baseline, corpus/mutation
+condition, preconditions, postconditions, failure and stack, Core caller and
+input origin, master-relative severity, existing-test gap, verifier
+commands/results, and whether the change preserves, changes, or masks the
+trigger.
+
 ## 2026-07-19 Extended BIP324 cipher transport replay
 
 The remaining high-impact Core boundary was the full
