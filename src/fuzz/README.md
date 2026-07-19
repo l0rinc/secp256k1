@@ -24322,3 +24322,162 @@ Existing findings remain reiterated at their master-relative ratings:
   itself.
 
 No temporary production mutation remains, and no fuzz jobs were left running.
+
+## 2026-07-19 Core block-index tree position contract oracle on latest master
+
+This entry records the next audit cycle after refreshing Bitcoin Core master.
+The target is `src/test/fuzz/block_index_tree.cpp`, a state-machine model for
+header insertion, block-data receipt, reorgs, invalidation, pruning, and
+redownload. The previous target asserted only that
+`ReceivedBlockTransactions()` raised validity and set `BLOCK_HAVE_DATA`; it
+discarded the exact file/offset and transaction-count state produced by the
+production call.
+
+### Rebase and provenance
+
+- `origin/master` advanced from the previous comparison
+  `ba48852f9e758df8e67ce5f51c0e3e2b68713ab4` to current master
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`.
+- The dirty fork overlay was left untouched. A disposable clean worktree was
+  created from current master, and the focused audit commits were cherry-picked
+  onto it. Equivalent l0rinc feature commits already present upstream were not
+  duplicated. The committed rebased audit parent is `fdf15a5e6b`; the code
+  commit for this entry is `4badfca78e`.
+- Original target source SHA-256:
+  `e14452b44c84b4f76718294512ece35f3a03b209c16913b913355924c60a0664`.
+- Patched target source SHA-256:
+  `035b02980d05cac97fe43cd76be4a70f99e5075df0554fac9c28008b394b638a`.
+- Production `src/validation.cpp` SHA-256:
+  `1b49bd6539860b5e06c93e5ec73a2735ca4521fb8c28fcd4b50268c44a0018ab`;
+  it is byte-identical to current master after the temporary mutation was
+  restored.
+- Final sanitizer fuzz binary SHA-256:
+  `b54264d7562a8c7953f2d46c74aa9312d0d89b1b924f3cd1296a9ebf3c5f1d11`.
+
+### Oracle contracts
+
+Both `ReceivedBlockTransactions()` call sites now go through a helper that
+asserts:
+
+- `nTx` equals the dummy block's transaction count.
+- `nFile` and `nDataPos` equal the exact `FlatFilePos` supplied by the caller.
+- `nUndoPos` is reset to zero at the block-data receipt boundary.
+- `BLOCK_HAVE_DATA` and `BLOCK_VALID_TRANSACTIONS` are set.
+- Every status bit present before the call remains present afterward.
+
+These are direct postconditions at the production boundary. They complement
+`CheckBlockIndex()`, which covers broad tree, candidate, and reorg invariants
+but does not assert the exact undo position. No production code is changed.
+
+### Corpus and sanitizer verification
+
+The existing shared corpus was copied into a private snapshot at
+`/tmp/secp256k1-current-block-index-tree-corpus-20260719`. At verification
+time it contained 4,396 files and 19,764,724 bytes. The snapshot was not
+modified by the replay.
+
+The corpus-first command shape was:
+
+```text
+timeout 600s env FUZZ=block_index_tree ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz <corpus> -merge=0 -runs=4396 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<artifacts> -print_final_stats=1
+```
+
+The replay completed 4,539 executions, reached coverage 2,181 and 21,031
+features, added zero corpus units, peaked at 627 MiB RSS, and exited zero.
+There were no assertion, ASan, UBSan, runtime, timeout, OOM, or crash
+diagnostics, and the artifact directory was empty.
+
+Four fresh disjoint partitions were each run in an isolated working directory
+with `-workers=1 -jobs=1 -max_total_time=60 -timeout=60 -rss_limit_mb=0`
+under the same ASan and UBSan settings. Each partition had 1,099 original
+files. Byte counts and final statistics were:
+
+| worker | bytes | executions | coverage | features | new units | peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 4,866,537 | 7,731 | 2,181 | 20,983 | 89 | 646 MiB |
+| 1 | 4,974,830 | 8,689 | 2,180 | 20,978 | 91 | 643 MiB |
+| 2 | 4,850,896 | 9,282 | 2,178 | 20,802 | 102 | 648 MiB |
+| 3 | 5,072,461 | 8,574 | 2,179 | 20,870 | 98 | 643 MiB |
+
+All four exited zero, produced no sanitizer/assertion/timeout/OOM/crash
+diagnostic, and left empty artifact directories. No fuzz process remained.
+
+### Differential mutation proof
+
+The deterministic proof seed is
+`/mnt/my_storage/qa-assets/fuzz_corpora/block_index_tree/00593bd83213a9143de3890b94d66a284d8e0b84`.
+It is 2,680 bytes and has SHA-256
+`3769b17765ac0e5b3ff3a7434b244ba98e7d7eb96216daa80383842030416f80`.
+
+The disposable production mutation changed `src/validation.cpp:3799` from:
+
+```text
+pindexNew->nUndoPos = 0;
+```
+
+to:
+
+```text
+pindexNew->nUndoPos = 1;
+```
+
+The old exact-master-style target, with this mutated production code, replayed
+the seed once and exited zero. The new target with the identical mutation
+exited 134 at `src/test/fuzz/block_index_tree.cpp:50`:
+
+```text
+assert(index->nUndoPos == 0);
+```
+
+This is a direct postcondition failure, not a later block-file or
+`ActivateBestChain` error. Restoring `nUndoPos = 0`, rebuilding, and replaying
+the identical seed exited zero. A separate candidate mutation of
+`nDataPos = pos.nPos + 1` was rejected as proof because it caused a downstream
+block-read failure before the direct helper; it is not part of this result.
+
+The build and fixed-seed verification used:
+
+```text
+cmake -S /tmp/bitcoin-secp256k1-audit-current -B /tmp/bitcoin-secp256k1-audit-current-build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_FOR_FUZZING=ON -DSANITIZERS=undefined,address,fuzzer -DWITH_ZMQ=OFF
+cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8
+```
+
+Fixed inputs used `-runs=1 -timeout=60 -rss_limit_mb=0 -handle_abrt=0`
+with the same sanitizer settings. `clang-format --dry-run --Werror` and
+`git diff --check` passed.
+
+### Core callers and severity on master
+
+The real input origin is an unauthenticated peer `headers` or block message.
+The relevant path is `PeerManagerImpl::ProcessHeadersMessage`,
+`ChainstateManager::ProcessNewBlockHeaders`, `BlockManager::AddToBlockIndex`,
+`ProcessBlock`, `ReceivedBlockTransactions`, and `ActivateBestChain`. The
+fuzzer's dummy blocks model post-header ingestion but do not bypass Core PoW,
+continuity, or consensus validation.
+
+On unmodified current master this is **no production finding** and no
+production fix or deterministic regression test is claimed. The result is
+oracle hardening; a local or unreachable metadata mismatch is
+**nice-to-have/low priority**. A real peer-triggerable position or reorg
+inconsistency affecting durable block-index state, block reads, chain
+selection, or availability requires a caller-level reproduction before a
+**High** or **Critical** rating. An invalid block alone is not Critical merely
+because this state model accepts a constructed block.
+
+Existing Core tests and `CheckBlockIndex()` cover broad tree consistency, but
+the old harness did not encode this exact undo-position identity. The old/new
+fixed-seed replay is the strongest proof that the new oracle matters. No
+l0rinc commit applies specifically to this target. Any later fix or cherry-pick
+must preserve the exact master seed, mutation, assertion stack/status, caller
+and input origin, test gap, verifier commands, and whether behavior is
+`preserved`, `changed`, or `masked`. A follow-up that hides a more severe
+master trigger cannot downgrade it without replaying the original seed or an
+equivalent mutation.
+
+Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; SHA,
+HMAC, and RFC6979 retention is **Medium** memory hygiene; and an uncleared
+nonce with no cryptographic meaning is not **Critical** by itself.
+
+No temporary production mutation remains, and no fuzz jobs were left running.
