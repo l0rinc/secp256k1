@@ -19856,3 +19856,130 @@ header input, failed state postcondition, caller path, and whether it chooses
 the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
+
+## 2026-07-19 Core block-index tree, reorg, and pruning replay
+
+The `block_index_tree` target is a state-transition model for the Core block
+index rather than a header parser. Its important contracts are that a header
+which extends an existing non-failed index entry gets the exact parent and next
+height, reaches `BLOCK_VALID_TREE`, and updates the tree consistently; that
+`ReceivedBlockTransactions` raises transaction validity and data flags together;
+that candidate selection never loses the best-work chain; that a reorg only
+disconnects entries with undo data; that invalid candidates are marked and
+removed from consideration; and that pruning followed by redownload restores
+the data flags and positions. The target also calls `CheckBlockIndex()` after
+each generated sequence unless the model deliberately aborts a pruned-data
+case. These are narrow preconditions and postconditions around the same state
+transitions used by Core, not an assumption that every fuzzer-accepted header
+is a consensus-valid block.
+
+The clean-master baseline is the exact Core checkout
+`/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/block_index_tree.cpp` is SHA-256
+`c37d865c426b0e1451b8161a8ccc214636099d0e22d9ddef42cc3dffdb1d6eaa` in both
+that checkout and the audit comparison. The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/block_index_tree`: 331 files and
+805,120 bytes at campaign start. Later worker runs wrote libFuzzer-generated
+units into that shared corpus directory; the 331-file count and all baseline
+results below come from the per-worker logs captured before those additions.
+
+The exact-master sanitizer fuzzer was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+corpus-first replay used, for each binary:
+
+    timeout 240s env FUZZ=block_index_tree \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 <binary> <corpus> \
+      -merge=0 -runs=331 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All three replays exited zero, with no artifact and no ASan, UBSan, runtime,
+assertion, timeout, OOM, or crash diagnostic. The exact-master run executed
+358 units, reached coverage 2166 and features 19652, and peaked at 306 MiB.
+The audit and comparison runs each executed 359 units, reached coverage 2185
+and features 19880/19797, and peaked at 307/308 MiB. The extra executions are
+libFuzzer's initialization and corpus accounting, not missing seed inputs.
+
+Each provenance was then run in four independent workers for 300 seconds with
+the same sanitizer settings and `-workers=1 -jobs=1 -max_total_time=300`.
+Every child exited zero, emitted final statistics, left its artifact directory
+empty, and produced no diagnostic. The exact-master workers ran
+163318/142259/100556/87684 executions, all at coverage 2166, with
+20613/20401/20373/20604 features, 498/474/377/322 new units, and
+342/392/381/352 MiB peak RSS. The audit workers ran
+92647/83267/112605/114876 executions, all at coverage 2185, with
+20473/20500/20679/20468 features, 359/321/371/327 new units, and
+397/344/360/364 MiB peak RSS. The comparison workers ran
+112001/139730/87355/138632 executions, all at coverage 2185, with
+20691/20419/20498/20652 features, 385/437/336/399 new units, and
+379/365/380/372 MiB peak RSS. The comparison `validation.cpp` differs from
+exact master by 466 changed lines, so its clean result is a separate overlay
+result and cannot mask or downgrade a master-relative finding.
+
+### Mutation proof: the oracle catches a broken tree-validity transition
+
+This is an oracle proof, not a production bug claim. In a disposable exact-
+master build, `src/node/blockstorage.cpp:248` was changed only from
+
+    pindexNew->RaiseValidity(BLOCK_VALID_TREE);
+
+to
+
+    pindexNew->RaiseValidity(BLOCK_VALID_UNKNOWN);
+
+The mutation was rebuilt with `cmake --build /tmp/bitcoin-coinscache-master-build
+--target fuzz -j2`. The smallest stable reproducer is corpus input
+`00103819eb159b14141297b36c6b8174dc244d44`, 333 bytes, SHA-256
+`a0d8e99c9d6ce743c20a9d6a8431ce7cf96aff555e8c86ca9710280dbdf408f7`.
+Running that exact file once with `FUZZ=block_index_tree`,
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=0`,
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`, `-runs=1`, and
+`-rss_limit_mb=0` aborted with exit code 77:
+
+    test/fuzz/block_index_tree.cpp:68:
+    Assertion `index->nStatus & BLOCK_VALID_TREE' failed.
+    SUMMARY: libFuzzer: deadly signal
+
+The symbolized assertion stack is `CallOneOf` at
+`src/test/fuzz/block_index_tree.cpp:68`,
+`block_index_tree_fuzz_target` at line 59, then
+`LLVMFuzzerTestOneInput` and libFuzzer's `ExecuteCallback`. There was no
+sanitizer report, which is expected for a deliberately removed status
+transition. After restoring the exact-master source and rebuilding the same
+binary (the SHA returned to
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`), the same input and command
+exited zero after one execution with no diagnostic. This proves the assertion
+is sensitive to the production transition and is reproducible from a fixed
+corpus byte sequence.
+
+The real Core origin is an unauthenticated peer's `headers` message or block
+message: `PeerManagerImpl::ProcessHeadersMessage` and
+`ChainstateManager::ProcessNewBlockHeaders` validate and index headers through
+`BlockManager::AddToBlockIndex`; `ProcessBlock` can then drive
+`ReceivedBlockTransactions` and `ActivateBestChain`. The fuzzer's dummy block
+and explicit invalid-mark paths model those later transitions, but do not
+prove that arbitrary fuzzer input bypasses Core's PoW, continuity, or consensus
+checks. A real missing tree-validity transition on master could make a peer
+supplied chain fail validation or corrupt candidate/reorg bookkeeping; if
+demonstrated on the actual caller path, that consequence could be High or
+Critical. This mutation alone is not a vulnerability, and the clean master
+campaign found no such failure, so no production severity is assigned.
+
+Existing Core tests exercise block-index and reorg behavior, but the corpus
+model's immediate assertion is stronger evidence for this specific contract:
+it catches the status regression at header insertion before later candidate
+selection can hide it. No production fix or security finding is claimed in
+this documentation commit. No l0rinc change was cherry-picked into this
+baseline; the comparison overlay already has a materially different
+validation implementation. If a future cherry-pick changes this result, the
+commit message and this ledger must preserve the exact master mutation, seed,
+caller reachability, and whether the later change masks, alters, or fixes the
+master behavior. This target has no cryptographic nonce; nonce-clearing
+severity is not applicable, and uncleared data without standalone
+cryptographic meaning is not Critical merely because it was not cleared.
