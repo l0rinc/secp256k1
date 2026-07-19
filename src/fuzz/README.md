@@ -21902,3 +21902,145 @@ checks, three four-worker sanitizer campaigns, diagnostic scans,
 empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
+
+## 2026-07-19 Core package_rbf replacement-diagram oracle replay
+
+This entry records the previously undocumented `package_rbf` target in
+`src/test/fuzz/rbf.cpp`. It covers the fee-diagram and staging layer used by
+package replacement, while keeping its synthetic graph domain separate from a
+full peer package acceptance proof.
+
+### Source, corpus, and build anchors
+
+The authoritative baseline was exact Bitcoin Core master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Relevant source hashes were:
+
+    src/test/fuzz/rbf.cpp    e8ce3d97f80ca1d10de79ef666ffedfd5c3e622b3a13a5e168ebe6035a3c2e85
+    src/txmempool.cpp        68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651
+    src/txmempool.h          d2b3100734cb5019f75cacc1d0c41d726d60c3cee6cbed7ec1912dd7efd0b54e
+    src/policy/rbf.cpp       ef094a51d531061b964a8cabdf8b486c06a5aa07050373a2a7f42684f3caed6d
+    src/policy/rbf.h         f6fb0a7e54364bcbc6cde126c8be24809be2b2381e17898a8881a27e7c1d9815
+
+The audit and comparison worktrees were at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; all five hashes above matched
+there. No l0rinc change silently altered the RBF target, the TxGraph staging
+implementation, or the policy wrapper in these builds.
+
+The original `package_rbf` corpus had 891 files and 78,899,303 bytes. Its
+sorted absolute-path SHA-256 manifest was
+`a01a112c7d6e6c13b4a33a348751b83731a2d6a47bff0bb9c99e790da84f5a6b`. Each
+campaign used an isolated copy and left the original manifest unchanged.
+
+### Oracle and synthetic state domain
+
+The initializer creates 10,000 unique synthetic outpoints. The harness then
+creates a replacement entry and a sequence of small parent/child pairs with
+unique inputs, adds accepted entries to a real `CTxMemPool`, optionally applies
+fee prioritization, selects arbitrary direct conflicts, expands them to all
+descendants, and stages their removal plus the replacement addition in a
+`CTxMemPool::ChangeSet`. It bounds aggregate adjusted size before entering
+`FeeFrac`/`int32_t`-sensitive paths and permits cluster-limit rejection.
+
+The postconditions are focused on the real replacement contracts:
+
+* every returned old and new fee diagram is monotonically non-increasing by
+  ratio;
+* the fee/size conservation identity holds after subtracting replaced and
+  replacement entries;
+* `CalculateChunksForRBF()` and `ImprovesFeerateDiagram()` agree on whether
+  the topology is uncalculable, successful, or a fee-diagram failure; and
+* a successful improvement never reduces the total old diagram fee, while a
+  failed improvement with a larger old total reports `DiagramCheckError::FAILURE`.
+
+This is stronger than checking only that a call returns, but it is not an
+“accepted means valid” oracle. The fuzzer does not call the full
+`MemPoolAccept::PackageRBFChecks` path, does not construct every consensus and
+policy-valid 1-parent/1-child package, and its explicit staged removals model
+conflict topology even when the synthetic replacement input is not a real
+wire-level double spend. The target also leaves the changeset to its scoped
+abort path rather than exercising the complete submission/callback lifecycle.
+
+The command shape was:
+
+    timeout 420s env FUZZ=package_rbf ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results were:
+
+    exact master  2,009 executions in 302 s; cov 5,668, ft 55,624,
+                 new_units_added 71, peak RSS 1,305 MiB
+    audit build   2,628 executions in 301 s; cov 5,679, ft 56,047,
+                 new_units_added 89, peak RSS 1,273 MiB
+    comparison    2,098 executions in 301 s; cov 5,679, ft 56,051,
+                 new_units_added 84, peak RSS 1,273 MiB
+
+All three exited zero with no assertion, ASan, UBSan, runtime, timeout, OOM,
+or leak diagnostic and no artifact. The high RSS is an observed campaign
+property from mutated inputs near the one-megabyte maximum, not a failure;
+`-rss_limit_mb=0` was intentional and no worker was left running. Fuzzer
+hashes after replay were:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c98803de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Bitcoin Core callers and severity
+
+`CTxMemPool::ChangeSet::CalculateChunksForRBF` at
+`txmempool.cpp:994-1003` checks cluster limits and requests the main/staging
+fee diagrams. `policy/rbf.cpp:127-141` wraps it in
+`ImprovesFeerateDiagram`. During package acceptance,
+`MemPoolAccept::PackageRBFChecks` at `validation.cpp:1041-1124` aggregates
+direct conflicts, stages all descendants for removal, checks anti-DoS fees
+with `PaysForRBF`, and rejects a replacement whose package diagram does not
+improve. `SubmitPackage` later applies the changeset at
+`validation.cpp:1246-1295`.
+
+Peer package input reaches this policy path through
+`net_processing.cpp:4517-4522` and `ProcessNewPackage`; authenticated/local
+`submitpackage` reaches it through `rpc/mempool.cpp:1419-1426`. Mining and
+block connection do not use package RBF to accept an invalid block. The
+fuzzer's synthetic operation sequence is therefore relevant to peer-reachable
+mempool policy and resource behavior, but it is not itself proof of a
+consensus or invalid-block path.
+
+This replay found no production bug, failure stack, mutation, fix, or
+deterministic regression test. A fee-diagram or replacement-policy mismatch
+is Low/Medium until a concrete mempool result, pinning effect, eviction, or
+resource consequence is reproduced through Core. A peer-triggered mempool
+corruption, memory-safety failure, or sustained remote DoS can be High only
+with caller-level proof. Invalid-block acceptance or remote consensus/memory
+impact is Critical only with proof through the actual validation/wire path;
+RBF policy reachability alone does not justify Critical.
+
+`src/test/rbf_tests.cpp:356-480` deterministically covers replacement
+diagrams across single chunks, CPFP children, multiple clusters, and fee/size
+variants. The fuzz target adds arbitrary topology, priorities, large ratios,
+and rejection boundaries, but it does not replace tests for full package
+validation, script/UTXO checks, callbacks, or block/reorg interaction.
+
+### Findings, fixes, and masking context
+
+No source mutation was used and no production fix or regression test is
+claimed. Existing master-relative findings remain: scratch allocation wrap is
+**Medium confirmed internal memory safety with low current Core reachability**;
+10x26 magnitude-32 carry loss is **Medium latent correctness**;
+SHA/HMAC/RFC6979 finalizer retention is **Medium memory hygiene** without a
+standalone read primitive; and direct API, wallet, callback, opaque-state,
+cache, and harness-performance issues remain below High/Critical without a
+demonstrated Core trigger. A nonce with no standalone cryptographic meaning
+is not Critical merely because it is not cleared.
+
+The relevant l0rinc commits were already reconciled and these five source
+hashes show no RBF-specific cherry-pick delta. Any later cherry-pick or minor
+fix that changes a trigger must retain the clean-master corpus/seed result,
+exact mutation and stack if one exists, caller input origin, severity on
+master, deterministic regression test, verifier commands, and an explicit
+statement of whether the change preserves, changes, or masks master behavior.
+A follow-up change that accidentally stops a failure cannot erase a more
+severe clean-master finding.
+
+Verification included source and binary SHA checks, corpus count/manifest
+checks, three four-worker sanitizer campaigns, diagnostic scans,
+empty-artifact checks, `ps` confirmation that no fuzz process remained, and
+`git diff --check`. No new l0rinc cherry-pick or production behavior change is
+claimed by this entry.
