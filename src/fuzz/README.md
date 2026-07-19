@@ -23388,3 +23388,169 @@ the original seed or minimal production mutation is rerun. Verification
 included source and binary hashes, original corpus count/byte/manifest checks,
 all ten isolated four-worker commands, final-stat aggregation, diagnostic and
 artifact scans, tracked-worktree status, process cleanup, and `git diff --check`.
+
+## 2026-07-19 MemorySanitizer public and signing-module replay
+
+This entry records a disposable-corpus MSan replay of the remaining symmetric
+public/module targets: `api_roundtrip`, `musig`, `schnorrsig`, and
+`xonly_tweak`. The audit branch still has earlier production and oracle
+changes relative to its exact `origin/master` ancestor
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, including `e217ead` (`field:
+serialize elements by word`). Therefore this is cross-backend sanitizer
+evidence for the current audit branch, not proof that every unmodified-master
+production path is safe. No production source was changed for this campaign,
+and no l0rinc commit was added after that baseline.
+
+### Target, source, and corpus anchors
+
+The source hashes are the tracked fuzzer translation units. The corpus
+manifest is the SHA-256 of sorted relative file names; all eight runs started
+from exact private copies of these original tracked inputs.
+
+| target | source SHA-256 | original files | original bytes | relative-name manifest |
+| --- | --- | ---: | ---: | --- |
+| `api_roundtrip` | `f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5` | 63 | 2,933 | `06df09d6853d275cb1b6ce8a3379dbf13f6bb42b2c4cf58fdb257d0ed7739fbf` |
+| `musig` | `5a51df8eabf397b01f7ab496a23ade8123afe5256b8b5b590ae20d547a9ef831` | 77 | 2,946 | `56691f8e7b9aa04e6c917cec95c9417e6471a4fe77da475a7d0fcbe98603f73f` |
+| `schnorrsig` | `47c871312162705d4355265bf682d4e195dcb64a3d13bb253a71a68552ce822b` | 18 | 670 | `622ca21847c8aa3daab163d0dc595f0d89dafe273bb3500efc19a6f15133ecf7` |
+| `xonly_tweak` | `f7910e0c16f3c682acd0892fe7de9a1df6d4d216084161a9da42993a624ed870` | 20 | 712 | `d458c67584b6c7cd0cff0604f50f638e2ef03b54e1bf03b5eeda21e37c5c9c64` |
+
+Each original corpus was copied with `cp -a` to
+`/tmp/msan-public-proof-{native,int64}-{api_roundtrip,musig,schnorrsig,xonly_tweak}/corpus`;
+the corresponding `run` directory held its own four `fuzz-*.log` files and
+artifact directory. LibFuzzer was allowed to expand only those private
+copies. The tracked corpus counts, bytes, and manifests remained unchanged.
+
+`recovery` is not in this symmetric native MSan set because the native build
+has `SECP256K1_ENABLE_MODULE_RECOVERY=OFF`; its native and forced-int64
+ASan/UBSan replay is already recorded in commit `fb6fbc4d`. This entry does
+not claim a new recovery result.
+
+### Oracle contracts and builds
+
+`api_roundtrip` combines Core-shaped DER/SEC1 parsing, ECDSA signing and
+verification, low-S and retry behavior, public-key composition, tweaks,
+overlap and NULL barriers, and deterministic state cleanup. `musig` checks
+key aggregation, cache and tweak transitions, nonce/session consumption,
+partial-signature equations, static-context behavior, callback failure, and
+opaque-state cleanup. `schnorrsig` checks BIP340 signing, parsing, challenge
+and verification equations, auxiliary randomness, keypair transitions,
+normalization, overlap, failure state, and round trips. `xonly_tweak` checks
+the independent Taproot tweak equation, parity, control-block-like paths,
+invalid field encodings, aliasing, static contexts, and unchanged outputs on
+rejection. These are precondition/postcondition oracles; they do not assume
+that an accepted API return value is valid unless the contract requires it.
+
+Both builds use Clang MemorySanitizer with origin tracking, assembly disabled,
+and libFuzzer:
+
+    cmake --build /tmp/secp256k1-msan-musig \
+      --target fuzz_api_roundtrip fuzz_musig fuzz_schnorrsig fuzz_xonly_tweak -j8
+    cmake --build /tmp/secp256k1-msan-int64-ext2 \
+      --target fuzz_api_roundtrip fuzz_musig fuzz_schnorrsig fuzz_xonly_tweak -j8
+
+The common flags are `RelWithDebInfo`,
+`-O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2`, and
+`-fno-omit-frame-pointer`. Native uses `wide multiply=OFF; external
+callbacks=OFF`; forced-int64 uses `wide multiply=int64; external
+callbacks=ON`.
+
+The refreshed binary SHA-256 values are:
+
+    native api_roundtrip  74b072701423d5a0fe03d2828cde69b196eba20e286ed757d57b4bfada769b7b
+    native musig          def3c1fa3e9f4055db07486cd05bdd576b5f7379d9ee98167399d2edd4cf717b
+    native schnorrsig     9c5723022150c576d7c211a9efac4efe77769bb90adf4a4bd9dd537110335b9e
+    native xonly_tweak    ec31afe024dfc807ef72643466793ea052ef6123ffe6cbd1ce71869e8f8812d2
+    int64 api_roundtrip   4390c2cfc13a2c8b5ad058de5e6d891494f6e987f2a984ea943e30a252c89d3e
+    int64 musig           56305ce629b553c342b7753b4dc5c8049017bf82801681e6c6206ad816d34e4a
+    int64 schnorrsig      0bd393ce1279ade5f69265f98dccbd422317e24e22dd11b2adfa70f24ba831b5
+    int64 xonly_tweak     6e609101a47bdd5d21bf943d9417110531cc1a9198880843d11d65ba50154ef7
+
+Each target/backend used:
+
+    timeout 360s env \
+      MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86:print_stats=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      <binary> <private-corpus> -workers=4 -jobs=4 -max_total_time=20 \
+      -timeout=60 -rss_limit_mb=0 -handle_abrt=0 -use_value_profile=1 \
+      -artifact_prefix=<private-run>/artifacts/ -print_final_stats=1
+
+### Results and failure classification
+
+The four worker final-stat records were summed per target. RSS is the largest
+worker value. All 32 workers emitted `Done` and exited zero.
+
+| backend/target | executions | new units | peak RSS | result |
+| --- | ---: | ---: | ---: | --- |
+| native `api_roundtrip` | 474 | 59 | 69 MiB | clean |
+| forced-`int64` `api_roundtrip` | 268 | 11 | 69 MiB | clean |
+| native `musig` | 312 | 0 | 69 MiB | clean |
+| forced-`int64` `musig` | 312 | 0 | 69 MiB | clean |
+| native `schnorrsig` | 380 | 83 | 69 MiB | clean |
+| forced-`int64` `schnorrsig` | 196 | 32 | 69 MiB | clean |
+| native `xonly_tweak` | 84 | 0 | 69 MiB | clean |
+| forced-`int64` `xonly_tweak` | 88 | 2 | 69 MiB | clean |
+
+No worker log contained an MSan, UBSan, runtime-error, assertion,
+deadly-signal, abort, timeout, or OOM diagnostic. All artifact directories
+were empty, and no fuzz process remained. This is negative current-branch
+sanitizer evidence. It is not a clean-master proof because prior audit-branch
+production fixes and oracle changes can preserve, change, or mask a master
+trigger.
+
+### Bitcoin Core callers and master-relative severity
+
+`api_roundtrip` overlaps Core's public-key and signing adapters, including
+`src/pubkey.cpp:236-298`, `src/key.cpp:208-269,409-439`, and script dispatch
+through `src/script/interpreter.cpp`. A clean-master discrepancy reachable
+from a peer-supplied invalid block or witness that accepts an invalid ECDSA or
+Schnorr signature, corrupts validation state, causes memory safety failure,
+or creates sustained remote denial of service would be High or Critical from
+the demonstrated consensus impact. This replay found no such behavior.
+
+`schnorrsig` and `xonly_tweak` are directly relevant to Taproot. Core's
+`CheckSchnorrSignature` and `XOnlyPubKey::VerifySchnorr` paths consume the
+same BIP340 equation, while Taproot control-block verification reaches x-only
+parse, tweak, and parity checks. An invalid witness acceptance or
+peer-reachable memory failure on exact master would therefore require a
+caller-level High/Critical rating and a minimized block/witness reproducer.
+The valid generated and opaque states in this replay do not establish that
+wire-level exploit.
+
+MuSig2 is used by Core's wallet, descriptor, and PSBT signing state, not by
+consensus block or witness validation. A clean-master MuSig state or
+signature-binding failure is Low/Medium until a concrete wallet key-loss,
+misbinding, unauthorized-signature, or resource consequence is shown; it is
+not Critical merely because an opaque state is malformed. A nonce without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+The existing master-relative findings remain unchanged: scratch allocation
+wrap is **Medium confirmed internal memory safety with low current Core
+reachability**; 10x26 magnitude-32 carry loss is **Medium latent correctness**;
+SHA/HMAC/RFC6979 post-finalization retention is **Medium memory hygiene**
+without a standalone read primitive; and direct callback, opaque-state,
+wallet, and API issues remain below High/Critical without a demonstrated Core
+trigger. No new production bug, fix, or deterministic regression test is
+claimed by this replay.
+
+### Mutation, cherry-pick, masking, and verification record
+
+No source mutation was used because all eight current-branch replays passed.
+Existing independent clean-master mutations and deterministic proofs remain
+the causal evidence for the previously recorded findings. A future fix or
+cherry-pick must not use this green branch replay to downgrade a worse master
+behavior: rerun the original master seed or minimal production mutation and
+retain its exact input, preconditions, postconditions, failure stack, Core
+caller/input origin, severity, deterministic test, and verifier commands.
+
+The relevant l0rinc PRs #1-#16 remain reconciled by equivalent or stronger
+existing commits, and no l0rinc commit was cherry-picked for this campaign.
+Any later production fix, minor fix, oracle change, or l0rinc cherry-pick that
+changes a trigger must amend the same commit message and ledger with an
+explicit preserve/change/mask classification. Existing tests cover standard
+vectors and individual API contracts, but do not replace these combined
+state transitions, failure cleanup, or alternate-backend checks. Verification
+included source and binary hashes, original corpus count/byte/manifest checks,
+all eight isolated four-worker commands, final-stat aggregation, diagnostic
+and artifact scans, tracked-worktree status, process cleanup, and
+`git diff --check`.
