@@ -21340,3 +21340,151 @@ fixed-seed replay; restored exact-master binary/source SHA checks; final clean
 seed replay; `git diff --check`; and no fuzz jobs left running. Setup-only and
 timeout batches are explicitly excluded from the evidence. No new l0rinc
 cherry-pick or production behavior change is claimed by this entry.
+
+## 2026-07-19 Core tx_pool exact-master reiteration and standard-state coverage
+
+This entry expands the earlier `330356e4` mempool replay rather than claiming
+a new production finding. It adds the exact clean-master result and covers the
+separate `tx_pool_standard` target, which the earlier entry did not run. The
+purpose is to keep a reproducible baseline for later mutations, fixes, and
+cherry-picks that might otherwise hide a master-relative failure.
+
+### Source and build anchors
+
+The clean baseline is the exact Bitcoin Core master worktree
+`/tmp/bitcoin-coinscache-master` at commit
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Its relevant source hashes are:
+
+    src/test/fuzz/tx_pool.cpp  50d7e8ad962557013392dc0c17ad486ea1f656a90ad12e1cd5ddbe5c00249c8b
+    src/txmempool.cpp          68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651
+    src/txmempool.h            d2b3100734cb5019f75cacc1d0c41d726d60c3cee6cbed7ec1912dd7efd0b54e
+    src/validation.cpp         d557f410ef78679ae2f001fa148c6d735a052a872456fe2ba7b4204ec8332900
+    src/net_processing.cpp     616412f5c6d304545c59d7c3a25919883c4654ef644214eef7ad797ae604c8f8
+
+The audit and comparison worktrees were both at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, and their `tx_pool.cpp`,
+`txmempool.cpp`, and `txmempool.h` hashes are identical to exact master. This
+means the target and mempool production implementation were not silently
+changed by the secp256k1 linkage comparison. The sanitizer fuzzer hashes were:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build  3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison   63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Corpus and oracle contract
+
+The original corpus snapshots were copied before each run and were not
+reused as writable libFuzzer output directories:
+
+    tx_pool          5,658 files, 41,820,925 bytes,
+                     manifest 3d14bd835e63eb67b6aa4fc7fcda532665497d06ef48acf0488292e246e25b9c
+    tx_pool_standard 2,086 files, 10,126,800 bytes,
+                     manifest c4da2b3c336abed8d710f42898150dde845165687b2b86e9dff9e59baee37633
+
+`initialize_tx_pool()` creates a real test chain with `2 * COINBASE_MATURITY`
+coinbase blocks, records mature and immature outpoints, sets mock time, and
+flushes validation callbacks. The standard target's preconditions then keep
+the mature outpoint set as both the RBF universe and the supply model. Its
+postconditions assert, before every operation, that mempool fees plus all
+tracked spendable outputs equal `SUPPLY_TOTAL`; after acceptance they assert
+the result type, state validity, txid/wtxid membership, fee metadata, unique
+added/removed callback deltas, created/spent outpoint bookkeeping, and TRUC
+invariants. `ProcessNewPackage` is checked independently from the later
+single-transaction `AcceptToMemoryPool` result.
+
+The generic target's preconditions include fuzzed time, rolling-fee state,
+prioritization, mempool limits, bypass policy, and transactions drawn from
+mature, immature, known, and unknown outpoints. Its postconditions retain
+accepted txids and finish with `CTxMemPool::check`. Both targets run the
+shared finish sequence: block-template creation, simulated `removeForBlock`,
+reorg-style re-addition, recursive removal, optional eviction, optional
+expiry, callback synchronization, and a final mempool check. This is a real
+state-transition oracle, but it is not proof that every intermediate removal
+or every peer/block path is independently asserted; that limitation is kept
+explicit below.
+
+### Exact commands and results
+
+Each command used ASan/UBSan, four workers, value profiling, a 60-second
+per-input timeout, no RSS cap, and a 300-second libFuzzer campaign:
+
+    timeout 420s env FUZZ=tx_pool ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 /tmp/bitcoin-coinscache-master-build/bin/fuzz /tmp/secp256k1-next-txpool-exact-20260719/corpus -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=/tmp/secp256k1-next-txpool-exact-20260719/artifacts/ -print_final_stats=1
+    timeout 420s env FUZZ=tx_pool_standard ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 /tmp/bitcoin-coinscache-master-build/bin/fuzz /tmp/secp256k1-next-txpool-standard-exact-20260719/corpus -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=/tmp/secp256k1-next-txpool-standard-exact-20260719/artifacts/ -print_final_stats=1
+
+The exact-master `tx_pool` replay loaded all 5,658 seeds, completed 29,429
+executions in 301 seconds, and ended with cov 19,671, features 146,197,
+`new_units_added=252`, and peak RSS 592 MiB. The exact-master
+`tx_pool_standard` replay loaded all 2,086 seeds, completed 10,326 executions
+in 301 seconds, and ended with cov 14,764, features 111,750,
+`new_units_added=369`, and peak RSS 549 MiB. Both exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The standard target was also run with the same command shape against the
+audit-linked and comparison binaries, using isolated copies of the standard
+corpus. The audit result was 8,098 executions in 342 seconds, cov 14,812,
+features 112,360, `new_units_added=417`, peak RSS 503 MiB; the comparison
+result was 9,451 executions in 301 seconds, cov 14,780, features 112,943,
+`new_units_added=291`, peak RSS 605 MiB. Both exited zero with no diagnostic
+or artifact. Coverage and feature totals are not cross-build correctness
+metrics because instrumentation and linked source differ.
+
+The earlier `330356e4` run remains the audit-versus-embedded-master evidence
+for generic `tx_pool`: audit 29,195 executions at cov 15,857 / features
+126,013, and embedded master 27,092 executions at cov 19,734 / features
+146,283, both zero with no diagnostics. The exact-master replay above closes
+the missing clean-master baseline for that target.
+
+### Bitcoin Core caller reachability and severity
+
+The concrete peer input path is `net_processing.cpp:4529`
+`ProcessTransaction(ptx)` -> `validation.cpp:4458-4468`
+`ChainstateManager::ProcessTransaction` -> `validation.cpp:1781-1810`
+`AcceptToMemoryPool`. Rejected peer transactions also exercise the
+`coins_to_uncache` cleanup intended to prevent a memory DoS from invalid
+inputs. The block path is separate: `ConnectTip` validates a block first and
+then removes its transactions from the mempool at `validation.cpp:3086-3089`;
+reorg resurrection uses `MaybeUpdateMempoolForReorg` at
+`validation.cpp:302-395`. RPC and mining callers are local or authenticated.
+
+The fuzzer input origin is therefore a peer-like transaction, not an invalid
+wire block. Its simulated block is assembled by Core from the current
+mempool, and its reorg is a model of the lifecycle rather than proof that an
+attacker can make `ConnectBlock` accept an invalid block. A future failure
+must be replayed on this unmodified master or on a minimal production-code
+mutation. A policy-only mismatch, a callback-model error, or a harness-only
+assertion is Low/Medium until a concrete Core consequence is shown. A
+peer-triggered mempool corruption, memory-safety failure, or sustained node
+DoS can be High and must be rated from the demonstrated reachability. A
+consensus violation, invalid-block acceptance, or remotely triggerable
+memory-safety failure is Critical only with caller-level proof; malformed
+transaction input alone is not enough.
+
+This replay found no production bug, failure stack, production mutation,
+fix, deterministic regression test, or severity promotion. No source was
+mutated, so there is no mutation condition to claim and no fix whose proof
+could be overstated. The existing tests and these fuzzers cover many local
+mempool invariants, but do not by themselves prove the full peer-to-block
+transition, durable mempool persistence, or every intermediate removal
+postcondition. Those remain explicit follow-up oracles rather than findings.
+
+The earlier l0rinc commits affecting this area were already reconciled before
+these replays; no additional l0rinc source change was present in the target or
+production hashes. If a later cherry-pick or minor fix changes a trigger, the
+clean-master seed/corpus result and any minimal-mutation result must remain in
+the same finding ledger and commit message, with the relationship called out
+as preserving, changing, or masking a worse master behavior. Existing
+findings remain: scratch-wrap is **Medium confirmed internal memory safety
+with low current Core reachability**; the 10x26 magnitude-32 carry issue is
+**Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention is
+**Medium memory hygiene** without a standalone read primitive; and direct
+API, wallet, callback, opaque-state, cache, and harness-performance findings
+remain below High/Critical without a concrete Core trigger. A nonce with no
+standalone cryptographic meaning is not Critical merely because it is not
+cleared.
+
+Verifier checks after the campaigns: all four tx-pool artifact directories
+were empty; the exact master binary returned to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`; source
+hashes remained unchanged; no fuzz process was left running; and the audit
+branch remained free of source changes. No production behavior change,
+regression test, or new l0rinc cherry-pick is claimed by this entry.
