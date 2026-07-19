@@ -18122,3 +18122,47 @@ postconditions, observed failure and stack, Core caller and input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger in both the
 ledger and the same commit message.
+
+## 2026-07-19 Extended SHA/HMAC/RFC6979 worker replay
+
+The hash oracle was extended to a five-minute forced-int64 10x26
+ASan/UBSan run with eight workers. It used a fresh copy of all 10 tracked
+`src/fuzz/corpora/hash` inputs at
+`/tmp/secp256k1-next-long-corpora/hash`; artifacts were directed to
+`/tmp/secp256k1-next-long-artifacts/hash/`:
+
+    timeout 420s \
+      /tmp/secp256k1-next-asan-int64/bin/fuzz_hash \
+      /tmp/secp256k1-next-long-corpora/hash \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/hash/ \
+      -print_final_stats=1
+
+The run loaded 10 seeds and completed 388,371 executions in 301 seconds,
+reaching 511 coverage points and 3,120 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact; the
+artifact directory was empty. The oracle's preconditions and postconditions
+remain the independent SHA/HMAC/RFC6979 stream relation, one-shot/chunked
+equivalence, boundary-length behavior, and zeroed reusable or secret-bearing
+state after the relevant finalize/clear operation.
+
+The existing severity remains **Medium memory hygiene** for finalizer state
+retention without a standalone read primitive. RFC6979 and tagged-SHA are
+used by authorized Core signing, BIP340 challenge hashing reaches Tapscript
+signature checking, and the built-in SHA callback feeds BIP324 EllSwift
+transport. A future clean-master discrepancy that changes invalid-witness
+acceptance, causes a peer-triggered transport failure, or exposes a concrete
+key-agreement/integrity/node-availability consequence must be rated from
+that Core impact, potentially High/Critical. Uncleared nonce material with
+no standalone cryptographic meaning is not Critical merely because it is
+uncleared. No production finding, fix, deterministic regression test, or
+severity change is claimed from this negative replay.
+
+For any later hash cleanup, optimization, cherry-pick, or finding, amend the
+same commit message and ledger with the exact clean-master or
+minimal-production-mutation baseline, corpus/mutation condition,
+preconditions, postconditions, failure and stack, Core caller/input origin,
+master-relative severity, existing-test gap, verifier commands/results, and
+whether the change preserves, changes, or masks the trigger. A green
+post-fix replay must not replace the original master proof.
