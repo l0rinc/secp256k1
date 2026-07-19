@@ -21903,6 +21903,176 @@ empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
 
+## 2026-07-19 Core `rbf` state oracle strengthening and replay
+
+This entry records the first source-level strengthening of the previously
+weak `rbf` target. The original harness constructed arbitrary transactions and
+mempool entries, called `IsRBFOptIn`, and discarded the result. The companion
+Core commit is `bc5c0c55d58673663ff36c8ba0004a298bb00d6b` on clean master.
+
+### Source, corpus, and baseline anchors
+
+The authoritative production baseline was exact Bitcoin Core master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Before the harness change, the
+relevant hashes were:
+
+    src/test/fuzz/rbf.cpp    e8ce3d97f80ca1d10de79ef666ffedfd5c3e622b3a13a5e168ebe6035a3c2e85
+    src/policy/rbf.cpp       ef094a51d531061b964a8cabdf8b486c06a5aa07050373a2a7f42684f3caed6d
+    src/policy/rbf.h         f6fb0a7e54364bcbc6cde126c8be24809be2b2381e17898a8881a27e7c1d9815
+    src/util/rbf.cpp         f3fe72afa2b11cef5cbbf928494007ea19d0fa8fbc6c4c783779ebe866ff914b
+    src/util/rbf.h           119e5181965d9d6be343e41c9f410edb7e76e274ce39ee6a6d24d98b6c787ad3
+    src/txmempool.cpp        68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651
+    src/txmempool.h          d2b3100734cb5019f75cacc1d0c41d726d60c3cee6cbed7ec1912dd7efd0b54e
+
+The audit and comparison worktrees at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` matched the production hashes.
+The strengthened harness hash is
+`b73807acf0f5c4a52836d9e2aeeeca805c49ec1f9165e851ed7141375001a1ff`.
+The production files were not changed by the committed Core patch.
+
+The original `rbf` corpus had 877 files and 71,875,213 bytes. Its sorted
+relative-path SHA-256 manifest was
+`dd19fca6ed36e99514fc70aea022c74b6930e11b8e6bf7222c1ae145643d5a27`.
+Every campaign used an isolated copy and the original count, byte total, and
+manifest remained unchanged.
+
+The unmodified target was replayed first with:
+
+    timeout 420s env FUZZ=rbf ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Baseline results were:
+
+    exact master  21,796 executions in 301 s; cov 4,723, ft 49,431,
+                 new_units_added 527, peak RSS 750 MiB
+    audit build   20,050 executions in 301 s; cov 4,727, ft 48,994,
+                 new_units_added 482, peak RSS 747 MiB
+    comparison    21,350 executions in 301 s; cov 4,727, ft 49,711,
+                 new_units_added 608, peak RSS 751 MiB
+
+All baseline runs reached `DONE` without assertion, ASan, UBSan, runtime,
+timeout, OOM, or leak diagnostics. Their artifact directories were empty and
+no fuzz process remained. These runs were a baseline only: the original
+target still had no postcondition on `IsRBFOptIn`.
+
+### Focused oracle and contract
+
+The harness now includes `util/rbf.h` and checks the actual state contract
+under `pool.cs`:
+
+* `SignalsOptInRBF(tx)` must produce `REPLACEABLE_BIP125` even when the
+  transaction is absent from the pool;
+* the empty-mempool helper must return `REPLACEABLE_BIP125` for direct
+  signaling and `UNKNOWN` otherwise;
+* a non-signaling transaction absent from the pool must be `UNKNOWN`; and
+* a non-signaling transaction in the pool must be `FINAL` unless one of its
+  in-mempool ancestors signals, in which case it must be
+  `REPLACEABLE_BIP125`.
+
+The reference model uses the pool's own ancestor traversal but independently
+evaluates each transaction's sequence signaling. It does not assert that
+arbitrary successful deserialization is consensus-valid, that a transaction
+is accepted into the mempool, or that RBF replacement itself succeeds. This
+keeps the oracle narrow and avoids an invalid "accepted means valid"
+assumption.
+
+The enhanced exact-master binary was built from the clean worktree with
+`BUILD_FOR_FUZZING=ON`, Clang, ccache, and `SANITIZERS=undefined,address,fuzzer`.
+Its SHA-256 was
+`201a2b61429c1c6e5748bcdac579adf79dd0fef8024ea47478dce8c0ff75d557`.
+The same four-worker sanitizer command completed:
+
+    enhanced exact master  19,760 executions in 301 s; cov 4,742, ft 49,462,
+                           new_units_added 554, peak RSS 752 MiB
+
+It exited cleanly with no diagnostic or artifact, and no worker remained.
+The one missing header dependency found during compilation was fixed in the
+harness by including `util/rbf.h`; this was a buildable harness correction,
+not a production behavior change.
+
+### Mutation proof and failure classification
+
+To prove the added oracle mattered, a temporary production-only mutation
+changed `src/policy/rbf.cpp:30` from:
+
+    return RBFTransactionState::REPLACEABLE_BIP125;
+
+to:
+
+    return RBFTransactionState::FINAL; // TEMPORARY FUZZ-ORACLE MUTATION
+
+The mutated full-file SHA-256 was
+`d2e6ebbd31547eb6e28f398dccb74477c66698e4c719babc5279fb1a8ab76b7a`.
+With the same corpus, the enhanced harness reached
+`src/test/fuzz/rbf.cpp:108` after 29 executions and emitted:
+
+    Assertion `IsRBFOptIn(tx, pool) == expected_state' failed.
+
+The four-worker and one-worker mutation replays both recorded the assertion
+in the fuzzer log. The intentional libFuzzer abort did not terminate its
+wrapper before the outer timeout, so their shell status was 124 rather than a
+normal completed-fuzzer status; this is expected mutation proof, not a clean
+campaign result. The diagnostic had no production ASan/UBSan finding and no
+artifact. The mutation was removed, `src/policy/rbf.cpp` was restored to
+`ef094a51d531061b964a8cabdf8b486c06a5aa07050373a2a7f42684f3caed6d`, and the
+clean enhanced binary was rebuilt to its recorded SHA.
+
+This proves the oracle detects a modeled regression in a real production
+contract. It does not claim that exact master contains that regression, and
+it is not a production bug finding or production fix.
+
+### Bitcoin Core callers and severity on master
+
+`IsRBFOptIn` is reached by the node chain interface at
+`src/node/interfaces.cpp:669-674`, by verbose mempool RPC status at
+`src/rpc/mempool.cpp:574-584`, and by wallet transaction status at
+`src/wallet/rpc/transactions.cpp:52-63`. The direct sequence rule is
+implemented in `src/util/rbf.cpp:11-18`; ancestor propagation is implemented
+in `src/policy/rbf.cpp:24-49`. Peer transactions can populate the mempool, but
+this status query is not the consensus block-acceptance path. Mempool RBF
+admission has separate replacement checks in validation, and an invalid block
+does not gain validity by reaching this status helper.
+
+No production finding was found on unmodified master. A real mismatch here
+would initially be **Low/Medium**, because the demonstrated consequences are
+wrong wallet/RPC replaceability status or local policy introspection. It can
+be **High** only with a caller-level proof that the mismatch changes
+peer-reachable replacement, eviction, mempool integrity, or sustained remote
+resource behavior. It is **Critical** only with proof of invalid-block
+acceptance, consensus divergence, or remotely reachable memory safety through
+the actual validation/wire path; this oracle does not provide that proof.
+
+`src/test/rbf_tests.cpp:58-162` covers helper fee/conflict functions but does
+not directly assert `IsRBFOptIn` or `IsRBFOptInEmptyMempool`; the new oracle
+closes that state-classification gap. It still does not replace deterministic
+tests for complete peer admission, package replacement, reorgs, callbacks,
+or block validation.
+
+Existing master-relative findings remain: scratch allocation wrap is **Medium
+confirmed internal memory safety with low current Core reachability**; 10x26
+magnitude-32 carry loss is **Medium latent correctness**; SHA/HMAC/RFC6979
+finalizer retention is **Medium memory hygiene** without a standalone read
+primitive; and direct API, wallet, callback, opaque-state, cache, and
+harness-performance issues remain below High/Critical without a demonstrated
+Core trigger. A nonce with no standalone cryptographic meaning is not
+Critical merely because it is not cleared.
+
+### Cherry-pick, masking, and verification record
+
+The relevant l0rinc commits were already reconciled; the baseline production
+hashes show no RBF-specific l0rinc delta. The committed Core change is a
+harness-only oracle addition. If a later cherry-pick or minor production fix
+changes a follow-up result, retain the clean-master corpus/seed condition,
+the exact mutation and assertion stack, the Core input origin, the severity on
+unmodified master, and whether the change preserves, changes, or masks the
+master behavior. A later fix that accidentally prevents an assertion cannot
+erase a more severe clean-master finding. Any actual production fix needs a
+minimized deterministic test and the strongest available caller-level proof.
+
+Verification included the exact build/configure command, incremental rebuild,
+`git diff --check`, source and binary SHA checks, baseline and enhanced
+four-worker sanitizer campaigns, mutation replay logs, corpus count/byte/
+manifest checks, diagnostic scans, empty-artifact checks, and process cleanup.
+
 ## 2026-07-19 `primitives_transaction` equality and cached-hash oracle replay
 
 This entry records the previously undocumented `primitives_transaction`
