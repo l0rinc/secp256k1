@@ -21148,3 +21148,195 @@ source and binary SHA-256 checks; empty artifact directories; `git diff
 --check`; exact master worktree clean; and `pgrep` confirmation that no fuzz
 jobs remain. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
+
+## 2026-07-19 Core UTXO total-supply and coinstats replay
+
+The `utxo_total_supply` target is a chainstate exercise rather than a
+context-free arithmetic fuzzer. It creates a regtest chainstate, mines a
+duplicate-coinbase case around BIP34/BIP30, appends forwarded input/output
+pairs, mines or rejects blocks, forces the UTXO cache to disk, and calls
+`kernel::ComputeUTXOStats`. Its live oracle checks that the reported
+`total_amount` equals the independently tracked subsidy circulation and that
+the serialized-stat value is unchanged after a rejected block. It also
+asserts block-height and duplicate-coinbase preconditions while the generated
+block is being mined.
+
+The campaign found no production bug. It did find an oracle boundary: the
+target requests `CoinStatsHashType::NONE`, so `hashSerialized` is left at its
+default zero value, and it discards `nTransactionOutputs`, `nTransactions`,
+`nBogoSize`, `nDiskSize`, and the selected hash algorithms. A bad
+`total_amount` implementation is caught; a bad bogo-size implementation is
+not. This distinction is recorded as an oracle gap, not as a production
+finding.
+
+### Baselines and corpus
+
+The clean master reference is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/utxo_total_supply.cpp` is SHA-256
+`a9a16b08bf990fc098a34c02a4db1078a89d71015dbc7b60b0d2652089b236a1` and
+`src/kernel/coinstats.cpp` is SHA-256
+`9f056331ad85c208d17ac2b3ce6ee790ca7013d694d7d0d8e5699d97131bb932` in
+exact master, the audit checkout, and the comparison checkout. The original
+corpus was `/mnt/my_storage/qa-assets/fuzz_corpora/utxo_total_supply`: 1,146
+files and 716,166 bytes. Each provenance was copied before execution.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit binary was `/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`; the
+comparison binary was `/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e`. The
+target and production coinstats source are identical across the three
+provenances; the audit/comparison results therefore add implementation
+comparison evidence but do not alter the master baseline. No new l0rinc
+commit was cherry-picked for this target and no later fix can soften a
+master-relative result.
+
+### Corpus-first replay
+
+The retained corpus command was:
+
+    timeout 900s env FUZZ=utxo_total_supply \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      <binary> <private-corpus> -merge=0 -runs=1146 -timeout=120 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=<private-artifacts>/ -print_final_stats=1
+
+The first launch was a setup-only failure because the three artifact
+directories had not been created; all children returned status 1 with the
+explicit error that the artifact directory did not exist. It ran no input and
+is excluded. After creating those directories, all three corpus passes exited
+zero with no ASan, UBSan, runtime, assertion, timeout, OOM, or crash
+diagnostic, and all artifact directories were empty:
+
+    provenance    executions  coverage  features  new units  peak RSS
+    exact master  1150        18495     90656     0          457 MiB
+    audit         1149        17370     94835     0          445 MiB
+    comparison    1149        19204     95117     0          461 MiB
+
+The extra execution is libFuzzer initialization/corpus accounting. A fixed
+seed from the corpus, `00224ef663685044dbd8a4d575311bd492252bf4`, is 288 bytes
+and SHA-256
+`24a8fd7f66550b8c05cc9acf567d5485a18d1907a0bb3ac187ba46d2d43cc113`.
+Unmodified master executes it successfully in about 366 ms.
+
+### Partitioned multi-worker replay
+
+An initial attempt launched 12 workers against the full 1,146-file corpus
+with `-runs=100`. LibFuzzer replayed roughly 927-963 corpus inputs in each
+child before the mutation budget, and the overloaded 300-second wrapper
+returned child status 124 for every worker. No diagnostic or artifact was
+produced, but the batch is excluded because it did not complete its intended
+budget.
+
+The retained worker campaign split the original corpus deterministically by
+sorted path modulo four, producing partitions of 287/287/286/286 files for
+each provenance. Four independent workers per provenance used:
+
+    timeout 300s env FUZZ=utxo_total_supply \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      <binary> <partition> -merge=0 -runs=50 -timeout=120 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=<private-artifacts>/ -print_final_stats=1
+
+All 12 retained children completed with exit code 0, final `DONE` lines,
+empty artifact directories, and no ASan, UBSan, runtime, assertion, timeout,
+OOM, or crash diagnostic. Each tuple is
+`executions/coverage/features/new-units/peak-RSS-MiB`:
+
+    exact master
+      290/18466/83962/0/422  291/18458/84578/0/447
+      290/18483/84002/0/421  289/17570/82823/0/446
+    audit
+      290/17330/88146/0/427  290/17331/87184/0/446
+      289/16473/84177/0/446  289/17281/85977/0/453
+    comparison
+      290/19169/89760/0/430  290/19180/88607/0/452
+      289/18298/85363/0/431  289/19120/88043/0/433
+
+### Mutation proof: total amount assertion is live
+
+In disposable exact master, `src/kernel/coinstats.cpp:103` was changed only
+from
+
+    stats.total_amount = CheckedAdd(*stats.total_amount, it->second.out.nValue);
+
+to
+
+    stats.total_amount = *stats.total_amount;
+
+The mutation was rebuilt with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8`.
+The fixed corpus seed above immediately emitted the assertion at
+`src/test/fuzz/utxo_total_supply.cpp:107`,
+`circulation == utxo_stats.total_amount`, followed by libFuzzer's deadly
+signal report. The fuzzer remained in its abort-reporting path, so it was
+terminated after the log was captured; no artificial exit code is claimed.
+This is still a strong reachability proof because the production mutation
+changes only the amount accumulation and the harness fails on the resulting
+state. Restoring the source, rebuilding, and replaying the identical seed
+returned the exact-master binary to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280` and
+exited zero.
+
+### Mutation proof: bogo-size field is silently ignored
+
+In a second disposable exact-master build, `src/kernel/coinstats.cpp:105`
+was changed only from
+
+    stats.nBogoSize += GetBogoSize(it->second.out.scriptPubKey);
+
+to
+
+    stats.nBogoSize += 0;
+
+The same build command and fixed seed exited zero with no assertion or
+sanitizer diagnostic. Restoring the production line, rebuilding, and replaying
+the same seed again exited zero with the original binary SHA. This is an
+oracle-gap proof: `gettxoutsetinfo` returns `bogosize`, but this fuzzer does not
+assert it. It is not a production bug, and no fix or regression test is
+claimed. The same source inspection shows that `NONE` leaves `hashSerialized`
+at zero, so the target's rejected-block hash comparison is currently
+vacuous. Future hardening should exercise `HASH_SERIALIZED` and `MUHASH`,
+assert repeatability and non-null hash behavior, and preserve all stats fields
+across rejected blocks with an independent cursor-based check.
+
+### Core caller reachability and master-relative severity
+
+`ComputeUTXOStats` is called by authenticated/local `gettxoutsetinfo` through
+`src/rpc/blockchain.cpp:1084-1136`, and by assumeutxo snapshot validation at
+`src/validation.cpp:5914-5926` and the later validated-snapshot path. A peer
+block reaches `ProcessNewBlock` and `ConnectBlock`, but this target computes
+stats after a forced flush in a separate test flow; it does not prove that an
+invalid network block invokes the RPC or snapshot verifier. The fuzzer's
+`MineBlock` rejection is a local test precondition, not a peer-wire bypass.
+
+**Severity of the amount and bogo mutations: Low/Medium local correctness,
+not High or Critical.** A wrong amount or bogo-size result affects RPC
+reporting and possibly index-visible statistics; the demonstrated mutations
+do not alter consensus validation, accept an invalid block, or reach a remote
+memory-safety condition. If a future hash-stat regression were shown to let
+an invalid UTXO snapshot pass `ActivateSnapshot`, or to corrupt durable
+chainstate through an actual peer-triggered path, severity would be assessed
+from that caller-level proof and could be High/Critical. Do not promote this
+target's model assertion or a malformed block input to Critical by itself.
+
+Existing kernel/coinstats tests cover fixed UTXO-stat values and hash behavior,
+while validation/RPC tests cover snapshot and `gettxoutsetinfo` plumbing. They
+do not exercise the fuzzer's duplicate-coinbase height choices, forwarded
+output sequences, forced flush modes, rejected-block invariants, and
+circulation tracking together. No deterministic production regression test is
+appropriate because exact master reproduced no production failure. This target
+has no cryptographic nonce; uncleared data without standalone cryptographic
+meaning is not Critical merely because it was not cleared.
+
+Verifier: corrected corpus-first passes for all three binaries; retained
+partitioned four-worker campaigns; both production mutations with rebuilds and
+fixed-seed replay; restored exact-master binary/source SHA checks; final clean
+seed replay; `git diff --check`; and no fuzz jobs left running. Setup-only and
+timeout batches are explicitly excluded from the evidence. No new l0rinc
+cherry-pick or production behavior change is claimed by this entry.
