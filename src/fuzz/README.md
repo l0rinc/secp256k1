@@ -19980,6 +19980,114 @@ behavior in both the ledger and commit message. This target has no
 cryptographic nonce, so nonce-clearing severity is not applicable and missing
 clearing alone is not Critical without standalone cryptographic meaning.
 
+## 2026-07-19 Core chain-index accessor replay and oracle gap
+
+The `chain` target deserializes a `CDiskBlockIndex`, installs a safe hash
+pointer, and calls `ConstructBlockHash`, block/data/undo position accessors,
+time and median-time accessors, transaction-count validity, header
+reconstruction, copy construction, skiplist construction, and arbitrary valid
+status raises. It then creates a plain `CBlockIndex` from the reconstructed
+header and formats it. This is useful sanitizer and parser coverage, but the
+target currently discards every result. It has no assertion that header fields
+round-trip, that `ConstructBlockHash()` equals the reconstructed header hash,
+that time accessors return the stored values, that positions honor status bits,
+or that `RaiseValidity()` is monotonic. Therefore a clean run is weak negative
+evidence and must not be reported as proof that chain-index semantics are
+correct.
+
+The exact-master baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/chain.cpp` is SHA-256
+`849ecd5beae870a8320fdad764771ec86dc20afbc5fda0e4eb77c54e01435cea` in the
+exact master and comparison checkout. The source corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/chain`: 243 files and 4,702,181
+bytes. Each provenance used an isolated corpus copy.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+corpus-first command shape was:
+
+    timeout 240s env FUZZ=chain \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 <binary> corpus \
+      -merge=0 -runs=243 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All three corpus replays exited zero with empty artifacts and no ASan, UBSan,
+runtime, assertion, timeout, OOM, or crash diagnostic. The exact-master run
+executed 244 units and reached coverage/features 410/2586 with 107 MiB peak
+RSS. The audit and comparison runs each executed 244 units and reached
+coverage/features 409/2588 with 107 MiB peak RSS.
+
+Four independent sanitizer workers per provenance then ran for 60 seconds with
+`-workers=1 -jobs=1 -max_total_time=60`, `-timeout=60`, and the same artifact
+settings. All twelve workers exited zero and left their artifact directories
+empty. The worker execution/coverage/features/new-unit/RSS results were:
+
+    master   29439/410/3176/320/265, 14548/410/3228/260/237,
+             18590/410/3122/289/205, 27204/410/3204/335/272
+    audit    18325/409/3107/270/237, 15199/409/3089/249/224,
+             23405/409/3196/355/278, 17074/409/3068/260/240
+    compare  20104/409/3210/299/236, 22060/409/3265/374/238,
+             24636/409/3302/333/294, 29055/409/3301/404/299
+
+### Mutation proof: a discarded time result passes silently
+
+This is an oracle-gap proof, not a production bug claim. In the disposable
+exact-master build, `src/chain.h:223` was changed only from
+
+    return (int64_t)nTime;
+
+to
+
+    return (int64_t)nTime + 1;
+
+The aggregate fuzzer was rebuilt with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j2`. The
+4,334,815-byte corpus input
+`6be3d5097269112e0cf05e05103c0e25686f33f3` has SHA-256
+`cf31ed63171fe34c5af1f1e8b6071272500931153578c38be1e0cba4e63d6de4`. With
+`FUZZ=chain`, ASan abort/leak/null-allocation settings, UBSan halt settings,
+`-runs=1`, `-timeout=60`, and `-rss_limit_mb=0`, the mutated production build
+exited zero after the fixed input with no diagnostic. The normal exact-master
+build, restored and rebuilt to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`, also
+exited zero on the identical input. The mutation is intentionally not called
+a finding: because the harness uses `(void)disk_block_index->GetBlockTime()`
+and discards the value, it has no way to distinguish the wrong result. A
+future oracle should assert the stored-time round trip, compare every
+`GetBlockHeader()` field with the `CDiskBlockIndex`, compare
+`ConstructBlockHash()` with that header hash, and check the expected block and
+undo positions for each status combination. Those additions need their own
+fixed-seed proof before being treated as effective.
+
+The actual Core consumers are local block-index/database state and chain
+selection, not raw network deserialization. `BlockTreeDB::LoadBlockIndexGuts`
+constructs `CBlockIndex` objects from records written by
+`WriteBatchSync`; accepted peer headers reach that database through
+`ProcessNewBlockHeaders` and `AddToBlockIndex`, while startup and reindex use
+`LoadBlockIndexDB`. `GetMedianTimePast` and related accessors then feed header
+context and chain logic. Network peers supply headers and blocks, not arbitrary
+`CDiskBlockIndex` database bytes, so an invalid block cannot be labelled
+Critical merely because this parser target accepts a serialized object.
+
+There is no master production finding or severity rating from this campaign.
+A real accessor regression that can be created by a Core peer/header path and
+then changes consensus validation, chain selection, or durable startup state
+would require High/Critical assessment from a deterministic caller-level
+reproduction. A local-only or unreachable accessor mismatch is a hardening
+issue. No l0rinc fix was cherry-picked here; the comparison overlay has the
+same target source and its negative result cannot repair this oracle gap. Any
+future cherry-pick or minor fix that changes the mutation result must state
+whether it masks, alters, or fixes the exact master behavior in the same
+commit message and ledger. This target has no cryptographic nonce; absent
+nonce clearing is not Critical without standalone cryptographic meaning.
+
 ## 2026-07-19 Core block-index tree, reorg, and pruning replay
 
 The `block_index_tree` target is a state-transition model for the Core block
