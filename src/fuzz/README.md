@@ -24323,6 +24323,168 @@ Existing findings remain reiterated at their master-relative ratings:
 
 No temporary production mutation remains, and no fuzz jobs were left running.
 
+## 2026-07-19 latest-master block serialization and consensus oracle
+
+This entry records the block target after rebuilding the audit stack on Bitcoin
+Core master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The focused Core commit
+is `5a26a558fc14e68988b4617ad375249f105bfa49`, whose parent is the committed
+latest-master transaction oracle `6f10154059ae35513b0b1a50ee28a559e2b1725e`.
+The clean branch was assembled from latest master and focused audit commits;
+equivalent l0rinc feature commits already present upstream were not duplicated.
+
+### Target and contracts
+
+The original `src/test/fuzz/block.cpp` parsed a block, exercised four
+`CheckBlock` combinations, checked only broad validity-result relationships,
+and discarded `GetHash()`, `BlockMerkleRoot()`, `BlockWitnessMerkleRoot()`,
+`GetBlockWeight()`, and `GetWitnessCommitmentIndex()` results.
+
+The new oracle adds focused contracts after parsing:
+
+* witness and non-witness block serialization sizes match `GetSerializeSize`;
+* a witness serialization round trip consumes the complete generated stream
+  and preserves every serialized header field and transaction;
+* reserializing the round-tripped block produces byte-identical output;
+* the block hash and round-tripped hash equal an independently hashed
+  `CBlockHeader`;
+* `GetBlockWeight` equals the independent stripped-size/total-size formula;
+* when `CheckBlock` reports the Merkle checks valid, the header root equals the
+  computed root and the computation reports no duplicate mutation.
+
+Malformed blocks remain in the existing domain. The target does not assert
+that arbitrary fuzz input is a valid consensus block, and it does not assert
+that a parsed input consumed the original fuzz buffer because the existing
+network-style parser intentionally accepts the generated block prefix.
+
+The original target source SHA-256 is
+`2033267ed04afd00d634ed6f687dcfbe2a0533d69dd8162d4e5300a6d35ca7da`.
+The enhanced target source SHA-256 is
+`6ce9214ff6b391c992d7486f5459c760a81cfbd01df5bb8c2142a253b6ece71d`.
+The final `src/consensus/validation.h` SHA-256 is
+`a05efe3196a6fec585622102d91c4f7558f1bf56c642cc0df5a21640594a73bf`,
+identical to master. The final sanitizer fuzz binary SHA-256 is
+`79fb4d6296b2f78ec3bc50fb7fd358043f13f799432c5148434e7306d3e65fb7`.
+No production file is changed by the Core commit.
+
+### Corpus, sanitizer, and worker evidence
+
+The immutable final snapshot is
+`/tmp/secp256k1-current-block-final-corpus-20260719`: 965 files and
+145,288,774 bytes, matching `/mnt/my_storage/qa-assets/fuzz_corpora/block`.
+The deterministic proof input is
+`03991419e89cb1608f5108992851bc274f5b54c5`, 81 bytes, SHA-256
+`69fd51dd381251cba31db34f70d988732a597696bf30737102a4dd5411199a67`.
+
+The final binary was built with:
+
+```text
+cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8
+```
+
+The corpus-first replay used `FUZZ=block`,
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1`,
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`, and:
+
+```text
+-merge=0 -runs=965 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -print_final_stats=1
+```
+
+It exited zero after 966 executions with coverage 1,620, feature count
+21,071, zero new units, peak RSS 824 MiB, and no sanitizer, assertion,
+timeout, OOM, crash, or artifact output. Four concurrent
+`-workers=1 -jobs=1 -max_total_time=60` runs each started from a separate copy
+of the untouched 965-file snapshot, so libFuzzer's generated units could not
+alter the evidence baseline:
+
+| worker | executions | coverage | features | new units | final local files | peak RSS | exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 1,019 | 1,620 | 21,141 | 10 | 975 | 841 MiB | 0 |
+| 1 | 988 | 1,620 | 20,770 | 3 | 968 | 831 MiB | 0 |
+| 2 | 998 | 1,620 | 21,057 | 5 | 970 | 833 MiB | 0 |
+| 3 | 980 | 1,620 | 20,786 | 4 | 969 | 839 MiB | 0 |
+
+All worker artifact directories were empty. The earlier disposable worker
+run that grew a shared private copy was discarded and is not used for these
+counts. Final logs are retained at
+`/tmp/secp256k1-current-block-final-replay-20260719/replay.log` and under
+`/tmp/secp256k1-current-block-final-workers-20260719/worker-{0,1,2,3}`.
+
+### Differential mutation proof
+
+To prove that the added postconditions detect a silent contract break, the
+disposable production mutation at `src/consensus/validation.h:138` changed:
+
+```text
+return ::GetSerializeSize(TX_NO_WITNESS(block)) * (WITNESS_SCALE_FACTOR - 1) + ::GetSerializeSize(TX_WITH_WITNESS(block));
+```
+
+to:
+
+```text
+return 0;
+```
+
+The exact original target plus this production mutation replayed the 81-byte
+seed and exited zero because it discarded `GetBlockWeight()`. The enhanced
+target plus the identical mutation, run with `-handle_abrt=0`, exited 134 at
+`src/test/fuzz/block.cpp:107` on:
+
+```text
+assert(GetBlockWeight(block) == expected_weight);
+```
+
+The assertion log contained no sanitizer artifact. Restoring the production
+formula, rebuilding, and replaying the identical seed with the final enhanced
+target exited zero. This is the strongest available proof that the new oracle
+matters while making no claim that master is broken. No production fix or
+deterministic regression test is claimed because master passed; the mutation
+is an oracle-validation device only.
+
+### Core caller graph and severity on master
+
+Unauthenticated peer block and compact-block messages enter
+`PeerManagerImpl::ProcessBlock` or `ProcessCompactBlockTxns`, use
+`PartiallyDownloadedBlock` reconstruction, and reach
+`ChainstateManager::ProcessNewBlock`, `CheckBlock`, contextual validation,
+`ConnectBlock`, and `ActivateBestChain`. Header and Merkle identities feed
+consensus and chain selection. Block weight also feeds policy, size
+accounting, compact-block handling, and RPC/reporting paths.
+
+On exact unmodified master this is **no confirmed production finding**. The
+oracle gap is **Low/Medium discovery value**, not a vulnerability rating. A
+real peer-triggerable hash or Merkle divergence needs caller-level proof before
+**High**. Consensus divergence, chain selection failure, persistent state
+corruption, availability impact, or remotely reachable memory safety needs
+direct caller-level proof before **Critical**. A malformed or invalid block
+alone is not Critical. Existing tests and the old target checked validation
+result relationships but did not assert these independently recomputable
+serialization, identity, and weight contracts.
+
+The Core commit and this ledger reiterate the existing findings:
+`ecmult_multi` scratch-size wrapping is **Medium** with low demonstrated
+Bitcoin Core reachability; forced 10x26 magnitude-32 normalization is latent
+**Medium** internal correctness; SHA, HMAC, and RFC6979 retention is
+**Medium** memory hygiene; and an uncleared nonce with no cryptographic meaning
+is not **Critical** by itself.
+
+### Cherry-pick and masking rules
+
+No additional l0rinc commit applies specifically to this target. If a later
+fix or cherry-pick changes this behavior, the same commit or an amended commit
+message must preserve the exact clean-master seed, mutation, source and binary
+hashes, assertion stack and exit status, Core caller and input origin, test
+gap, verifier commands, severity on master, and an explicit
+`preserved`/`changed`/`masked` classification. A patch that happens to make a
+follow-up seed pass must not downgrade a more severe master trigger until the
+original seed or an equivalent production mutation is replayed. Every claimed
+fix requires deterministic or caller-level proof; this commit claims only
+oracle hardening.
+
+Verifiers passed: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8`,
+`clang-format --dry-run --Werror src/test/fuzz/block.cpp`, and
+`git diff --check`. No temporary production mutation remains and no fuzz job
+was left running.
+
 ## 2026-07-19 latest-master transaction serialization and identity oracle
 
 This entry records the transaction target after rebuilding the audit stack on
