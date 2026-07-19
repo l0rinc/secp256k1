@@ -19857,6 +19857,113 @@ the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
 
+## 2026-07-19 Core mempool persistence load/dump oracle gap
+
+The `validation_load_mempool` target feeds a fuzzed `FILE*` into
+`LoadMempool`, marks the pool as loaded, then feeds another fuzzed file handle
+into `DumpMempool`. The target currently discards both boolean results and
+does not assert a mempool invariant or serialized round trip. That makes it
+useful for parser and I/O sanitizer coverage, but a successful production
+transition can fail silently in the harness. The relevant contracts are:
+malformed input must fail without memory or graph corruption, accepted
+transactions must leave `mapTx`, `mapNextTx`, the transaction graph, fee
+deltas, and the unbroadcast set consistent, and a successful dump must emit a
+version that the production loader can read.
+
+The exact-master Core baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/validation_load_mempool.cpp` is SHA-256
+`2c6cc5ec04aabbf0677719c598488a9d528afec67af5a3721cc3ab88890bdeb2` in the
+exact-master, audit, and comparison checkouts. The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/validation_load_mempool`: 1,425 files
+and 112,122,591 bytes. Each provenance and each worker used an isolated copy.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+Corpus-first runs used `FUZZ=validation_load_mempool`,
+`-merge=0 -runs=1425 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`,
+ASan abort/leak/null-allocation settings, UBSan halt/stacktrace settings, and
+isolated artifact directories. All three exited zero with empty artifacts and
+no assertion, sanitizer, runtime, timeout, OOM, or crash diagnostic. They
+executed 1,426 units and reached coverage/features/RSS of 4027/32398/595 MiB
+for exact master, 4057/32400/590 MiB for audit, and 4057/32518/595 MiB for
+comparison.
+
+Four independent workers per provenance then ran with
+`-workers=1 -jobs=1 -max_total_time=60 -timeout=60` and the same sanitizer
+settings. All twelve exited zero and left their artifact directories empty.
+Each tuple is executions/coverage/features/new-units/RSS MiB:
+
+    master   1697/4027/32836/15/568, 1426/4055/32609/0/518,
+             1426/4027/32480/0/514, 1426/4055/32655/0/520
+    audit    1426/4057/32417/0/519, 1426/4057/32433/0/525,
+             1426/4057/32364/0/518, 1426/4057/32663/0/518
+    compare  1480/4085/32684/8/518, 1426/4057/32428/0/520,
+             1681/4057/32634/14/575, 1426/4057/32476/0/521
+
+### Mutation proof: a reachable load-result regression passes silently
+
+This is an oracle-gap proof, not a production bug claim. In the disposable
+exact-master build, `src/node/mempool_persist.cpp:150` was changed only from
+
+    return true;
+
+to
+
+    return false;
+
+at the successful `LoadMempool` return immediately after its import summary.
+The fixed corpus input
+`009cae8b2347fdf545ce54f1b47964847a308db9` is 309,150 bytes with SHA-256
+`63ffe93e369ab20efcd468f010bc3cbe629ac526d42f7be2e66dfd45bb318a17`.
+Symbolized GDB replays of the restored master hit the successful load return
+at `src/node/mempool_persist.cpp:151` and the successful dump return at
+`:231`, through `validation_load_mempool.cpp:57` and `:62`; this is not an
+unreachable mutation. The mutated build was rebuilt with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8` and
+the fixed input was run once with `FUZZ=validation_load_mempool`, ASan/UBSan
+abort settings, `-timeout=30`, and `-rss_limit_mb=0`. It exited zero with no
+assertion or sanitizer diagnostic, exactly because the harness discards the
+load result. The restored exact-master build returned to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`, and the
+identical seed again exited zero.
+
+The real callers are materially different. Startup calls `LoadMempool` from
+`src/init.cpp:2069` and then marks `GetLoadTried` without using the return
+value. Authenticated/local `importmempool` calls it at
+`src/rpc/mempool.cpp:1178` and reports failure to the RPC client; the related
+`savemempool` RPC checks `DumpMempool` at `:1214`. Mempool persistence is a
+local file/RPC boundary, not an unauthenticated peer block boundary. A real
+memory-safety, graph-corruption, or durable-state bug reachable while loading
+an attacker-controlled file could be High or Critical only after a concrete
+caller-level impact is demonstrated. This return-value mutation alone would
+be Low/Medium correctness or observability impact, and malformed mempool
+bytes cannot inherit the Critical invalid-block rating. No master production
+bug or deterministic fix is claimed here.
+
+There is no dedicated deterministic mempool-persistence round-trip test in
+this checkout; the existing target is the relevant coverage. Future oracle
+hardening should retain the boolean outcomes, call `CTxMemPool::check` under
+`cs_main` after load and dump, assert that failed loads do not violate the
+documented partial-import policy, and serialize a successful dump into a
+second deterministic reader so version/XOR-key, fee-delta, and unbroadcast
+round trips are checked. Any new assertion needs a fixed-seed proof and a
+caller-level severity review. No l0rinc change was cherry-picked into this
+replay; later fixes or overlays must preserve the exact mutation, reachable
+seed, caller origin, severity, and masking/altering relationship in the ledger
+and commit message. This target has no cryptographic nonce, so uncleared data
+without standalone cryptographic meaning is not Critical merely because it
+was not cleared.
+
+Verifier: private-copy corpus pass; twelve sanitizer workers; GDB breakpoints
+at both successful persistence returns; mutation build and fixed-seed replay;
+restored clean-master build and identical-seed replay; `git diff --check`;
+exact-master source and binary clean; no fuzz jobs remain.
+
 ## 2026-07-19 Core invalid UTXO snapshot rejection replay
 
 The `utxo_snapshot_invalid` target is a negative-state oracle for
