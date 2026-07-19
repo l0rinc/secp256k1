@@ -23735,3 +23735,94 @@ seed or a minimal production mutation is rerun. No new production bug is
 claimed by this replay because the fix and deterministic regression already
 exist in `84549065`; this entry supplies the direct exact-master oracle proof
 and the Core-specific severity disposition.
+
+## 2026-07-19 Bitcoin Core block coinbase-layout oracle
+
+This is an oracle-hardening result, not a new production defect. The companion
+Bitcoin Core audit commit is `86d77eef1b805ab29fbd7ff461cd5160f66123d3`
+(`fuzz: require invalid block coinbase layouts to be rejected`). It adds a
+narrow postcondition to the `block` target: if the decoded block is empty, its
+first transaction is not coinbase, or it contains more than one coinbase,
+then the weakest `CheckBlock` call (`fCheckPoW=false`,
+`fCheckMerkleRoot=false`) must still return false. The assertion is harness
+only and mirrors context-free consensus rules already enforced by production
+`CheckBlock`; it does not turn every accepted block into a validity oracle.
+
+### Exact-master proof
+
+The baseline was Bitcoin Core exact master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The original Core target source
+SHA-256 was
+`47fe53354e2c5cb37a895566527dd4fa76330eea7a06d1b35aa76a66e8c4a8c0`; the
+patched source is
+`2033267ed04afd00d634ed6f687dcfbe2a0533d69dd8162d4e5300a6d35ca7da`.
+The original `block` corpus was `/mnt/my_storage/qa-assets/fuzz_corpora/block`
+with 965 files and 145,288,774 bytes. The minimal existing seed was
+`03991419e89cb1608f5108992851bc274f5b54c5` (81 bytes,
+SHA-256 `69fd51dd381251cba31db34f70d988732a597696bf30737102a4dd5411199a67`).
+
+For the strongest differential proof, a disposable exact-master
+`src/validation.cpp` mutation inserted `if (block.vtx.empty()) return true;`
+immediately after the `fChecked` early return. With the new harness, the
+identical seed exited 134 under `-handle_abrt=0` at
+`test/fuzz/block.cpp:55` on `assert(!valid_incl_none)`. Removing the mutation
+and restoring the original harness made the same seed exit 0 and restored the
+exact-master fuzz binary SHA-256 to
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`.
+This records the exact failure stack and exit status, rather than inferring
+oracle value from a green replay. The ordinary Core build/tests did not catch
+the injected regression because the existing target only compared four
+`CheckBlock` modes; the empty-block seed made all four results consistently
+true after the production mutation.
+
+The audit build passed
+`cmake --build /tmp/bitcoin-secp256k1-audit-build --target fuzz -j8`; its fuzz binary SHA-256 was
+`d5019aa75091710e789dfc0cdcf2c26e62e7451a7b9eb73ee455b534b3ed6b65`.
+ASan/UBSan corpus-first replay completed 966 units with 861 MiB peak RSS.
+The private replay with `-workers=4 -jobs=1 -max_total_time=60` completed
+1,949 executions, found 55 new units, reached coverage 1,410 and feature
+count 18,206, and used 921 MiB peak RSS. It produced no sanitizer,
+assertion, timeout, OOM, or artifact diagnostic. The artifact directory was
+created before the worker run; the earlier missing-directory exit was setup,
+not a fuzz failure.
+
+### Core reachability and severity
+
+The relevant Core boundary is peer block and compact-block processing through
+`PeerManagerImpl::ProcessBlock` / compact-block handling,
+`ChainstateManager::ProcessNewBlock`, `CheckBlock`, `AcceptBlock`, and
+`ActivateBestChain`. Consensus script validation separately reaches public
+libsecp adapters from `src/script/interpreter.cpp` and `src/pubkey.cpp` for
+invalid witness and signature inputs. A malformed block or witness is not
+automatically Critical: severity must follow a reproduced caller-level
+consequence. Acceptance, consensus divergence, memory safety, or sustained
+remote node failure could be High/Critical; this replay found none on clean
+master, so it assigns no production vulnerability severity and no production
+fix.
+
+The current finding ledger remains: `ecmult_multi` scratch-size wrapping is
+Medium confirmed internal memory safety with low demonstrated Core
+reachability; the forced-10x26 field-normalization defect is Medium latent
+internal correctness on master, not wire-reachable on ordinary 64-bit Core;
+SHA/HMAC/RFC6979 post-finalization retention is Medium memory hygiene without
+a standalone read primitive; and clearing a nonce with no cryptographic
+meaning is not Critical by itself. These ratings must be revisited if a Core
+caller-level trigger is proven.
+
+### Cherry-pick and masking record
+
+This proof ran before a new cherry-pick. Existing l0rinc PR #1-#16 changes
+remain reconciled by equivalent or stronger commits; no additional l0rinc
+commit was cherry-picked for this Core harness change. The already-present
+`f34ff1ba` zero-predicate carry fix cannot mask this result: clean master
+fails first at the independent normalized-byte reference in `field.c:72`,
+before zero predicates are checked. Any future fix, minor fix, oracle change,
+or cherry-pick that changes this behavior must amend its own commit message
+and this ledger with the exact clean-master seed/corpus condition, mutation,
+preconditions, postconditions, failure stack/status, Core caller and input
+origin, master severity, deterministic proof, test gap, verifier commands,
+and whether the change `preserve`s, `changes`, or `masks` the original
+behavior. A green follow-up branch is not evidence against the clean-master
+failure until that seed or an equivalent minimal production mutation is
+rerun. No production mutation remains in the exact-master checkout, and no
+fuzz jobs were left running.
