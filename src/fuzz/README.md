@@ -19030,3 +19030,134 @@ the same commit message and this ledger. Existing scratch-wrap, 10x26 carry,
 and SHA/HMAC/RFC6979 memory-hygiene findings retain their recorded Medium
 ratings. Uncleared nonce data without standalone cryptographic meaning is not
 Critical merely because it is uncleared.
+
+## 2026-07-19 Core compact-block peer state-machine replay
+
+The `cmpctblock` target exercises the complete Core peer-facing compact-block
+state machine, including chain setup, mempool state, four peers, and several
+message types. Its source is `src/test/fuzz/cmpctblock.cpp`, SHA-256
+`6e06caa077d07fd195e34017e3392cd90a2bea45c438e38b8e22d6755b7dbe48` in both
+the audit checkout and the comparison checkout. It matches Core
+`origin/master` at `ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+Each input starts from a deterministic chain with mature coinbases, resets the
+chain manager and mempool state, creates four test peers, and lets the
+`FuzzedDataProvider` generate transactions, blocks, compact blocks, blocktxn
+responses, headers, `sendcmpct`, and transaction messages. Generated blocks can
+be invalid, can spend mempool or earlier generated outputs, can follow an
+alternate generated branch, and can contain both mempool and non-mempool
+transactions. The target's existing contracts are:
+
+* when a compact block is manually composed, the number of prefilled
+  transactions plus short transaction IDs must equal the source block's
+  transaction count;
+* a valid `sendcmpct` version must update the receiving peer's high-bandwidth
+  state to the requested value;
+* no more than three live peers may be high-bandwidth peers, and each such peer
+  must have an allowed inbound/outbound/manual/address-fetch connection type;
+* validation-signal queues and connection shutdown must drain before the
+  iteration ends; if the block-index or mempool sequence changed, the harness
+  resets the chain and mempool before the next input.
+
+The production input origin is a remote peer's `cmpctblock` message. Core's
+`PeerManagerImpl::ProcessMessage` parses it, processes the header, calls
+`PartiallyDownloadedBlock::InitData`, queries `IsTxAvailable`, and either
+requests `blocktxn` or reconstructs optimistically with `FillBlock` before
+`ProcessBlock`. A peer's `blocktxn` response reaches
+`ProcessCompactBlockTxns`, calls `FillBlock` against the stored partial state,
+and then forces block processing. `headers`, `sendcmpct`, and `tx` messages
+exercise the adjacent peer-state transitions. Thus the target can reach real
+Bitcoin Core network, chain-index, mempool, compact-block, and eventual block
+validation code with invalid peer-shaped data. The final consensus gate does
+not make earlier memory, race, state-corruption, or resource failures
+harness-only.
+
+The original corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/cmpctblock`. It contained 1,435 files
+and 3,705,961 bytes. To make worker evidence auditable, the original files
+were distributed unchanged into four disjoint seed sets of 359, 359, 359, and
+358 files with 905,517, 911,351, 949,358, and 939,735 bytes respectively.
+LibFuzzer added generated units to each private working corpus; those files
+are not counted as original seeds.
+
+An initial attempt used one shared corpus with libFuzzer's `-workers=4` and an
+outer 420-second guard. It reached only 1,342 executions in 420 seconds and
+was terminated with exit 124 while the initial corpus was still being loaded;
+the log reported 3 executions per second and 556 MiB peak RSS, with no
+assertion, sanitizer, timeout artifact, OOM, or crash diagnostic. A controlled
+single-worker replay with a 60-second fuzz budget and a 110-second outer guard
+similarly reached 668 executions before the guard, with 453 MiB peak RSS and
+no artifact. These were corpus-load watchdog results, not production hangs or
+findings. The partitioned replay below completed normal libFuzzer shutdown for
+all workers and is the authoritative campaign result.
+
+The audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`. Each of
+the four workers ran this command from its own working directory, with
+`worker` substituted from 0 through 3 and a separate corpus, artifact, and
+libFuzzer log directory:
+
+    timeout 540s env FUZZ=cmpctblock \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz corpus \
+      -workers=1 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+The four audit workers all exited zero, with empty artifact directories and no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash diagnostic. Their exact
+final statistics were:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       1273        25958     138621    271        511 MiB
+    1       1193        25934     140058    308        504 MiB
+    2       1389        26004     140268    284        507 MiB
+    3       1217        26013     139095    257        500 MiB
+
+The comparison binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e`. It ran
+the identical per-worker command and fresh seed partitioning. All four
+comparison workers exited zero with empty artifact directories and no
+diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       862         25974     137748    171        468 MiB
+    1       1330        25922     139676    296        533 MiB
+    2       1338        26021     140491    326        504 MiB
+    3       1293        26028     139701    294        500 MiB
+
+The comparison executable came from the existing Core checkout at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, which is 41 commits ahead and 7
+behind Core `origin/master`. It was not rebuilt from a separate pristine Core
+master checkout. The source target is master-identical, so this is useful
+differential evidence but is not claimed as a clean-master replay.
+
+No production assertion, fuzzer assertion, source mutation, production bug,
+fix, or deterministic regression test is claimed from this negative replay.
+Existing deterministic tests cover basic compact-block encoding,
+`PartiallyDownloadedBlock` filling, and selected network messages, but they do
+not replace the multi-message, multi-peer, generated-chain/mempool sequence
+exercised here. The campaign therefore closes a coverage and oracle-replay
+record, not a production defect. A future failure must retain the exact input,
+message sequence, generated chain/mempool preconditions, postcondition that
+failed, assertion or sanitizer stack, and a minimized reproducer. It must be
+replayed on unmodified master or on a minimal production mutation that models
+the broken condition.
+
+Severity is based on the actual Bitcoin Core caller and master behavior. A
+clean-master acceptance of an invalid compact block, a consensus-relevant
+reconstruction/hash disagreement, or a remotely reachable memory-safety,
+race, or node-availability failure may be High or Critical according to the
+demonstrated impact. A peer-state accounting discrepancy, expected rejection,
+or harness/resource issue without a production consequence is lower severity.
+If a later minor fix or l0rinc cherry-pick changes behavior, it must not hide a
+more severe master trigger: preserve the clean-master or minimal-mutation
+replay and state whether the change masks, alters, or preserves it in the same
+commit message and this ledger. No l0rinc commit was applied by this negative
+campaign. Existing scratch-wrap, 10x26 carry, and SHA/HMAC/RFC6979
+memory-hygiene findings retain their recorded Medium ratings. Uncleared nonce
+data without standalone cryptographic meaning is not Critical merely because
+it is uncleared.
