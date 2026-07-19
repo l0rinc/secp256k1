@@ -19161,3 +19161,133 @@ campaign. Existing scratch-wrap, 10x26 carry, and SHA/HMAC/RFC6979
 memory-hygiene findings retain their recorded Medium ratings. Uncleared nonce
 data without standalone cryptographic meaning is not Critical merely because
 it is uncleared.
+
+## 2026-07-19 Core transaction-download/orphan state replay
+
+The `txdownloadman_impl` target exercises Core's transaction announcement,
+request, orphan, rejection-cache, and package-reconsideration state machine.
+Its source is `src/test/fuzz/txdownloadman.cpp`, SHA-256
+`a6fd8dbeb7812a6a9282c2a9db06e50a9cbbb16c64b7fe97cbf75cc6b13da65d` in both
+the audit and comparison checkouts. It matches Core `origin/master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+The harness precomputes same-txid/different-witness pairs, parent/child
+packages, branching children, five-deep segwit and non-segwit chains, and
+conflicting loose transactions. Each input then drives up to 500 arbitrary
+state transitions across 16 peer IDs, with forward and backward time jumps.
+The target covers peer connect/disconnect, active-tip and block transitions,
+mempool acceptance/rejection, transaction announcements, request selection,
+received transactions, `notfound`, and reconsideration.
+
+The focused contracts checked by the existing oracle are:
+
+* `ReceivedTx` may not request validation and return a package at the same
+  time; every returned 1-parent/1-child package must have the expected two
+  senders, peer ordering, and parent/child structure;
+* a `HaveMoreWork` result may be false only when no non-null reconsideration
+  transaction is returned, and a returned transaction must be already known
+  under the non-reconsiderable view;
+* after `ActiveTipChange`, ordinary and reconsiderable rejection filters must
+  be cleared for every precomputed txid and wtxid;
+* `BlockConnected` must remove block transactions from the orphanage, while
+  `BlockDisconnected` must clear the corresponding confirmed-transaction
+  filter entries;
+* `GetRequestsToSend` must not request transactions already held by the node
+  (apart from the documented reconsiderable-parent exception), and the
+  orphanage and transaction-request structures must pass their sanity checks;
+* no non-relay peer may exceed the maximum in-flight announcement count, and
+  disconnecting all 16 peers must leave both the per-peer and global manager
+  state empty.
+
+The production input origin is remote peer traffic in Core's
+`PeerManagerImpl`. After a peer handshake, `ConnectedPeer` records preferred,
+relay-permission, and wtxid-relay state. `INV` messages call
+`AddTxAnnouncement`; `TX` messages call `ReceivedTx` and can cause direct
+mempool validation or a 1p1c package validation; `NOTFOUND` calls
+`ReceivedNotFound`; and `SendMessages` calls `GetRequestsToSend` to emit
+`MSG_TX` or `MSG_WTX` `GETDATA`. Chain and mempool callbacks call
+`ActiveTipChange`, `BlockConnected`, `BlockDisconnected`,
+`MempoolAcceptedTx`, and `MempoolRejectedTx`, while orphan reconsideration
+uses `GetTxToReconsider`. Invalid transaction bytes, duplicate txids, witness
+malleations, missing parents, conflicting spends, and malicious announcement
+ordering can therefore reach this manager from peers. The manager is not the
+final consensus validator: a manager-only scheduling discrepancy is not a
+consensus bug unless its concrete Core consequence is demonstrated.
+
+The original corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/txdownloadman_impl`. It contained 1,181
+files and 5,391,080 bytes. The four unchanged seed partitions contained
+296/295/295/295 files and 1,348,770/1,458,329/1,540,803/1,043,178 bytes. Each
+audit and comparison worker used its own fresh copy; generated corpus files
+are excluded from those original counts.
+
+The audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`. Each
+of four isolated workers ran the following command from its private worker
+directory, with `FUZZ=txdownloadman_impl` and `worker` substituted in the
+paths:
+
+    timeout 540s env FUZZ=txdownloadman_impl \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz corpus \
+      -workers=1 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All audit workers exited zero with empty artifact directories and no assertion,
+ASan, UBSan, runtime, timeout, OOM, or crash diagnostic. Their final results
+were:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       7496        6207      54074     563        539 MiB
+    1       8221        6210      54154     572        532 MiB
+    2       8326        6210      54646     566        535 MiB
+    3       8284        6210      54050     590        536 MiB
+
+The comparison binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e`. It ran
+the identical command and fresh seed partitions. All comparison workers
+exited zero with empty artifact directories and no diagnostic:
+
+    worker  executions  coverage  features  new units  peak RSS
+    0       7859        6207      54480     575        544 MiB
+    1       8111        6210      54235     527        533 MiB
+    2       8002        6210      54398     599        531 MiB
+    3       7992        6210      54722     629        531 MiB
+
+The comparison executable came from Core checkout
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, 41 commits ahead and 7 behind
+Core `origin/master`; it was not rebuilt from a separate pristine master
+checkout. The target source is master-identical, so these runs are useful
+differential evidence but are not claimed as clean-master reproduction.
+
+No production or fuzzer assertion, mutation, fix, or deterministic regression
+test is claimed from this negative replay. The deterministic
+`txdownload_tests.cpp`, `orphanage_tests.cpp`, and related mempool/network
+tests cover important individual rejection, orphan, eviction, and package
+cases, but do not replace the long arbitrary interleaving of peer, time,
+chain, mempool, witness, and reconsideration transitions exercised here. A
+future failure must preserve the exact transaction set, peer/event sequence,
+time jumps, cache/orphan preconditions, failed postcondition, assertion or
+sanitizer stack, existing-test gap, and verifier commands. Reproduce it on
+unmodified master or identify the minimal production mutation that models the
+broken condition.
+
+Severity is based on how Bitcoin Core actually consumes the result on master.
+A manager bug that accepts or relays an invalid transaction, causes a
+consensus-validation bypass, corrupts shared orphan/rejection state, or gives
+an unauthenticated peer remotely reachable memory-safety, race, or sustained
+node-availability impact may be High or Critical according to the proof. A
+request-choice discrepancy, duplicate announcement, expected rejection, or
+harness/resource-only issue without a production consequence is lower. A
+later minor fix or l0rinc cherry-pick must not hide a more severe master
+trigger: preserve the clean-master or minimal-mutation replay and state
+whether the change masks, alters, or preserves it in the same commit message
+and this ledger. No l0rinc commit was applied by this negative campaign.
+Existing scratch-wrap, 10x26 carry, and SHA/HMAC/RFC6979 memory-hygiene
+findings retain their recorded Medium ratings. Uncleared nonce data without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
