@@ -19857,6 +19857,111 @@ the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
 
+## 2026-07-19 Core BIP157 block-filter hash oracle gap
+
+The `blockfilter` target deserializes a `BlockFilter`, then calls
+`ComputeHeader`, `GetBlockHash`, `GetEncodedFilter`, `GetHash`, filter-type
+name conversion, GCS parameter accessors, encoding, single-element matching,
+and multi-element matching. It discards every result. The target therefore
+provides parser and sanitizer coverage, but no postcondition that the filter
+hash is `Hash(GetEncodedFilter())`, that the header chains from the returned
+hash, that serialization round-trips, or that matching is stable under a
+re-encoded filter. These are the contracts that matter to BIP 157 clients and
+the on-disk filter index.
+
+The exact-master Core baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/blockfilter.cpp` is SHA-256
+`4b52a1cc5cbb487777c85209d1b8a0412a5e506ccd5bf4ee275374cb78b4f143` in the
+exact-master, audit, and comparison checkouts. The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/blockfilter`: 484 files and
+23,348,818 bytes. Each provenance and worker used an isolated corpus copy.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+Corpus-first replays used `FUZZ=blockfilter`,
+`-merge=0 -runs=484 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`,
+ASan abort/leak/null-allocation settings, UBSan halt/stacktrace settings, and
+isolated artifact directories. All three exited zero with empty artifacts and
+no assertion, sanitizer, runtime, timeout, OOM, or crash diagnostic. They
+executed 969 units and reached coverage/features/RSS of 1042/9104/651 MiB
+for exact master, 1038/9298/653 MiB for audit, and 1038/9305/649 MiB for
+comparison.
+
+Four independent workers per provenance then ran with
+`-workers=1 -jobs=1 -max_total_time=60 -timeout=60` and the same sanitizer
+settings. All twelve exited zero and left their artifact directories empty.
+Each tuple is executions/coverage/features/new-units/RSS MiB:
+
+    master   1667/1042/9346/36/597, 1132/1042/9170/13/549,
+             1539/1042/9182/39/606, 2002/1042/9220/54/578
+    audit    1750/1038/9219/34/563, 1808/1038/9437/39/617,
+             1249/1038/9605/10/622, 2205/1038/9777/69/624
+    compare  2208/1038/9373/57/564, 1490/1038/9591/26/565,
+             1517/1038/9372/26/565, 1969/1038/9451/41/552
+
+### Mutation proof: a reachable wrong filter hash passes silently
+
+This is an oracle-gap proof, not a production bug claim. In the disposable
+exact-master build, `src/blockfilter.cpp:250` was changed only from
+
+    return Hash(GetEncodedFilter());
+
+to
+
+    return uint256{};
+
+The first lexicographic corpus input
+`0141ec0ece3f9b8af4e5caeeea5fbbde364b1a08` is 132 bytes with SHA-256
+`c8f42b4714e415965bcefe775cf6d403f6ef6ed0a70bdfdeba9a7fd928697a37`.
+Symbolized GDB on restored master reaches `BlockFilter::GetHash` at
+`src/blockfilter.cpp:250`, then `ComputeHeader` at `:255`, then
+`blockfilter.cpp:25`; the filter is valid and the mutation is reachable.
+After rebuilding with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8`,
+the mutated build ran the fixed input once with `FUZZ=blockfilter`, ASan/UBSan
+abort settings, `-timeout=10`, and `-rss_limit_mb=0`, then exited zero with no
+assertion or sanitizer diagnostic. The exact-master line was restored and
+rebuilt; the binary returned to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`, and the
+identical input again exited zero. The target has no way to observe the wrong
+hash or header.
+
+The real Core path is `BlockFilterIndex::CustomAppend` at
+`src/index/blockfilterindex.cpp:259`, which computes the header and stores the
+filter hash in the index at `:275`; `ReadFilterFromDisk` verifies the stored
+hash at `:172`. Authenticated/local `getblockfilter` reaches the index through
+`src/rpc/blockchain.cpp:3017`, while peer `getcfilters` requests reach
+`PeerManagerImpl::ProcessGetCFilters` through `LookupFilterRange` and emit
+`cfilter` messages at `src/net_processing.cpp:3363-3371`. `getcfheaders` uses
+the same header chain. A real wrong-hash master bug would be a Medium
+filter-index/client-correctness or availability issue, potentially High only
+with demonstrated wallet privacy or security impact. The index checksum can
+turn it into a detectable filter lookup failure; it is not consensus
+acceptance, and an invalid peer block cannot be labelled Critical merely
+because it might later feed filter indexing. This mutation found no master
+production bug and no fix is claimed.
+
+There is no deterministic round-trip or hash/header assertion in this target;
+existing index code's disk checksum does not strengthen this isolated model.
+Future hardening should assert `GetHash() == Hash(GetEncodedFilter())`,
+`ComputeHeader(prev) == Hash(GetHash(), prev)`, serialized field equality,
+and match equivalence before/after serialization. No l0rinc change was
+cherry-picked into this replay; later fixes or overlays must preserve the
+exact mutation, reachable seed, stack, Core caller/input origin, severity,
+and masking/altering relationship in the ledger and commit message. This
+target has no cryptographic nonce, so uncleared data without standalone
+cryptographic meaning is not Critical solely because it was not cleared.
+
+Verifier: private-copy corpus pass; twelve sanitizer workers; symbolized GDB
+reachability replay; mutation build and fixed-seed replay; restored
+clean-master build and identical-seed replay; `git diff --check`; exact-master
+source and binary clean; no fuzz jobs remain.
+
 ## 2026-07-19 Core mempool persistence load/dump oracle gap
 
 The `validation_load_mempool` target feeds a fuzzed `FILE*` into
