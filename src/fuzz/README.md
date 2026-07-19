@@ -23826,3 +23826,110 @@ behavior. A green follow-up branch is not evidence against the clean-master
 failure until that seed or an equivalent minimal production mutation is
 rerun. No production mutation remains in the exact-master checkout, and no
 fuzz jobs were left running.
+
+## 2026-07-19 Bitcoin Core CoinsViewOverlay prefetch oracle
+
+This is a harness-only oracle improvement for the already-reconciled l0rinc
+parallel-prevout feature, not a new production bug. The companion Core commit
+is `68cdc9d7e6` (`fuzz: assert overlay prefetch consumption and parent
+immutability`). It adds a focused `coins_view_overlay` postcondition that
+mirrors the ordered prevout walk in `ConnectBlock`: same-block spends are
+skipped, every external input is fetched in order, duplicate external
+outpoints are uncached so each queued entry is exercised, and
+`AllInputsConsumed()` must hold. The existing parent-cache mutation guard is
+also checked immediately after the prefetch walk, rather than only when a
+later `BatchWrite` happens.
+
+### Baseline, provenance, and corpus
+
+The exact upstream Core baseline was
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`; the Core audit parent before this
+oracle was `86d77eef1b805ab29fbd7ff461cd5160f66123d3`. The relevant l0rinc
+feature chain was already present in that parent, including
+`321a39e583`, `fccdc098d3`, `b3b0d49aad`, `67cad6779e`, `ed9688ff2d`,
+`6e82d955aa`, `c53eedff90`, `a805a57b32`, `b2d5ec4947`, and `439d23b19e`.
+No new l0rinc cherry-pick was needed for this harness change.
+
+The original tracked `src/test/fuzz/coins_view.cpp` SHA-256 was
+`efe84e416feb19b67025776d0cc1f227daa9c6ca2b15ba717738d0e484d67255`; the
+patched SHA-256 is
+`6614165603e54f63c8b3027897d617a9c6514d61ad29e2aa2c8c1dc782fe19eb`.
+The original `/mnt/my_storage/qa-assets/fuzz_corpora/coins_view_overlay`
+replay began with 1,646 files and 3,344,493 bytes. The deterministic proof
+input was `08595e24aaa03d10816bebe86fe670c952d5a565`, 207,430 bytes,
+SHA-256 `54d80a57f3f52fed2927c50a0b410ac71bc92d0803e34207e02a1535b7ea376c`.
+The shared worker run appended 201 generated units; the directory then
+measured 1,847 files and 4,685,065 bytes. Those same-day additions remain in
+the shared overlay corpus because the original file set was not snapshotted
+separately and deleting them could remove pre-existing inputs. The separate
+`coinscache_sim` reconnaissance corpus was restored exactly to 305 files and
+5,153,077 bytes.
+
+### Oracle contract and differential proof
+
+The prefetch contract is distinct from universal block validity. It applies
+only while `CoinsViewOverlay::StartFetching` owns a live block and workers may
+read the parent through `PeekCoin()`. The production caller assumes the queue
+was consumed after a successful connection; an API fuzzer that only performs
+arbitrary cache operations did not previously prove that state transition or
+the parent-immutability requirement.
+
+For the strongest deterministic proof, a disposable production mutation
+changed the ordered branch in `CoinsViewOverlay::FetchCoinFromBase` to
+`false && ...`. The exact seed exited 134 under `-handle_abrt=0` at
+`test/fuzz/coins_view.cpp:154` on `assert(view.AllInputsConsumed())`.
+Restoring the production condition made the identical seed exit 0. A second,
+separate mutation changed `ProcessInput` from `base->PeekCoin()` to
+`base->GetCoin()`. That run produced an ASan `use-after-poison` report on
+worker thread `T3` while concurrently populating the parent cache; libFuzzer
+remained in its deadly-signal handler and the bounded replay ended with
+timeout 124. It is recorded as sanitizer-only mutation evidence, not as a
+clean exit-status proof and not as an unmodified-master vulnerability.
+
+The audit build passed
+`cmake --build /tmp/bitcoin-secp256k1-audit-build --target fuzz -j8`; the
+restored fuzz binary SHA-256 was
+`287c42d8c308be774f03ae111c302bdd50aabe8d524e6f181336e5489c98f3aa`.
+The fixed original-corpus replay completed 2,065 executions with coverage
+2,452, feature count 17,336, and 213 MiB peak RSS. The four-worker ASan/UBSan
+replay started from that original corpus and completed 6,885 executions,
+found 204 new units, reached coverage 2,481 and feature count 18,329, and
+used 240 MiB peak RSS with no sanitizer, assertion, timeout, OOM, or artifact
+diagnostic. After the worker appended units, an additional augmented
+1,847-file replay completed 1,918 executions with coverage 2,500, feature
+count 17,910, and 219 MiB peak RSS.
+
+### Bitcoin Core caller boundary and severity
+
+The relevant path is peer block processing through
+`ProcessNewBlock -> AcceptBlock -> ActivateBestChain ->
+Chainstate::ConnectTip -> CoinsViewOverlay::StartFetching -> ConnectBlock`.
+`StartFetching` is reached only for blocks selected for connection, not for
+every malformed peer block; validation can reject input before or during this
+path. This campaign found no failure on unmodified upstream master and makes
+no production vulnerability or severity claim. A real caller-level cache
+mutation, memory-safety failure, consensus divergence, or sustained remote
+node failure would be rated High/Critical; malformed input alone is not
+Critical.
+
+The existing ledger ratings remain: `ecmult_multi` scratch-size wrapping is
+Medium confirmed internal memory safety with low demonstrated Core
+reachability; forced-10x26 field normalization is Medium latent internal
+correctness on master; SHA/HMAC/RFC6979 post-finalization retention is Medium
+memory hygiene without a standalone read primitive; and clearing a nonce with
+no cryptographic meaning is not Critical by itself. These ratings change only
+with a reproduced Core caller-level consequence.
+
+### Cherry-pick, masking, and verification record
+
+No production file was changed by `68cdc9d7e6`; no temporary mutation remains.
+The exact-master checkout remains unaffected apart from its pre-existing fuzz
+log, and no fuzz process remains running. If a future production fix, minor
+fix, oracle edit, or l0rinc cherry-pick changes this behavior, its commit
+message and this ledger must retain the exact master/audit parent, corpus and
+seed, mutation, preconditions, postconditions, failure stack/status, Core
+caller and input origin, master-relative severity, test gap, verifier
+commands, and whether the change `preserve`s, `changes`, or `masks` the
+behavior. A green follow-up branch must not downgrade the clean-master
+disposition until the original seed or an equivalent minimal mutation is
+rerun.
