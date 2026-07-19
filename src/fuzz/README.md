@@ -19717,3 +19717,142 @@ oracle works, not a vulnerability finding. This target contains no
 cryptographic nonce, so nonce-clearing severity is not applicable; uncleared
 data without standalone cryptographic meaning is not Critical merely because
 it was not cleared.
+
+## 2026-07-19 Core headers-sync replay and future-MTP boundary
+
+The `headers_sync_state` target models the two-phase low-work headers
+anti-DoS protocol. Its real contracts are: continuous headers supplied by the
+caller; valid proof of work checked before the target; bounded presync
+commitments; commitment agreement during redownload; bounded redownload
+lookahead; correct `PRESYNC` -> `REDOWNLOAD` -> `FINAL` transitions; and
+non-empty locators only while a successful call requests more headers. The
+target's existing explicit postcondition checks the work threshold when it
+enters `REDOWNLOAD`; it does not turn an arbitrary accepted header into a
+valid block-index entry. That distinction matters because the production
+caller performs the PoW and continuity checks before invoking this class and
+does full header acceptance only after the class returns headers.
+
+The exact Core master baseline is checkout
+`/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/headerssync.cpp` is SHA-256
+`300cc7054746ecf257d94b5618a9bbc7f2dbc480bb3fcafa6fe5b38c6c4051b1`;
+the same source is present in the current comparison checkout. The original
+corpus was `/mnt/my_storage/qa-assets/fuzz_corpora/headers_sync_state`: 310
+files and 30,514,451 bytes. No generated corpus entries were included in that
+count.
+
+The exact master sanitizer binary is SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`.
+The audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+The corpus-first replay used:
+
+    timeout 240s env FUZZ=headers_sync_state \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-coinscache-master-build/bin/fuzz \
+      /mnt/my_storage/qa-assets/fuzz_corpora/headers_sync_state \
+      -merge=0 -runs=310 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+The master, audit, and comparison corpus-first runs each exited zero after
+311 executions. They reached coverage/features of 1170/10307,
+1162/10161, and 1162/10059, with peak RSS of 375, 376, and 374 MiB. Their
+artifact directories were empty and no assertion, ASan, UBSan, runtime,
+timeout, OOM, or crash diagnostic was emitted.
+
+Each provenance was then run in four independent worker directories with:
+
+    timeout 330s env FUZZ=headers_sync_state \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 <binary> corpus \
+      -workers=1 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All 12 children emitted `DONE`, final statistics, exit code 0, and empty
+artifact directories. The exact master workers ran 11,359/12,815/11,681/
+11,661 executions, all at coverage 1170, with 199/224/215/220 new units and
+394/383/394/400 MiB peak RSS. The audit workers ran
+12,374/11,933/11,179/11,148 executions, all at coverage 1162, with
+211/198/172/172 new units and 384/404/390/385 MiB peak RSS. The comparison
+workers ran 9,793/11,697/11,009/10,221 executions, all at coverage 1162,
+with 156/219/169/175 new units and 378/385/402/393 MiB peak RSS. This is
+negative evidence for the exercised domain, not evidence that the old clock
+boundary is safe.
+
+### Existing master finding: signed-to-unsigned commitment bound
+
+**Severity: Medium, conditional remote memory-DoS on master; not High or
+Critical on the demonstrated Bitcoin Core path.** In exact master,
+`HeadersSyncState` computes `max_seconds_since_start` as a signed elapsed
+time, adds `MAX_FUTURE_BLOCK_TIME`, and assigns
+`6 * max_seconds_since_start / m_params.commitment_period` to the unsigned
+`m_max_commitments`. If the local clock is more than
+`MAX_FUTURE_BLOCK_TIME` behind the chain-start MTP, the negative value is
+converted through the unsigned `size_t` commitment period, producing an
+effectively `2^64`-sized cap instead of aborting. A peer can then keep a
+low-work presync alive and grow `m_header_commitments` without the intended
+memory bound.
+
+The deterministic proof was run in disposable worktree
+`/tmp/bitcoin-headerssync-proof`, with the production baseline still at the
+exact master commit. A test-only addition based on l0rinc commit
+`3a70822391d3d240ef0b526d609940530bda0316` set the fake clock to
+`genesis_time - MAX_FUTURE_BLOCK_TIME - 1`, used `commitment_period=1`, and
+fed one mined regtest header. The unmodified master production code passed
+the old behavior exactly: `PRESYNC`, `success=true`, `request_more=true`, no
+returned headers. The targeted command was:
+
+    /tmp/bitcoin-headerssync-proof-build/bin/test_bitcoin \
+      --run_test=headers_sync_chainwork_tests/future_chain_start_mtp_bounds_commitments \
+      --log_level=test_suite
+
+It exited zero with `*** No errors detected`. Applying only the production
+cap from l0rinc `9274f925a7ca64d114e1172957a9f94e1ed1796b` in that disposable
+worktree, and flipping the expected result, changed the same test to
+`FINAL`, `success=false`, and `request_more=false`; the full
+`headers_sync_chainwork_tests` suite then ran all four cases with exit zero.
+The temporary worktree changes were not committed and the exact master
+worktree remains clean. This is a production behavior proof, not a mutation
+claim.
+
+The Core input origin is an unauthenticated peer's `headers` message. The
+path is `PeerManagerImpl::ProcessHeadersMessage` -> `CheckHeadersPoW` and
+continuity checks -> `TryLowWorkHeadersSync` -> `HeadersSyncState`; after
+redownload, `ProcessNewBlockHeaders` performs block-index acceptance. The
+chain-start index is already local state. `ContextualCheckBlockHeader`
+rejects a newly received block header whose timestamp is more than two hours
+ahead of the local clock, so the proof does not show that an invalid block can
+manufacture the future-MTP precondition. The realistic trigger is a local
+clock moving backward or lagging after a future-dated chain-start block is
+already persisted; once that condition exists, a remote peer can drive the
+unbounded presync allocation with valid-PoW headers. That makes this a
+conditional availability bug, not a consensus-state corruption or invalid-
+block Critical finding. If a deployment cannot satisfy the clock precondition,
+the issue is a nice-to-have hardening item rather than a remotely triggerable
+security issue.
+
+The ordinary master fuzzer did not cover this condition: its `FakeNodeClock`
+consumes time with a minimum of `start_index.GetMedianTimePast()`, excluding
+the necessary clock-skew interval. The existing unit suite had no future-MTP
+case at the baseline. Later l0rinc commits make the gap explicit:
+`3a70822391` adds the pre-fix regression expectation and broadens the
+boundary test; `9274f925a7` caps negative elapsed time at zero; and the
+parallel `046615ae5969d0e31e8cac2f02a8ef49b75505f8` instead rejects the
+condition in `TryLowWorkHeadersSync` and asserts in the constructor. The two
+fix commits share the regression-test parent and are alternative behavior,
+not a safe sequence to silently stack: cherry-picking one after the other can
+change the expected test and caller semantics. The ledger therefore keeps
+the unmodified-master proof and records both commits as masking/altering this
+master trigger. No l0rinc fix was cherry-picked into the audit baseline.
+
+No production fix is claimed in this secp256k1 documentation commit. A future
+Core fix must retain the exact clock, chain-start MTP, commitment period,
+header input, failed state postcondition, caller path, and whether it chooses
+the cap or the caller-level rejection. The target has no cryptographic nonce;
+nonce-clearing is unrelated, and uncleared data without standalone
+cryptographic meaning is not Critical merely because it was not cleared.
