@@ -18914,3 +18914,119 @@ commit message and ledger. Existing scratch-wrap, 10x26 carry, and SHA/HMAC/
 RFC6979 memory-hygiene findings retain their recorded Medium severities, and
 uncleared nonce data without standalone cryptographic meaning is not Critical
 merely because it is uncleared.
+
+## 2026-07-19 Core compact-block reconstruction replay
+
+The `partially_downloaded_block` target exercises the stateful BIP152 compact
+block reconstruction helper rather than only parsing a block. Its source is
+`src/test/fuzz/partially_downloaded_block.cpp`, SHA-256
+`09e30070ee44e6b9f7452507ea20911638659b8d4a647f948d8c060ad42f61b4`. That
+source is byte-for-byte identical to Core `origin/master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+For each deserializable non-empty block below the uint16 transaction-count
+limit, the harness creates `CBlockHeaderAndShortTxIDs`, a fresh test mempool,
+and a `PartiallyDownloadedBlock`. It independently chooses whether each
+non-coinbase transaction is available through `extra_txn` or the mempool. The
+real contracts checked by the target are:
+
+* after successful `InitData`, `IsTxAvailable(i)` may only report an index that
+  the harness actually made available; the converse is intentionally not
+  required because compact-block short-ID collisions can hide an available
+  transaction;
+* every unavailable transaction that is not deliberately omitted from the
+  `missing` vector must be supplied to `FillBlock`;
+* `READ_STATUS_OK` requires no skipped missing transaction, no mocked mutation
+  result, and equality of the reconstructed and source block hashes;
+* `READ_STATUS_FAILED` requires the mocked `IsBlockMutated` result, while
+  `READ_STATUS_INVALID` is a valid rejection path for malformed or
+  non-matching reconstruction state.
+
+The production input origin is a peer's serialized `cmpctblock` message. Core
+handles it in `PeerManagerImpl::ProcessMessage` by parsing
+`CBlockHeaderAndShortTxIDs`, calling `PartiallyDownloadedBlock::InitData`,
+querying `IsTxAvailable`, and either requesting `blocktxn` or optimistically
+calling `FillBlock` and `ProcessBlock`. A peer's `blocktxn` response reaches
+`ProcessCompactBlockTxns`, which calls `FillBlock` again before forced block
+processing. This means a future mismatch can affect a remotely supplied,
+invalid compact block even though the helper is below the final consensus
+validation gate. A malformed input can also exercise duplicate short IDs,
+prefilled-index arithmetic, missing-transaction handling, large allocation
+paths, and the lock-protected mempool lookup state.
+
+The original corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/partially_downloaded_block` into
+separate fresh working directories. It contained 909 files and 148,804,324
+bytes before fuzzing. LibFuzzer added new units during each run, leaving 1,266
+files in the audit directory and 1,275 files in the comparison directory;
+those generated files are not counted as original seeds.
+
+The audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`. The
+exact audit command was:
+
+    timeout 420s env FUZZ=partially_downloaded_block \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/partially_downloaded_block-20260719-audit \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/partially_downloaded_block-20260719-audit/ \
+      -print_final_stats=1
+
+It completed 16,509 executions in 301 seconds, with 5,306 coverage points,
+54,029 feature points, 397 new units, and 821 MiB peak RSS. It exited zero
+with no assertion, ASan, UBSan, runtime, timeout, OOM, or crash diagnostic;
+the artifact directory was empty.
+
+The comparison binary was
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+exact comparison command was:
+
+    timeout 420s env FUZZ=partially_downloaded_block \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/partially_downloaded_block-20260719-master-clean \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/partially_downloaded_block-20260719-master-clean/ \
+      -print_final_stats=1
+
+It completed 16,641 executions in 301 seconds, with 5,306 coverage points,
+54,458 feature points, 427 new units, and 791 MiB peak RSS. It exited zero
+with no assertion, ASan, UBSan, runtime, timeout, OOM, or crash diagnostic;
+its artifact directory was empty. This executable came from the existing Core
+checkout at `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, which is 41 commits
+ahead and 7 behind Core `origin/master`; it was not rebuilt from a separate
+pristine Core master checkout. The target source is master-identical, so the
+comparison is useful differential evidence but is not claimed as a clean
+master reproduction.
+
+No production assertion, fuzzer assertion, source mutation, production bug,
+fix, or deterministic regression test is claimed from this negative replay.
+The fuzzer's existing assertions were exercised by both binaries. The absence
+of a failure is evidence only for the recorded corpus and run configuration,
+not proof that all compact-block state combinations are safe. A future failure
+must preserve the exact input, worker command, status, assertion or sanitizer
+stack, and a minimal reproducer, then be rerun on unmodified master. If the
+finding appears only after a minimal production mutation, the mutation must
+model the broken condition and be recorded explicitly rather than presented as
+a master bug.
+
+Severity follows the actual Core caller and input origin. A clean-master
+acceptance of an invalid compact block, a reconstruction/hash disagreement
+that reaches consensus processing, or a remotely reachable memory-safety,
+race, or node-availability failure may be High or Critical depending on the
+demonstrated impact. A helper-only accounting discrepancy, an expected
+`READ_STATUS_INVALID`, or a harness/resource issue without a Core consequence
+is lower severity. A later minor fix or cherry-pick must not downgrade a more
+severe master trigger: retain a clean-master or minimal-mutation replay and
+state whether the change masks, alters, or preserves the original behavior in
+the same commit message and this ledger. Existing scratch-wrap, 10x26 carry,
+and SHA/HMAC/RFC6979 memory-hygiene findings retain their recorded Medium
+ratings. Uncleared nonce data without standalone cryptographic meaning is not
+Critical merely because it is uncleared.
