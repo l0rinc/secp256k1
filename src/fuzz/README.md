@@ -21903,6 +21903,136 @@ empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
 
+## 2026-07-19 Core ephemeral_package_eval policy oracle replay
+
+This entry completes the package-evaluation pair by replaying the
+`ephemeral_package_eval` target in `src/test/fuzz/package_eval.cpp`. The
+target focuses on standardness, dust, ephemeral-parent, and child-triggered
+replacement transitions; it is a mempool-policy oracle, not a consensus-block
+oracle.
+
+### Source and corpus anchors
+
+The exact-master baseline was Bitcoin Core commit
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target and production hashes
+were:
+
+    src/test/fuzz/package_eval.cpp  58d3bb90571153b0efda8003662755efb55c36bf4620de36a607d6d37d0039be
+    src/validation.cpp              d557f410ef78679ae2f001fa148c6d735a052a872456fe2ba7b4204ec8332900
+    src/txmempool.cpp               68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651
+    src/txmempool.h                 d2b3100734cb5019f75cacc1d0c41d726d60c3cee6cbed7ec1912dd7efd0b54e
+
+The audit and comparison worktrees were at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; the target and mempool hashes
+matched, while their known unrelated l0rinc `src/validation.cpp` hash was
+`c77eda8986ec1be796c2cbcc92834dab42d7113239b70a1154b332f913894b10`. The
+package acceptance ranges are unchanged; exact master remains the behavior and
+severity baseline.
+
+The original corpus had 1,671 files and 9,748,246 bytes. Its sorted
+absolute-path SHA-256 manifest was
+`8a9af7ff8e4ba33743d120f1b46c59b1462a73ad16dac50539a5fc7e8473c245`. Each
+run used an isolated copy and did not alter the original corpus.
+
+### Oracle and state transitions
+
+The initializer mines `2 * COINBASE_MATURITY` blocks, records mature
+coinbase outpoints and values, sets mock time, and synchronizes validation
+callbacks. Each iteration creates a `MockedTxPool` configured for standard
+transactions with zero min-relay fee, tracks all spendable outpoints, and
+constructs a package of one to four transactions. Generated transitions
+include arbitrary fees and output splits, naturally dust outputs, optional
+zero-valued dust outputs, multi-input children, package-created outputs,
+mock-time changes, prioritization, and a child that double-spends an input
+from an existing dust-parent child to exercise ephemeral eviction.
+
+The harness registers callbacks that update the explicit outpoint model and
+then calls `ProcessNewPackage` followed by `AcceptToMemoryPool` with
+complementary test-accept modes. For a single submission it asserts the
+result and callback delta agree. For a multi-transaction package it checks
+the package result map and state with `CheckPackageMempoolAcceptResult` when
+the package did not stop at an early policy result. Every iteration runs
+`CheckMempoolEphemeralInvariants`, which checks that dust parents have the
+required child structure and that ephemeral transactions obey the mempool
+graph rules, and the run ends with `CTxMemPool::check`.
+
+These are focused pre/postconditions around real contracts. The fuzzer does
+not treat every accepted transaction as consensus-valid: generated inputs can
+be invalid, result shape is checked separately, and later Core validation
+remains responsible for consensus/script/UTXO checks. The target does not
+assert the full durable mempool or block-connect lifecycle.
+
+The command shape was:
+
+    timeout 420s env FUZZ=ephemeral_package_eval ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results were:
+
+    exact master  2,064 executions in 377 s; cov 13,211, ft 110,573,
+                 new_units_added 3, peak RSS 303 MiB
+    audit build   2,072 executions in 379 s; cov 13,227, ft 109,780,
+                 new_units_added 1, peak RSS 301 MiB
+    comparison    2,052 executions in 369 s; cov 13,236, ft 111,303,
+                 new_units_added 3, peak RSS 304 MiB
+
+All three exited zero with no assertion, ASan, UBSan, runtime, timeout, OOM,
+or leak diagnostic and no artifact. Fuzzer hashes after replay were:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c98803de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Bitcoin Core callers and severity
+
+The peer package path is `net_processing.cpp:4517-4522`, which calls
+`ProcessNewPackage` for a package returned by `ReceivedTx`; rejected single
+transactions can also trigger package reconsideration at
+`net_processing.cpp:4537-4541`. RPC `testmempoolaccept` uses the test path at
+`rpc/mempool.cpp:355-360`, and `submitpackage` uses submission at
+`rpc/mempool.cpp:1419-1426`. The resulting transactions remain subject to
+Core's ordinary consensus/script/UTXO validation before they can be mined.
+
+This replay found no production bug, failure stack, mutation, fix, or
+deterministic regression test. An ephemeral-policy or dust-eviction mismatch
+is Low/Medium until a concrete mempool state or node resource consequence is
+shown. A peer-triggered mempool corruption, memory-safety failure, or
+sustained remote DoS can be High only with a reachable caller and reproducer.
+Invalid-block acceptance or remote consensus/memory impact is Critical only
+with proof through the actual wire and validation callers; this policy oracle
+does not supply that proof.
+
+The earlier `tx_package_eval` entry and deterministic package tests cover
+ordinary package result shapes, while this target adds arbitrary dust,
+ephemeral-parent, callback, and child-eviction interleavings. There is still
+no exhaustive proof of network callback ordering, persistence/restart, or
+block/reorg interaction; those are explicit coverage gaps, not findings.
+
+### Findings, fixes, and masking context
+
+No source mutation was used and no production fix or regression test is
+claimed. Existing master-relative findings remain: scratch allocation wrap is
+**Medium confirmed internal memory safety with low current Core reachability**;
+10x26 magnitude-32 carry loss is **Medium latent correctness**;
+SHA/HMAC/RFC6979 finalizer retention is **Medium memory hygiene** without a
+standalone read primitive; and direct API, wallet, callback, opaque-state,
+cache, and harness-performance issues remain below High/Critical without a
+demonstrated Core trigger. A nonce with no standalone cryptographic meaning
+is not Critical merely because it is not cleared.
+
+The relevant l0rinc commits were already reconciled. Any later cherry-pick or
+minor fix that changes this target's result must retain the clean-master
+corpus/seed condition, exact mutation and stack if one exists, caller input
+origin, master-relative severity, deterministic regression test, verifier
+commands, and whether the change preserves, changes, or masks master
+behavior. A follow-up change that accidentally stops a failure cannot erase a
+more severe clean-master finding.
+
+Verification included source and binary SHA checks, corpus count/manifest
+checks, three four-worker sanitizer campaigns, diagnostic scans,
+empty-artifact checks, `ps` confirmation that no fuzz process remained, and
+`git diff --check`. No new l0rinc cherry-pick or production behavior change is
+claimed by this entry.
+
 ## 2026-07-19 Core package_rbf replacement-diagram oracle replay
 
 This entry records the previously undocumented `package_rbf` target in
