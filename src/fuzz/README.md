@@ -18174,6 +18174,50 @@ preconditions, postconditions, failure and stack, Core caller/input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger.
 
+## 2026-07-19 Extended standalone ECDH worker replay
+
+The standalone `fuzz_ecdh` oracle was extended to a five-minute forced-int64
+10x26 ASan/UBSan run with eight workers. It used a fresh copy of all 9
+tracked `src/fuzz/corpora/ecdh` inputs at
+`/tmp/secp256k1-next-long-corpora/ecdh`; artifacts were directed to
+`/tmp/secp256k1-next-long-artifacts/ecdh/`:
+
+    timeout 420s \
+      /tmp/secp256k1-next-asan-int64/bin/fuzz_ecdh \
+      /tmp/secp256k1-next-long-corpora/ecdh \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/ecdh/ \
+      -print_final_stats=1
+
+The run loaded 9 seeds and completed 2,369 executions in 301 seconds,
+reaching 4,485 coverage points and 25,373 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact; the
+artifact directory was empty. The oracle exercised shared-point symmetry,
+independent field/hash equations, zero/order/order-plus-one scalar
+boundaries, infinity handling, custom hash callbacks, static-context ECDH,
+and output cleanup after rejected operations.
+
+This standalone entry point is a direct library/API boundary. Bitcoin Core's
+production BIP324 path uses
+`CKey::ComputeBIP324ECDHSecret -> secp256k1_ellswift_xdh`, which was separately
+covered by the long BIP324 cipher and peer-transport campaigns. A future
+clean-master failure in the standalone API remains below remote consensus
+severity unless a concrete Core caller reaches it; a failure in the actual
+peer-controlled BIP324 EllSwift path must instead be rated from demonstrated
+transport crash/DoS, key-agreement, or integrity impact, potentially
+High/Critical. No production finding, fix, deterministic regression test, or
+severity change is claimed from this negative replay. A nonce without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+Any future ECDH, EllSwift, callback, optimization, cherry-pick, or production
+fix must amend the same commit message and ledger with the exact clean-master
+or minimal-production-mutation baseline, corpus/mutation condition,
+preconditions, postconditions, failure and stack, Core caller/input origin,
+master-relative severity, existing-test gap, verifier commands/results, and
+whether the change preserves, changes, or masks the trigger.
+
 ## 2026-07-19 Extended Core multi-peer message replay
 
 The Core `process_messages` target was selected for multi-peer network state
