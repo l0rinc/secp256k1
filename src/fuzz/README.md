@@ -23933,3 +23933,83 @@ commands, and whether the change `preserve`s, `changes`, or `masks` the
 behavior. A green follow-up branch must not downgrade the clean-master
 disposition until the original seed or an equivalent minimal mutation is
 rerun.
+
+## 2026-07-19 Bitcoin Core block-index transition oracle
+
+This is a harness-only oracle improvement for the block-index state machine,
+not a production bug claim. The companion Core commit is
+`ccf346df93` (`fuzz: check block index transitions during state machine`).
+The target previously called production `ChainstateManager::CheckBlockIndex()`
+only after the entire fuzz command sequence. It now calls the same checker
+after every 16 transitions, while retaining the final check and skipping the
+intentional `abort_run` path that models unavailable pruned undo data. The
+cadence is deliberate: a full every-transition check timed out, while this
+still prevents a later command from silently repairing a bad transition.
+
+### Baseline, corpus, and hashes
+
+The exact upstream Core baseline was
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`; the audit parent was
+`68cdc9d7e6f9c638000eb877e6b213988e402383`. The original tracked
+`src/test/fuzz/block_index_tree.cpp` SHA-256 was
+`c37d865c426b0e1451b8161a8ccc214636099d0e22d9ddef42cc3dffdb1d6eaa`; the
+patched source SHA-256 is
+`5928e669efa448e54f1e048b299a48bb0a8b16ebba94b482972ec5c9fb4885f4`.
+The private original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/block_index_tree` with 4,396 files
+and 19,764,724 bytes. The deterministic largest proof seed was
+`fde37ce21093bd578a8cf49d27f8c003d5e68028`, 26,372 bytes,
+SHA-256 `c1f67dc38a0dab4ec71e441d61a5f990158003bd6075a73729b4e72dc7232072`.
+
+### Oracle sensitivity and verification
+
+A disposable harness mutation cleared
+`ActiveChainstate().setBlockIndexCandidates` immediately before the first
+periodic check. The exact seed exited 134 under `-handle_abrt=0` at
+`validation.cpp:5601` on `c->setBlockIndexCandidates.contains(pindex)`.
+Removing the injected corruption made the same seed exit 0. This is
+oracle-sensitivity evidence only: no production code was mutated or fixed,
+and it is not a master vulnerability finding.
+
+The audit fuzz build passed
+`cmake --build /tmp/bitcoin-secp256k1-audit-build --target fuzz -j8`.
+Before the oracle, corpus-first replay completed 4,541 executions with
+coverage 2,185, feature count 20,428, and 728 MiB peak RSS. Its four-worker
+ASan/UBSan replay completed 55,662 executions, added 164 units, reached
+coverage 2,185 and feature count 20,621, and used 729 MiB without
+diagnostics. An every-transition checker was separately measured and timed
+out after 300 seconds at 3,512 of 4,396 inputs and 11 executions per second.
+
+With the 16-transition cadence, corpus-first replay completed 4,536
+executions in 67 seconds with coverage 2,190, feature count 21,133, and
+624 MiB peak RSS. The four-worker replay completed 4,544 executions in 68
+seconds with coverage 2,190, feature count 21,029, and 622 MiB peak RSS.
+Neither produced a sanitizer, assertion, timeout, OOM, or artifact
+diagnostic. The restored largest seed replay exited 0.
+
+### Core caller boundary and severity
+
+The relevant caller boundary is
+`ProcessNewBlock -> AcceptBlock -> ActivateBestChain`, followed by block-index
+candidate selection and `Chainstate::ConnectTip` under `cs_main`. This target
+models those state transitions directly. A real peer-triggered candidate/tree
+corruption, consensus divergence, memory-safety failure, or sustained remote
+node failure would be High/Critical. This campaign found no unmodified-master
+production failure and assigns no production severity or fix; malformed block
+input alone is not Critical.
+
+The existing ledger remains: `ecmult_multi` scratch-size wrapping is Medium
+confirmed internal memory safety with low demonstrated Core reachability;
+forced-10x26 field normalization is Medium latent internal correctness;
+SHA/HMAC/RFC6979 post-finalization retention is Medium memory hygiene; and an
+uncleared nonce with no cryptographic meaning is not Critical by itself.
+
+### Cherry-pick and masking record
+
+No new l0rinc cherry-pick was made for this target. Any future production fix,
+minor fix, oracle edit, or cherry-pick must preserve the exact master/audit
+parent, corpus and seed, transition mutation, preconditions, postconditions,
+failure stack/status, Core caller and input origin, master-relative severity,
+test gap, verifier commands, and whether it `preserve`s, `changes`, or
+`masks` the behavior. No temporary production mutation remains and no fuzz
+process is running.
