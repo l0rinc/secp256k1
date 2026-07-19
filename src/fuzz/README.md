@@ -19161,3 +19161,164 @@ campaign. Existing scratch-wrap, 10x26 carry, and SHA/HMAC/RFC6979
 memory-hygiene findings retain their recorded Medium ratings. Uncleared nonce
 data without standalone cryptographic meaning is not Critical merely because
 it is uncleared.
+
+## 2026-07-19 Resurrection Hunt: Falsification Pass over Dismissed Candidates
+
+Method. Every dismissed or downgraded ledger entry ("not a clean-master
+production finding", "low current reachability", "latent", "Low /
+informational", "test-only") was treated as a falsifiable claim. For each
+candidate the exact rejection and its assumptions were recorded, at least one
+assumption was attacked with a concrete instrument (caller enumeration,
+master-vs-branch diff, Core call-site tracing, sanitizer replay, or a
+temporary tripwire mutation), and reachability was re-derived from the actual
+Bitcoin Core call graph instead of being asserted. The Core reference is the
+local checkout `4684a4245d53` with vendored subtree `bd0287d650` (post-0.7.1
+master): Core builds recovery ON, ecdh OFF, musig/ellswift/schnorrsig/
+extrakeys ON (`cmake/secp256k1.cmake:17-19`); Core code calls secp256k1 only
+from `src/key.cpp`, `src/pubkey.cpp`, and `src/musig.cpp`; every secp256k1
+return value is checked (the ignored returns are the documented
+`parse_compact` initialization hack at `src/pubkey.cpp:53,182`, the
+`signature_normalize` low-S flag, and always-1 `ellswift_decode`); Core always
+passes `msglen = 32` to `secp256k1_schnorrsig_verify` (`src/pubkey.cpp:241`,
+`src/key.cpp:436`) and never calls `secp256k1_tagged_sha256`,
+`secp256k1_schnorrsig_sign_custom`, `secp256k1_ecdsa_signature_parse_der`,
+`secp256k1_ecdh`, or any scratch symbol; the field backend is 5x52 on 64-bit
+and 10x26 only on 32-bit, by wide-multiplication autodetection
+(`src/secp256k1/src/util.h:343-360`, `src/secp256k1/src/field_impl.h:13-16`).
+
+### Confirmed rejections with falsification attempts
+
+1. Scratch-wrap `cc5132d` (**Medium, low current Core reachability** —
+   stands). Assumption attacked: "no caller can supply a wrapping size".
+   Enumerated every `secp256k1_scratch_create` caller on master and on this
+   branch: the only caller is the `static` `secp256k1_scratch_space_create`
+   (`src/secp256k1.c:249`), itself called only by tests and `bench_ecmult`;
+   no public header exports scratch symbols (removed API,
+   `src/secp256k1/CHANGELOG.md:60-63`); `secp256k1_ecmult_multi_var` with
+   NULL scratch falls to `secp256k1_ecmult_multi_simple_var`
+   (`src/ecmult_impl.h:848-850`), a stack-only loop, and master's MuSig key
+   aggregation passes NULL scratch (`src/modules/musig/keyagg_impl.h:192`).
+   Core's MuSig path (`src/musig.cpp:36`) therefore never allocates scratch,
+   and no attacker-influenced count reaches any library allocation.
+   **Confirmed rejection.**
+
+2. 10x26 zero-predicate carry loss (**Medium/latent** — stands, evidence
+   strengthened). Assumption attacked: "no public API path naturally produces
+   the exact maximum-magnitude state". Static analysis: the uint32 carry loss
+   requires limbs near 2^32 (`t1 + (x<<6) + (t0>>26) >= 2^32`, likewise the
+   `t0` chain), i.e. magnitude >= ~31 representations, while every production
+   operand reaching `fe_normalizes_to_zero{,_var}` is capped at magnitude 4
+   (`src/group.h:49-53`) or 8 (`fe_sqrt`, `src/field_impl.h:52`); the 5x52
+   predicate keeps 12 bits of headroom per limb at magnitude 32 and is not
+   affected. Dynamic instrument (temporary, uncommitted tripwire in both
+   10x26 predicates recording the maximum limb and maximum `t9>>22` ever
+   observed): the full tracked corpora of `api_roundtrip`, `schnorrsig`,
+   `recovery`, `xonly_tweak`, `ellswift`, `ecdh`, `musig`, and `context`
+   under forced-int64 ASan/UBSan peaked at limb `0x2bfa4c55` (~2^29.6,
+   matching the magnitude-4 negate ceiling `2*(4+1)*0x3FFFFFB`);
+   `exhaustive_tests` peaked at `0x2bf939eb` and reported `no problems
+   found`; per-target 90 s, two-worker libFuzzer campaigns on all seven API
+   targets exited 0 with the same ceiling (max `0x2bfa4c55`; musig
+   `0x0307036a`). The carry-loss zone begins within 2^12 of 2^32, more than
+   5x above the observed API ceiling. The `tests` binary did reach
+   `n[0]=0xffffffc0` and `x=0x3f`, but attribution shows that came from
+   `run_fe_normalize_max_magnitude` (`src/tests.c:3502`), which constructs
+   the carry-wrap state directly — an internal construction, not API
+   reachability. The masking caveat from `c11c0127` was also attacked:
+   crafted opaque objects cannot carry magnitude-31 limbs because storage
+   loading bounds limbs to ~2^26, so no branch fix hides an API path.
+   **Confirmed rejection**; the prior corpus-only screen is now backed by a
+   dynamic near-zone measurement, and the 32-bit-platform note stands (Core
+   uses 10x26 only there).
+
+3. Impossible SHA256 lengths `ab36b78` (**Medium, low practical
+   exploitability** — stands). Assumption attacked: "requires an incoherent
+   pointer/length pair". Master `secp256k1_tagged_sha256` has no length cap;
+   the trigger needs `msglen >= 2^61` with no backing allocation. Core never
+   calls `tagged_sha256` or `sign_custom`, and no attacker-influenced
+   variable length reaches the internal hashing from Core. **Confirmed
+   rejection.**
+
+4. Scratch accounting `df888448` (**Low/informational** — stands).
+   Assumption attacked: "no valid master path creates `alloc_size >
+   max_size`". Walked all four mutators on master: `apply_checkpoint` rejects
+   `checkpoint > alloc_size`, `alloc` guards `size > max_size - alloc_size`,
+   create zeroes the counter; the invariant holds for any validly created
+   object. The only contaminating path was the separately rated candidate 1.
+   **Confirmed rejection** (defense-in-depth hardening).
+
+5. `gej_rescale` scale alias `61259f9` (**Low** — stands). Assumption
+   attacked: "no current public reachability". All call sites pass provably
+   distinct objects: `src/ecmult_impl.h:301` (distinct locals),
+   `src/ecmult_gen_impl.h:261` (context member versus local output); the
+   remaining callers are test and bench only. **Confirmed rejection**
+   (internal hardening).
+
+6. Secret-state retention class `5cfe7f7`, `c02dc5e`, `a3e30b3`, `36a009f`
+   (**Low to Medium** — stand). Assumption attacked: "no memory-read
+   primitive". Core checks every secp256k1 return value, so no failed-call
+   output is reused; elevation beyond the recorded ratings requires a
+   demonstrated Core memory-disclosure primitive reaching secp256k1
+   temporaries, and none was demonstrated. **Confirmed rejection**; the
+   severity-ceiling reasoning is sound. See still-open item O1.
+
+7. ECDSA DER `SIZE_MAX` pointer construction `cd8c9f1` (**Low** — stands).
+   Assumption attacked: "not a remote DER vulnerability". Core uses its own
+   lax parser (`src/pubkey.cpp:45`) and never calls
+   `secp256k1_ecdsa_signature_parse_der`; the trigger requires
+   `inputlen = SIZE_MAX`, a contract violation no real caller commits.
+   **Confirmed rejection.**
+
+8. contrib lax-DER/BER parsers `d334351`, `36a009f` (**Medium/Low** —
+   stand). Assumption attacked: "caller-reachable contribution". Core does
+   not build `contrib/`, so these are not reachable from any Core boundary;
+   they remain caller-side issues for direct contrib consumers only.
+   **Confirmed rejection** for Core reachability.
+
+9. Tweak input/output aliasing in `secp256k1_ec_pubkey_tweak_add` and
+   `secp256k1_keypair_xonly_tweak_add` (**Low** — stands). Assumption
+   attacked: "the public contracts do not prohibit this overlap". Core's
+   tweak call sites (`src/pubkey.cpp:341-363`, `src/key.cpp:409-424`) pass
+   distinct output and input objects. **Confirmed rejection.**
+
+10. MuSig low-severity class `64250f7`, `3c1d67b`, and the cleanup set
+    (**Low** — stand). Assumption attacked: "local API-consistency and
+    stale-state hygiene only". The adversarial-PSBT boundary is real: Core
+    parses counterparty pubnonces and partial signatures in
+    `CreateMuSig2AggregateSig` (`src/musig.cpp:197,289`), and no coded cap
+    limits the participant count (`src/script/descriptor.cpp:2051-2070`,
+    `src/psbt.h:231-239`). But all 13 Core musig calls are return-checked,
+    the parse-layer Mediums are already fixed, `n_pubkeys` drives only
+    linear work proportional to real input bytes (33 bytes per key) through
+    the NULL-scratch simple loop, and no PSBT length or count reaches a
+    library allocation. **Confirmed rejection**; the trust boundary is
+    covered by Core's return discipline plus the already-landed parse fixes.
+
+### Proven candidates
+
+None. Every prioritized dismissal survived its falsification attempt. No
+production or test fix commit was needed or made. The only code change
+during the hunt was the temporary 10x26 tripwire described in candidate 2,
+reverted before this record; the working tree was clean
+(`git status --short` empty) at commit time.
+
+### Still-open candidates
+
+- O1. Elevating the secret-retention class above its recorded ratings
+  requires a memory-disclosure primitive in Core that reaches secp256k1
+  secret temporaries. Missing instrument: a whole-Core information-leak
+  audit, which is outside the secp256k1 queue.
+- O2. The dated Core-side campaign records (cmpctblock, mempool, BIP324
+  transport, block replay, and the other "Finding: none" Core replays) are
+  Core fuzz-campaign negatives, not secp256k1 dismissals; re-running Core
+  campaigns at longer budgets was not in this queue. Missing instrument: a
+  dedicated Core fuzz campaign with fresh corpora, if Core-side hunting is
+  wanted.
+
+Verification: this commit is documentation-only. The code tree is identical
+to the state verified by `ctest --test-dir build-rh-int64` (forced-int64 /
+10x26, Clang ASan/UBSan): 237/237 tests passed, exit 0. The candidate-2
+measurements above were taken with the same build plus the temporary
+tripwire; the per-target libFuzzer campaigns used the matching
+`SECP256K1_FUZZ_USE_LIBFUZZER=ON` build with `-workers=2 -jobs=2
+-max_total_time=90`, all exit 0.
