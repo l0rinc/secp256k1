@@ -21903,6 +21903,157 @@ empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
 
+## 2026-07-19 Core `addrman` state and consistency-checker replay
+
+This entry covers the stateful peer-address manager target. The target
+deserializes optional `peers.dat`-shaped state, performs fuzz-selected adds,
+promotions, failures, collision resolution, service updates, selection, and
+serialization, then leaves the result alive through its public query paths.
+
+### Source, corpus, and build anchors
+
+The authoritative baseline was exact Bitcoin Core master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Relevant hashes were:
+
+    src/test/fuzz/addrman.cpp       7747e2efaa055e96444dc8582d1adef61fb4eda4f6b6c6cfaaebdfc3fc8fb83a
+    src/addrman.cpp                 b96f2c0f11ba797c3f7e65a2b52f599df81d1723538f409f1286d4bda4d6f1bf
+    src/addrman.h                   60837f602183a22416438ba430ecb1664ee58119e9bb2a41f874886c99b4b562
+    src/addrman_impl.h              f861137b2ba16d3cb621a9b5cfe5d0ebd27a36107a17c044915b627e79cb4116
+    src/test/fuzz/util/net.h        d9b3d77677696ef1ca9e44d3d96b39e724edc0873ecab992f95a1d53e7813e67
+
+All five hashes matched in the audit and comparison worktrees at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; no l0rinc source delta was found
+for AddrMan.
+
+The original `addrman` corpus had 1,793 files and 104,247,504 bytes. Its
+sorted relative-path SHA-256 manifest was
+`9ccbbc4d27321b245c0c9afa005cacfc2b6108b3e2c2920890bfcf2bacb76d4e`.
+The separate `addrman_serdeser` corpus had 1,206 files and 23,454,548 bytes
+with manifest
+`5696db9698d145dd4ee3549077e25860782f629e39fdaffee95136dcd238552e`.
+This entry replays `addrman`; every run used an isolated copy and the source
+corpus manifests remained unchanged.
+
+### Ordinary multi-worker replay
+
+The original target's default `GetCheckRatio()` is zero, so this first replay
+measures the existing harness without changing its runtime configuration.
+The command shape was:
+
+    timeout 420s env FUZZ=addrman ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results were:
+
+    exact master  9,058 executions in 301 s; cov 3,825, ft 37,633,
+                 new_units_added 276, peak RSS 803 MiB
+    audit build   8,558 executions in 301 s; cov 3,835, ft 37,920,
+                 new_units_added 250, peak RSS 789 MiB
+    comparison    8,118 executions in 301 s; cov 3,835, ft 37,585,
+                 new_units_added 237, peak RSS 813 MiB
+
+All three reached `DONE` with no assertion, ASan, UBSan, runtime, timeout,
+OOM, or leak diagnostic. Artifact directories were empty and no worker
+remained. The high RSS is an observed property of mutated address-manager
+inputs, not an OOM finding; `-rss_limit_mb=0` was intentional.
+
+### Production consistency checker replay
+
+The fuzzer framework forwards double-dash test arguments to
+`BasicTestingSetup`; running with `--checkaddrman=1` sets the AddrMan
+consistency-check ratio to one. This activates `AddrManImpl::Check()` around
+each public mutation and query, and `CheckAddrman()` verifies the counts,
+address indexes, random-position map, new/tried bucket membership, bucket
+positions, network counters, timestamps, and non-null secret key. This is a
+production-side invariant oracle, not a blanket assertion that a peer-shaped
+serialization is valid.
+
+The full-corpus checker command used the same four-worker sanitizer settings
+with `--checkaddrman=1`. It did not complete within the 420-second outer cap:
+each build reached about 1,623 executed units, produced no assertion or
+sanitizer diagnostic, and emitted three libFuzzer `slow-unit` files for the
+same large mutated inputs (12-19 seconds each). The shell status was 124 from
+the outer timeout. These are resource/coverage observations, not clean
+campaign results and not production bug artifacts. The full checker replay
+is therefore explicitly incomplete and is not counted as proof of exhaustive
+large-input coverage.
+
+To obtain a bounded clean checker result, a derived slice of 1,295 original
+inputs smaller than 4 KiB was used. It contained 590,804 bytes and had sorted
+relative-path manifest
+`89d346cc742dcf03a9bc87be9a25d517e9be6155a89cff781ee6ca09bb3683c2` before
+libFuzzer growth. The command added `-max_total_time=60`, `-timeout=30`, and
+`--checkaddrman=1` to the standard four-worker sanitizer command. Results
+were:
+
+    exact master  5,176 executions in 61 s; cov 3,863, ft 33,720,
+                 new_units_added 307, peak RSS 428 MiB
+    audit build   5,167 executions in 61 s; cov 3,876, ft 33,880,
+                 new_units_added 273, peak RSS 427 MiB
+    comparison    5,175 executions in 61 s; cov 3,873, ft 33,661,
+                 new_units_added 312, peak RSS 428 MiB
+
+All bounded checker runs reached `DONE` with no consistency assertion, ASan,
+UBSan, runtime, timeout, OOM, or leak diagnostic; artifacts were empty and no
+worker remained. The evolved slice copies grew independently, while the
+original full corpus and bounded-slice manifest stayed unchanged.
+
+### Core callers, oracle boundary, and severity
+
+Peer address messages reach `m_addrman.Add` at
+`src/net_processing.cpp:5789`; connection success and service updates reach
+`Good`, `Connected`, and `SetServices` at `src/net_processing.cpp:1748`,
+`src/net_processing.cpp:3638`, and `src/net_processing.cpp:3821`. Address
+selection and outbound scheduling use `Select`, `SelectTriedCollision`,
+`Good`, and `GetAddr` in `src/net.cpp:2819-2873` and `src/net.cpp:3762`.
+Persistent state is loaded and replaced on corrupt/incompatible `peers.dat`
+through `src/addrdb.cpp:196-225`. This makes malformed peer address state and
+failure-path consistency relevant to remote node resource behavior, but it is
+not a block or transaction consensus path.
+
+No production bug, mutation, fix, or deterministic regression test was found.
+A real AddrMan index corruption or memory-safety failure reachable from a
+peer's address messages can be **High** with a minimized caller-level proof;
+a sustained remotely triggerable resource exhaustion can also be High when
+the scheduling/eviction impact is demonstrated. A local `--checkaddrman` slow
+unit is not a remote DoS finding. Invalid-block acceptance or consensus impact
+is not reachable through AddrMan and is not Critical. This campaign therefore
+does not justify a High/Critical production finding.
+
+`src/test/addrman_tests.cpp` covers deterministic additions, ports, selection,
+network filtering, collisions, and `GetAddr` behavior. The fuzz target adds
+arbitrary serialized state and long mixed operation sequences; enabling the
+production checker exposes internal consistency failures that the default
+fuzzer configuration would otherwise leave latent. The separate
+`addrman_serdeser` target remains the focused equality oracle for serialized
+round trips.
+
+Existing master-relative findings remain: scratch allocation wrap is **Medium
+confirmed internal memory safety with low current Core reachability**; 10x26
+magnitude-32 carry loss is **Medium latent correctness**; SHA/HMAC/RFC6979
+finalizer retention is **Medium memory hygiene** without a standalone read
+primitive; and direct API, wallet, callback, opaque-state, cache, and
+harness-performance issues remain below High/Critical without a demonstrated
+Core trigger. A nonce with no standalone cryptographic meaning is not
+Critical merely because it is not cleared.
+
+### Cherry-pick, masking, and verification record
+
+The relevant l0rinc commits were already reconciled and the five source
+hashes show no AddrMan-specific delta. If a later cherry-pick or minor fix
+changes a checker result, retain the clean-master corpus/seed condition,
+exact assertion or slow-input evidence, caller input origin, severity on
+unmodified master, deterministic proof, verifier commands, and whether the
+change preserves, changes, or masks master behavior. A follow-up change that
+merely removes a consistency failure cannot erase a more severe clean-master
+memory or remote-state finding.
+
+Verification included source and binary SHA checks, full-corpus count/byte/
+manifest checks, the complete ordinary three-build sanitizer replay, the
+explicitly incomplete full checker stress, the bounded checker slice,
+diagnostic scans, slow-artifact classification, empty-artifact checks, `ps`
+process cleanup, and `git diff --check`. No production behavior change or
+new l0rinc cherry-pick is claimed by this entry.
+
 ## 2026-07-19 Core `pow_transition` consensus-boundary oracle replay
 
 This entry records the previously undocumented `pow_transition` target. It
