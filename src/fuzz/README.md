@@ -20848,3 +20848,104 @@ caller reachability, and whether the later change masks, alters, or fixes the
 master behavior. This target has no cryptographic nonce; nonce-clearing
 severity is not applicable, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
+
+## 2026-07-19 Core raw transaction serialization and hash oracle replay
+
+The `transaction` target has a useful context-free oracle: it requires the
+immutable and mutable deserializers to agree, and requires `CheckTransaction`
+to agree with its `TxValidationState`. It then exercises standardness, value
+range handling, txid/wtxid, size, weight, finality, RBF, input standardness,
+and JSON conversions, but discards nearly all of those results. In particular
+it does not compare cached txid/wtxid values with independent serialization,
+or assert that size/weight accessors match their wire representations.
+
+The exact-master Core baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/transaction.cpp` is SHA-256
+`9eab2de93005850424ac0627f229ae95db7a56de1171f86d242b47803eb0e587` in the
+exact-master, audit, and comparison checkouts. The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/transaction`: 1,323 files and
+90,450,914 bytes. Each provenance and worker used an isolated corpus copy.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+Corpus-first replays used `FUZZ=transaction`,
+`-merge=0 -runs=1323 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`,
+ASan abort/leak/null-allocation settings, UBSan halt/stacktrace settings, and
+isolated artifact directories. All three exited zero with empty artifacts and
+no assertion, sanitizer, runtime, timeout, OOM, or crash diagnostic. They
+executed 2,326 units and reached coverage/features/RSS of 4520/41596/1014 MiB
+for exact master, 3657/36139/1052 MiB for audit, and 4528/41934/1057 MiB for
+comparison.
+
+Four independent workers per provenance ran in three provenance batches with
+`-workers=1 -jobs=1 -max_total_time=60 -timeout=60` and a 600-second outer
+allowance. All twelve exited zero and left their artifact directories empty.
+Each tuple is executions/coverage/features/new-units/RSS MiB:
+
+    master   2326/4520/42043/0/1052, 2326/4520/41640/0/1046,
+             2326/4520/42066/0/1055, 2326/4520/41629/0/1009
+    audit    2326/3657/35942/0/1036, 2326/3657/36179/0/1059,
+             2326/3657/35996/0/1042, 2326/3657/36018/0/1036
+    compare  2326/4528/41546/0/1042, 2326/4528/41467/0/1062,
+             2326/4528/41620/0/1034, 2326/4528/41866/0/1015
+
+### Mutation proof: a reachable wrong size passes silently
+
+This is an oracle-gap proof, not a production bug claim. The first
+lexicographic corpus input
+`000075b11369fe1eb21c04a78ef44f989703bad8` is 57,460 bytes with SHA-256
+`53ddd5080a74bfece48f85e1ba40dbe1dc27939704f3fba551a41e416e4446e3`.
+In the disposable exact-master build, `src/primitives/transaction.cpp:110`
+was changed only from
+
+    return ::GetSerializeSize(TX_WITH_WITNESS(*this));
+
+to
+
+    return 0;
+
+After rebuilding with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8`,
+the mutated build ran this fixed input once with `FUZZ=transaction`,
+ASan/UBSan abort settings, `-timeout=30`, and `-rss_limit_mb=0`; it exited
+zero with no assertion or sanitizer diagnostic. The restored exact-master
+build returned to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`, and the
+identical seed again exited zero. This is a reachable post-construction
+mutation; an earlier candidate changing `CTransaction::ComputeHash` was
+discarded because it changed regtest genesis construction and aborted
+`kernel/chainparams.cpp:611` before the fuzzer target, so it is not evidence.
+
+The real Core origin for raw transactions is an unauthenticated peer `tx`
+message through `PeerManagerImpl` at `src/net_processing.cpp:4467`, then
+`ChainstateManager::ProcessTransaction` and `AcceptToMemoryPool`; orphan
+reconsideration uses the same path. On-chain transactions also pass
+`CheckTransaction` through `CheckBlock` before `ConnectBlock`. A real cached
+txid/wtxid or size regression reachable on the peer path could corrupt
+mempool identity, dependency indexing, fee/weight policy, or transaction
+relay; High or Critical would require a deterministic caller-level impact.
+The clean master found no such production bug, and this mutation alone is
+not a severity-rated vulnerability. An invalid transaction or block is not
+automatically Critical without demonstrating the downstream consensus or
+memory-safety consequence.
+
+The target's existing `CheckTransaction`/deserializer assertion is strong for
+context-free rejection, but its hash/size calls are coverage-only. Future
+hardening should independently serialize the transaction, compare txid and
+wtxid to the cached fields, compare `ComputeTotalSize` and weight to the
+serialized bytes, and check those identities after mutable/immutable
+round-trips. No l0rinc change was cherry-picked here; later fixes or overlays
+must preserve the exact mutation, seed, rejected global-init mutation, caller
+origin, severity, and masking/altering relationship in the ledger and commit
+message. This target has no cryptographic nonce, so uncleared data without
+standalone cryptographic meaning is not Critical solely because it was not
+cleared.
+
+Verifier: private-copy corpus pass; twelve sanitizer workers; mutation build
+and fixed-seed replay; restored clean-master build and identical-seed replay;
+`git diff --check`; exact-master source and binary clean; no fuzz jobs remain.
