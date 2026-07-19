@@ -19857,6 +19857,96 @@ the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
 
+## 2026-07-19 Core external block-file import reachability gap
+
+The `load_external_block_file` target supplies a fuzzed `AutoFile` to both
+Core external-import modes: reindex-style loading with an out-of-order-parent
+map and `-loadblock`-style loading without that map. The production routine
+scans message-start/size frames, deserializes headers and blocks, handles
+unknown parents, calls `AcceptBlock`, and may activate genesis or update
+pruning state. The harness has no postcondition on block-index state,
+`FlatFilePos`, unknown-parent tracking, accepted-block count, or chain tip.
+Consequently, a clean run only proves that this generated file stream did not
+crash the scanner; it does not prove that block import or validation was
+exercised.
+
+The exact-master Core baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/load_external_block_file.cpp` is SHA-256
+`9ce2de4212db74c4d4b77825ec659d933a7f692a46cf357cc21c8df6576f2a02` in the
+exact-master, audit, and comparison checkouts. The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/load_external_block_file`: 577 files
+and 68,776,078 bytes. Each provenance and worker used an isolated copy.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+Corpus-first replays used `FUZZ=load_external_block_file`,
+`-merge=0 -runs=577 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`,
+ASan abort/leak/null-allocation settings, UBSan halt/stacktrace settings, and
+isolated artifact directories. All three exited zero with empty artifacts and
+no assertion, sanitizer, runtime, timeout, OOM, or crash diagnostic. They
+executed 762 units and reached coverage/features/RSS of 2356/23874/672 MiB
+for exact master, 2376/23984/669 MiB for audit, and 2376/23980/671 MiB for
+comparison.
+
+Four independent workers per provenance were rerun in three four-worker
+batches with `-workers=1 -jobs=1 -max_total_time=60 -timeout=60` and a
+600-second outer allowance. The initial all-provenance attempt used a
+180-second wrapper and was excluded because eleven wrappers timed out during
+corpus initialization; their logs contained no sanitizer diagnostic or
+artifact. The proper rerun had all twelve workers exit zero with empty
+artifacts. Each tuple is executions/coverage/features/new-units/RSS MiB:
+
+    master   761/2356/23789/0/669, 761/2356/23863/0/670,
+             762/2356/23798/0/669, 762/2356/23880/0/669
+    audit    762/2376/24147/0/670, 761/2376/23958/0/673,
+             762/2376/24245/0/670, 761/2376/23941/0/670
+    compare  762/2376/23981/0/671, 762/2376/24508/0/667,
+             762/2376/24083/0/672, 761/2376/24030/0/672
+
+### Reachability proof: no corpus input reaches `AcceptBlock`
+
+In the disposable exact-master build, a symbolized GDB replay set a
+breakpoint at `src/validation.cpp:5050`, the `AcceptBlock` call inside
+`ChainstateManager::LoadExternalBlockFile`. The command used the original
+577-file corpus, `FUZZ=load_external_block_file`, `-runs=577`,
+`-timeout=30`, and `-rss_limit_mb=0`. It completed 761 executions, exited
+zero, and reported that the breakpoint was never hit. The same probe against
+the first lexicographic seed
+`009343fe5e65cbc604883df63227f992d59a2c6f` (1,535 bytes) also exited without
+the breakpoint. The corpus therefore reaches the scanner and deserialization
+coverage, but no seed supplies a file-provider stream that becomes a block
+accepted by Core. No production mutation or vulnerability claim is made:
+mutating an unreachable `AcceptBlock` postcondition would not be strong proof.
+
+The real callers are local node startup paths: reindex invokes this routine
+from `src/node/blockstorage.cpp:1298`, while `-loadblock` invokes it at
+`:1316`. The input is a local block file, not an unauthenticated peer message;
+peer blocks enter `ProcessNewBlock` through a different path. A real local
+import crash or block-index corruption would need a deterministic caller
+reproduction and would generally be Medium or High based on availability or
+persistent-state impact. It cannot be rated Critical merely because the file
+contains an invalid block, and this campaign found no master production bug.
+
+The missing oracle is also a domain-construction gap. Future hardening should
+construct a valid framed block file from a deterministic regtest chain, mix
+it with malformed and out-of-order frames, assert `CheckBlockIndex()` and
+parent-map cleanup after each mode, and compare accepted/indexed state with a
+direct `AcceptBlock` model. No l0rinc change was cherry-picked here; any later
+fix or overlay must preserve this no-hit result, the exact corpus/probe, Core
+caller origin, severity reasoning, and masking/altering relationship in the
+ledger and commit message. This target has no cryptographic nonce, so
+uncleared data without standalone cryptographic meaning is not Critical solely
+because it was not cleared.
+
+Verifier: private-copy corpus pass; twelve proper sanitizer workers after the
+wrapper rerun; corpus-wide and fixed-seed symbolized GDB probes; `git diff
+--check`; exact-master source and binary clean; no fuzz jobs remain.
+
 ## 2026-07-19 Core BIP157 block-filter hash oracle gap
 
 The `blockfilter` target deserializes a `BlockFilter`, then calls
