@@ -19857,6 +19857,129 @@ the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
 
+## 2026-07-19 Core block-tree database round-trip replay
+
+The `block_index` target covers a different boundary from `block_index_tree`:
+it writes synthetic `CBlockFileInfo` records and disk block-index records to a
+memory-only `BlockTreeDB`, then reads every file record, the last-file marker,
+reindexing state, an arbitrary named flag, and all block-index entries back.
+It finishes with `LoadBlockIndexGuts`, including proof-of-work validation and
+reconstruction through the production deserializer. The relevant contracts
+are exact file metadata round trips, `DB_LAST_BLOCK` matching the highest
+written file, true/false reindexing persistence, named-flag persistence, and
+block-index records surviving serialization and reload. The fuzzer uses a
+hardcoded genesis hash and `nBits` so its generated records satisfy the PoW
+gate; that is a harness precondition, not a claim that arbitrary wire input is
+accepted as a valid block.
+
+The exact-master baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/block_index.cpp` is SHA-256
+`40a815ea7848db1d7a2b41e1e202cc3f81c742e58b05b0ec8b680ae9bf68af5a` in the
+exact master and comparison checkout. The source corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/block_index`: 467 files and 454,540
+bytes. Each provenance used a private copy of those files, so the workers'
+generated corpus entries did not change the shared baseline.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+corpus-first command shape was:
+
+    timeout 240s env FUZZ=block_index \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 <binary> corpus \
+      -merge=0 -runs=467 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+The exact-master, audit, and comparison replays each executed 469 units and
+exited zero with empty artifacts and no ASan, UBSan, runtime, assertion,
+timeout, OOM, or crash diagnostic. They reached respectively coverage/features
+3994/22476, 3976/21868, and 3976/21825, with peak RSS 477/475/476 MiB.
+
+Four independent sanitizer workers per provenance then ran for 60 seconds
+with `-workers=1 -jobs=1 -max_total_time=60`, `-timeout=60`, and the same
+artifact and sanitizer settings. Every one of the twelve workers exited zero,
+emitted final statistics, and left its artifact directory empty. The worker
+execution/coverage/features/new-unit/RSS results were:
+
+    master   1975/3994/22209/110/483, 2243/3995/22594/137/477,
+             2038/3995/22201/118/481, 1783/3995/22325/115/483
+    audit    1927/3977/22092/125/481, 2274/3977/22128/145/485,
+             2035/4119/22898/119/482, 2018/3977/21879/131/480
+    compare  1895/3977/22405/124/483, 2133/3977/22188/129/482,
+             1914/3977/22298/108/486, 1945/3977/22324/112/486
+
+The comparison checkout has 466 changed lines in `validation.cpp` relative to
+exact master. Its negative result is therefore an overlay result and cannot
+mask a master-relative database or startup failure.
+
+### Mutation proof: the oracle catches a wrong last-file marker
+
+This is an oracle proof, not a production bug claim. In the disposable exact-
+master build, `src/node/blockstorage.cpp:98` was changed only from
+
+    batch.Write(DB_LAST_BLOCK, nLastFile);
+
+to
+
+    batch.Write(DB_LAST_BLOCK, nLastFile + 1);
+
+The mutation was rebuilt with `cmake --build /tmp/bitcoin-coinscache-master-build
+--target fuzz -j2`. The first lexicographic corpus input,
+`009c8d65d7f65418dbccbf3217a1f1f276159153`, is 237 bytes with SHA-256
+`4f5cb9573b62bd961eebfd808914d68016dba222de7a4a2301099a21c19e266b`.
+Running it once with `FUZZ=block_index`,
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=0`,
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`, `-runs=1`, and
+`-rss_limit_mb=0` aborted with exit code 77:
+
+    test/fuzz/block_index.cpp:108:
+    Assertion `last_block_file == files_count - 1' failed.
+    SUMMARY: libFuzzer: deadly signal
+
+The symbolized stack is `block_index_fuzz_target` at
+`src/test/fuzz/block_index.cpp:108`, then `LLVMFuzzerTestOneInput`, the
+libstdc++ `std::function` wrapper, and libFuzzer's `ExecuteCallback`. No ASan
+or UBSan report was emitted: this is a deterministic metadata postcondition,
+not a sanitizer-only event. After restoring the exact-master production line
+and rebuilding, the identical input with the same one-run command exited zero
+and emitted no diagnostic. The exact-master fuzzer SHA returned to
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`; the
+exact-master source worktree is clean.
+
+The Bitcoin Core origin is a peer's accepted header or block. Header processing
+runs `PeerManagerImpl::ProcessHeadersMessage` ->
+`ChainstateManager::ProcessNewBlockHeaders` -> `AcceptBlockHeader` ->
+`BlockManager::AddToBlockIndex`, which makes block-index state dirty. Periodic,
+forced, or prune-related `FlushStateToDisk` then calls
+`BlockManager::WriteBlockIndexDB` -> `BlockTreeDB::WriteBatchSync`; startup
+calls `LoadBlockIndexDB` -> `LoadBlockIndexGuts` to reconstruct that state.
+The same production APIs are also reachable from compact blocks, RPC, and the
+kernel interface. The fuzzer's synthetic records model the DB contract, but
+do not establish that invalid block bytes bypass Core's PoW, continuity, or
+consensus checks.
+
+Severity is master-relative. The clean exact master found no production bug,
+so this mutation is not assigned a vulnerability severity and no production
+fix is claimed. If an equivalent real master defect let a remotely supplied
+header persist inconsistent block-file metadata and caused restart failure,
+loss of indexed block data, or forced unsafe reindex behavior, it would need a
+High assessment and possibly Critical depending on demonstrated data-loss or
+availability impact. If the condition cannot be reached from Core's actual
+peer/block path, it is only a nice-to-have database hardening issue. An invalid
+block is not automatically Critical unless the call graph proves it reaches a
+security-relevant failure. No l0rinc commit was cherry-picked here; any later
+fix or overlay that changes this replay must retain the exact master mutation,
+seed, caller reachability, and whether it masks, alters, or fixes the master
+behavior in both the ledger and commit message. This target has no
+cryptographic nonce, so nonce-clearing severity is not applicable and missing
+clearing alone is not Critical without standalone cryptographic meaning.
+
 ## 2026-07-19 Core block-index tree, reorg, and pruning replay
 
 The `block_index_tree` target is a state-transition model for the Core block
