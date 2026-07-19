@@ -24154,3 +24154,171 @@ Medium latent internal correctness; SHA/HMAC/RFC6979 retention is Medium
 memory hygiene; and an uncleared nonce with no cryptographic meaning is not
 Critical by itself. No temporary production mutation remains and no fuzz
 jobs were left running.
+
+## 2026-07-19 Core chain-index accessor contract oracle
+
+This entry records the next Core-side oracle hardening result. The target is
+`src/test/fuzz/chain.cpp`. Its input is a serialized `CDiskBlockIndex` plus
+state-machine operations. The old target deserialized the object, installed a
+safe hash pointer, called accessors and `RaiseValidity`, and discarded the
+results. That made it useful for coverage but weak as a bug-discovery oracle.
+
+### Baseline and source fingerprints
+
+- Exact Bitcoin Core master used for the comparison: `ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+- Audit parent before this harness commit: `4b90f5b796`.
+- Original `src/test/fuzz/chain.cpp` SHA-256:
+  `849ecd5beae870a8320fdad764771ec86dc20afbc5fda0e4eb77c54e01435cea`.
+- Patched `src/test/fuzz/chain.cpp` SHA-256:
+  `00d78ca61103a7cfdd1bd8c385618faf48c7e2ed279a33d3fa7d2017a0581022`.
+- Production `src/chain.h` SHA-256:
+  `7996088d27e7fc75e80822e477817e353c331d5eedc49a5b60069e2af84e446f`;
+  it is byte-identical to exact master after the temporary mutation was
+  restored.
+- Final audit fuzz binary SHA-256:
+  `ef12317be35a781098d37d2e9374588b6bdf869e5bb1f2627b591b929327184b`.
+
+### Contracts added
+
+The harness now checks the contracts that belong at the serialized and
+in-memory boundary, rather than assuming that successful execution means
+valid state:
+
+- A `CDiskBlockIndex` serialization round trip consumes the complete stream
+  and preserves every persisted field.
+- `ConstructBlockHash()` equals an independently assembled `CBlockHeader`
+  hash, including the fuzzed previous-block hash.
+- `GetBlockPos()` and `GetUndoPos()` match the `BLOCK_HAVE_DATA` and
+  `BLOCK_HAVE_UNDO` status flags and their file/offset fields.
+- Block time, maximum time, median time with no parent, and the
+  chain-transaction presence predicate match their stored state.
+- `IsValid(BLOCK_VALID_TRANSACTIONS)` rejects failed-valid entries and agrees
+  with the validity mask.
+- `GetBlockHeader()` has the expected persisted fields and no parent pointer
+  is silently fabricated for a standalone disk index.
+- Copy construction preserves all persisted fields.
+- `RaiseValidity()` is monotonic, is a no-op for failed-valid entries, and
+  preserves unrelated status bits.
+- A plain `CBlockIndex` returns the installed hash and reconstructs the same
+  header fields.
+
+Guarded disk-index reads are performed under `cs_main`; the comparison helper
+is annotated with that lock requirement. The production code was not changed.
+
+### Corpus and sanitizer evidence
+
+The existing corpus was copied privately from
+`/mnt/my_storage/qa-assets/fuzz_corpora/chain` to avoid changing the shared
+corpus. It contains 243 files and 4,702,181 bytes. The final build command
+was:
+
+```text
+cmake --build /tmp/bitcoin-secp256k1-audit-build --target fuzz -j8
+```
+
+The full corpus replay used:
+
+```text
+timeout 240s env FUZZ=chain ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 /tmp/bitcoin-secp256k1-audit-build/bin/fuzz /tmp/secp256k1-next-chain-audit-corpus -merge=0 -runs=243 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=/tmp/secp256k1-next-chain-audit-artifacts/ -print_final_stats=1
+```
+
+It loaded all 243 files, completed 244 executions, reached coverage 546 and
+3,641 features, found zero new units, used 107 MiB peak RSS, and exited 0.
+There were no assertion, ASan, UBSan, timeout, OOM, or crash diagnostics, and
+the artifact directory was empty.
+
+Four disjoint corpus partitions were then run with `-workers=1 -jobs=1
+-max_total_time=60` under the same ASan and UBSan settings. All workers
+exited 0, produced no diagnostics, and left empty artifact directories:
+
+| worker | executions | coverage | features | new units | peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | 48,984 | 543 | 4,173 | 751 | 206 MiB |
+| 1 | 26,295 | 542 | 4,257 | 522 | 311 MiB |
+| 2 | 347,901 | 541 | 3,952 | 1,270 | 120 MiB |
+| 3 | 243,124 | 546 | 4,303 | 1,401 | 143 MiB |
+
+The runs were explicitly checked for `ERROR:`, `Assertion`, sanitizer
+`SUMMARY`, timeout, OOM, and crash output. No fuzz process was left running.
+
+### Differential oracle proof
+
+The proof seed is
+`/mnt/my_storage/qa-assets/fuzz_corpora/chain/6be3d5097269112e0cf05e05103c0e25686f33f3`.
+It is 4,334,815 bytes and has SHA-256
+`cf31ed63171fe34c5af1f1e8b6071272500931153578c38be1e0cba4e63d6de4`.
+
+For a minimal production-code mutation, `src/chain.h:223` was changed from:
+
+```text
+return (int64_t)nTime;
+```
+
+to:
+
+```text
+return (int64_t)nTime + 1;
+```
+
+With the old target, the seed still exited zero. With the new target and the
+mutation, a one-run replay exited 134 at
+`test/fuzz/chain.cpp:79` on:
+
+```text
+assert(disk_block_index->GetBlockTime() == static_cast<int64_t>(disk_block_index->nTime));
+```
+
+The mutation was then removed, the fuzzer rebuilt, and the same replay exited
+zero. This is deterministic evidence that the new assertion detects a modeled
+broken production contract. It is not evidence that exact master currently
+contains that production bug. No production fix or deterministic regression
+test is claimed for this entry because the mutation was intentionally restored
+and no clean-master failure was reproduced.
+
+### Core reachability and severity on master
+
+Relevant Core consumers include `BlockTreeDB::LoadBlockIndexGuts`,
+`BlockTreeDB::WriteBatchSync`, `BlockManager::AddToBlockIndex`,
+`ProcessNewBlockHeaders`, startup and reindex, chain selection, and contextual
+header-time logic. Accepted peer headers reach block-index storage through
+these paths. Network peers supply headers and blocks; they do not directly
+supply arbitrary `CDiskBlockIndex` database bytes to this target.
+
+Therefore the exact-master rating for this result is **no production finding**:
+the added oracle is a correctness guard with local or unreachable accessor
+mismatch impact currently **nice-to-have/low priority**. A real
+peer/header-triggerable inconsistency affecting consensus validation, chain
+selection, restart recovery, or durable index state would need a deterministic
+caller-level reproduction before it could be rated **High** or **Critical**.
+An invalid block is not automatically Critical merely because a constructed
+index object or parser accepts it. If a later proof demonstrates network
+triggerability and consensus, durable-state, or availability impact, severity
+must be reassessed against unmodified master, not against whichever follow-up
+commit happens to hide the trigger.
+
+### Cherry-pick and follow-up protocol
+
+No l0rinc fork commit applies to this target. This harness commit changes only
+the oracle and preserves clean-master production behavior; it does not mask a
+clean-master production trigger. Every subsequent cherry-pick or fix must
+record the exact clean-master seed or an equivalent minimal production
+mutation, the failure stack and exit status, the Core caller and input origin,
+and whether that commit **preserves**, **changes**, or **masks** the original
+behavior. A green follow-up branch cannot downgrade a more severe master
+trigger until the original replay has been repeated. If a potential fix
+changes the behavior needed by a later finding, the context belongs in that
+finding's commit message, or the commits must be merged so the comparison
+remains reproducible. Amend a commit message when new context changes that
+conclusion.
+
+Existing findings remain reiterated at their master-relative ratings:
+
+- `ecmult_multi` scratch-size wrapping: **Medium**, with low demonstrated
+  Bitcoin Core reachability.
+- Forced 10x26 magnitude-32 normalization: **Medium** latent internal
+  correctness risk.
+- SHA, HMAC, and RFC6979 retention: **Medium** memory hygiene.
+- An uncleared nonce with no cryptographic meaning is not **Critical** by
+  itself.
+
+No temporary production mutation remains, and no fuzz jobs were left running.
