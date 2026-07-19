@@ -3144,6 +3144,149 @@ only used normalized magnitude-1 operands and therefore could not distinguish
 a wrong metadata update from a correct one. No production fix or severity
 change is claimed.
 
+## 2026-07-19 Latest-master Schnorr and recovery boundary replay
+
+This entry records a fresh multi-worker replay of the two signature targets
+whose inputs most easily invite an incorrect severity jump. The libsecp clean
+baseline includes `origin/master` at
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, including `e217ead` (`field:
+serialize elements by word`). The Core caller snapshot used for reachability
+was exact Core master `ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. No l0rinc
+commit was added after that libsecp baseline and no production source was
+modified for this replay.
+
+### Target, corpus, and build anchors
+
+The tracked source/corpus inputs were:
+
+| target | source SHA-256 | files | bytes | sorted relative-path manifest |
+| --- | --- | ---: | ---: | --- |
+| `schnorrsig` | `47c871312162705d4355265bf682d4e195dcb64a3d13bb253a71a68552ce822b` | 18 | 670 | `622ca21847c8aa3daab163d0dc595f0d89dafe273bb3500efc19a6f15133ecf7` |
+| `recovery` | `ecdfb380801c2c20be6079d968166f2c5b5528b1f185d8160982f2855d234ae0` | 17 | 782 | `914e3b35321f5cc34c372935f6de9a81378e6760d65efc17f544ae13a23ac5b5` |
+
+The original corpora were copied into four disposable directories and their
+counts, bytes, and manifests remained unchanged. Refreshed Clang ASan/UBSan
+binary hashes were:
+
+```text
+native schnorrsig d4a4b4e25cd6988f7c4f1edf1829afe63372759634989f3e2b4bb52ca9b6d08d
+native recovery   f2611c7446fdee90e087703b23d66e1e10da7a9d00505291fd59e33fae0539bd
+int64  schnorrsig 8665166ad79bedc4315d3c079404d314ef49687f146703fede5f422cefbb3683
+int64  recovery   3cb29f0fef0601aa1da5159fa87ea6cb9ffc2007aad7cdb98ae8a94121ad2b2d
+```
+
+The binaries were refreshed with:
+
+```sh
+cmake --build /tmp/secp256k1-next-asan \
+  --target fuzz_schnorrsig fuzz_recovery -j8
+cmake --build /tmp/secp256k1-next-asan-int64 \
+  --target fuzz_schnorrsig fuzz_recovery -j8
+```
+
+Each target/backend used its own working directory and this command:
+
+```sh
+timeout 200s env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+  UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+  <binary> corpus -workers=4 -jobs=4 -max_total_time=25 -timeout=60 \
+  -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=artifacts/ \
+  -print_final_stats=1
+```
+
+### Oracle scope and results
+
+`fuzz_schnorrsig` checks generated and arbitrary signatures with the
+independent BIP340 point equation, scalar/field bounds, tagged-hash model,
+custom nonce and tag domains, static-context rejection, and Core-shaped
+64/65-byte Taproot witness framing. `fuzz_recovery` independently checks
+recoverable ECDSA point equations, compact-header composition, `r+n` recovery,
+zero-`s` rejection, invalid-point cleanup, and retry behavior. Neither target
+assumes that a successful API call alone proves a valid signature.
+
+All 16 workers emitted `Done` and exited zero. The four-worker sums were:
+
+| backend/target | executions | new units | peak RSS | artifacts/diagnostics |
+| --- | ---: | ---: | ---: | --- |
+| native `schnorrsig` | 401 | 86 | 47 MiB | none |
+| native `recovery` | 731 | 169 | 50 MiB | none |
+| forced-`int64` `schnorrsig` | 236 | 45 | 47 MiB | none |
+| forced-`int64` `recovery` | 435 | 98 | 50 MiB | none |
+
+The worker logs contained no ASan, UBSan, assertion, deadly-signal,
+runtime-error, or abort diagnostic. No slow-unit or crash artifact was
+written, and `pgrep` found no remaining fuzz process. This is a clean
+replay, not a production bug or a fix.
+
+### Bitcoin Core callers and severity
+
+The Schnorr target maps directly to Core's consensus boundary. In exact Core
+master, `EvalChecksigTapscript` invokes
+`GenericTransactionSignatureChecker::CheckSchnorrSignature` at
+`src/script/interpreter.cpp:357-381`; the checker parses the 32-byte x-only
+key and calls `XOnlyPubKey::VerifySchnorr` at `:1727-1751`, which reaches
+libsecp at `src/pubkey.cpp:236-241`. Taproot key-path witness data reaches
+that checker at `src/script/interpreter.cpp:1958-1975`, and block transaction
+validation drives `VerifyScript` at `src/validation.cpp:2029`. A clean-master
+bug that accepts an invalid Schnorr signature or invalid Taproot witness is a
+consensus finding and should be rated Critical after a minimized block/witness
+reproducer proves the actual path. A memory-safety or remotely triggerable
+hang in the same path requires the corresponding caller proof and is at least
+High, potentially Critical where it changes consensus or node safety. This
+replay found neither.
+
+Pre-Taproot ECDSA verification similarly flows from script evaluation through
+`CheckECDSASignature` at `interpreter.cpp:345-350,1702-1723` to
+`CPubKey::Verify` at `pubkey.cpp:283-298`; malformed transaction signatures
+are rejected at the script boundary. A clean-master acceptance of an invalid
+consensus ECDSA signature would likewise be Critical only after the exact
+transaction and validation caller are demonstrated. The fuzzer's generated
+and arbitrary signature seeds are not, by themselves, an invalid-block proof.
+
+The recovery target has a different Core boundary. `CPubKey::RecoverCompact`
+at `src/pubkey.cpp:300-315` is called by `src/common/signmessage.cpp:46` for
+message-signature recovery, while `CKey::SignCompact` is at
+`src/key.cpp:249-269`. These are wallet/message API paths, not block
+acceptance. A recovery mismatch is Low/Medium until it proves a concrete
+wallet identity, authorization, or resource consequence; it is not Critical
+merely because the same curve is used by consensus signatures.
+
+The Core caller source hashes used for this reachability review were:
+
+```text
+src/script/interpreter.cpp 57a6f328c7e6202f499e48366a86eb26e09c8ebb78e92eef7e839207230be333
+src/script/sigcache.cpp     62da43b9482d4b5339ba5418d4ceb9b53f821b281866c3beb4980989d5d2c474
+src/pubkey.cpp              0c86716f3626f591e643bd327fe0e48f6cebba8da3aba91ec6587256d725f1c0
+src/key.cpp                 e6ebcbe39d63f880268256d53d75eecc420379e5f3fa0209b0afba5125269af1
+```
+
+### Findings, mutation, and masking context
+
+No clean-master failure occurred, so this entry claims no production bug,
+mutation, fix, or deterministic regression test. The independent Schnorr and
+recovery equations already have focused mutation proofs in the ledger; this
+replay is the fresh cross-backend negative evidence. Existing findings retain
+their master-relative severities: scratch allocation wrap is **Medium
+confirmed internal memory safety with low current Core reachability**; 10x26
+magnitude-32 carry loss is **Medium latent correctness**; SHA/HMAC/RFC6979
+finalizer retention is **Medium memory hygiene** without a read primitive;
+and direct opaque/API/callback issues remain below High/Critical without a
+real Core trigger. A nonce without standalone cryptographic meaning is not
+Critical solely because it is uncleared.
+
+If a later l0rinc cherry-pick, minor fix, or oracle change alters a signature
+result, preserve the unmodified-master seed, exact mutation and stack if one
+exists, Core input origin, severity, deterministic test, verifier commands,
+and an explicit preserve/change/mask classification in the same commit
+message. A follow-up that accidentally blocks a trigger cannot erase a more
+severe clean-master consensus finding. Any confirmed fix still needs the
+strongest caller-level block/witness or wallet reproducer available.
+
+Verification included both build commands, all four exact worker commands,
+source/binary SHA-256 checks, original corpus count/byte/manifest checks,
+four-worker final-stat scans, sanitizer/assertion diagnostic scans, artifact
+inspection, process cleanup, and `git diff --check`.
+
 For causal proof, a temporary production-code mutation changed the update for
 different magnitudes to the exact expression
 `r->magnitude = (a->magnitude > r->magnitude ? a->magnitude : r->magnitude) + 1`.
