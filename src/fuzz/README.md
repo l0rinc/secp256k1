@@ -23554,3 +23554,184 @@ included source and binary hashes, original corpus count/byte/manifest checks,
 all eight isolated four-worker commands, final-stat aggregation, diagnostic
 and artifact scans, tracked-worktree status, process cleanup, and
 `git diff --check`.
+
+## 2026-07-19 Clean-master 10x26 magnitude-32 normalization differential
+
+This entry reiterates the existing `field_10x26` finding fixed by
+`84549065` (the l0rinc PR #10 import). It is a clean-master proof of the
+original defect, not a new production finding. The exact fetched
+`origin/master` tree was `8c3e6e6d992456d3b9228305ae84a6703273cf70`; it did
+not advance during this replay. The audit tree was
+`6a549afb144901b3fff45847f4fae99734bd7e4e`.
+
+### Exact state, oracle, and hashes
+
+The test forces the 10x26 backend because that is the affected implementation.
+The same backend is selected naturally on 32-bit builds; a normal 64-bit build
+selects int128 unless the test-only override is used. The production source
+SHA-256 values were:
+
+| item | clean master | fixed audit tree |
+| --- | --- | --- |
+| `src/field_10x26_impl.h` | `4c23a9466b333a49e2a974f3472cec8a5379fcd69fb8ff2ebc76d1aafd444784` | `2c642c6c87d53e358c8254b0e3985c2917f999af362afe6dd8e5d0c1478f8289` |
+| `src/fuzz/field.c` | `2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9` | `2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9` |
+| corpus input | `158829afa5615d0664c06a9230d6b8ae822dd94f7251d8d1e9c6f17d5892d8cf` | identical |
+
+The exact original corpus input is 57 bytes:
+`field normalize magnitude32 bounds split zero raise seed` followed by a
+newline. No mutation was applied. `LLVMFuzzerTestOneInput` always executes
+the fixed magnitude-32 check for this target, but the corpus condition is
+recorded so a later replay cannot silently substitute a generated seed.
+
+The oracle constructs `left = secp256k1_fe_get_bounds(16)` and
+`right = secp256k1_fe_get_bounds(16)`, adds them, and checks that the valid
+result has magnitude 32. Since `get_bounds(m)` represents twice `m` times the
+all-ones field value, the exact sum is `64 * (2^256 - 1)`. Its canonical
+residue is `64 * (2^32 + 976)`. The fuzzer compares the normalized bytes with
+that independently calculated 32-byte value, then compares constant-time,
+variable-time, and weak-then-full normalization paths. It does not use a
+production-derived normalized value as the reference.
+
+On clean master, the 10x26 first pass uses 32-bit temporaries. At maximum
+magnitude a limb can reach `2 * 32 * (2^26 - 1) = 0xFFFFFFC0`; after reducing
+the top limb, `t0 + (t9 >> 22) * 0x3D1` exceeds `UINT32_MAX`. The wrapped
+carry is dropped before final reduction. The fixed tree carries this first
+pass through `uint64_t` in `normalize`, `normalize_var`, and `normalize_weak`.
+
+### Differential replay and strongest proof
+
+Both binaries were built directly from their respective production trees with
+Clang, `-O1 -g -DVERIFY -DUSE_FORCE_WIDEMUL_INT64`, the same current
+`field.c`, the same `fuzz.h` contract, the same precomputed tables, and
+`-fsanitize=address,undefined -fno-omit-frame-pointer`:
+
+```sh
+clang -O1 -g -DVERIFY -DUSE_FORCE_WIDEMUL_INT64 \
+  -Iinclude -Isrc -Isrc/fuzz \
+  src/fuzz/field.c src/fuzz/external_callbacks.c \
+  src/precomputed_ecmult.c src/precomputed_ecmult_gen.c \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -o /tmp/secp256k1-clean-master-latest/fuzz_field_clean_file
+
+clang -O1 -g -DVERIFY -DUSE_FORCE_WIDEMUL_INT64 \
+  -Iinclude -Isrc -Isrc/fuzz \
+  src/fuzz/field.c src/fuzz/external_callbacks.c \
+  src/precomputed_ecmult.c src/precomputed_ecmult_gen.c \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -o /tmp/secp256k1-field-fixed-file
+```
+
+The clean temporary driver added only a diagnostic print to `FUZZ_CHECK`; it
+did not change the condition or production code. The clean binary SHA-256 was
+`8d81a8333779c86ea81fb440ca0636ea43c0b71ba51c3e9ae19db834da724f7d`; the
+fixed binary was
+`4a06a184444e5428a6e6187dc185b48de9b5d748387e77f33c5ae1f5c14a41cb`.
+
+The exact file-driver commands were:
+
+```sh
+(cd /tmp/secp256k1-clean-master-latest && \
+  ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=1 \
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer \
+  ./fuzz_field_clean_file src/fuzz/corpora/field/magnitude32-normalize)
+
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=1 \
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer \
+/tmp/secp256k1-field-fixed-file \
+  /tmp/secp256k1-oracles-next/src/fuzz/corpora/field/magnitude32-normalize
+```
+
+Results were deterministic:
+
+| tree | result | diagnostic |
+| --- | --- | --- |
+| exact clean master | exit 134 | `FUZZ_CHECK failed at src/fuzz/field.c:72: memcmp(actual32, expected32, sizeof(actual32)) == 0` |
+| fixed audit tree | exit 0 | no ASan, UBSan, assertion, or runtime diagnostic |
+
+The file-driver replay was used for the proof because this toolchain's
+libFuzzer rejected `-handle_abort=1` and kept the deliberate `abort()` under
+its deadly-signal handler. The file driver invokes the same fuzzer entry point
+and input without adding a libFuzzer process-control result. This is stronger
+than treating the green fixed branch as evidence by itself: the unmodified
+master implementation fails first at the independent byte reference, before
+any later state check can accept the wrong residue.
+
+The existing deterministic regression also passes on the fixed tree in a fresh
+forced-10x26 build:
+
+```sh
+cmake -S . -B /tmp/secp256k1-fixed-10x26-proof \
+  -DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64 \
+  -DSECP256K1_ASM=OFF -DSECP256K1_BUILD_BENCHMARK=OFF \
+  -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
+  -DSECP256K1_BUILD_CTIME_TESTS=OFF \
+  -DSECP256K1_BUILD_FUZZ=OFF -DSECP256K1_BUILD_EXAMPLES=OFF
+cmake --build /tmp/secp256k1-fixed-10x26-proof --target tests -j8
+/tmp/secp256k1-fixed-10x26-proof/bin/tests -t=fe_normalize_max_magnitude
+```
+
+The unit exited 0. The original master build and ordinary default-backend
+tests did not catch this because the relevant test requires the documented
+magnitude-32 state and forced 10x26 selection; the default 64-bit backend is
+5x52/int128. The deterministic unit is necessary regression coverage, while
+the fuzzer's independent byte reference is the discovery proof.
+
+### Bitcoin Core caller boundary and severity on master
+
+The caller snapshot was Bitcoin Core commit
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Consensus script evaluation calls
+the public adapters through `src/script/interpreter.cpp:331-350` and
+`src/script/interpreter.cpp:1162-1177`; ECDSA then reaches
+`src/pubkey.cpp:283-297`, and Taproot Schnorr reaches
+`src/pubkey.cpp:236-242`. The generic checker paths are
+`src/script/interpreter.cpp:1689-1723` and
+`src/script/interpreter.cpp:1727-1751`. Those are the actual invalid-block
+and invalid-witness input boundaries considered for severity.
+
+Core's vendored libsecp selection in `src/secp256k1/src/util.h:332-360`
+chooses int128 on normal 64-bit platforms and 10x26 only on the fallback
+platforms or an explicit test override. Thus the proof establishes an
+unfixed production defect on master in a supported alternate field backend,
+but not a naturally wire-reachable bug on the usual 64-bit Core deployment.
+No invalid block or witness has been minimized to this exact maximum-
+magnitude opaque field representation. The finding is therefore **Medium,
+latent internal field correctness on master**, with potentially High impact if
+an in-contract 10x26 path is shown to reach it. It is not claimed as High or
+Critical merely because Core eventually calls field arithmetic. High/Critical
+requires a reproducible peer-supplied block or witness that causes invalid
+signature acceptance, consensus divergence, memory safety failure, or a
+sustained remote failure on the affected deployment.
+
+For the existing findings, the same Core-aware rule remains in force:
+`ecmult_multi` scratch-size wrapping is **Medium confirmed internal memory
+safety with low current Core reachability**; SHA/HMAC/RFC6979 post-finalization
+retention is **Medium memory hygiene** without a standalone read primitive;
+and an uncleared nonce with no standalone cryptographic meaning is not
+Critical. Any invalid-block or invalid-witness trigger must be rated from the
+actual consequence, not from the presence of malformed input alone.
+
+### Mutation, cherry-pick, and masking ledger
+
+This proof ran before any new cherry-pick. The fixed audit tree already
+contains `84549065` and the separate `f34ff1ba` zero-predicate carry fix.
+`f34ff1ba` cannot mask this result: the clean-master failure is at the
+normalized byte reference in `field.c:72`, before the zero predicates are
+checked. The clean-master replay therefore preserves the original master
+trigger and distinguishes the normalize fix from the later zero-predicate
+fix. The relevant l0rinc PRs #1-#16 remain reconciled by equivalent or
+stronger commits; no additional l0rinc commit was cherry-picked for this
+replay.
+
+If a future production fix, minor fix, oracle edit, or l0rinc cherry-pick
+changes this behavior, the affected commit message and this ledger must state
+the exact unmodified-master seed/corpus condition, mutation if any, failure
+stack and exit status, preconditions and postconditions, Core caller and
+input origin, severity on master, deterministic proof, existing test gap,
+verifier commands, and one of `preserve`, `change`, or `mask`. A green
+follow-up branch must not downgrade this master failure until the original
+seed or a minimal production mutation is rerun. No new production bug is
+claimed by this replay because the fix and deterministic regression already
+exist in `84549065`; this entry supplies the direct exact-master oracle proof
+and the Core-specific severity disposition.
