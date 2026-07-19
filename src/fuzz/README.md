@@ -18834,3 +18834,83 @@ mode, Core caller, existing-test gap, verifier commands/results, and
 master-relative severity recorded here. Future changes must preserve the
 unmodified-master/minimal-mutation baseline and document any masking or
 behavior change from a fix or cherry-pick in the same commit and ledger.
+
+## 2026-07-19 Core direct block-validation differential replay
+
+The direct Core `block` target was exercised as the remaining invalid-block
+oracle. It deserializes peer-shaped `CBlock` bytes and invokes `CheckBlock`
+four ways: with PoW and merkle checks enabled, with each check independently
+disabled, and with both disabled. Its existing differential postconditions
+require that accepting both checks implies accepting each individual check and
+that accepting either individual check implies accepting neither-check mode.
+It then exercises block hashing, merkle/witness roots, witness-commitment
+lookup, weight, dynamic-memory accounting, copying, and nulling. The target
+source SHA-256 is
+`47fe53354e2c5cb37a895566527dd4fa76330eea7a06d1b35aa76a66e8c4a8c0` in both
+the audit checkout and Core `origin/master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+The original 965-file corpus from `/mnt/my_storage/qa-assets/fuzz_corpora/block`
+was copied into separate directories and contains 145,288,774 bytes. The
+large inputs are relevant to resource and deserialization behavior. The
+audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`. The
+comparison binary was `/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. As in
+the other Core campaigns, this comparison executable was not rebuilt from a
+separate clean Core `origin/master` checkout; its checkout is Core `HEAD`
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, 41 commits ahead and 7 behind
+Core `origin/master`. The target source itself is identical to Core master,
+and the provenance limitation is retained instead of overclaiming a pristine
+master result.
+
+The exact audit command was:
+
+    timeout 420s env FUZZ=block \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/block-20260719-audit \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/block-20260719-audit/ \
+      -print_final_stats=1
+
+It completed 19,256 executions in 301 seconds, with 1,394 coverage points,
+18,660 feature points, 401 new units, and 860 MiB peak RSS. The comparison
+command was identical except for the binary, corpus, and artifact paths:
+
+    timeout 420s env FUZZ=block \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/block-20260719-master-clean \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/block-20260719-master-clean/ \
+      -print_final_stats=1
+
+The comparison run completed 17,978 executions in 301 seconds, with 1,394
+coverage points, 18,558 feature points, 374 new units, and 859 MiB peak RSS.
+Both runs exited zero with empty artifact directories and no assertion, ASan,
+UBSan, runtime, timeout, OOM, or crash diagnostic. No production or harness
+assertion was added, no mutation was used, and no production finding, fix, or
+deterministic regression test is claimed from this negative replay.
+
+The concrete Core input origin is a serialized block received from a peer and
+then passed through Core's block processing path, where `CheckBlock` is an
+early consensus/structural gate. A future clean-master failure that accepts a
+malformed or invalid block, disagrees on a consensus-relevant check, corrupts
+merkle/witness state, or causes a remotely reachable memory/race/node-
+availability failure must be replayed on unmodified master or a minimal
+production mutation and rated from that Core impact, potentially High/Critical.
+A standalone memory-accounting discrepancy or harness-only invariant without
+that production consequence remains lower. Record the exact corpus input or
+mutation, preconditions, postconditions, failure and stack, Core caller/input
+origin, existing-test gap, verifier commands/results, and whether a fix or
+l0rinc cherry-pick changes or masks the original master trigger in the same
+commit message and ledger. Existing scratch-wrap, 10x26 carry, and SHA/HMAC/
+RFC6979 memory-hygiene findings retain their recorded Medium severities, and
+uncleared nonce data without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
