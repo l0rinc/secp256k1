@@ -19966,6 +19966,113 @@ fixes the master behavior in both the ledger and commit message. This target
 has no cryptographic nonce; missing nonce clearing alone is not Critical
 without standalone cryptographic meaning.
 
+## 2026-07-19 Core invalid-block validation replay and oracle gap
+
+The `block` target deserializes a `CBlock` with witness data and calls
+`CheckBlock` four ways: with both PoW and merkle checks, with PoW only, with
+merkle only, and with neither. Its existing oracle checks that every validation
+state is terminal, that success with stronger checks implies success with
+weaker checks, that block dynamic usage grows when wrapped in a shared pointer,
+and that `SetNull()` makes a copied block null. It also exercises block hash,
+string, merkle, witness-merkle, weight, and witness-commitment helpers.
+
+This is meaningful context-free validation coverage, but it is not a complete
+invalid-block oracle. The cross-mode implication can accept a consensus bug
+that returns `true` consistently for an invalid block, and the target does not
+call `ProcessNewBlock`, `AcceptBlock`, `ContextualCheckBlock`, or
+`ConnectBlock`. An empty block should be rejected by `CheckBlock`; that exact
+expected outcome is not asserted today.
+
+The exact-master baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/block.cpp` is SHA-256
+`47fe53354e2c5cb37a895566527dd4fa76330eea7a06d1b35aa76a66e8c4a8c0` in the
+exact master and comparison checkout. The source corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/block`: 965 files and 145,288,774
+bytes. Each provenance and every worker used a private copy because this
+large target can add corpus units.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+corpus-first command shape was:
+
+    timeout 600s env FUZZ=block \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 <binary> corpus \
+      -merge=0 -runs=965 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All three corpus replays exited zero with empty artifacts and no ASan, UBSan,
+runtime, assertion, timeout, OOM, or crash diagnostic. The exact-master run
+executed 966 units and reached coverage/features 1378/18145 with 857 MiB peak
+RSS. The audit and comparison runs each executed 966 units and reached
+coverage/features 1394/17915 and 1394/18004 with 860/782 MiB peak RSS.
+
+Four independent sanitizer workers per provenance then ran for 60 seconds with
+`-workers=1 -jobs=1 -max_total_time=60`, `-timeout=60`, and the same artifact
+settings. All twelve workers exited zero, emitted final statistics, and left
+their artifact directories empty. The worker execution/coverage/features/new-
+unit/RSS results were:
+
+    master   966/1378/18025/0/793, 2103/1378/18061/64/895,
+             966/1378/17880/0/800, 966/1378/17994/0/765
+    audit    1676/1394/18178/55/916, 966/1394/18117/0/789,
+             966/1394/18054/0/792, 966/1394/18102/0/790
+    compare  1778/1394/18499/41/925, 1921/1394/18595/67/896,
+             966/1394/18009/0/788, 966/1394/17933/0/795
+
+### Mutation proof: a consistent empty-block acceptance passes silently
+
+This is an oracle-gap proof, not a production bug claim. In the disposable
+exact-master build, `src/validation.cpp:3934` was changed by inserting:
+
+    if (block.vtx.empty())
+        return true;
+
+immediately after the existing `fChecked` early return in `CheckBlock`. The
+aggregate fuzzer was rebuilt with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8`. The
+fixed corpus input
+`03991419e89cb1608f5108992851bc274f5b54c5` is 81 bytes, SHA-256
+`69fd51dd381251cba31db34f70d988732a597696bf30737102a4dd5411199a67`, and is
+an 80-byte header followed by a zero transaction count. Running it once with
+`FUZZ=block`, ASan abort/leak/null-allocation settings, UBSan halt/stacktrace
+settings, `-runs=1`, `-timeout=60`, and `-rss_limit_mb=0` exited zero with no
+assertion or sanitizer diagnostic under the mutated production code. The
+mutation makes all four `CheckBlock` calls report success, and the existing
+cross-mode implication accepts that consistent but wrong result. After
+restoring exact master and rebuilding, the fuzzer SHA returned to
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`.
+
+The real invalid-block path is `PeerManagerImpl::ProcessBlock` ->
+`ChainstateManager::ProcessNewBlock` -> `CheckBlock` -> `AcceptBlock` ->
+`ActivateBestChain`; compact-block reconstruction can reach the same path.
+`ProcessNewBlock` deliberately avoids storing a block when `CheckBlock` fails,
+which is a security-relevant boundary. The fuzzer does not prove that the
+mutated empty block reaches `AcceptBlock`, contextual checks, or UTXO
+connection, so this is not evidence of a consensus acceptance bug. A real
+master defect that lets an invalid peer block pass every downstream check could
+be Critical; a defect caught by `ContextualCheckBlock` or `ConnectBlock`, or a
+mutation that cannot be reached from peer input, is lower. Severity must follow
+the full Core call graph and deterministic result, not the fuzzer's `true`
+return alone.
+
+No clean-master production bug or severity-rated vulnerability was found in
+this campaign. The next oracle hardening should assert known-invalid outcomes
+for empty blocks, duplicate coinbases, malformed merkle roots, excessive
+weight/sigops, and invalid witness commitments, then add a minimal stateful
+`ProcessNewBlock`/`TestBlockValidity` model where the required setup is safe.
+No l0rinc fix was cherry-picked here; any later fix or overlay must preserve
+the exact master mutation, empty-block seed, caller reachability, downstream
+outcome, and masking/altering relationship in the same ledger and commit
+message. This target has no cryptographic nonce; missing nonce clearing alone
+is not Critical without standalone cryptographic meaning.
+
 ## 2026-07-19 Core block-tree database round-trip replay
 
 The `block_index` target covers a different boundary from `block_index_tree`:
