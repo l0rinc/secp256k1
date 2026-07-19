@@ -17592,3 +17592,95 @@ and explain that masking relationship rather than lowering severity. A
 confirmed production bug requires the strongest available proof and a
 deterministic regression or functional test; no such fix is claimed for this
 negative replay.
+
+## 2026-07-19 Bitcoin Core parsing and interpreter worker recheck
+
+The audit-linked Core binary from the preceding section was used for a second
+fresh-corpus campaign. It contained Core `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`
+with the secp256k1 audit source snapshot at `eab2def1`, and was built with
+`SANITIZERS=undefined,address,fuzzer` and
+`FUZZ_BINARY_LINKS_WITHOUT_MAIN_FUNCTION=1`. The six target corpora were
+copied from `/mnt/my_storage/qa-assets/fuzz_corpora` to
+`/tmp/secp256k1-next-audit-core-corpora-direct/<target>`; artifacts were
+written to `/tmp/secp256k1-next-audit-core-artifacts-direct/<target>/`.
+No tracked corpus was used as a libFuzzer output directory.
+
+The exact replay command, with `<target>` substituted, was:
+
+    timeout 180s env FUZZ=<target> \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-audit-core-corpora-direct/<target> \
+      -workers=4 -jobs=1 -max_total_time=60 -timeout=30 \
+      -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-audit-core-artifacts-direct/<target>/ \
+      -print_final_stats=1
+
+The results were:
+
+    target                                      seeds   runs     cov    ft
+    key                                          1085    4342    2185  2304
+    pub_key_deserialize                            30  506844     167   202
+    secp256k1_ec_seckey_import_export_der         74  483365     115   145
+    secp256k1_ecdsa_signature_parse_der_lax       86    3329     844  1030
+    script_interpreter                           532    3330    1009  5548
+    script_ops                                    267    7419     665  4042
+
+Every job exited zero. The logs were
+`/tmp/secp256k1-next-audit-core-{key,pub_key_deserialize,script_interpreter,script_ops}.log`,
+`/tmp/secp256k1-next-audit-core-secp256k1_ec_seckey_import_export_der.log`,
+and `/tmp/secp256k1-next-audit-core-secp256k1_ecdsa_signature_parse_der_lax.log`.
+All six artifact directories were empty. There was no assertion, ASan, UBSan,
+runtime error, timeout, OOM, or crash artifact. The two interpreter targets
+reached approximately 570 MB and 622 MB peak RSS under sanitizers; this was
+resource use, not a failure.
+
+The input origins and Core implications differ by target:
+
+* `script_interpreter` consumes a serialized transaction with witness data,
+  script code, amounts, signature-hash types, and BASE/WITNESS_V0 modes. Its
+  `SignatureHash` and interpreter boundary is the strongest path in this
+  campaign: a clean-master acceptance/equation discrepancy, memory failure,
+  or race reachable from an invalid block or witness is rated High/Critical
+  from demonstrated consensus or node impact.
+* `script_ops` mutates scripts and exercises opcode parsing, push-only and
+  witness-program recognition, sigop counting, and unspendable checks. It is a
+  useful malformed-script boundary, but it does not itself prove consensus
+  impact without a `VerifyScript` or block-validation caller.
+* `secp256k1_ecdsa_signature_parse_der_lax` exercises the helper used by
+  `CPubKey::Verify` and `CPubKey::CheckLowS`. A matching invalid transaction or
+  witness signature that changes acceptance is potentially High/Critical; a
+  direct helper discrepancy without that Core construction remains below
+  that rating.
+* `pub_key_deserialize` exercises generic `CPubKey::Unserialize` state. It is
+  relevant to serialized wallet, PSBT, and key-bearing objects, but the
+  target alone does not establish that arbitrary bytes reach a consensus
+  validation call. Promotion requires that caller proof.
+* `key` and `secp256k1_ec_seckey_import_export_der` exercise private-key
+  validity, derivation, encoding, signing-provider, and wallet/API state.
+  Invalid block or witness bytes do not construct a private key through these
+  target contracts, so a failure here remains wallet/API severity unless a
+  separate Core path demonstrates otherwise.
+
+No production finding, fix, or deterministic regression test is claimed from
+this campaign. The existing findings and severity remain unchanged: scratch
+wrap is **Medium confirmed internal memory safety with low current Core
+reachability**; the 10x26 magnitude-32 carry issue is **Medium latent
+correctness**; SHA/HMAC/RFC6979 finalizer retention is **Medium memory
+hygiene** without a standalone read primitive; and direct API, wallet,
+callback, opaque-state, and local lifecycle findings stay below consensus
+High/Critical without a concrete Core trigger. A nonce without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. Any
+future parser, interpreter, fuzzer oracle, production fix, or cherry-pick
+must record the exact clean-master or minimal-production-mutation baseline,
+corpus bytes or mutation, preconditions, postconditions, observed failure and
+stack, Core caller and input origin, severity on master, existing-test gap,
+verifier commands/results, and whether the change preserves, changes, or
+masks the trigger. If another fix makes a follow-up green, restore and rerun
+the original baseline before changing severity, and document that masking
+relationship in the same commit message and ledger.
