@@ -21766,3 +21766,139 @@ checks, focused package-range diffs, three four-worker sanitizer campaigns,
 empty-artifact checks, diagnostic scans, `ps` confirmation that no fuzz
 process remained, and `git diff --check`. No new l0rinc cherry-pick or
 production behavior change is claimed by this entry.
+
+## 2026-07-19 Core decode_tx parser oracle replay
+
+This entry records the previously undocumented `decode_tx` target in
+`src/test/fuzz/decode_tx.cpp`. It is a parser-boundary replay and must not be
+confused with the already documented `transaction` serialization/hash target
+or with Core's peer wire deserializer.
+
+### Source, corpus, and provenance
+
+The authoritative build was exact Bitcoin Core master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Exact-master source hashes were:
+
+    src/test/fuzz/decode_tx.cpp    7cfa58aeda543664acedd6d05a7865875ca825dda3a25162ddd7cdb5c3975c67
+    src/core_io.cpp                76be48e01be8e83345af181950daa256937f341c61aaf6c3cbb8d0d8f07f2e93
+    src/core_io.h                  146cd72471c2975f73b734c837458f07e914ee6c5cac8844bb2e0486152deac2
+    src/rpc/rawtransaction.cpp     87825f4c1c29479214dbc9be54d7feb1cf84b38f7b40d45b96a9489e62c10da7
+    src/rpc/mempool.cpp             055a8f65065cbec6a87d82a23e3d8a6f1b15adb640cac66ed5273e5a14a9966e
+
+The audit and comparison builds used the same target, `core_io.cpp`,
+`core_io.h`, and RPC hashes at commit
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. Their `net_processing.cpp`
+hash was `6545e6381f786770940ae65ae10c4bb6f8fa8bfd21cb6715a7fd07d5a7f83a41`
+versus exact master's
+`616412f5c6d304545c59d7c3a25919883c4654ef644214eef7ad797ae604c8f8`, an
+unrelated l0rinc network differential. The parser itself and its RPC callers
+were unchanged, so exact master is still the authoritative behavior and
+severity baseline.
+
+The original corpus had 458 files and 12,380,914 bytes. Its sorted
+absolute-path SHA-256 manifest was
+`2ef05ddf13b9153853c94f56e3c16e8885ac44e556d9802328cba657ef910e2e`. Each
+run used an isolated corpus copy; the original manifest remained unchanged.
+
+### Existing Oracle Contract
+
+The harness converts arbitrary bytes to an even-length hex string with
+`HexStr`, then exercises the four `DecodeHexTx` mode combinations:
+
+    false, false  neither legacy nor witness serialization enabled
+    false, true   witness/extended serialization only
+    true, true    witness first, with legacy fallback
+    true, false   legacy/no-witness serialization only
+
+The first result must be false by construction because both decoders are
+disabled. If the combined mode succeeds, at least one single-mode decoder
+must succeed. If legacy-only decoding succeeds, the returned mutable
+transaction must not have witness data and combined decoding must also
+succeed. These postconditions match `DecodeTx`'s documented strategy: try
+extended and legacy serialization according to the flags, require complete
+input consumption, select a result using script-sanity checks, and return
+false only when neither mode decodes.
+
+The target deliberately does not assert consensus validity, because
+`DecodeHexTx` is a syntax/serialization parser and callers perform later
+`CheckTransaction`, script, UTXO, fee, and policy checks. The separate
+`transaction` target covers immutable/mutable decode agreement and raw
+transaction hash/serialization contracts. This target adds mode-selection
+and witness/no-witness implication coverage that the round-trip oracle does
+not directly express.
+
+The command shape was:
+
+    timeout 420s env FUZZ=decode_tx ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results were:
+
+    exact master  13,299 executions in 301 s; cov 634, ft 8,608,
+                 new_units_added 330, peak RSS 506 MiB
+    audit build   15,171 executions in 302 s; cov 633, ft 8,599,
+                 new_units_added 353, peak RSS 498 MiB
+    comparison    12,908 executions in 301 s; cov 633, ft 8,632,
+                 new_units_added 334, peak RSS 506 MiB
+
+All three exited zero. There was no assertion, ASan, UBSan, runtime, timeout,
+OOM, or leak diagnostic and no artifact in any artifact directory. Coverage
+and feature totals are instrumentation/build comparisons only, not evidence
+that one source behavior is more correct than another. Fuzzer hashes after
+the run were:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c98803de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Core Callers and Severity
+
+`DecodeHexTx` is used by local or authenticated RPC inputs including
+`decoderawtransaction` in `rpc/rawtransaction.cpp:428-433`,
+`testmempoolaccept` in `rpc/mempool.cpp:340-360`, and package submission in
+`rpc/mempool.cpp:1401-1426`; wallet and `bitcoin-tx` commands also use it.
+Those callers pass the resulting object into later transaction, script, UTXO,
+fee, and policy validation. The peer `tx` message path at
+`net_processing.cpp:4479-4480` deserializes with `TX_WITH_WITNESS` directly;
+it does not call `DecodeHexTx`. Thus this fuzzer is relevant to RPC/wallet
+parser inputs and later mempool behavior, but it is not direct proof that an
+invalid peer block or transaction wire message reaches this function.
+
+This replay found no production bug, failure stack, mutation, fix, or
+deterministic regression test. A mode-selection or parser-result discrepancy
+is Low/Medium until a concrete RPC, wallet, or mempool consequence is shown.
+A remotely exposed RPC memory-safety or sustained service denial can be High
+only with a reachable caller and reproducer. Invalid-block acceptance or
+remote consensus/memory impact is Critical only with proof through the actual
+Core wire/validation path; parser reachability alone does not justify it.
+
+Existing `src/test/validation_tests.cpp:278-282` exercises selected legacy
+decoding cases, and `transaction` fuzzing covers broader serialization/hash
+round trips. Neither replaces this target's arbitrary flag-combination and
+mode-implication sequence, but neither is evidence of a finding here.
+
+### Findings, Fixes, and Masking Context
+
+No source mutation was used and no production fix or regression test is
+claimed. Existing master-relative findings remain: scratch allocation wrap is
+**Medium confirmed internal memory safety with low current Core reachability**;
+10x26 magnitude-32 carry loss is **Medium latent correctness**;
+SHA/HMAC/RFC6979 finalizer retention is **Medium memory hygiene** without a
+standalone read primitive; and direct API, wallet, callback, opaque-state,
+cache, and harness-performance issues remain below High/Critical without a
+demonstrated Core trigger. A nonce with no standalone cryptographic meaning
+is not Critical merely because it is not cleared.
+
+The relevant l0rinc changes were already reconciled. The changed
+`net_processing.cpp` in the differential builds does not turn this parser
+replay into peer-wire evidence. Any later cherry-pick or minor fix must retain
+the clean-master corpus/seed result, exact mutation and stack if one exists,
+caller input origin, master-relative severity, deterministic regression test,
+verifier commands, and an explicit statement of whether it preserves, changes,
+or masks the master behavior. A follow-up change that accidentally stops a
+failure cannot erase a more severe clean-master finding.
+
+Verification included source and binary SHA checks, corpus count/manifest
+checks, three four-worker sanitizer campaigns, diagnostic scans,
+empty-artifact checks, `ps` confirmation that no fuzz process remained, and
+`git diff --check`. No new l0rinc cherry-pick or production behavior change is
+claimed by this entry.
