@@ -18739,3 +18739,98 @@ underlying defect. Existing scratch-wrap, 10x26 carry, and SHA/HMAC/RFC6979
 memory-hygiene findings retain their recorded **Medium** severities. Uncleared
 nonce data without standalone cryptographic meaning is not Critical merely
 because it is uncleared.
+
+## 2026-07-19 Recoverable-signature lower-S postconditions
+
+The recovery fuzzer previously normalized the signature produced by
+`secp256k1_ecdsa_sign_recoverable` but ignored the normalization return value
+in the main round trip and in the alternate recovery-ID loop. That let a
+regression which emitted a high-S recoverable signature remain hidden: the
+fuzzer would normalize the result before verification, and the recovery
+equation could still pass. The oracle now asserts
+`secp256k1_ecdsa_signature_normalize(...) == 0` at both sites. The assertion is
+on a signature created by the signer and then compact-parsed/converted, so the
+input precondition is the public signing contract, not an arbitrary malformed
+opaque object. Existing postconditions still require compact round-trip
+equality, successful normalized verification, recovery-equation agreement, and
+the original public key.
+
+The exact production-facing Core path is
+`MessageSign -> CKey::SignCompact -> secp256k1_ecdsa_sign_recoverable`; Core
+uses this for message-signing/RPC and authentication-style APIs, not for block
+or witness validation. Therefore this oracle hardening is not a consensus
+High/Critical finding. A future clean-master discrepancy in this signing path
+would be rated from demonstrated compact-signature compatibility,
+authentication, wallet, memory, or availability impact, generally below
+consensus severity absent a concrete reachable consequence. An invalid block
+cannot invoke the signing path. Uncleared nonce material without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The current Clang ASan/UBSan build used
+`/tmp/secp256k1-oracles-recovery-build/bin/fuzz_recovery`, SHA-256
+`cc44541165f72ea9ff68c295092a69d74f6f125793c337054cbdbf7a5a92d1f7`, built
+from the audit branch after this fuzzer-only change. The deterministic corpus
+check loaded all 17 tracked `src/fuzz/corpora/recovery` seeds and completed 18
+runs in one second with exit 0. The four-worker replay loaded 17 seeds and
+completed 2,530 executions in 181 seconds, with 2,771 coverage points, 16,279
+feature points, 684 new units, and 61 MiB peak RSS. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The exact deterministic command was:
+
+    env ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=0 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=0 \
+      /tmp/secp256k1-oracles-recovery-build/bin/fuzz_recovery \
+      -runs=1 -handle_abrt=0 \
+      /tmp/secp256k1-oracles-next/src/fuzz/corpora/recovery
+
+The exact worker command was:
+
+    timeout 240s \
+      env ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/secp256k1-oracles-recovery-build/bin/fuzz_recovery \
+      /tmp/secp256k1-recovery-oracle-corpus-20260719 \
+      -workers=4 -jobs=1 -max_total_time=180 -timeout=30 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-recovery-oracle-artifacts-20260719/ \
+      -print_final_stats=1
+
+The causal oracle proof used an isolated copy of the source and removed both
+`secp256k1_scalar_cond_negate(sigs, high)` and the following `*recid ^= high`
+adjustment in `src/ecdsa_impl.h`. This models a signer that leaves S high while
+leaving the recovery ID consistent with that unnormalized signature. The
+unmodified build passed the fixed
+`src/fuzz/corpora/recovery/core-sign-compact-composition` seed with exit 0;
+the mutation build aborted at the new postcondition with exit 134. The exact
+mutation replay was:
+
+    timeout 20s \
+      env ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=0 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=0 \
+      /tmp/secp256k1-recovery-low-s-mutation-build/bin/fuzz_recovery \
+      -runs=1 -handle_abrt=0 \
+      /tmp/secp256k1-oracles-next/src/fuzz/corpora/recovery/core-sign-compact-composition
+
+The mutation is evidence that the new oracle detects the modeled broken
+condition; it is not a claim that unmodified master currently has that bug.
+The existing unit coverage exercises lower-S normalization and ordinary
+`secp256k1_ecdsa_sign`, while the recovery tests checked compact round trips
+and recovery IDs without asserting the lower-S return value on the
+recoverable-signing path. That is the specific oracle gap this change closes.
+No production code, deterministic production regression test, or severity
+change was made. The existing `noverify_tests` binary was rebuilt together
+with the fuzzer and completed its 16 sequential iterations under ASan/UBSan
+with exit 0 in 89.868 seconds. The exact unit command was:
+
+    timeout 180s \
+      env ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/secp256k1-oracles-recovery-build/bin/noverify_tests
+
+The fuzzer-only assertion is intentionally
+kept in the same commit as this evidence, with the exact mutation, failure
+mode, Core caller, existing-test gap, verifier commands/results, and
+master-relative severity recorded here. Future changes must preserve the
+unmodified-master/minimal-mutation baseline and document any masking or
+behavior change from a fix or cherry-pick in the same commit and ledger.
