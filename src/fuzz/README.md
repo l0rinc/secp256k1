@@ -18217,3 +18217,44 @@ preconditions, postconditions, failure and stack, Core caller/input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger. A green
 post-fix replay must not replace the original master proof.
+
+## 2026-07-19 Extended Schnorr/Taproot worker replay
+
+The standalone Schnorr oracle was extended to a five-minute forced-int64
+10x26 ASan/UBSan run with eight workers. It used a fresh copy of all 18
+tracked `src/fuzz/corpora/schnorrsig` inputs at
+`/tmp/secp256k1-next-long-corpora/schnorrsig`; artifacts were directed to
+`/tmp/secp256k1-next-long-artifacts/schnorrsig/`:
+
+    timeout 420s \
+      /tmp/secp256k1-next-asan-int64/bin/fuzz_schnorrsig \
+      /tmp/secp256k1-next-long-corpora/schnorrsig \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/schnorrsig/ \
+      -print_final_stats=1
+
+The run loaded 18 seeds and completed 1,302 executions in 301 seconds,
+reaching 5,163 coverage points and 32,625 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact; the
+artifact directory was empty. The target exercised BIP340 signing and
+verification equations, x-only parity and tweak transitions, signature
+parsing, nonce/auxiliary state, output cleanup, and reference checks.
+
+The Core boundary is explicit: Schnorr verification can be reached by
+Taproot script validation from an invalid witness, while signing and nonce
+generation are wallet/authorized operations. A future clean-master equation,
+acceptance, memory, or race failure in the actual invalid-witness verifier
+would be rated from demonstrated consensus and node-availability impact,
+potentially High/Critical. A direct signing, nonce, callback, or opaque API
+failure without that Core path remains below that threshold. No production
+finding, fix, deterministic regression test, or severity change is claimed
+from this negative replay. A nonce without standalone cryptographic meaning
+is not Critical merely because it is uncleared.
+
+Any later Schnorr, Taproot, optimization, cherry-pick, or production change
+must amend the same commit message and ledger with the exact clean-master or
+minimal-production-mutation baseline, corpus/mutation condition,
+preconditions, postconditions, failure and stack, Core caller/input origin,
+master-relative severity, existing-test gap, verifier commands/results, and
+whether the change preserves, changes, or masks the trigger.
