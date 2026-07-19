@@ -1174,7 +1174,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &normal_sig, &reparsed_sig) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, normal_compact, &normal_sig) == 1);
     FUZZ_CHECK(memcmp(compact, normal_compact, sizeof(compact)) == 0);
-    secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig);
+    /* Recoverable signing uses the same lower-S signing contract as ecdsa_sign. */
+    FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig) == 0);
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
     FUZZ_CHECK(secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32) == 1);
     secp256k1_fuzz_check_recovery_equation(ctx, &reparsed_sig, msg32, &recovered_pubkey);
@@ -1209,7 +1210,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         }
         FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &reparsed_sig, compact, alt_recid) == 1);
         FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_convert(ctx, &normal_sig, &reparsed_sig) == 1);
-        secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig);
+        FUZZ_CHECK(secp256k1_ecdsa_signature_normalize(ctx, &normalized_sig, &normal_sig) == 0);
         FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &normalized_sig, msg32, &pubkey) == 1);
         if (secp256k1_ecdsa_recover(ctx, &recovered_pubkey, &reparsed_sig, msg32)) {
             secp256k1_fuzz_check_recovery_equation(ctx, &reparsed_sig, msg32, &recovered_pubkey);
