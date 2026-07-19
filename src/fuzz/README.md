@@ -18537,3 +18537,116 @@ minimal-production-mutation baseline, corpus/mutation condition,
 preconditions, postconditions, failure and stack, Core caller/input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger.
+
+## 2026-07-19 Extended Core peer-message and invalid-block replay
+
+The remaining peer-facing target was `process_message`. Its input origin is a
+serialized message supplied by a remote peer: the harness queues a fuzzed
+`CSerializedNetMsg` with `ConnmanTestMsg::ReceiveMsgFrom`, drains
+`ConnmanTestMsg::ProcessMessagesOnce`, and calls the real
+`PeerManagerImpl::ProcessMessage`. The production boundary for a block is
+`ProcessMessage("block") -> ProcessBlock -> ChainstateManager::ProcessNewBlock`;
+the transaction boundary is `ProcessMessage("tx") -> ReceivedTx /
+ProcessNewPackage` after `TX_WITH_WITNESS` deserialization. Thus these runs
+exercise invalid peer block and transaction bytes, rather than only direct
+secp256k1 API calls. The target source was byte-for-byte identical to
+Bitcoin Core `origin/master` at `ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`.
+
+The original 2,386-file corpus was copied without generated files. It contains
+74,604,086 bytes, including 197 `block`-prefixed seeds and 21 `tx`-prefixed
+seeds. The audit-linked ASan/UBSan binary was
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`, SHA-256
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae`, built
+from the audit Core checkout at `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`
+with the secp256k1 audit branch linked in. Every replay used four workers,
+`-rss_limit_mb=0`, value profiling, a 60-second per-input timeout, and a
+separate artifact directory.
+
+The exact unrestricted command was:
+
+    timeout 420s env FUZZ=process_message \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/process_message-20260719-audit \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/process_message-20260719-audit/ \
+      -print_final_stats=1
+
+The exact block command was:
+
+    timeout 300s env FUZZ=process_message LIMIT_TO_MESSAGE_TYPE=block \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/process_message-block-20260719-audit \
+      -workers=4 -jobs=1 -max_total_time=180 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/process_message-block-20260719-audit/ \
+      -print_final_stats=1
+
+The exact transaction command was:
+
+    timeout 240s env FUZZ=process_message LIMIT_TO_MESSAGE_TYPE=tx \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/process_message-tx-20260719-audit \
+      -workers=4 -jobs=1 -max_total_time=120 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/process_message-tx-20260719-audit/ \
+      -print_final_stats=1
+
+No production-side or harness-side assertion was added by this evidence-only
+commit. The assertion gap is intentional and recorded: the next oracle
+change should add only contracts that can be justified from Core ownership,
+such as preservation of the chain-index size after a rejected message,
+peer-send cleanup, and validation-interface quiescence, with matching
+postconditions in the harness. It must first establish a failing clean-master
+or minimal-mutation case so a new assertion does not turn a valid rejection
+into a stale oracle.
+
+The unrestricted replay used
+`/tmp/secp256k1-next-long-core-corpora/process_message-20260719-audit` and
+completed 25,977 executions in 335 seconds, with 14,659 coverage points,
+63,540 feature points, 639 new units, and 821 MiB peak RSS. It exited zero.
+The block-only replay set `LIMIT_TO_MESSAGE_TYPE=block`, used
+`/tmp/secp256k1-next-long-core-corpora/process_message-block-20260719-audit`,
+and completed 31,726 executions in 181 seconds, with 5,617 coverage points,
+24,377 feature points, 1,310 new units, and 553 MiB peak RSS. It exited zero.
+The transaction-only replay set `LIMIT_TO_MESSAGE_TYPE=tx`, used
+`/tmp/secp256k1-next-long-core-corpora/process_message-tx-20260719-audit`,
+and completed 21,011 executions in 121 seconds, with 4,310 coverage points,
+18,054 feature points, 1,032 new units, and 524 MiB peak RSS. It exited zero.
+All three artifact directories were empty; no assertion, ASan, UBSan, runtime,
+timeout, OOM, or crash diagnostic was produced.
+
+The existing harness precondition is a fresh regtest chainstate and reset
+peer/addrman/banman state for each input; its existing postconditions are
+stream-exception containment, validation-interface synchronization, node
+shutdown, and chain-index reset when processing dirties the index. It does not
+yet assert a full peer, outbound-message, mempool, or chainstate invariant, so
+this is negative evidence about the current production path, not proof that
+every state transition is modeled. No failure was produced, so no
+clean-master/minimal-mutation replay, production fix, deterministic
+regression test, or severity claim is warranted from this campaign. The audit
+binary is not described as a clean-master comparison.
+
+If a future run finds a block/witness acceptance error, state corruption,
+peer-triggered memory error, race, or remotely reachable node-availability
+failure in this path, rate it from the behavior of unmodified master and the
+actual Core caller/input origin; an invalid block or witness can therefore be
+High/Critical when the demonstrated impact warrants it. A policy-only,
+wallet-only, local opaque-state, harness-only, or direct callback discrepancy
+must remain lower absent that trigger. Any candidate must be replayed on clean
+master or a minimal production-code mutation before being called a production
+bug. Record the exact corpus input or mutation, preconditions, postconditions,
+failure and stack, Core call path, severity, existing-test gap, verifier
+commands/results, and whether an earlier fix or cherry-pick preserves, changes,
+or masks the finding. Existing findings remain unchanged: scratch-wrap is
+**Medium confirmed internal memory safety with low current Core reachability**;
+the 10x26 magnitude-32 carry issue is **Medium latent correctness**;
+SHA/HMAC/RFC6979 finalizer retention is **Medium memory hygiene** without a
+standalone read primitive; and uncleared nonce material without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
