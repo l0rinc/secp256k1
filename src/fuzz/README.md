@@ -21903,6 +21903,129 @@ empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
 
+## 2026-07-19 Core `pow_transition` consensus-boundary oracle replay
+
+This entry records the previously undocumented `pow_transition` target. It
+constructs one complete mainnet difficulty-adjustment period from fuzzed
+timestamps, version, and compact target, calls `GetNextWorkRequired`, and
+asserts that the returned target satisfies `PermittedDifficultyTransition`.
+
+### Source, corpus, and build anchors
+
+The authoritative baseline was exact Bitcoin Core master
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Relevant source hashes were:
+
+    src/test/fuzz/pow.cpp       fb34de1e611df736b5537e7defbd181cb228d0d7e891ac74c73a6eba275ef0b8
+    src/pow.cpp                 cad89cf4d7b99f3f6d3e93393febe523133320a5f4e92a61c8179bb5ac526a8a
+    src/pow.h                   f24633898a46a41ef8e8c0cd1c8af5b0122c4f83aac03e2e93ac510a3896f719
+    src/chain.h                 7996088d27e7fc75e80822e477817e353c331d5eedc49a5b60069e2af84e446f
+    src/consensus/params.h      5f6d2e2f46ca3b95447dda659bae1d4bd969acd8e4fc55a697c728ca7ad5d995
+
+All five hashes matched in the audit and comparison worktrees at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; no l0rinc cherry-pick changed
+this consensus implementation or target.
+
+The original `pow_transition` corpus had 173 files and 2,590 bytes. Its
+sorted relative-path SHA-256 manifest was
+`87cb559bc9fc6716f96ead07fd58b1638691ed56876ff7b8b2b8d1d5a4572830`.
+Each run used an isolated copy and the original corpus remained unchanged.
+
+### Harness contract and coverage boundary
+
+The harness selects mainnet parameters, clamps an arbitrary compact target to
+the proof-of-work limit, and creates headers at heights 0 through
+`DifficultyAdjustmentInterval() - 1` (2,016 headers on mainnet). The first
+block uses `old_time`; only the last header uses `new_time`. It links each
+`CBlockIndex` to the preceding synthetic index, then calls
+`GetNextWorkRequired(last_block, nullptr, consensus_params)` and asserts
+`PermittedDifficultyTransition(consensus_params, last_height + 1,
+last_bits, new_bits)`.
+
+This is a focused postcondition: it does not claim that every arbitrary
+header is valid. In particular, the target runs mainnet rather than testnet,
+passes a null candidate header to the retarget function, and does not call
+`ContextualCheckBlockHeader`, `CheckProofOfWork`, merkle validation, chainwork
+selection, or the peer header state machine. It therefore does not exercise
+the testnet minimum-difficulty timestamp exception, median-time checks,
+actual wire serialization, or invalid-block acceptance. Those omissions are
+coverage gaps, not reasons to weaken the existing transition assertion.
+
+The command shape was:
+
+    timeout 420s env FUZZ=pow_transition ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results were:
+
+    exact master  192,609 executions in 301 s; cov 255, ft 3,370,
+                 new_units_added 713, peak RSS 501 MiB
+    audit build   194,190 executions in 301 s; cov 254, ft 3,281,
+                 new_units_added 756, peak RSS 502 MiB
+    comparison    203,179 executions in 301 s; cov 254, ft 3,235,
+                 new_units_added 720, peak RSS 519 MiB
+
+All three reached `DONE` and exited cleanly with no assertion, ASan, UBSan,
+runtime, timeout, OOM, or leak diagnostic. Artifact directories were empty,
+the original corpus manifest was unchanged, and no fuzz worker remained.
+Fuzzer hashes after replay remained:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Bitcoin Core callers and severity on master
+
+Consensus block validation calls `GetNextWorkRequired` from
+`validation.cpp:4090-4099` in `ContextualCheckBlockHeader`; a block whose
+`nBits` differs from the computed value is rejected as `bad-diffbits`.
+Initial and redownloaded peer-header processing uses
+`PermittedDifficultyTransition` at `headerssync.cpp:177-193` and
+`headerssync.cpp:215-241` to reject implausible difficulty jumps before
+tracking work. Mining and RPC template construction also call
+`GetNextWorkRequired`, but those are local producers rather than untrusted
+block acceptance.
+
+No production bug, mutation, fix, or deterministic regression test was found.
+If exact master ever produces a false permitted transition or a wrong
+retarget, the initial severity is **High** and can be **Critical** when the
+actual `ContextualCheckBlockHeader` path demonstrates acceptance of an invalid
+block, consensus divergence, or an attacker-controlled chain-selection or
+resource consequence. A mismatch found only in the synthetic helper without
+wire/validation reproduction is not automatically Critical. This campaign
+does not provide that stronger proof, and the audit/comparison builds showed
+no differential result.
+
+`src/test/pow_tests.cpp:33-81` deterministically checks selected retarget
+transitions and their permitted bounds, while lines 84-135 cover malformed,
+negative, overflow, too-easy, and zero proof-of-work targets. The fuzz target
+adds arbitrary compact targets, timestamps, version values, and full-period
+boundary combinations, but leaves the caller-level block and header-state
+coverage to the block, headers-sync, and peer-message targets.
+
+Existing master-relative findings remain: scratch allocation wrap is **Medium
+confirmed internal memory safety with low current Core reachability**; 10x26
+magnitude-32 carry loss is **Medium latent correctness**; SHA/HMAC/RFC6979
+finalizer retention is **Medium memory hygiene** without a standalone read
+primitive; and direct API, wallet, callback, opaque-state, cache, and
+harness-performance issues remain below High/Critical without a demonstrated
+Core trigger. A nonce with no standalone cryptographic meaning is not
+Critical merely because it is not cleared.
+
+### Cherry-pick, masking, and verification record
+
+The relevant l0rinc commits were already reconciled and the five source
+hashes show no difficulty-specific delta. If a later cherry-pick or minor fix
+changes a transition result, retain the clean-master corpus/seed condition,
+exact failure or mutation, caller input origin, master-relative severity,
+deterministic regression proof, verifier commands, and whether the change
+preserves, changes, or masks master behavior. A follow-up change that merely
+stops an assertion cannot erase a more severe clean-master consensus finding.
+
+Verification included source and binary SHA checks, corpus count/byte/manifest
+checks, three four-worker sanitizer campaigns, normal `DONE` summaries,
+diagnostic scans, empty-artifact checks, `ps` process cleanup, and
+`git diff --check`. No new l0rinc cherry-pick or production behavior change is
+claimed by this entry.
+
 ## 2026-07-19 Core `rbf` state oracle strengthening and replay
 
 This entry records the first source-level strengthening of the previously
