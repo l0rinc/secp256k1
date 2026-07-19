@@ -23201,3 +23201,190 @@ checks, three four-worker sanitizer campaigns, diagnostic scans,
 empty-artifact checks, `ps` confirmation that no fuzz process remained, and
 `git diff --check`. No new l0rinc cherry-pick or production behavior change is
 claimed by this entry.
+
+## 2026-07-19 MemorySanitizer arithmetic and backend differential replay
+
+This entry records the retained MSan replay of the five internal arithmetic
+targets: `field`, `group`, `scalar`, `ecmult_const`, and `ecmult_multi`. It
+starts from the exact libsecp `origin/master` baseline
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`, including `e217ead` (`field:
+serialize elements by word`). No l0rinc commit was added after that baseline,
+and no production source was changed for this campaign.
+
+### Target, source, and corpus anchors
+
+The source hashes are the tracked fuzzer translation units. The corpus
+manifest is the SHA-256 of sorted relative file names; content bytes are
+reported separately so generated post-run corpus entries cannot be confused
+with the original input set.
+
+| target | source SHA-256 | original files | original bytes | relative-name manifest |
+| --- | --- | ---: | ---: | --- |
+| `field` | `2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9` | 21 | 742 | `272fd45fe1524a73d1308d9e96c867183f14463932869143771acf4962ab9ee2` |
+| `group` | `c8b122ad7a011834ad7ef3a23d9ab57e006a5be903c17783f66dfdc059aa98b3` | 23 | 837 | `706353b1bda3fdb80bfa8dd02bf148bb54494234947386da1de58a999e4235b2` |
+| `scalar` | `5d06b4bac78016abf1503b0110f99118662679c7ea8dff4ab2c6489ac5fc5ac0` | 8 | 292 | `6e1035218ff78a5a1ec0d9e63e3862f73a7069538639950cffc5511a86ccc4e9` |
+| `ecmult_const` | `7b0bcbb7da144048fce0773eca8bfe3a970f3553c7ae02f811e5f047419e33bf` | 11 | 406 | `501c7a0417afcf90a4bf37409ea89c2e0ac672b35b131ac0aa39ffbae064cce9` |
+| `ecmult_multi` | `aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21` | 29 | 1,028 | `e125fff7a4d0bb3926e4d0276d4357addbec772fc4a61a4fee3207de58223da1` |
+
+The final proof run copied each tracked corpus with `cp -a` into a private
+directory before starting the fuzzer. The tracked counts and manifests above
+were unchanged after the run. The private copies were intentionally allowed
+to grow as libFuzzer discovered new units; their post-run sizes are not input
+provenance. Two preparatory attempts were discarded: one shared relative
+`fuzz-*.log` files between managers, and the next passed the tracked corpus
+directory directly. Neither attempt is used as evidence or cited in the
+results below.
+
+### Oracle contracts and builds
+
+The five targets use real contracts rather than treating a return value as
+valid state. `field` compares arithmetic, normalization, zero predicates,
+serialization, and magnitude metadata against independent byte/arithmetic
+models, including the 10x26 magnitude-32 boundary. `group` compares affine
+and Jacobian equations, infinity/cancellation, batch conversion, aliases,
+rescaling, and invalid opaque-key rejection/cleanup. `scalar` checks
+independent base-2^16 addition, multiplication, inversion, WNAF, shifts,
+serialization, order/zero boundaries, and defined rejection. `ecmult_const`
+compares generator and arbitrary-point multiplication with an independent
+affine model and checks fractions, infinity, x-only rejection, table state,
+and sentinel outputs after failure. `ecmult_multi` compares Strauss,
+Pippenger, simple, filtered, callback-failure, scratch checkpoint, overflow,
+batch, and output-state transitions against an independent sum model.
+
+The native build has assembly and external callbacks disabled. The alternate
+build forces the int64 wide-multiply backend and external callbacks:
+
+    cmake --build /tmp/secp256k1-msan-musig \
+      --target fuzz_field fuzz_group fuzz_scalar fuzz_ecmult_const fuzz_ecmult_multi -j8
+    cmake --build /tmp/secp256k1-msan-int64-ext2 \
+      --target fuzz_field fuzz_group fuzz_scalar fuzz_ecmult_const fuzz_ecmult_multi -j8
+
+Both builds use `RelWithDebInfo` with:
+
+    -O1 -g -fsanitize=memory -fsanitize-memory-track-origins=2
+    -fno-omit-frame-pointer; assembly=OFF; libFuzzer=ON
+
+The build-specific settings are `wide multiply=OFF; external callbacks=OFF`
+for `/tmp/secp256k1-msan-musig`, and `wide multiply=int64; external
+callbacks=ON` for `/tmp/secp256k1-msan-int64-ext2`. Refreshed binary hashes:
+
+    native field          690ac4f166e947907349e3053be8a8095896160709bbc5280cd68bc62f6e7e81
+    native group          9e84dccda752e2207b2a6b7ca6691cfc37d4ddf0fd0044e880b0074ca1caa3d8
+    native scalar         527920c9107978d2867e37b3c88fcc5f5d951b93d8777c0502bfecbac87d08fc
+    native ecmult_const   019f091ea84c61a7aa31658baa5275f97f889e674df3b9c3ebd90a7cbe736858
+    native ecmult_multi   01bfe4c7e2454209c25ad9427f21c30c3b8757566415b59491a474713185487a
+    int64 field           4b8136a8a38a63f27a10360fa646442d59a724ae6fab33a38df4c36963f13b71
+    int64 group           905d4487258eb803339d8179ed83c6c98fae976f089ef20f47d92240f9e14378
+    int64 scalar          420ab356a578ce8f1ce9be34dfc67aa99d444bf47f3df12b855db5941b1eed7c
+    int64 ecmult_const    2181f9723f25ea8055bb7385c2bc8c64906058b1a249490de8a34c7d4b0add62
+    int64 ecmult_multi    816a5feefcf7af6dcc5466c6d94cdb6c868731f40e1ea9de175d2f7646a73c42
+
+Each target/backend used its own private working directory and the same
+bounded worker command:
+
+    timeout 180s env \
+      MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:exit_code=86:print_stats=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+      <binary> <private-corpus> -workers=4 -jobs=4 -max_total_time=20 \
+      -timeout=60 -rss_limit_mb=0 -handle_abrt=0 -use_value_profile=1 \
+      -artifact_prefix=<private-run>/artifacts/ -print_final_stats=1
+
+The exact retained directories were
+`/tmp/msan-arith-proof-native-{field,group,scalar,ecmult_const,ecmult_multi}/run`
+and
+`/tmp/msan-arith-proof-int64-{field,group,scalar,ecmult_const,ecmult_multi}/run`,
+with corresponding `/corpus` paths. All ten commands started from the
+tracked corpus copies, not from an evolved corpus produced by an earlier
+worker.
+
+### Results and failure classification
+
+The four worker final-stat records were summed per target. RSS is the largest
+worker value. All forty workers emitted `Done` and exited zero.
+
+| backend/target | executions | new units | peak RSS | result |
+| --- | ---: | ---: | ---: | --- |
+| native `field` | 637 | 141 | 68 MiB | clean |
+| forced-`int64` `field` | 559 | 122 | 68 MiB | clean |
+| native `group` | 1,854 | 411 | 68 MiB | clean |
+| forced-`int64` `group` | 1,028 | 241 | 68 MiB | clean |
+| native `scalar` | 551 | 135 | 68 MiB | clean |
+| forced-`int64` `scalar` | 354 | 82 | 68 MiB | clean |
+| native `ecmult_const` | 980 | 238 | 69 MiB | clean |
+| forced-`int64` `ecmult_const` | 570 | 134 | 69 MiB | clean |
+| native `ecmult_multi` | 185 | 22 | 69 MiB | clean |
+| forced-`int64` `ecmult_multi` | 120 | 0 | 69 MiB | clean; slow-unit only |
+
+No log contained an MSan, UBSan, runtime-error, assertion, deadly-signal,
+abort, timeout, or OOM diagnostic. The only artifact was the known 22-byte
+libFuzzer slow-unit marker `f3185a099d358ac90b3dc1d4ba06a267f27e7b80` for
+forced-int64 `ecmult_multi`, containing the base64 input
+`cGlwcGVuZ2VyIHdpbmRvdyAxMjYxCg==` (`pippenger window 1261`). It completed
+within the 60-second per-input timeout and is a harness-performance
+observation, not a memory-safety, correctness, or Core DoS finding. No fuzz,
+sanitizer, compiler, or test process remained after the process check.
+
+### Bitcoin Core callers and master-relative severity
+
+Field, group, and scalar operations sit below Core's public-key and signature
+adapters. The relevant paths include `CPubKey::Verify` and
+`XOnlyPubKey::VerifySchnorr` in `src/pubkey.cpp`, and the ECDSA/Schnorr
+consensus checks in `src/script/interpreter.cpp`. A future clean-master
+failure that an invalid block or witness can drive into accepting an invalid
+signature, corrupting validation state, causing memory safety failure, or
+creating a sustained remote failure would be High or Critical according to
+the demonstrated consensus consequence. These generated arithmetic states
+are not themselves a proof that a wire-level block or witness constructs the
+same maximum-magnitude, opaque, alias, or callback state, so this replay found
+no such High/Critical issue.
+
+`ecmult_const` is used by the optional ECDH/EllSwift helpers. Core's direct
+relevant path is `BIP324Cipher::Initialize` ->
+`CKey::ComputeBIP324ECDHSecret` -> `secp256k1_ellswift_xdh`; malformed peer
+EllSwift bytes are a transport input, not a consensus block or witness. A
+clean-master failure there is Medium until a concrete remote crash, sustained
+DoS, or key-agreement/integrity consequence is reproduced, and is not
+Critical merely because the peer input is invalid.
+
+`ecmult_multi` is an internal batch backend used by library tests and
+internal arithmetic paths; this campaign did not establish a current Core
+wire caller that supplies attacker-controlled `n_points`, scratch size, or
+callback state. The existing scratch allocation wrap therefore remains
+**Medium confirmed internal memory safety with low current Core reachability**,
+and the known slow unit remains below High/Critical. A direct internal/API
+failure cannot be promoted to Critical without the actual Core call graph and
+reproducer.
+
+The separate 10x26 magnitude-32 carry loss remains **Medium latent
+correctness**: the focused vector and production mutation prove the arithmetic
+defect on master, but no natural Bitcoin Core wire state has been shown to
+construct that representation. SHA/HMAC/RFC6979 post-finalization retention
+remains **Medium memory hygiene** without a standalone read primitive. A
+nonce with no standalone cryptographic meaning is not Critical merely because
+it is uncleared. No new production finding, fix, or deterministic regression
+test is claimed by this negative replay.
+
+### Mutation, cherry-pick, masking, and verification record
+
+No source mutation was used because both backends passed the original corpus
+replay. The existing field carry mutation, scratch-wrap mutation, hash/callback
+mutations, and other independent proofs remain causal evidence for their
+previously recorded findings; this campaign adds cross-backend uninitialized-
+state evidence only. Existing unit and exhaustive tests cover individual
+formulas and fixed boundaries, but do not replace the combined independent
+models, failure-state checks, private-corpus worker matrix, or alternate
+backend replay. No new deterministic regression test is justified.
+
+The relevant l0rinc PRs #1-#16 remain reconciled by equivalent or stronger
+existing commits, and no l0rinc commit was cherry-picked for this campaign.
+Any later production fix, minor fix, oracle change, or l0rinc cherry-pick that
+changes a trigger must amend the same commit message and this ledger with the
+unmodified-master seed/corpus condition, exact mutation and stack if any,
+preconditions, postconditions, Core caller and input origin, severity on
+master, deterministic proof, existing test gap, verifier commands, and an
+explicit preserve/change/mask statement. A follow-up fix that makes this
+replay green cannot erase or downgrade a worse master-relative behavior until
+the original seed or minimal production mutation is rerun. Verification
+included source and binary hashes, original corpus count/byte/manifest checks,
+all ten isolated four-worker commands, final-stat aggregation, diagnostic and
+artifact scans, tracked-worktree status, process cleanup, and `git diff --check`.
