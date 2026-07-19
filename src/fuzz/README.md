@@ -21620,3 +21620,149 @@ SHA checks, the three four-worker sanitizer commands above, empty-artifact
 checks, `ps` confirmation that no fuzz process remained, and `git diff --check`.
 No production behavior change or new l0rinc cherry-pick is claimed by this
 entry.
+
+## 2026-07-19 Core tx_package_eval exact-master package oracle replay
+
+This entry records the previously uncovered `tx_package_eval` target in
+`src/test/fuzz/package_eval.cpp`. It is a clean-master baseline for package
+acceptance behavior and a differential check against the l0rinc-linked builds;
+it does not promote coverage-only differences into findings.
+
+### Source provenance and corpus
+
+The authoritative baseline was `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. Relevant exact-master hashes were:
+
+    src/test/fuzz/package_eval.cpp  58d3bb90571153b0efda8003662755efb55c36bf4620de36a607d6d37d0039be
+    src/validation.cpp              d557f410ef78679ae2f001fa148c6d735a052a872456fe2ba7b4204ec8332900
+    src/txmempool.cpp               68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651
+    src/txmempool.h                 d2b3100734cb5019f75cacc1d0c41d726d60c3cee6cbed7ec1912dd7efd0b54e
+
+The audit and comparison worktrees were at `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+The package harness and `txmempool` hashes matched exact master. Their
+`src/validation.cpp` hash was
+`c77eda8986ec1be796c2cbcc92834dab42d7113239b70a1154b332f913894b10`, because
+those worktrees include l0rinc chainstate, prune-assumevalid, flush-interval,
+and prevout-fetch changes. A focused diff of the package-acceptance ranges
+(`AcceptMultipleTransactionsInternal`, `AcceptPackage`, `AcceptToMemoryPool`,
+and `ProcessNewPackage`) was empty in both comparisons. Therefore those runs
+are useful differential evidence, but exact master remains the severity and
+production-behavior baseline; the unrelated `validation.cpp` changes must not
+be treated as a clean-master fix or as proof that a later failure is absent.
+
+The original corpus was 2,115 files and 77,567,620 bytes with sorted
+absolute-path manifest
+`7c4a6d70441428c29b7bc6168fb8b2fbd7fcd508148f9dfad5b269acab2a7d89`. Three
+isolated copies were used. The companion `ephemeral_package_eval` target in
+the same source file was not included in this entry.
+
+### Fuzzed state and oracle contract
+
+The initializer mines `2 * COINBASE_MATURITY` blocks, retains mature coinbase
+outpoints and values, sets mock time, and synchronizes validation callbacks.
+For `tx_package_eval`, the harness fuzzes ancestor/descendant limits, mempool
+size, expiry, sigop weighting, standardness, rolling-fee state, prioritization,
+mock time, and optional client maximum feerate. Each iteration creates a
+package of one to 26 transactions while maintaining an explicit outpoint/value
+model. It covers current and TRUC versions, locktime and sequence variation,
+valid and malformed witness stacks, duplicate inputs, null/nonexistent inputs,
+oversized sigop-adjusted outputs, arbitrary fees and output splits, and
+transactions that spend earlier package outputs.
+
+The harness registers callbacks that track created and released spendable
+outpoints and the exact set of transactions added or removed. It invokes
+`ProcessNewPackage` and `AcceptToMemoryPool` with complementary test-accept
+modes, then asserts the single-transaction result/callback relationship and
+the package result map/state consistency through
+`CheckPackageMempoolAcceptResult`. It also checks TRUC invariants, ephemeral
+dust invariants when standardness is enabled, callback synchronization, and a
+final `CTxMemPool::check` under `cs_main`. These are state-transition
+postconditions, not a blanket assumption that any accepted object is valid;
+the expected package validity is derived from the production result state and
+the independent result-shape checks remain active even when the generated
+transaction is invalid.
+
+The command shape for every build was:
+
+    timeout 420s env FUZZ=tx_package_eval ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 <fuzz-binary> <isolated-corpus> -workers=4 -jobs=1 -max_total_time=300 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Results, including the coordinator's corpus reload and setup time, were:
+
+    exact master  2,664 executions in 353 s; cov 14,538, ft 121,111,
+                 new_units_added 2, peak RSS 608 MiB
+    audit build   2,711 executions in 360 s; cov 14,552, ft 120,446,
+                 new_units_added 2, peak RSS 641 MiB
+    comparison    2,729 executions in 361 s; cov 14,554, ft 121,562,
+                 new_units_added 3, peak RSS 635 MiB
+
+All three campaigns exited zero. Their logs contained no assertion, ASan,
+UBSan, runtime, timeout, OOM, or leak diagnostic, and their artifact
+directories were empty. The original corpus manifest was unchanged. The
+sanitizer fuzzer hashes after replay were:
+
+    exact master  95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280
+    audit build   3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae
+    comparison    63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5
+
+### Bitcoin Core callers and severity
+
+The peer package path is `net_processing.cpp:4517-4522`, where a package
+returned by `ReceivedTx` is sent to
+`ProcessNewPackage(m_chainman.ActiveChainstate(), m_mempool, ..., false,
+std::nullopt)`. A package reconsideration after a rejected transaction uses
+the same path at `net_processing.cpp:4537-4541`. `ProcessNewPackage` requires
+`cs_main`, dispatches either package test-accept or child-with-parents
+submission, uncaches unsubmitted/invalid coins, and flushes cache limits at
+`validation.cpp:1813-1843`. RPC `testmempoolaccept` calls the test-accept path
+at `rpc/mempool.cpp:355-360`; `submitpackage` calls submission at
+`rpc/mempool.cpp:1419-1426`. These RPC paths are local/authenticated, while
+the network path is peer-reachable policy/mempool input. A single transaction
+still reaches `ChainstateManager::ProcessTransaction` and
+`AcceptToMemoryPool`, but this target's package call is the direct package
+entry point.
+
+This campaign found no production bug, failure stack, source mutation, fix,
+or deterministic regression test. The generated package is not an invalid
+wire block and this target does not call block validation or make consensus
+accept an invalid block. A package result/policy discrepancy is Low/Medium
+until a concrete node effect is shown. A peer-triggered mempool corruption,
+memory-safety failure, or sustained remote DoS is High only with a reproducible
+caller-level proof. Invalid-block acceptance or remotely triggerable memory
+safety is Critical only with proof through the corresponding Core validation
+caller; package-policy reachability alone does not justify Critical.
+
+`src/test/txpackage_tests.cpp` already has extensive deterministic coverage for
+package topology, result maps, low-fee packages, prioritization, deduplication,
+and package RBF. The fuzz oracle adds malformed combinations and arbitrary
+limits/time/fee state, but it does not prove every network callback ordering,
+restart/persistence transition, or block-connect interaction. Those are test
+gaps, not findings from this replay.
+
+### Findings, fixes, and masking context
+
+No source mutation was used because no failure required one; consequently no
+production fix or regression test is claimed. The master-relative findings
+remain unchanged: scratch allocation wrap is **Medium confirmed internal
+memory safety with low current Core reachability**; 10x26 magnitude-32 carry
+loss is **Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention is
+**Medium memory hygiene** without a standalone read primitive; and direct API,
+wallet, callback, opaque-state, cache, and harness-performance issues remain
+below High/Critical without a demonstrated Bitcoin Core trigger. A nonce with
+no standalone cryptographic meaning is not Critical merely because it is not
+cleared.
+
+The relevant l0rinc commits were already reconciled. The audit/comparison
+`validation.cpp` changes are an explicit differential-build condition, not a
+package fix and not evidence that clean master is patched. Any later
+cherry-pick or minor fix that changes a package trigger must amend the same
+finding commit or ledger entry with the exact corpus seed/mutation, stack,
+caller input origin, severity on clean master, deterministic regression test,
+and verifier commands. It must state whether it preserves, changes, or masks
+the master behavior; a harmless follow-up change that accidentally prevents a
+failure cannot erase a more severe clean-master finding.
+
+Verification included corpus count/manifest checks, source and binary SHA
+checks, focused package-range diffs, three four-worker sanitizer campaigns,
+empty-artifact checks, diagnostic scans, `ps` confirmation that no fuzz
+process remained, and `git diff --check`. No new l0rinc cherry-pick or
+production behavior change is claimed by this entry.
