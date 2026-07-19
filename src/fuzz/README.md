@@ -19857,6 +19857,122 @@ the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
 
+## 2026-07-19 Core invalid UTXO snapshot rejection replay
+
+The `utxo_snapshot_invalid` target is a negative-state oracle for
+`ChainstateManager::ActivateSnapshot`. Its harness always appends a coin with
+an impossible index and height, then requires activation to fail without
+dirtying the shared chainman. The important production contract is that
+`PopulateAndValidateSnapshot` rejects that state and that the failure path
+cleans up the temporary chainstate before returning an error. This is a local
+snapshot-file contract, not an assumption that arbitrary peer block bytes are
+valid snapshot input.
+
+The exact-master Core baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/utxo_snapshot.cpp` is SHA-256
+`6c4ce564980ea7ad198fddf5c9bfbf65bdc07d82206c4e33c13ec086ee2a4ca1` in the
+exact-master, audit, and comparison checkouts. The original corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/utxo_snapshot_invalid`: 805 files and
+18,925,105 bytes. Every provenance used a private copy for this campaign.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+Corpus-first replays used `FUZZ=utxo_snapshot_invalid`,
+`-merge=0 -runs=805 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`,
+ASan abort/leak/null-allocation settings, UBSan halt/stacktrace settings, and
+an isolated `artifact_prefix`. All three replays exited zero with empty
+artifacts and no assertion, sanitizer, runtime, timeout, OOM, or crash
+diagnostic. They executed 934 units and reached coverage/features/RSS of
+6540/32699/415 MiB for exact master, 5552/25744/437 MiB for audit, and
+6715/33282/442 MiB for comparison.
+
+Four independent workers per provenance then ran with
+`-workers=1 -jobs=1 -max_total_time=60 -timeout=60` and the same sanitizer
+settings. All twelve proper worker runs exited zero and left artifacts empty.
+Each tuple is executions/coverage/features/new-units/RSS MiB:
+
+    master   5540/6813/34250/331/409, 5421/6823/34564/294/408,
+             5362/6823/34199/274/408, 5339/6823/34135/303/409
+    audit    5405/6582/28939/317/432, 5499/5835/28164/327/434,
+             5495/5835/27090/282/435, 5254/5552/26423/298/435
+    compare  5363/6715/33841/334/435, 5464/6995/34858/366/441,
+             5263/6715/33935/309/436, 5403/6998/34880/322/435
+
+### Mutation proof: invalid snapshot cleanup is an effective oracle
+
+This is an oracle proof, not a production bug claim. In the disposable
+exact-master Core checkout, `src/validation.cpp:5708` was changed only from
+
+    if (auto res{this->PopulateAndValidateSnapshot(*snapshot_chainstate, coins_file, metadata)}; !res) {
+
+to
+
+    if (auto res{this->PopulateAndValidateSnapshot(*snapshot_chainstate, coins_file, metadata)}; false) {
+
+This models the production failure condition in which the result of snapshot
+population is ignored. The mutation was rebuilt with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8`.
+The first lexicographic corpus input
+`00643621a94bce07bf44c9f023215ed1eafdf8d1` is 3,872 bytes with SHA-256
+`ee6349a989acbb5eea3b087c1da8e8ebb37b3a8d75f2b4a6a92619d81f2fe04f`.
+With `FUZZ=utxo_snapshot_invalid`, one run, a 5-second per-input timeout,
+and ASan/UBSan abort settings, the mutated build reported:
+
+    src/node/blockstorage.cpp:177:30: runtime error:
+    member access within null pointer of type 'const CBlockIndex'
+
+The fuzzer timeout wrapper subsequently returned 124 because the corrupted
+state did not unwind cleanly. A symbolized GDB breakpoint at
+`__ubsan_handle_type_mismatch_v1` gives the deterministic stack:
+`node::CBlockIndexWorkComparator::operator()` at
+`src/node/blockstorage.cpp:177` with `pb=0`,
+`ChainstateManager::ActivateSnapshot` at `src/validation.cpp:5718`,
+`utxo_snapshot.cpp:167` and `:184`, the `utxo_snapshot_invalid` target at
+`:230`, `LLVMFuzzerTestOneInput`, and libFuzzer's `ExecuteCallback`. No ASan
+report was emitted; this is a UBSan null-member access caused by the
+deliberate cleanup-gate mutation. The exact command, with the GDB breakpoint,
+is part of the commit message.
+
+The mutation was then reverted exactly. The clean binary returned to SHA
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`, and the
+identical seed exited zero after one execution with no diagnostic. Thus the
+master-relative result is a validated harness oracle, not evidence that
+unmodified master has a null dereference. No production fix or deterministic
+regression test is claimed by this commit; the harness already catches the
+modeled invalid state through `ActivateSnapshot == error` and
+`!dirty_chainman`.
+
+Bitcoin Core's real caller is the authenticated/local `loadtxoutset` RPC in
+`src/rpc/blockchain.cpp:3543`, which calls `ActivateSnapshot` on a snapshot
+file supplied by the node operator. It is not a direct unauthenticated peer
+block path; peers provide headers and blocks, not UTXO snapshot files. A real
+master cleanup regression reachable through this RPC would be a local
+availability/integrity issue, generally Medium or High depending on proven
+process crash, persistent-state damage, or RPC exposure. It is not Critical
+merely because the file is malformed, and it cannot inherit the Critical
+invalid-peer-block rating without a caller-level path that proves that input
+origin and impact. No cryptographic nonce is involved; uncleared data without
+standalone cryptographic meaning is not Critical solely because it was not
+cleared.
+
+No l0rinc change was cherry-picked into this replay. The comparison result is
+an overlay result and cannot mask the exact-master mutation proof. Any later
+cherry-pick, minor fix, or follow-up must preserve the exact mutation, seed,
+stack, input origin, severity rationale, and whether it masks, alters, or
+fixes the master behavior in this ledger and its commit message. Existing
+tests cover valid snapshot loading and error handling, but this fixed invalid
+coin is the targeted proof that the fuzzer's negative postcondition matters.
+
+Verifier: exact-master mutation build and GDB replay; restored clean-master
+build and identical-seed replay; `git diff --check`; exact-master source and
+binary clean; all twelve workers exited zero with empty artifacts; no fuzz
+jobs remain.
+
 ## 2026-07-19 Core block-header invariant replay
 
 The `block_header` target has materially stronger oracles than the generic
