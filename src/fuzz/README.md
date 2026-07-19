@@ -19322,3 +19322,90 @@ measurements above were taken with the same build plus the temporary
 tripwire; the per-target libFuzzer campaigns used the matching
 `SECP256K1_FUZZ_USE_LIBFUZZER=ON` build with `-workers=2 -jobs=2
 -max_total_time=90`, all exit 0.
+
+## 2026-07-19 Fix Reassessment: Master-Reproducibility and Exploitability per Fix
+
+Method. Every production-code commit on this branch (80 commits touching
+`src/`, `include/`, `contrib/`, excluding fuzz harnesses, tests, and bench)
+was rechecked on two axes: (1) is the addressed defect reproducible on clean
+`origin/master` (`8c3e6e6`), and (2) is it exploitable from a real Bitcoin
+Core boundary (Core `4684a4245d53`, vendored subtree `bd0287d650`; Core
+calls secp256k1 only from `src/key.cpp`, `src/pubkey.cpp`, `src/musig.cpp`,
+checks every return value, builds ecdh OFF and recovery/musig/ellswift/
+schnorrsig/extrakeys ON, uses 5x52 on 64-bit and 10x26 on 32-bit). The
+question was whether any innocent-looking fix conceals a vulnerability whose
+recorded priority understates its exploitability. Result: **no covert
+vulnerability found; every recorded priority is honest.** The per-fix
+verdicts below group commits by finding; ledger cross-references use the
+"Current-Master Finding Ledger" anchors.
+
+- **Memory safety, internal-only (reproducible on master, not exploitable
+  from any boundary):** `cc5132d7` scratch `SIZE_MAX` wrap (only caller is
+  the test/bench-only static `secp256k1_scratch_space_create`,
+  `src/secp256k1.c:249`; Core's MuSig passes NULL scratch,
+  `src/modules/musig/keyagg_impl.h:192`), `df888448` scratch accounting (all
+  four mutators preserve the invariant), `f379521e` scalar
+  `mul_shift_var` shift >= 513 stack OOB (only in-tree callers pass the
+  constant 384, `src/scalar_impl.h:166-167`), `9945973a` WNAF signed
+  overflow (requires `w == 31`; `ECMULT_WINDOW_SIZE` is CMake-capped at 24,
+  `CMakeLists.txt:61-64`, Core builds 15), `a5999437` `gej_rescale` alias
+  (all call sites pass distinct objects, `src/ecmult_impl.h:301`,
+  `src/ecmult_gen_impl.h:261`). Reproducibility: sanitizer/UBSan proofs
+  recorded in the commit messages; independently re-verified by caller and
+  bound enumeration here. **Ratings stand (Low to Medium, internal).**
+- **10x26 carry class (reproducible on master, no API path demonstrated):**
+  `84549065` magnitude-32 normalize/normalizes_to_zero carry loss. The
+  resurrection-hunt section above measured a maximum API-path limb of
+  `0x2bfa4c55` against a carry-loss zone within 2^12 of 2^32. 64-bit Core
+  uses the unaffected 5x52 backend. **Medium/latent stands.**
+- **Public API misuse, not Core-reachable (reproducible on master):**
+  `a8d3f7a6` EllSwift XDH prefix-NULL crash (Core's BIP324 path uses
+  `secp256k1_ellswift_xdh_hash_function_bip324` with valid arguments,
+  `src/key.cpp:327-345`), `32823e13` built-in nonce-callback NULL derefs,
+  `fd296e30` RFC6979 `UINT_MAX` attempt hang (Core signing uses the
+  internal attempt counter starting at 0 and grinds low-R via extra
+  entropy; the value is never attacker-controlled), `24775841`/`d60558a6`
+  ECDH callback guards (module OFF in Core), `d5e103d9` DER `SIZE_MAX`
+  pointer UB (Core uses its own lax parser, `src/pubkey.cpp:45`),
+  `6e578b2d`/`e3e9a16f`/`bb87febf` tweak input/output aliasing (Core
+  passes distinct objects, `src/pubkey.cpp:341-363`,
+  `src/key.cpp:409-424`). **Ratings stand (Low to Medium, API-misuse).**
+- **Opaque-state validation set (reproducible on master via documented
+  mutations; boundary-checked):** `ac5c0482`, `8aaa9ab0`, `e948f17d`,
+  `ad45595a`, `9989133d`, `4a23eadc`, `dc6545fa`, `63fbe427`, `0b37ebe7`,
+  `26f492e8`, `458ca97f`, `3c88abee`, `b3fc0bdc`, `a61d5a2d`, `c3aeb87f`,
+  `97221e84`, `145938ec`, `592ebc6f`. The adversarial-PSBT musig boundary
+  is real (Core parses counterparty pubnonces and partial signatures,
+  `src/musig.cpp:197,289`), but all 13 Core musig calls are return-checked
+  and the impact ceiling on master was an invalid-signature/wallet-session
+  DoS or a release/VERIFY disagreement, not forgery or consensus
+  divergence (consensus verifies only the final Schnorr signature).
+  **Medium/Low ratings stand.**
+- **Secret-state hygiene (lifetime class, no read primitive):**
+  `16c9476c`, `62e3274f`, `0e85dfc3`, `9916d27e`, `2e9e72c2`, `e636aa30`,
+  `56318458`, `ddcc8dcc`, `9104b67f`, `708546d8`, `9a55a455`, `b786d267`,
+  `20af4db2`, `710a676a`, `048533f8`, `8310f5b5`, `142035db`, `dc636a87`,
+  `ef80b7a1`, `f489da1a`, `ade58484`, `32962f84`, `1191f8ba`. Core checks
+  every secp256k1 return value, so failed-call stale outputs are never
+  consumed; elevation requires a Core memory-disclosure primitive (still
+  open as item O1 above). **Ratings stand.**
+- **Dispatch/performance, not correctness:** `a3578835`, `62516511`
+  route built-in callbacks through the caller context's SHA backend;
+  results are SHA256-equivalent either way and Core never installs a
+  custom compressor. `03ad6d6a` field serialize-by-word is an optimization
+  replay, explicitly not security evidence. **Low/Informational stands.**
+- **VERIFY-only and harness/tooling:** `0189ac06`, `0825d70b` (assert-only
+  postconditions), `1108405d`, `c2a2a209`, `091a1d89`, `d12197c9`
+  (tools/tests), plus test/docs commits. Not production behavior.
+- **Retraction audit:** `97270ab7` retracted the unsupported
+  `xonly_pubkey_tweak_add` Out/in alias oracle from `c0c6948`. Verified
+  against the public header: the alias is not a documented contract, the
+  reverted production ordering change is gone, and the supported
+  keypair/pubkey tweak-alias fixes and the even-Y load barrier remain in
+  the tree. The retraction narrows an over-claim; it does not hide a fix.
+
+Conclusion: no fix on this branch conceals a vulnerability whose recorded
+priority understates Core-exploitable impact. One master-reproducibility
+caveat is unchanged from the ledger: the branch's fixes were proven against
+clean master by mutation/sanitizer evidence recorded in each commit; the
+spot checks above re-derived the same conclusions independently.
