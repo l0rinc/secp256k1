@@ -24323,6 +24323,167 @@ Existing findings remain reiterated at their master-relative ratings:
 
 No temporary production mutation remains, and no fuzz jobs were left running.
 
+## 2026-07-19 latest-master transaction serialization and identity oracle
+
+This entry records the transaction target after rebuilding the audit stack on
+Bitcoin Core master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The focused Core
+commit is `6f10154059ae35513b0b1a50ee28a559e2b1725e`, whose parent is the
+latest-master block-index oracle commit `4badfca78efbc4065bb9ecdaab87a096abfe7284`.
+The clean branch was assembled from latest master and the focused audit commits;
+equivalent l0rinc feature commits already present upstream were not replayed as
+duplicates.
+
+### Target and contracts
+
+The original `src/test/fuzz/transaction.cpp` parsed both `CTransaction` and
+`CMutableTransaction`, checked their parse status, and then discarded the
+results of `GetHash()`, `ComputeTotalSize()`, `GetWitnessHash()`,
+`GetTransactionWeight()`, and `GetVirtualTransactionSize()`. It did not assert
+that those APIs agreed with independently serialized data.
+
+The new oracle adds focused contracts only after both parsers accept the same
+input:
+
+* immutable and mutable transaction fields, including witness presence, match;
+* witness and non-witness serialization sizes match `GetSerializeSize`;
+* a witness-preserving serialization round trip consumes the entire stream and
+  preserves the transaction fields;
+* independently hashed `TX_NO_WITNESS` and `TX_WITH_WITNESS` bytes equal TXID
+  and WTXID, including the mutable transaction hash;
+* `ComputeTotalSize` equals serialized-with-witness size;
+* `GetTransactionWeight` equals the independent stripped-size/total-size
+  formula, and virtual size equals the independently rounded weight;
+* the existing JSON guard uses the checked total size rather than recomputing a
+  discarded value.
+
+The original target source SHA-256 is
+`9eab2de93005850424ac0627f229ae95db7a56de1171f86d242b47803eb0e587`.
+The enhanced target source SHA-256 is
+`e69793721d52f885782f9613f38ccbee7d23b45d59006332b2d8e6590c2a2d2f`.
+The production `src/primitives/transaction.cpp` SHA-256 is
+`82fdf15e4e4e08c60511428910bec05170cae594445d1b8b67e9fa9739d8fb9e`,
+identical to master. The final sanitizer fuzz binary SHA-256 is
+`cd3527acb8430efd6ea609858fdb9737c22573d44bb1f2c65a49bcd488103d5e`.
+No production file is changed by the Core commit.
+
+### Corpus, sanitizer, and worker evidence
+
+The private corpus snapshot is
+`/tmp/secp256k1-current-transaction-corpus-20260719`: 1,323 files and
+90,450,914 bytes. The proof input is
+`000075b11369fe1eb21c04a78ef44f989703bad8`, 57,460 bytes, SHA-256
+`53ddd5080a74bfece48f85e1ba40dbe1dc27939704f3fba551a41e416e4446e3`.
+
+The final binary was built with:
+
+```text
+cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8
+```
+
+The full-corpus run used `FUZZ=transaction`,
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1`,
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`, and:
+
+```text
+-merge=0 -runs=1323 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 -print_final_stats=1
+```
+
+It exited zero after 2,326 executions with coverage 4,631, feature count
+42,770, zero new units, peak RSS 965 MiB, and no sanitizer, assertion,
+timeout, OOM, crash, or artifact output. Four concurrent isolated
+`-workers=1 -jobs=1 -max_total_time=60` runs used the same untouched full
+corpus, rather than sharing a mutable corpus directory:
+
+| worker | executions | coverage | features | new units | peak RSS | exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 2,326 | 4,631 | 42,672 | 0 | 1,017 MiB | 0 |
+| 1 | 2,326 | 4,631 | 42,698 | 0 | 1,008 MiB | 0 |
+| 2 | 2,326 | 4,631 | 43,022 | 0 | 1,000 MiB | 0 |
+| 3 | 2,326 | 4,631 | 42,561 | 0 | 1,007 MiB | 0 |
+
+All worker artifact directories were empty. The final fixed-seed replay with
+the restored production source also exited zero. Logs are retained at
+`/tmp/secp256k1-current-transaction-final-replay-20260719/replay.log`,
+`/tmp/secp256k1-current-transaction-clean-final.log`, and the four worker
+directories under
+`/tmp/secp256k1-current-transaction-workers-final-20260719`.
+
+### Differential mutation proof
+
+To prove that the assertions detect a silent contract break, the disposable
+production mutation at `src/primitives/transaction.cpp:112` changed:
+
+```text
+return ::GetSerializeSize(TX_WITH_WITNESS(*this));
+```
+
+to:
+
+```text
+return 0;
+```
+
+The original target plus this mutation replayed the proof input and exited
+zero, because it discarded `ComputeTotalSize()`. The enhanced target plus the
+identical mutation exited 134 at
+`src/test/fuzz/transaction.cpp:93` on:
+
+```text
+assert(total_size == serialized_with_witness.size());
+```
+
+Restoring the production implementation, rebuilding, and replaying the same
+input with the enhanced target exited zero. This is the strongest available
+proof that the new assertion matters while making no claim that master is
+broken. No production fix or deterministic regression test is claimed because
+the exact master implementation passed; the mutation is an oracle-validation
+device only.
+
+### Core caller graph and severity on master
+
+For a network transaction, `PeerManagerImpl::ProcessMessage` deserializes the
+`NetMsgType::TX` payload, obtains TXID and WTXID, and passes the transaction to
+`ChainstateManager::ProcessTransaction` and `AcceptToMemoryPool`. Block paths
+use `CheckBlock`, contextual checks, and `ConnectBlock`. RPC raw transaction
+and mempool paths construct, identify, and report the same object. Hash
+identity feeds mempool, package, relay, wallet, and replacement behavior;
+`ComputeTotalSize` feeds transaction/block response accounting and RPC output;
+weight and virtual size feed policy and fee calculations.
+
+On the unmodified master branch this is **no confirmed production finding**.
+The oracle gap is **Low/Medium discovery value**, not a vulnerability rating.
+A real identity or policy divergence reachable through peer transaction
+acceptance would need a caller-level reproduction before **High**. A consensus
+divergence or remotely reachable memory-safety failure would need direct
+caller-level proof before **Critical**. An invalid transaction by itself is
+not Critical. Existing tests and the old target cover ordinary behavior but
+did not assert these arbitrary composite serialization/cache contracts.
+
+The Core commit and this ledger deliberately reiterate the existing findings:
+`ecmult_multi` scratch-size wrapping is **Medium** with low demonstrated
+Bitcoin Core reachability; forced 10x26 magnitude-32 normalization is a latent
+**Medium** internal correctness concern; SHA, HMAC, and RFC6979 retention is
+**Medium** memory hygiene; and an uncleared nonce with no cryptographic meaning
+is not **Critical** by itself.
+
+### Cherry-pick and masking rules
+
+No additional l0rinc commit applies specifically to this target. If a later
+fix or cherry-pick changes this behavior, the same commit or an amended commit
+message must preserve the exact clean-master seed, mutation, source and binary
+hashes, assertion stack and exit status, Core caller and input origin, test
+gap, verifier commands, severity on master, and an explicit
+`preserved`/`changed`/`masked` classification. A patch that happens to make a
+follow-up seed pass must not downgrade a more severe master trigger until the
+original seed or an equivalent production mutation is replayed. Every claimed
+fix requires deterministic or caller-level proof; this commit claims only
+oracle hardening.
+
+Verifiers passed: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8`,
+`clang-format --dry-run --Werror src/test/fuzz/transaction.cpp`, and
+`git diff --check`. No temporary production mutation remains and no fuzz job
+was left running.
+
 ## 2026-07-19 Core block-index tree position contract oracle on latest master
 
 This entry records the next audit cycle after refreshing Bitcoin Core master.
