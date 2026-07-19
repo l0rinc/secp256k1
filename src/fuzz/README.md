@@ -17910,3 +17910,74 @@ and results, and whether the change preserves, changes, or masks the trigger.
 If a minor fix makes a follow-up green, rerun the original baseline before
 lowering severity and document that masking relationship in the same commit
 message and ledger.
+
+## 2026-07-19 Extended Bitcoin Core interpreter worker replay
+
+The two highest-value invalid-script and signature-state Core targets were
+replayed for five minutes with eight libFuzzer workers against the
+ASan/UBSan audit-linked Core binary at
+`/tmp/bitcoin-secp256k1-audit-build/bin/fuzz`. Fresh copies of the committed
+QA corpora were used, so generated corpus output could not modify the source
+corpus. The exact commands were:
+
+    timeout 420s env FUZZ=eval_script \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/eval_script \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/eval_script/ \
+      -print_final_stats=1
+    timeout 420s env FUZZ=signature_checker \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/signature_checker \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/signature_checker/ \
+      -print_final_stats=1
+
+`eval_script` loaded 1,675 seeds and completed 342,350 executions in 301
+seconds, reaching 1,335 coverage points and 19,561 features.
+`signature_checker` loaded 1,495 seeds and completed 127,362 executions in
+301 seconds, reaching 1,740 coverage points and 24,478 features. Both jobs
+exited zero. Neither produced an assertion, ASan, UBSan, runtime, timeout,
+OOM, or crash artifact; both artifact directories were empty.
+
+The Core reachability and oracle limits matter for severity. `eval_script`
+calls `EvalScript` for BASE and WITNESS_V0 with a neutral
+`BaseSignatureChecker`, while `signature_checker` calls `EvalScript` and
+`VerifyScript` with a checker whose signature, lock-time, and sequence
+results are fuzzed booleans. These targets therefore exercise invalid script
+and witness-shaped interpreter transitions, stack/error handling, and
+signature-check callback boundaries, but they do not independently prove
+ECDSA or Schnorr acceptance. A future clean-master mismatch, state
+corruption, or memory failure in the actual invalid-block or witness path
+would be severity-rated from its demonstrated consensus and node-availability
+impact, potentially High/Critical. A callback-only or synthetic-checker
+finding without that Core consequence remains an internal/API finding.
+
+No production finding, fix, deterministic regression test, or severity change
+is claimed from this replay. Existing findings remain: scratch-wrap is
+**Medium confirmed internal memory safety with low current Core reachability**;
+the 10x26 magnitude-32 carry issue is **Medium latent correctness**;
+SHA/HMAC/RFC6979 finalizer retention is **Medium memory hygiene** without a
+standalone read primitive; and direct API, wallet, callback, opaque-state,
+cache, and harness-performance observations remain below consensus
+High/Critical without a concrete Core trigger. A nonce without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The result is evidence about the audit-linked oracle branch, not a claim that
+unmodified master is bug-free. For any future failure, replay the exact input
+on `origin/master` or a minimal production-code mutation before classifying
+it, then record the preconditions, postconditions, failure and stack, Core
+caller and input origin, master-relative severity, existing-test gap, exact
+verifier commands/results, and whether a cherry-pick, optimization, or minor
+fix preserves, changes, or masks the trigger. If a change masks a stronger
+master failure, retain the original baseline proof and amend the same commit
+message and ledger rather than lowering severity from the green follow-up.
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled.
