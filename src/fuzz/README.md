@@ -18123,6 +18123,57 @@ master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger in both the
 ledger and the same commit message.
 
+## 2026-07-19 Extended context lifecycle worker replay
+
+The context lifecycle oracle was extended to a five-minute forced-int64 10x26
+ASan/UBSan run with eight workers. It used a fresh copy of all 13 tracked
+`src/fuzz/corpora/context` inputs at
+`/tmp/secp256k1-next-long-corpora/context`; artifacts were directed to
+`/tmp/secp256k1-next-long-artifacts/context/`:
+
+    timeout 420s \
+      /tmp/secp256k1-next-asan-int64/bin/fuzz_context \
+      /tmp/secp256k1-next-long-corpora/context \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/context/ \
+      -print_final_stats=1
+
+The run loaded 13 seeds and completed 2,249 executions in 301 seconds,
+reaching 5,041 coverage points and 27,394 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact; the
+artifact directory was empty. Preconditions and postconditions covered heap
+and preallocated contexts, clone sizing, randomize/reset transitions,
+static-context rejection, callback inheritance, invalid flags, overlap
+handling, deterministic ECDSA/Schnorr equivalence, and cleanup after rejected
+secret operations.
+
+The master-relative severity boundary is unchanged. Context creation,
+randomization, cloning, preallocation, and custom callback installation are
+local API/startup or authorized-signing integration contracts; a direct
+caller failure remains below consensus High/Critical without a concrete Core
+input origin and impact. If the same arithmetic, callback, or lifecycle
+failure is shown on a peer-controlled invalid block, witness, or BIP324 wire
+path, rate it from demonstrated consensus, transport, key-agreement, or
+node-availability impact. No production finding, fix, deterministic
+regression test, or severity change is claimed from this negative replay.
+
+Existing findings remain: scratch-wrap is **Medium confirmed internal memory
+safety with low current Core reachability**; the 10x26 magnitude-32 carry
+issue is **Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention
+is **Medium memory hygiene** without a standalone read primitive; and direct
+API, callback, opaque-state, wallet, cache, and harness-performance
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+Any later context change, production fix, cherry-pick, or finding must amend
+the same commit message and ledger with the exact clean-master or
+minimal-production-mutation baseline, corpus/mutation condition,
+preconditions, postconditions, failure and stack, Core caller/input origin,
+master-relative severity, existing-test gap, verifier commands/results, and
+whether the change preserves, changes, or masks the trigger.
+
 ## 2026-07-19 Extended SHA/HMAC/RFC6979 worker replay
 
 The hash oracle was extended to a five-minute forced-int64 10x26
