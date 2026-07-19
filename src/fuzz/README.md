@@ -18174,6 +18174,84 @@ preconditions, postconditions, failure and stack, Core caller/input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger.
 
+## 2026-07-19 Extended BIP324 cipher transport replay
+
+The remaining high-impact Core boundary was the full
+`bip324_cipher_roundtrip` target. It constructs initiator and responder
+private keys and EllSwift encodings, performs BIP324 ECDH initialization,
+derives the transport state, and then exercises multi-message encryption,
+length decoding, AAD/ciphertext corruption, ignore bits, session IDs, and
+garbage terminators. The original 1,482-file corpus from
+`/mnt/my_storage/qa-assets/fuzz_corpora/bip324_cipher_roundtrip` was copied
+separately for each build.
+
+The audit-linked ASan/UBSan run used
+`/tmp/secp256k1-next-long-core-corpora/bip324_cipher_roundtrip` and artifacts
+at `/tmp/secp256k1-next-long-core-artifacts/bip324_cipher_roundtrip/`:
+
+    timeout 420s env FUZZ=bip324_cipher_roundtrip \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/bip324_cipher_roundtrip \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/bip324_cipher_roundtrip/ \
+      -print_final_stats=1
+
+It loaded 1,482 seeds and completed 74,124 executions in 301 seconds,
+reaching 1,172 coverage points and 10,406 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The same original corpus was replayed against the embedded-master binary
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, using
+`/tmp/secp256k1-next-long-core-corpora/bip324_cipher_roundtrip-master-clean`
+and artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/bip324_cipher_roundtrip-master-clean/`:
+
+    timeout 420s env FUZZ=bip324_cipher_roundtrip \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/bip324_cipher_roundtrip-master-clean \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/bip324_cipher_roundtrip-master-clean/ \
+      -print_final_stats=1
+
+The clean-master run loaded 1,482 seeds and completed 73,984 executions in
+301 seconds, reaching 5,860 coverage points and 23,666 features. It exited
+zero with no assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+Coverage totals are not comparable because the binaries have different
+source and instrumentation states.
+
+The concrete Bitcoin Core path is
+`V2Transport::ProcessReceivedPacketBytes -> BIP324Cipher::Decrypt`; session
+setup is `BIP324Cipher::Initialize -> CKey::ComputeBIP324ECDHSecret ->
+secp256k1_ellswift_xdh`, followed by Core HKDF and AEAD state. A future
+clean-master failure that accepts damaged ciphertext/AAD, mishandles packet
+lengths, corrupts transport state, or causes a peer-triggered crash/DoS or
+key-agreement/integrity failure must be rated from that demonstrated remote
+impact, potentially High/Critical. This replay found no such failure and
+claims no production fix, deterministic regression test, or severity change.
+
+Existing findings remain: scratch-wrap is **Medium confirmed internal memory
+safety with low current Core reachability**; the 10x26 magnitude-32 carry
+issue is **Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention
+is **Medium memory hygiene** without a standalone read primitive; and direct
+API, wallet, callback, opaque-state, cache, and harness-performance
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+Any future BIP324, EllSwift, transport, optimization, cherry-pick, or
+production fix must amend the same commit message and ledger with the exact
+clean-master or minimal-production-mutation baseline, corpus/mutation
+condition, preconditions, postconditions, failure and stack, Core caller and
+input origin, master-relative severity, existing-test gap, verifier
+commands/results, and whether the change preserves, changes, or masks the
+trigger.
+
 ## 2026-07-19 Extended SHA/HMAC/RFC6979 worker replay
 
 The hash oracle was extended to a five-minute forced-int64 10x26
