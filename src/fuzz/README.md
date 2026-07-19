@@ -18067,3 +18067,58 @@ results, and whether a cherry-pick, optimization, or minor fix preserves,
 changes, or masks the trigger. If a minor fix makes a follow-up green, rerun
 the original baseline before lowering severity and amend that masking
 relationship into the same commit message and ledger.
+
+## 2026-07-19 Extended Core-shaped API round-trip replay
+
+The broad `fuzz_api_roundtrip` oracle was replayed after the Core interpreter
+campaign. It covers Core-shaped ECDSA serialization, DER and compact
+round-trips, signing and verification, public-key derivation, recovery,
+x-only conversion/tweaks, and the associated output/state contracts. The
+corpus was copied from `src/fuzz/corpora/api_roundtrip` to
+`/tmp/secp256k1-next-long-corpora/api_roundtrip`; generated output was kept
+out of the committed source corpus. The run used the forced-int64 10x26
+ASan/UBSan binary `/tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip`:
+
+    timeout 420s \
+      /tmp/secp256k1-next-asan-int64/bin/fuzz_api_roundtrip \
+      /tmp/secp256k1-next-long-corpora/api_roundtrip \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-artifacts/api_roundtrip/ \
+      -print_final_stats=1
+
+The run loaded 63 seeds and completed 1,768 executions in 301 seconds,
+reaching 6,242 coverage points and 41,369 features. The low execution count
+reflects the target's deliberately wide API sequence per input, not an early
+termination. It exited zero with no assertion, ASan, UBSan, runtime,
+timeout, OOM, or crash artifact; the artifact directory was empty.
+
+This is strong direct-library and Core-shaped API evidence, but it is not by
+itself a remote invalid-block proof. The corresponding Core callers are
+wallet/descriptor/PSBT signing and key handling for most stateful sequences;
+legacy ECDSA verification also informs `CPubKey::Verify` and script
+validation, but a severity promotion requires a concrete Core invalid-block
+or witness reproduction. A future clean-master mismatch must first be
+replayed on unmodified master or a minimal production mutation. If it
+changes consensus acceptance, exposes a memory/race failure, or causes node
+unavailability from an invalid peer object, rate it from that demonstrated
+impact, potentially High/Critical. A direct opaque-API, wallet, callback, or
+serialization-contract defect without that reachability remains below that
+threshold.
+
+No production finding, fix, deterministic regression test, or severity
+change is claimed from this replay. Existing findings remain: scratch-wrap is
+**Medium confirmed internal memory safety with low current Core reachability**;
+the 10x26 magnitude-32 carry issue is **Medium latent correctness**;
+SHA/HMAC/RFC6979 finalizer retention is **Medium memory hygiene** without a
+standalone read primitive; and direct API, wallet, callback, opaque-state,
+cache, and harness-performance observations remain below consensus
+High/Critical without a concrete Core trigger. A nonce without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+Any future API oracle, production fix, cherry-pick, optimization, or finding
+must preserve the exact corpus/mutation condition, preconditions,
+postconditions, observed failure and stack, Core caller and input origin,
+master-relative severity, existing-test gap, verifier commands/results, and
+whether the change preserves, changes, or masks the trigger in both the
+ledger and the same commit message.
