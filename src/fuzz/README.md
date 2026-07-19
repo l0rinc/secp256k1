@@ -17684,3 +17684,96 @@ verifier commands/results, and whether the change preserves, changes, or
 masks the trigger. If another fix makes a follow-up green, restore and rerun
 the original baseline before changing severity, and document that masking
 relationship in the same commit message and ledger.
+
+## 2026-07-19 Bitcoin Core signature-cache transition replay
+
+The stateful cache targets were replayed against the audit-linked Core fuzz
+binary from the preceding sections. Fresh copies of the QA corpora were used
+at `/tmp/secp256k1-next-audit-core-corpora-cache/sighash_cache` and
+`/tmp/secp256k1-next-audit-core-corpora-cache/script_sigcache`, with artifact
+directories under `/tmp/secp256k1-next-audit-core-artifacts-cache`. The exact
+worker command was:
+
+    timeout 180s env FUZZ=<target> \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-audit-core-corpora-cache/<target> \
+      -workers=4 -jobs=1 -max_total_time=60 -timeout=30 \
+      -rss_limit_mb=0 \
+      -artifact_prefix=/tmp/secp256k1-next-audit-core-artifacts-cache/<target>/ \
+      -print_final_stats=1
+
+`sighash_cache` loaded 585 seeds and completed 1,229 executions, reaching
+1,028 coverage points and 6,020 features. `script_sigcache` loaded 590 seeds
+and completed 7,575 executions, reaching 1,227 coverage points and 2,974
+features. Both jobs exited zero with no assertion, ASan, UBSan, runtime,
+timeout, OOM, or crash diagnostic. The `script_sigcache` artifact directory
+was empty.
+
+The cache oracle deliberately performs 100 hash-type iterations and compares
+`SignatureHash` with and without `SigHashCache`, preserving the same cache
+across iterations. Its precondition is a transaction with at least one input;
+its postcondition is byte equality between the cached and uncached hashes for
+each generated hash type. `script_sigcache` constructs a fresh bounded
+`SignatureCache`, a transaction/witness candidate, a random input and amount,
+and then drives either ECDSA or Schnorr verification with both cache-store
+choices. A future clean-master mismatch, stale result, or state corruption
+that reproduces through Core signature validation would be rated from its
+invalid-block/witness consequence, potentially High/Critical. Direct cache
+behavior without a consensus caller remains a lower internal finding.
+
+One generated `sighash_cache` input was a slow unit rather than a failure:
+`/tmp/secp256k1-next-audit-core-artifacts-cache/sighash_cache/slow-unit-40612e90cc70779e70f10b5f00ab76c230937e11`
+is 581,885 bytes and took 33 seconds in the audit-linked cache harness. The
+same bytes took 36.229 seconds in the embedded-master cache harness. The
+exact replays were:
+
+    timeout 90s /usr/bin/time -f 'audit_elapsed=%e audit_exit=%x' \
+      env FUZZ=sighash_cache \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-audit-core-artifacts-cache/sighash_cache/slow-unit-40612e90cc70779e70f10b5f00ab76c230937e11 \
+      -runs=1 -timeout=90 -rss_limit_mb=0 -print_final_stats=1
+    timeout 90s /usr/bin/time -f 'base_elapsed=%e base_exit=%x' \
+      env FUZZ=sighash_cache \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-audit-core-artifacts-cache/sighash_cache/slow-unit-40612e90cc70779e70f10b5f00ab76c230937e11 \
+      -runs=1 -timeout=90 -rss_limit_mb=0 -print_final_stats=1
+
+The first replay measured 33.53 seconds including process startup and the
+second measured 36.38 seconds. Both exited zero. The same byte stream also
+completed the single-pass `script_interpreter` target in 0.250 seconds of
+target time in the audit binary and 0.38 seconds wall time in the embedded-
+master binary. That is only a sanity check because the two targets consume
+the byte stream differently; it is not a production benchmark. The slow
+unit is therefore classified as **fuzzer-harness amplification**, not a
+production DoS or a severity-rated finding: the 100-iteration differential
+loop is the known multiplier, and no invalid-block or witness failure was
+demonstrated. A production performance claim would require a bounded
+consensus-validity input and a single-call Core reproduction.
+
+No production fix, deterministic regression test, or severity change is
+claimed. Existing findings remain: scratch-wrap is **Medium confirmed
+internal memory safety with low current Core reachability**; the 10x26
+magnitude-32 carry issue is **Medium latent correctness**; SHA/HMAC/RFC6979
+finalizer retention is **Medium memory hygiene** without a standalone read
+primitive; and direct API, wallet, callback, opaque-state, and local cache
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+The baseline remains `origin/master`
+`8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
+`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled. Any
+future cache assertion, optimization, cherry-pick, slow-unit investigation,
+or production fix must record the exact unmodified-master or minimal-
+production-mutation baseline, corpus bytes or mutation, preconditions,
+postconditions, observed failure and stack, Core caller and input origin,
+severity on master, existing-test gap, verifier commands/results, and whether
+the change preserves, changes, or masks the trigger. If a minor fix makes a
+follow-up green, rerun the original baseline before lowering severity and
+document that masking relationship in the same commit and ledger.
