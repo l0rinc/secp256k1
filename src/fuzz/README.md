@@ -17981,3 +17981,89 @@ message and ledger rather than lowering severity from the green follow-up.
 The baseline remains `origin/master`
 `8c3e6e6d992456d3b9228305ae84a6703273cf70`; `l0rinc/master` remains
 `11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53`, with PR #1-#16 reconciled.
+
+## 2026-07-19 Core real-signature flag-transition replay
+
+The Core `script_flags` target was selected as the next consensus-adjacent
+oracle because it deserializes a transaction with witness data and spent
+outputs, builds `PrecomputedTransactionData`, and invokes `VerifyScript` with
+the real `TransactionSignatureChecker`. That reaches the production ECDSA
+and Schnorr checker implementations in `script/interpreter.cpp`, rather than
+the neutral or synthetic checkers used by `eval_script` and
+`signature_checker`. The target then removes flags from a passing case or
+adds flags to a failing case and asserts that the result/error contract is
+stable.
+
+The original 2,171-file corpus from
+`/mnt/my_storage/qa-assets/fuzz_corpora/script_flags` was copied separately
+for each build to avoid generated corpus files changing the comparison. The
+audit-linked run used
+`/tmp/secp256k1-next-long-core-corpora/script_flags` and artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/script_flags/`. The exact command
+was:
+
+    timeout 420s env FUZZ=script_flags \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/script_flags \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/script_flags/ \
+      -print_final_stats=1
+
+It loaded 2,171 seeds and completed 105,431 executions in 301 seconds,
+reaching 2,443 coverage points and 30,520 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The same original corpus was then run against the embedded-master Core
+binary at `/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, with artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/script_flags-master-clean/`:
+
+    timeout 420s env FUZZ=script_flags \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/script_flags-master-clean \
+      -workers=8 -jobs=1 -max_total_time=300 -timeout=30 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/script_flags-master-clean/ \
+      -print_final_stats=1
+
+The clean-master run loaded 2,171 seeds and completed 80,325 executions in
+301 seconds, reaching 6,650 coverage points and 65,390 features. It exited
+zero with no assertion, ASan, UBSan, runtime, timeout, OOM, or crash
+artifact. Coverage and feature totals are not directly comparable because
+the two binaries have different source/instrumentation states. A preliminary
+master run was discarded: it reused the audit run's input directory after
+libFuzzer had appended generated corpus files, so it loaded 3,018 files and
+was not an identical-baseline comparison.
+
+This target uses transaction and spent-output data shaped by the fuzzer, not
+a complete block-validation harness. Nevertheless, a future clean-master
+failure in the actual `VerifyScript`/`TransactionSignatureChecker` path that
+changes acceptance, corrupts state, or causes memory/race failure for an
+invalid block or witness would be rated from the demonstrated consensus and
+node-availability consequence, potentially High/Critical. A result confined
+to a synthetic checker, wallet/API caller, or harness-only assumption remains
+below that threshold. No production finding, fix, deterministic regression
+test, or severity change is claimed from this replay, and no existing test
+gap is asserted.
+
+Existing findings remain: scratch-wrap is **Medium confirmed internal memory
+safety with low current Core reachability**; the 10x26 magnitude-32 carry
+issue is **Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention
+is **Medium memory hygiene** without a standalone read primitive; and direct
+API, wallet, callback, opaque-state, cache, and harness-performance
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+For future findings, preserve the exact unmodified-master or minimal
+production-mutation baseline, corpus snapshot or mutation condition,
+preconditions, postconditions, failure and stack, Core caller and input
+origin, master-relative severity, existing-test gap, verifier commands and
+results, and whether a cherry-pick, optimization, or minor fix preserves,
+changes, or masks the trigger. If a minor fix makes a follow-up green, rerun
+the original baseline before lowering severity and amend that masking
+relationship into the same commit message and ledger.
