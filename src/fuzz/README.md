@@ -19857,6 +19857,115 @@ the cap or the caller-level rejection. The target has no cryptographic nonce;
 nonce-clearing is unrelated, and uncleared data without standalone
 cryptographic meaning is not Critical merely because it was not cleared.
 
+## 2026-07-19 Core block-header invariant replay
+
+The `block_header` target has materially stronger oracles than the generic
+chain accessor target. After deserializing a `CBlockHeader`, it asserts that
+the hash is not the all-ones sentinel, `GetBlockTime()` equals `nTime`, and
+`IsNull()` agrees with `nBits == 0`. It then checks that converting the header
+to a `CBlock` preserves the hash, that `SetNull()` produces a null block, and
+that the null block's hash matches the null header. Optional `CBlockLocator`
+state also has a null/reset postcondition. These assertions are still model
+contracts, not consensus validation: the target does not claim arbitrary
+serialized input has valid proof of work, continuity, or a valid transaction
+count.
+
+The exact-master baseline is `/tmp/bitcoin-coinscache-master` at
+`ba48852f9e758df8e67ce5f51c0e3e2b68713ab4`. The target source
+`src/test/fuzz/block_header.cpp` is SHA-256
+`1fd8f88beea05396694aaf4ab5bf03afabb22c0f760da12bd4961be1db9a419a` in the
+exact master and comparison checkout. The source corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/block_header`: 121 files and 285,055
+bytes. Each provenance used an isolated corpus copy.
+
+The exact-master sanitizer binary was
+`/tmp/bitcoin-coinscache-master-build/bin/fuzz`, SHA-256
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`. The
+audit and comparison binaries were respectively
+`3ac3ec7b3448eee95f7543ac8ef4c469f70347ea26700391bf97478e6d3863ae` and
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+corpus-first command shape was:
+
+    timeout 240s env FUZZ=block_header \
+      ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 <binary> corpus \
+      -merge=0 -runs=121 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -artifact_prefix="$PWD/artifacts/" \
+      -print_final_stats=1
+
+All three corpus replays exited zero with empty artifacts and no ASan, UBSan,
+runtime, assertion, timeout, OOM, or crash diagnostic. The exact-master run
+executed 122 units and reached coverage/features 410/2692 with 104 MiB peak
+RSS. The audit and comparison runs each executed 122 units and reached
+coverage/features 412/2640 and 412/2689 with 104/105 MiB peak RSS.
+
+Four independent sanitizer workers per provenance then ran for 60 seconds with
+`-workers=1 -jobs=1 -max_total_time=60`, `-timeout=60`, and the same artifact
+settings. All twelve workers exited zero, emitted final statistics, and left
+their artifact directories empty. The worker execution/coverage/features/new-
+unit/RSS results were:
+
+    master   47997/410/3356/620/221, 27099/410/3290/526/187,
+             22074/410/3288/398/189, 24872/410/3297/459/189
+    audit    24773/412/3189/473/190, 72303/412/3292/821/200,
+             39895/412/3269/606/215, 37124/412/3325/586/193
+    compare  54264/412/3341/699/216, 27517/412/3299/511/195,
+             40327/412/3329/620/213, 24308/412/3282/447/194
+
+### Mutation proof: the time invariant fails immediately
+
+This is an oracle proof, not a production bug claim. In the disposable exact-
+master build, `src/primitives/block.h:68` was changed only from
+
+    return (int64_t)nTime;
+
+to
+
+    return (int64_t)nTime + 1;
+
+The aggregate fuzzer was rebuilt with
+`cmake --build /tmp/bitcoin-coinscache-master-build --target fuzz -j8`. The
+first lexicographic corpus input
+`011392c3197834c907ef4cfe7ac14d4e5378b971` is 91 bytes with SHA-256
+`5602d6bbd84604b2a40a31f43af02cf962c76c3040f02b47d7482f546f922ed3`.
+Running it once with `FUZZ=block_header`, ASan abort/leak/null-allocation
+settings, UBSan halt/stacktrace settings, `-runs=1`, `-timeout=60`, and
+`-rss_limit_mb=0` aborted with exit code 77:
+
+    test/fuzz/block_header.cpp:28:
+    Assertion `block_header->GetBlockTime() == block_header->nTime' failed.
+    SUMMARY: libFuzzer: deadly signal
+
+The symbolized stack is `block_header_fuzz_target` at
+`src/test/fuzz/block_header.cpp:28`, then `LLVMFuzzerTestOneInput`, the
+libstdc++ `std::function` wrapper, and libFuzzer's `ExecuteCallback`. No ASan
+or UBSan report was emitted; this is a deterministic invariant failure. After
+restoring the exact-master source and rebuilding, the identical input and
+one-run command exited zero with no diagnostic, and the fuzzer SHA returned to
+`95b90363818824e5e6c65596d7ccd34f1f546f2afdf026f9e5f498a7b946f280`.
+
+The real Core origin is an incoming peer `headers` or block message. The path
+is `PeerManagerImpl::ProcessHeadersMessage` -> PoW/continuity checks ->
+`ChainstateManager::ProcessNewBlockHeaders` -> `AcceptBlockHeader` and its
+contextual timestamp checks. `CBlockHeader::GetBlockTime()` is used in
+`ContextualCheckBlockHeader` for median-time-past and time-warp bounds, in
+proof-of-work retarget calculations, block-file placement, and chain tip
+reporting. The fuzzer does not prove those callers accept the arbitrary header;
+it proves the local header/block/hash/time contracts survive deserialization.
+
+The clean exact master found no production bug, so the deliberate mutation is
+not assigned a vulnerability severity and no production fix is claimed. A
+real master defect that lets an invalid peer header bypass contextual time
+checks or makes a valid header fail, especially if it affects consensus chain
+selection, could be High or Critical only after deterministic caller-level
+proof. A parser-only mismatch with no Core reachability is lower. No l0rinc
+fix was cherry-picked here; comparison coverage cannot mask a clean-master
+failure. Any later cherry-pick or minor fix must preserve the exact mutation,
+seed, assertion stack, Core caller origin, and whether it masks, alters, or
+fixes the master behavior in both the ledger and commit message. This target
+has no cryptographic nonce; missing nonce clearing alone is not Critical
+without standalone cryptographic meaning.
+
 ## 2026-07-19 Core block-tree database round-trip replay
 
 The `block_index` target covers a different boundary from `block_index_tree`:
