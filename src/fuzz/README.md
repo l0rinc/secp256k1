@@ -18174,6 +18174,84 @@ preconditions, postconditions, failure and stack, Core caller/input origin,
 master-relative severity, existing-test gap, verifier commands/results, and
 whether the change preserves, changes, or masks the trigger.
 
+## 2026-07-19 Extended Core multi-peer message replay
+
+The Core `process_messages` target was selected for multi-peer network state
+transitions. It creates one to three synthetic peers, feeds arbitrary network
+message types and bounded payloads through `ConnmanTestMsg` and `PeerManager`,
+repeatedly drains message processing and send queues, resets address/peer
+state to expose dangling references, and checks whether chain-index state
+changed unexpectedly. The original 3,783-file corpus from
+`/mnt/my_storage/qa-assets/fuzz_corpora/process_messages` was copied
+separately for the two builds. Four sanitized workers were used.
+
+The audit-linked ASan/UBSan run used
+`/tmp/secp256k1-next-long-core-corpora/process_messages` and artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/process_messages/`:
+
+    timeout 420s env FUZZ=process_messages \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /tmp/bitcoin-secp256k1-audit-build/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/process_messages \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/process_messages/ \
+      -print_final_stats=1
+
+It loaded 3,783 seeds and completed 23,646 executions in 301 seconds,
+reaching 15,299 coverage points and 80,291 features. It exited zero with no
+assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+
+The same original corpus was replayed against the embedded-master binary
+`/mnt/my_storage/bitcoin/build_fuzz/bin/fuzz`, using
+`/tmp/secp256k1-next-long-core-corpora/process_messages-master-clean` and
+artifacts at
+`/tmp/secp256k1-next-long-core-artifacts/process_messages-master-clean/`:
+
+    timeout 420s env FUZZ=process_messages \
+      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+      /mnt/my_storage/bitcoin/build_fuzz/bin/fuzz \
+      /tmp/secp256k1-next-long-core-corpora/process_messages-master-clean \
+      -workers=4 -jobs=1 -max_total_time=300 -timeout=60 \
+      -rss_limit_mb=0 -use_value_profile=1 \
+      -artifact_prefix=/tmp/secp256k1-next-long-core-artifacts/process_messages-master-clean/ \
+      -print_final_stats=1
+
+The clean-master run loaded 3,783 seeds and completed 21,957 executions in
+301 seconds, reaching 15,299 coverage points and 80,906 features. It exited
+zero with no assertion, ASan, UBSan, runtime, timeout, OOM, or crash artifact.
+Coverage totals are not comparable because the binaries have different
+source and instrumentation states.
+
+This is peer-message and lifecycle evidence, not a claim that every block,
+transaction, or consensus transition was reached. A future failure that
+accepts an invalid transaction/block, corrupts peer or chain state, exposes a
+use-after-free, or causes remote node unavailability must be replayed on
+unmodified master or a minimal production mutation and rated from its actual
+impact, potentially High/Critical. A policy-only or harness-only discrepancy
+without a concrete Core consequence remains lower. No production finding,
+fix, deterministic regression test, or severity change is claimed from this
+negative replay.
+
+Existing findings remain: scratch-wrap is **Medium confirmed internal memory
+safety with low current Core reachability**; the 10x26 magnitude-32 carry
+issue is **Medium latent correctness**; SHA/HMAC/RFC6979 finalizer retention
+is **Medium memory hygiene** without a standalone read primitive; and direct
+API, wallet, callback, opaque-state, cache, and harness-performance
+observations remain below consensus High/Critical without a concrete Core
+trigger. A nonce without standalone cryptographic meaning is not Critical
+merely because it is uncleared.
+
+Any future P2P, validation, transaction, block, reorg, optimization,
+cherry-pick, or production fix must amend the same commit message and ledger
+with the exact clean-master or minimal-production-mutation baseline,
+corpus/mutation condition, preconditions, postconditions, failure and stack,
+Core caller and input origin, master-relative severity, existing-test gap,
+verifier commands/results, and whether the change preserves, changes, or
+masks the trigger.
+
 ## 2026-07-19 Extended Core mempool state-transition replay
 
 The Core `tx_pool` target was selected for its broader state-machine and
