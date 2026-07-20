@@ -1135,3 +1135,132 @@ V2 command above. `clang-format --dry-run --Werror` still reports pre-existing
 violations at `p2p_transport_serialization.cpp:69, 108, 177, 300-309, 361,
 388-389`; no unrelated formatting was changed. No fuzz process remained after
 verification.
+
+## `block_index_tree` oracle
+
+Source commit `22d2be54d5` (`fuzz: assert block index insertion contracts`)
+adds an operation-local postcondition to `src/test/fuzz/block_index_tree.cpp`.
+Before `BlockManager::AddToBlockIndex`, the harness snapshots
+`ChainstateManager::m_best_header`. It then requires the inserted entry to
+become the best header exactly when its chain work is greater, and requires the
+old pointer to remain unchanged otherwise. The existing `BLOCK_VALID_TREE` and
+parent-link assertions remain in place. This makes a bad best-header transition
+fail at the insertion site instead of waiting for the later O(tree)
+`CheckBlockIndex()` pass.
+
+Audit identity and clean behavior:
+
+* Core base master was `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; the source
+  parent was `b25efc953d3d57daf9fd525148740945f6be730e`. Production behavior is
+  unchanged.
+* Clean `src/node/blockstorage.cpp` SHA-256:
+  `2e5c4c9dc606e1cf42d81dc4fd6bba6a3edfb97f7f857422af96c828f09246b`.
+  Original harness SHA-256:
+  `035b02980d05cac97fe43cd76be4a70f99e5075df0554fac9c28008b394b638a`.
+  Enhanced harness SHA-256:
+  `1015d4afaddfac50173cae2fdb4a51fdd8c55cb4ad1d1b5a53a9b46366514382`.
+  Final enhanced sanitizer fuzz binary SHA-256:
+  `52bf6b3f18b1e9409b5b084218adcaa1db31110fc0c8351a1ebe82203fbd1eeb`.
+* The frozen corpus is
+  `/tmp/bitcoin-block-index-tree-20260720/frozen`, copied from
+  `/mnt/my_storage/qa-assets/fuzz_corpora/block_index_tree`. It contains 4,396
+  files and 19,764,724 bytes. Its sorted path-independent manifest is
+  `d8a53adaa94c902d29021ccc88e3c2042b9e91ea98ec798e91def650ec32da09`.
+  The frozen directory was not modified by fuzzing.
+* The original `-merge=0 -runs=4396 -timeout=60 -rss_limit_mb=0
+  -print_final_stats=1` replay exited 0 after 4,541 executions, with cov
+  2,181, ft 20,544, and peak RSS 629 MiB. It produced no artifacts. Log
+  SHA-256: `6fbb5fa7d09c00f7930ae1a6e9e288a10469602bb5b0242a098c17758b689c44`.
+* The enhanced replay with the same command exited 0 after 4,542 executions,
+  with cov 2,188, ft 14,354, and peak RSS 631 MiB. It produced no artifacts.
+  Log SHA-256:
+  `005263a7b00b680b2d25b341cd1c5a76a5d94a577660060115569f3583e3a90d`.
+
+Multi-worker evidence:
+
+`env FUZZ=block_index_tree /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+-jobs=4 -workers=4 -max_total_time=15 -timeout=60 -rss_limit_mb=0
+-print_final_stats=1
+-artifact_prefix=/tmp/bitcoin-block-index-tree-20260720/enhanced-worker-artifacts/
+/tmp/bitcoin-block-index-tree-20260720/enhanced-workers`
+
+All four jobs exited 0 with no artifacts or sanitizer diagnostics. Jobs 0, 1,
+2, and 3 processed 4,539, 4,541, 4,537, and 4,539 executions; each reached
+cov 2,188 and ft 14,363, 14,355, 14,355, and 14,364; peak RSS was 632, 626,
+631, and 631 MiB. Worker log SHA-256:
+`6a97ad2912342c372c72e086dfd89777976ad174a753568844ef8d39e199e4de`. The
+disposable worker corpus remained at 4,396 files and 19,764,724 bytes, and no
+fuzz process remained afterward.
+
+Differential proof and its limitation:
+
+* A temporary production mutation changed
+  `best_header->nChainWork < pindexNew->nChainWork` to `>`, modeling a
+  comparator-direction regression. Mutated `src/node/blockstorage.cpp`
+  SHA-256: `72c32558c15df785be91677d61f0864254ff4f2f649f015ee986f9f7442d2d1e`.
+  Enhanced mutated binary SHA-256:
+  `65290e0164ac8c46ccde12898600b719a5051043e58e0be844467dc1884600b8`.
+* The enhanced mutation replay exited 77 after 21 executions at
+  `block_index_tree.cpp:86`, assertion `chainman.m_best_header == index`.
+  Log SHA-256:
+  `5684635edb4f27d211ece0d2d8446782b8a3c60528043e4fccbd8a30f50b9b55`.
+  The exact artifact is
+  `/tmp/bitcoin-block-index-tree-20260720/mutation-best-header-artifacts/crash-fb565ba0bf05cdac6b755cd350604b9be1073078`,
+  5 bytes, SHA-256
+  `49bdc48359856c9245421c6241722b232a06fa48fa433c3c6c7c61216621b4db`,
+  Base64 `////AQU=`.
+* The original harness with the same mutated production and exact artifact
+  also failed, but later at the existing production assertion
+  `validation.cpp:5315` in `ChainstateManager::CheckBlockIndex()`. It exited
+  134 with no libFuzzer artifact. The old harness SHA-256 was
+  `035b02980d05cac97fe43cd76be4a70f99e5075df0554fac9c28008b394b638a`, the
+  old mutated binary SHA-256 was
+  `79963b5b9b0ccbd5b4cba3c05db45abb0e8e1fccce538cea8d754a53801a6877`, and
+  the control log SHA-256 was
+  `b44a1e37c6b4ee06f73eff4afdcde813a8174cb4bb8ef7e07e40388ef5a0294a`.
+
+This is therefore not a newly exposed production bug. The assertion is a
+stronger and earlier oracle, but the modeled comparator defect is redundant
+with the legacy structural checker. Clean production plus the enhanced
+harness passed the full frozen corpus, so no production fix or deterministic
+regression test is claimed.
+
+Bitcoin Core reachability and severity:
+
+* Remote header processing enters at
+  `PeerManagerImpl::ProcessHeadersMessage` (`src/net_processing.cpp:3007`),
+  calls `ProcessNewBlockHeaders` (`:3166`), then
+  `AcceptBlockHeader` (`src/validation.cpp:4202`) and
+  `AddToBlockIndex` (`src/node/blockstorage.cpp:224`). The same transition is
+  also used by local reindex/loadblock processing and genesis initialization.
+* The fuzzer directly constructs mocked-valid headers and calls
+  `AddToBlockIndex`; it does not establish that arbitrary invalid block bytes
+  can reach this production transition. Clean master has no production
+  failure, so master-relative severity is N/A and this is Low/informational
+  oracle hardening. The modeled comparator regression would affect best-header
+  selection, but Core's existing `CheckBlockIndex()` already catches it. No
+  High/Critical or invalid-block vulnerability is claimed.
+* Existing findings remain reiterated and Core-caller relative: private
+  broadcast failed-send retention is Medium and feature-conditional; empty
+  HEADERS IBD handoff is Medium availability; peer activity refresh,
+  process-message local storage failure, oversized transport types, and banman
+  invalid-subnet integrity are Low or nice-to-have in current callers; ecmult
+  scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979 retention
+  remain reachability-limited latent/hygiene findings. Invalid fuzzer state or
+  invalid block bytes alone is not Critical. A nonce without cryptographic
+  meaning is not a Critical clearing finding.
+
+Cherry-pick and masking policy:
+
+`origin/master` and `remotes/l0rinc/master` both resolve to
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; no relevant l0rinc commit applies
+to this target, so none was cherry-picked. Any later production fix, minor
+fix, oracle change, or cherry-pick must repeat the exact target,
+corpus/artifact, mutation, assertion, status/stack, Core caller/input origin,
+test gap, severity, and verifier commands, and state whether it preserves,
+changes, or masks this clean-master behavior.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j4`; `git diff --check`; original and enhanced frozen-corpus replays;
+exact enhanced mutation and legacy control replays; and the four-worker
+command above.
