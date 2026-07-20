@@ -1264,3 +1264,150 @@ Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
 fuzz -j4`; `git diff --check`; original and enhanced frozen-corpus replays;
 exact enhanced mutation and legacy control replays; and the four-worker
 command above.
+
+## `tx_pool` accepted-result oracle
+
+Source commit `848eb7b5e9` (`fuzz: assert accepted transactions remain
+indexed`) strengthens the stateful `tx_pool` target. After
+`AcceptToMemoryPool` returns `VALID`, the harness requires both the txid and
+wtxid to be present in the same `CTxMemPool`. It deliberately does not assert
+membership for rejected results, replacements, or other result types. This is
+a postcondition on the production API result, not an assumption that an
+accepted-looking input is valid.
+
+Master and clean identities:
+
+* Core base master is
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; the source parent is
+  `22d2be54d5cff17ea9fda9fc6c3cc09547f45c05`. Production behavior is
+  unchanged.
+* `origin/master` `src/validation.cpp` SHA-256 is
+  `1b49bd6539860b5e06c93e5ec73a2735ca4521fb8c28fcd4b50268c44a0018ab`.
+  The clean audit branch hash is
+  `6f00f58f3cc9623fb02cfa8c776654e617b6a88e87c2b075bb855116b9ebfefc`; its
+  only difference from master is the previously recorded `fNewBlock` storage
+  ordering fix outside `AcceptToMemoryPool`. Clean `src/txmempool.cpp` is
+  `4d011a74b788983200916cc4b467813e8d0e62334118c67a2ffb390a87b3bbff`,
+  byte-identical to master.
+* Original harness SHA-256:
+  `807e5b8bd2e4dde1f23155e13cfb2f47e78e45a962da10aa4187f01a3355f993`.
+  Enhanced harness SHA-256:
+  `6393553562a8ed9c41fd4f87bf156540a4924d16e04db3610ae289570c03fbc0`.
+  Final enhanced sanitizer binary SHA-256:
+  `9fec9e5287b7f70b270bb5a0327b41e8371d80c6f718e42df0e49def271e9965`.
+
+Frozen corpus and clean replay:
+
+* The corpus is `/tmp/bitcoin-tx-pool-20260720/frozen`, copied from
+  `/mnt/my_storage/qa-assets/fuzz_corpora/tx_pool`. It has 5,658 files and
+  41,820,925 bytes. The sorted filename/content manifest SHA-256 is
+  `3fc9394c051dabb5fa79fa942d84c48913a1ca8639c915e59bcae918a26b6689`.
+  The frozen directory was not modified.
+* The original `-merge=0 -runs=5658 -timeout=60 -rss_limit_mb=0
+  -print_final_stats=1` replay exited 0 after 5,660 executions, cov 19,672,
+  ft 117,570, peak RSS 541 MiB, with no artifacts. Log SHA-256:
+  `5690c2e30c7b08f4fffa6481d9627b1f7408705b86678079f08967e42fa38e0f`.
+* The enhanced replay with the same command exited 0 after 5,660 executions,
+  cov 19,677, ft 117,579, peak RSS 546 MiB, with no artifacts. Log SHA-256:
+  `6d6634ebb18becdccc61db9b7aa278011e948e5c2e6fefb9002445ac3860632d`.
+
+Multi-worker evidence:
+
+`env FUZZ=tx_pool /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+-jobs=4 -workers=4 -max_total_time=15 -timeout=60 -rss_limit_mb=0
+-print_final_stats=1
+-artifact_prefix=/tmp/bitcoin-tx-pool-20260720/enhanced-worker-artifacts/
+/tmp/bitcoin-tx-pool-20260720/workers`
+
+All four jobs exited 0 with no artifacts or sanitizer diagnostics. Jobs 0, 1,
+2, and 3 each processed 5,660 executions, all reached cov 19,677, ft was
+117,580, 117,578, 117,569, and 117,574, and peak RSS was 545, 546, 546, and
+545 MiB. Worker log SHA-256:
+`52da96043f4aba3af4a1e717fed87b638856e8ab5d5262e85e91ca5ccc491934`. The
+disposable worker corpus remained at 5,658 files and 41,820,925 bytes, and no
+fuzz process remained afterward.
+
+Differential proof:
+
+* A temporary production mutation was inserted after
+  `AcceptSingleTransactionAndCleanup` returned: for a `VALID` result, lock
+  the pool and call `removeRecursive(*tx, MemPoolRemovalReason::EXPIRY)` before
+  returning the still-`VALID` result. This models an API result/state
+  divergence after acceptance. Mutated `src/validation.cpp` SHA-256:
+  `7d861abff06ed59852f96f38a4361371bbb4c374ac906f95ec7a9518a4202b9f`.
+  Enhanced mutated binary SHA-256:
+  `0cf882087398839e726903b17b1908b2a03014e67d2e0feda5a046e88154a47b`.
+* The enhanced mutation replay exited 77 after 24 executions at
+  `tx_pool.cpp:481`, assertion `tx_pool.exists(tx->GetHash())`. Log SHA-256:
+  `d1c776e230f284dff96f98018c3827eca66dc833549d195be5d71d049c8ce64f`.
+  The exact artifact is
+  `/tmp/bitcoin-tx-pool-20260720/mutation-artifacts/crash-c956a7bba2210989971d1d5709674218a56eb6fb`,
+  152 bytes, SHA-256
+  `7e9d24d50b7cb88d06581c72251271d473e514da0729f90f5a64de85a102f93b`,
+  Base64
+  `QQAAAACgplVVjiQAVVVVVVVVVbFVVVVVVVVVVVVVVVVTVf///09VVVVSVVVVVVVVVf////////////////////////////////////////9xAAAEZGF0YWPhcn5yaWVyc2ktLS0tLdotLS0tLS0tLS1dLS0tLS0tLS0tLS0tLS0tLS0Avt1DQwFDQ0NDQ/4FAE/1TERDsbU=`.
+* The original harness with the same mutated production and exact artifact
+  exited 0. Its SHA-256 was
+  `807e5b8bd2e4dde1f23155e13cfb2f47e78e45a962da10aa4187f01a3355f993`;
+  mutated legacy binary SHA-256 was
+  `b25d2714a680d7bb236df972ac3184424e88ab585cde85899bdde5f722b5e1a7`; and
+  control log SHA-256 was
+  `c63ab3ca356c5cb136988d2654e61f64af31e4bb780dd11f4e4d5ec0d3231ee7`.
+* Clean production plus the enhanced harness accepted the exact artifact with
+  exit 0; clean exact log SHA-256:
+  `267f8aea8d7f517139c304d9aab81fa5a313b22fc89cd329954733b6b0e1955c`.
+  Clean production plus the original harness also accepted it with exit 0;
+  clean legacy binary SHA-256 was
+  `611b2f9d49cca909ee0e21d76f26fa99d5767151f3cff5c12b7ffae7eb2c374e`, and
+  clean legacy log SHA-256 was
+  `ed8532d3c63f4a1f495d0b1c359bb165eb51f4cd4dd3b999c2e21291e9c397da`.
+
+This is an oracle-only change: clean master reproduces no failure, so no
+production fix or deterministic regression test is claimed.
+
+Bitcoin Core caller and severity:
+
+* A remote TX message reaches `PeerManagerImpl::ProcessMessage`
+  (`src/net_processing.cpp:4597`), which calls
+  `ChainstateManager::ProcessTransaction` (`src/validation.cpp:4480`) and
+  `AcceptToMemoryPool` (`src/validation.cpp:1782`). Orphan release at
+  `src/net_processing.cpp:3315` and package processing at `:3260` also route
+  accepted results through `ProcessValidTx`.
+* `ProcessTransaction` checks the mempool after the API returns, but a stale
+  `VALID` result can still reach `ProcessValidTx`, which updates peer activity
+  and relay bookkeeping. The fuzzer calls the lower-level API directly so the
+  result/state contract is checked at its boundary; the mutation does not
+  claim that a remote peer can directly delete a transaction after acceptance.
+* Clean master has no production failure. Master-relative severity is N/A and
+  this is Low/informational oracle hardening. If the modeled divergence
+  existed, impact would be limited to mempool acceptance/reporting, peer
+  activity, and relay bookkeeping, not consensus, block validation, memory
+  safety, or a Critical invalid-block path. Invalid block bytes alone are not
+  Critical. A nonce without cryptographic meaning is not a Critical clearing
+  finding.
+* Existing findings remain reiterated and Core-caller relative: private
+  broadcast failed-send retention is Medium and feature-conditional; empty
+  HEADERS IBD handoff is Medium availability; peer activity refresh,
+  process-message local storage failure, oversized transport types, and banman
+  invalid-subnet integrity are Low or nice-to-have in current callers; ecmult
+  scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979 retention
+  remain reachability-limited latent/hygiene findings. No clean-master
+  production bug was established in the previously audited addrman,
+  coins-cache, txgraph, txdownloadman, txrequest, connman, eviction,
+  compact-block, headers-sync, UTXO snapshot, mempool-persistence,
+  package-evaluation, handshake, BufferedFile, or block-index paths.
+
+Cherry-pick and masking policy:
+
+`origin/master` and `remotes/l0rinc/master` both resolve to
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; no relevant l0rinc commit applies
+to this target, so none was cherry-picked. Any later fix, minor fix, oracle
+change, or cherry-pick must repeat the exact target/corpus/artifact, mutation,
+assertion, status/stack, Core caller/input origin, test gap, severity, and
+verifier commands, and state whether it preserves, changes, or masks this
+clean-master behavior.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j4`; `git diff --check`; original/enhanced frozen-corpus replays; the
+four-worker command; and exact enhanced-mutated, legacy-mutated,
+enhanced-clean, and legacy-clean artifact replays.
