@@ -44,6 +44,9 @@ SECP256K1_API const secp256k1_ecdh_hash_function secp256k1_ecdh_hash_function_de
  *           hashfp:     pointer to a hash function. If NULL,
  *                       secp256k1_ecdh_hash_function_sha256 is used
  *                       (in which case, 32 bytes will be written to output).
+ *                       Passing secp256k1_ecdh_hash_function_sha256 or
+ *                       secp256k1_ecdh_hash_function_default is equivalent
+ *                       to passing NULL.
  *           data:       arbitrary data pointer that is passed through to hashfp
  *                       (can be NULL for secp256k1_ecdh_hash_function_sha256).
  */
