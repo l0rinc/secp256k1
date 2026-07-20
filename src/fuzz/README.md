@@ -25952,3 +25952,146 @@ node-eviction campaigns found no confirmed production bug on master. An
 uncleared nonce with no cryptographic meaning is not **Critical** by itself.
 
 No temporary production mutation remains, and no fuzz jobs were left running.
+
+
+## 2026-07-20 Core p2p_transport_serialization oversized-type oracle on latest master
+
+Commit `948ac5982abaf57c6369a24a4dc50da144efaf75` hardens
+`FUZZ=p2p_transport_bidirectional_v2` and adds a deterministic assertion to
+`net_tests/v2transport_test`. The audit parent is `02a4e3fd44`; exact audited
+`origin/master` is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`. Before this campaign, the
+transport fuzzer, `src/net.cpp`, and `src/test/net_tests.cpp` had SHA-256
+values
+`0371822b7dd8578893c804a88c3968b4a686a10129c9ed8369bbe1c0b21d14af`,
+`a29e9e5eb6591ee3e4d9aac049905909371489b99ab726e6cd63221389d17754`, and
+`06139b187d351131ed4b2570bd866d36b478a00e36b7898fdeacbf86a54edcfc`.
+Final values are `src/net.cpp`
+`cb55514eeaf4ce16336675d9bdca55c24b9c3fc7dc0685c0cb9d6fd12e3363a9`,
+`src/test/fuzz/p2p_transport_serialization.cpp`
+`2cd26f3fa04ba0c5049e9e431de6bdaa8826ca3a3b62c44be34c5262fa447dde`, and
+`src/test/net_tests.cpp`
+`6484dab8eccda58f6366faecac2e765a3106418ac016e619f0252a4dd2be53bc`.
+The final sanitizer fuzz binary is
+`bdb9cd0c8974dd91933ab58d1fd1c5d585a6d62f06732894bbbffc15f62e3a27`.
+
+### Contract and production fix
+
+`CMessageHeader` encodes a message type in a fixed 12-byte field. V2
+`SetMessageToSend` previously allocated `1 + 12 + payload` bytes for a long
+type and copied all of `msg.m_type` into that buffer without checking its
+length. V1 sent the same invalid input to `CMessageHeader`: debug builds
+asserted and release builds silently truncated the header. Both transports now
+return `false` before encoding a type longer than
+`CMessageHeader::MESSAGE_TYPE_SIZE`, preserving the input message. The V2
+fuzzer calls `CheckOversizedMessageType` only after `SimulationTest` has
+flushed both peers into the application-ready state; it asserts rejection,
+type preservation, and an unchanged payload. The existing deterministic
+`V2TransportTester` now makes the same post-handshake call with a 13-byte type.
+
+### Clean-master proof and exact witness
+
+The immutable corpus snapshot is
+`/tmp/bitcoin-current-p2p-transport-serialization-corpus-frozen-20260720`:
+292 files, 24,999,219 bytes, manifest SHA-256
+`c90405f1c3d7f167be1582b2d4cf348905554ae72367124358abfd0447a8bc0f`.
+The original replay completed 294 executions and exit 0; that baseline had
+the output log created inside the input directory, so it included the 292
+corpus files plus that log. Baseline log SHA-256 is
+`f3f3c98aa7e952768736d0006b67a8731b2a978abf133f17182ddcd5bf39c293`.
+
+The strongest proof input is the 86-byte artifact
+`/tmp/bitcoin-current-p2p-transport-serialization-direct-witness-20260720/artifacts/crash-11285a393aad23d2bfe64b6d175e29fd3b73df7a`,
+SHA-256
+`763d7869bd7cc4dfb26400e4c16e53cb04d996f58a101930a4031d42adca7496`.
+After a valid bidirectional V2 simulation, the temporary helper constructed
+an empty-payload `CSerializedNetMsg` whose type was 76 `x` bytes. To replay
+clean master exactly, the two new size-check lines were deleted from
+`src/net.cpp` and the helper's three expected-rejection/preservation asserts
+were disabled. This restored the production source to the exact
+`origin/master` hash above while allowing the original copy to run. One input
+then produced an AddressSanitizer `heap-buffer-overflow` with `WRITE of size
+76`; the first report log SHA-256 is
+`927e52ca9b4b842bf2ee7cf76719b15c5b976803abd5464219c461cf69c82b83`, and the
+complete `abort_on_error=0` replay log SHA-256 is
+`0530be5581a8c4502b7ab2c931b1596a9e74f8ce456dd4ba8bbcb6a145948e00`.
+The exact bytes are:
+
+    c000ff001100a700000800ff115600000000000000ffffffffffffffff7affffffffffffffffffffffff000000ffffffffffffffffffffffffffffffffd1d1d12ed9492efefdfdfdfdfdfdfdfdfdfdfdfdfdfd0afd00
+
+The fixed binary replayed the identical artifact once with exit 0 and no
+sanitizer output. Its log SHA-256 is
+`f38ab143e26539e00d510f2912248886ebdbd282722e7e04ce227d99b7f18da9`.
+
+### Core caller boundary and master-relative severity
+
+The production route is `CConnman::PushMessage` to the peer send queue,
+`CConnman::SocketSendData`, and then `SetMessageToSend`. Normal Bitcoin Core
+callers use fixed `NetMsgType` constants; the `sendmsgtopeer` RPC rejects a
+message type longer than 12 bytes before queueing. Peer-controlled invalid
+blocks, invalid witnesses, or other inbound payloads cannot select an
+arbitrary outbound message type in this call graph. The clean-master ASan
+replay nevertheless proves a real production API memory-safety/contract bug,
+so rate it **Low** on master: it is reachable by an internal or future caller
+that bypasses the current bounds, but no remotely triggerable Bitcoin Core,
+consensus, invalid-block, or witness impact was demonstrated. Do not rate it
+High/Critical without a Core caller-level reproduction showing remote crash,
+memory corruption, resource exhaustion, availability, or consensus impact.
+No cryptographic nonce is involved; a nonce with no cryptographic meaning is
+not Critical merely because it is not cleared.
+
+### Verification and sanitizer run
+
+The deterministic build was:
+
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-testbuild --target test_bitcoin -j2
+
+The targeted verifier was:
+
+    /tmp/bitcoin-secp256k1-audit-current-testbuild/bin/test_bitcoin --run_test=net_tests/v2transport_test --catch_system_error=no --log_level=test_suite
+
+It reported no errors. The final immutable replay used
+`FUZZ=p2p_transport_bidirectional_v2`, `-merge=0 -runs=1 -timeout=60
+-rss_limit_mb=4096`, completed 293 executions, exited 0, and produced no
+artifacts. Its log SHA-256 is
+`87b4069dc2ab3c220731299d10c8c49a8f1d76453b76c114579f37a313279369`.
+Four ASan/UBSan workers used `-jobs=4 -workers=4 -max_total_time=120`; all
+exited 0 with no artifacts. They completed 14,723/14,532/14,652/14,911
+executions, with peak RSS 1271/1160/1219/1287 MiB and 261/234/233/276 new
+units. The combined worker log SHA-256 is
+`1856673efafde676d44537a1475b8038f8d722a792b126e846ab09dfd59d7a62`.
+`git diff --check` passed. A whole-file clang-format dry run remains noisy
+on pre-existing formatting violations in these older files; no unrelated
+formatting was changed.
+
+### Rejected candidates, cherry-picks, and reiterated findings
+
+An initial 954-byte oversized-type witness reached `SetMessageToSend` while
+V2 was not ready (SHA-256
+`5538a4617e77b84dc21b9d7f5ad3a0c8370e52e78b0338d4a313a5d6a6d9cf10`). It was
+a state-sensitive harness false witness and is not production proof. V2's
+receive parser also accepts type byte `0x7f` while V1 accepts through `0x7e`;
+unknown types are rejected or dropped and no Core-visible inconsistency was
+reproduced, so this remains deferred Informational/Low protocol-permissiveness
+context rather than a finding in this commit.
+
+The l0rinc/secp256k1 pull-request list was reviewed. No
+transport-serialization-specific commit applies, so none was cherry-picked;
+reconciled relevant commits remain represented by the audit parent. Any later
+minor fix or cherry-pick that makes this witness green must preserve or state
+whether it changes or masks clean-master behavior, and amend its commit
+message and this ledger with the exact artifact/mutation, preconditions,
+postconditions, assertion/status/stack, source and binary hashes, Core caller
+and input origin, master-relative severity, test gap, and verifier commands.
+
+Existing findings remain reiterated: the banman invalid subnet/unban
+map-integrity defect is **Low/nice-to-have** on master because Core RPC
+validation drops invalid entries; `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; and
+SHA/HMAC/RFC6979 retention is **Medium** memory hygiene. The txdownloadman,
+txrequest, connman, node-eviction, and p2p-handshake campaigns found no
+confirmed production bug on master; process-message block storage remains
+**Low** and requires a local disk/write failure. Invalid fuzzer state or an
+invalid block alone is not Critical. No temporary mutation or fuzz job
+remains.
