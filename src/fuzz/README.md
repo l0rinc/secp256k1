@@ -26922,6 +26922,122 @@ clean-master or minimal-mutation proof, deterministic regression test when a
 production bug is confirmed, and whether a later minor fix changed or masked
 the behavior.
 
+## 2026-07-20 Core `validation_load_mempool` persistence-state oracle
+
+This entry records Core commit `a59470d823`,
+`fuzz: enforce mempool persistence state contracts`, on Bitcoin Core
+`origin/master` `18c05d93016b28a9afd4c716dfe00b6e0accb30b`.
+
+### Contract and caller
+
+The target previously discarded both `LoadMempool` and `DumpMempool` results.
+It now runs the always-on mempool consistency checker after loading and
+requires every unbroadcast transaction to still exist in the pool. Before
+`DumpMempool`, it captures transaction IDs, fee deltas, unbroadcast IDs, total
+transaction size, total fee, sequence, and load-attempt state. The complete
+state must be unchanged after dumping, including output-file failures. The
+mempool is checked again afterward.
+
+The production path is local startup mempool loading and local persistence or
+manual dump, not direct peer block or witness input. A persistence-state bug
+could affect restart or relay availability, but this campaign found no
+consensus, invalid-block, memory-safety, or Critical issue. Severity must be
+reassessed from an actual Bitcoin Core caller and input origin. Invalid
+fuzzer state alone is insufficient.
+
+### Master and fork boundary
+
+The original harness SHA-256 is
+`2c6cc5ec04aabbf0677719c598488a9d528afec67af5a3721cc3ab88890bdeb2`; the
+final harness SHA-256 is
+`4de679169905895d57cefca73f3322e1afe975e2cfcdbb8b871581cf33fb7e7e`.
+`src/node/mempool_persist.cpp` is unchanged from master at
+`3ac7d1c297009783f55fd4ff5058c5efbd0896bc4dd04d342cc9d86807c6379a`.
+
+The l0rinc persistence history and current-master refactors were reviewed;
+no l0rinc fork commit adds this fuzzer contract or a matching production
+change, so no cherry-pick was applied and no later fix is masking this result.
+The earlier compact-block reconstruction target was deliberately skipped
+because its l0rinc-derived oracle is already recorded in `01086e700f`.
+
+### Frozen baseline
+
+The source corpus was `/mnt/my_storage/qa-assets/fuzz_corpora/validation_load_mempool`;
+the frozen copy is `/tmp/bitcoin-validation-load-mempool-20260720/corpus`.
+
+* 1,425 files, 112,122,591 bytes.
+* Manifest SHA-256:
+  `1b4813ce902fff536c20e4ca3024b57313ad2765cec0515b1ceac3a082f9c019`.
+* Baseline log SHA-256:
+  `d5bd5df40af5da6c789e611dcdb37e5086f00e2cd349b10c8050a1f967d22ba6`.
+* Baseline: 1,426 executions, coverage 4,076, features 32,849, peak RSS
+  543 MiB, exit 0, no diagnostic or artifact.
+
+### Minimal mutation proof
+
+At `src/node/mempool_persist.cpp:177`, the output-file failure branch was
+temporarily changed to call
+`const_cast<CTxMemPool&>(pool).SetLoadTried(false)` before returning. This
+models a failed persistence operation clobbering the pool's load-attempt
+state.
+
+* Mutated source SHA-256:
+  `5a3847fa69c34be977112b9e3cb14a039693072065f3a7642e043212a0b2f0d5`.
+* Mutation log SHA-256:
+  `02fe04de6b73417e6d70df07efdf173fc15d01aa9bb09dc598b972a04adb37c4`.
+* Result: exit 77 at
+  `validation_load_mempool.cpp:110` on the pre/post dump-state assertion.
+* Mutation artifact SHA-256:
+  `c47a6e83ba35ca1b8ed18dfacf4d16364997dbebcd81deb75a6593f4a3b92bd4`.
+* Artifact input Base64: `////////fwA=`.
+* The exact artifact passed under restored production; fixed replay log
+  SHA-256:
+  `f83946488e9a634841356da50e9025c97629c25ac5f2c13337fb2a1a65cdcb07`.
+
+This is oracle-sensitivity evidence only, not a claim that unchanged master
+has this defect.
+
+### Final verification
+
+The final ASan/UBSan fuzzer SHA-256 is
+`c43614dc8342414b7def1021bd4603725a2e257596aba89154ffafb8dce1e40d`.
+The restored full replay log SHA-256 is
+`30964f66f7d003099a6db9872edef0b6f8a192a16c195883cb3208475b5ddb95`:
+1,426 executions, coverage 4,282, features 32,928, peak RSS 544 MiB, exit 0,
+with no sanitizer or assertion diagnostics.
+
+The four-job replay log SHA-256 is
+`1975d6fa06dae9447226ddefacaddf0af29b90cfcf80c0cb280e813007c084a3`.
+With `-jobs=4 -workers=4`, jobs 0 through 3 all exited 0 after 1,426
+executions. Peak RSS values were 548, 540, 554, and 545 MiB; no artifacts
+were produced. `git diff --check` passed, production was restored, and no
+fuzz jobs remained.
+
+### Severity and reiterated findings
+
+This campaign found no confirmed production bug and adds no deterministic
+regression test for one. Existing ratings remain against unmodified master
+and actual Core reachability:
+
+* Private-broadcast failed-send retention: **Medium**, conditional feature.
+* Empty `HEADERS` initial-sync handoff: **Medium** availability/IBD stall.
+* Peer transaction activity refresh and process-message storage failure:
+  **Low**.
+* Oversized transport message types: **Low** in current callers.
+* `ecmult_multi` scratch wrapping and forced 10x26/SHA/HMAC/RFC6979
+  retention: **Medium**, with limited Core reachability.
+* Banman invalid-subnet integrity: **Low/nice-to-have** because Core RPC
+  validation drops invalid entries before affected state is used.
+* Tx download, tx request, connman, node eviction, handshake, compact-block,
+  headers-sync, UTXO snapshot, and mempool-persistence campaigns: no new
+  confirmed master production bug.
+
+An uncleared nonce is not Critical unless it carries cryptographic meaning.
+Future confirmed production bugs still require the Core caller, input origin,
+master behavior, exact precondition/postcondition, assertion/status/stack,
+clean-master or minimal-mutation proof, deterministic regression test, and a
+record of whether a later minor fix changed or masked the behavior.
+
 ## 2026-07-20 Core `utxo_snapshot_invalid` activation-rollback oracle
 
 This entry records Core commit `b91114946f`,
