@@ -1411,3 +1411,152 @@ Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
 fuzz -j4`; `git diff --check`; original/enhanced frozen-corpus replays; the
 four-worker command; and exact enhanced-mutated, legacy-mutated,
 enhanced-clean, and legacy-clean artifact replays.
+
+## `policy_estimator_io` read/write state oracle
+
+Source commit `4cb03a5556` (`fuzz: assert policy estimator read/write state
+contracts`) strengthens `policy_estimator_io`. The original target discarded
+both `CBlockPolicyEstimator::Read` and `Write` results and checked no state
+after either operation. The new `CaptureEstimatorState` helper serializes the
+estimator through its public const `Write` API into a temporary file. After a
+failed `Read`, the exact serialized state must equal the pre-read state. After
+a successful `Read`, `Write` must not change the serialized state. The target
+does not assume rejected bytes are valid, or that a failed read must accept a
+particular encoding. This mirrors the production contract documented at
+`src/policy/fees/block_policy_estimator.cpp:1012-1013`: parsing uses temporary
+variables so an exception cannot corrupt existing structures.
+
+Master and clean identities:
+
+* Core base master is
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; source parent is
+  `848eb7b5e9fc5357007e951133d213ceae2f244b`. The production implementation
+  is unchanged and matches master.
+* `origin/master`
+  `src/policy/fees/block_policy_estimator.cpp` SHA-256 is
+  `d5642f08207163c0d442bcbf077ab4321189f8472a5cfa851f70d0ceb92b69c3`; the
+  clean audit branch has the same hash. The unchanged header SHA-256 is
+  `7435bb720c5c861ad8fdd440c9e3df8e107f8bd983a7563ad7f61abde6c22f45`.
+* Original harness SHA-256:
+  `c7eb2e1f6ce776d872604927a5375e09432b479948b95f0c95054416b3256eac`.
+  Enhanced harness SHA-256:
+  `336876e2e88b661c568edeb5c774d35d1a960f0048e49b9d8422c13cd0c12fee`.
+  Final clean sanitizer fuzz binary SHA-256:
+  `4013d0cd770d51aec62e0133e5c388d07499a63cac79840214461184a76fee0a`.
+
+Frozen corpus and clean runs:
+
+* Target: `policy_estimator_io`.
+* Frozen directory: `/tmp/bitcoin-policy-estimator-io-20260720/frozen`.
+* Source: `/mnt/my_storage/qa-assets/fuzz_corpora/policy_estimator_io`.
+* 238 files and 5,777,773 bytes. Sorted filename/content manifest SHA-256:
+  `daf58fbb3745f279b9b9569facaaf0186ab6adb5bbe34dfa9797163e54ba5072`.
+  The frozen directory was not modified by fuzzing.
+* Original replay used `-merge=0 -runs=238 -timeout=60 -rss_limit_mb=0
+  -print_final_stats=1`. It exited 0 after 257 executions, cov 757, ft 2270,
+  peak RSS 475 MiB, with no artifacts. Log SHA-256:
+  `edd689c9da8ebf38a669e44304f308ca871390c2ea3f4f8ba4c5c9713ed207f7`.
+* Enhanced replay with the same command exited 0 after 254 executions,
+  cov 784, ft 2385, peak RSS 498 MiB, with no artifacts. Log SHA-256:
+  `0475a5872873226a296154c33e51fcc37d3ffeb7d85101096057c4899da1ae23`.
+
+Multi-worker evidence:
+
+```text
+env FUZZ=policy_estimator_io /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+  -jobs=4 -workers=4 -max_total_time=15 -timeout=60 -rss_limit_mb=0 \
+  -print_final_stats=1 \
+  -artifact_prefix=/tmp/bitcoin-policy-estimator-io-20260720/enhanced-worker-artifacts/ \
+  /tmp/bitcoin-policy-estimator-io-20260720/workers
+```
+
+All four jobs exited 0 with no sanitizer diagnostics or artifacts. Jobs 0, 1,
+2, and 3 processed 3,187, 3,087, 4,215, and 4,127 executions; each reached
+cov 784; ft was 2,442, 2,441, 2,438, and 2,442; peak RSS was 499, 517, 499,
+and 514 MiB. Parent worker log SHA-256:
+`2b211ed06f4c56ef5a2dedb70434b93946365d69165508bb1c9330c58b3d1818`.
+The disposable worker corpus grew from 238 files/5,777,773 bytes to 323
+files/8,124,936 bytes; the frozen corpus remained unchanged and no fuzz
+process remained afterward.
+
+Differential proof that the oracle matters:
+
+* Temporary production mutation: immediately before the `Read` catch block's
+  `return false`, insert `buckets.clear()`. This models the exact class of
+  bug the production comment forbids: an exception path changes persistent
+  estimator state even though `Read` reports failure. Mutated production
+  source SHA-256:
+  `315ebce491bda45a55f9d1130605f81ac0dfe6760053d507c6f997d245df142a`.
+  Enhanced mutated binary SHA-256:
+  `c310aca5df4e0b0a98c669a1d59235b3fb80c5dae6b507191ee8ab2c58091432`.
+* The frozen replay exited 77 after one execution at
+  `src/test/fuzz/policy_estimator_io.cpp:51`, asserting
+  `CaptureEstimatorState(block_policy_estimator) == before_read`. Log
+  SHA-256:
+  `813e06d428e561f03c17c58b5ce664149b53b9bf5cc2e54cfdd27f2a1854d511`.
+* The exact minimized artifact is the empty file at
+  `/tmp/bitcoin-policy-estimator-io-20260720/mutation-artifacts/crash-da39a3ee5e6b4b0d3255bfef95601890afd80709`,
+  size 0, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+  Its Base64 representation is the empty string. The zero-byte input is
+  sufficient because a newly constructed estimator has non-empty default
+  buckets and the mutation clears them on the first malformed `Read`.
+* The original harness, with the same mutated production and the complete
+  frozen corpus, exited 0 after 254 executions, cov 765, ft 2277, peak RSS
+  346 MiB, and produced no artifact. Original mutated binary SHA-256:
+  `965fc7936292d0c9902c06c655fcbc765bc95562e67663043faf22cfb1812f6b`.
+  Legacy replay log SHA-256:
+  `eed97b83536ed3d98574fc5a70a2ec0534bff659dff73c5cea9855aeba89c4a1`.
+* Clean production plus the enhanced harness accepted the exact empty
+  artifact with exit 0; control log SHA-256:
+  `267f8aea8d7f517139c304d9aab81fa5a313b22fc89cd329954733b6b0e1955c`.
+  This proves the assertion is not an overbroad failure on master.
+* No production mutation remains. No deterministic regression test or
+  production fix is claimed because clean master reproduces no failure; this
+  commit closes an oracle gap only.
+
+Bitcoin Core caller, input origin, and severity:
+
+* The estimator is created during node initialization at `init.cpp:1680-1685`,
+  loads `fee_estimates.dat` from local disk in the constructor at
+  `block_policy_estimator.cpp:561-575`, and periodically persists it through
+  `FlushFeeEstimates` at `init.cpp:1682-1684`. RPC `estimatesmartfee` consumes
+  it at `rpc/fees.cpp:65-91`; the chain interface forwards `estimateSmartFee`
+  at `node/interfaces.cpp:739-747`.
+* The fuzzed bytes model a local persisted fee-estimate file, not a remote
+  block, transaction, witness, or peer-controlled consensus message. A
+  malformed local file can already be rejected non-fatally by master. This
+  audit found no clean-master corruption, crash, consensus effect, or memory
+  safety issue.
+* Master-relative severity: N/A for production; Low/informational for oracle
+  hardening. Even the modeled divergence would be a local fee-estimation
+  persistence/quality issue. It is not Critical merely because malformed bytes
+  are accepted by a fuzzer. A nonce without cryptographic meaning would not
+  make a clearing issue Critical. Reassess only if a clean-master reproduction
+  demonstrates stronger Core impact.
+
+Existing findings and cherry-pick context:
+
+* Existing findings remain rated by actual Core reachability: private
+  broadcast failed-send retention is Medium and feature-conditional; empty
+  HEADERS IBD handoff is Medium availability; peer activity refresh,
+  process-message local storage failure, oversized transport types, and banman
+  invalid-subnet integrity are Low or nice-to-have in current callers; ecmult
+  scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979 retention
+  remain reachability-limited latent/hygiene findings. No clean-master
+  production bug was established in the previously audited addrman,
+  coins-cache, txgraph, txdownloadman, txrequest, connman, eviction,
+  compact-block, headers-sync, UTXO snapshot, mempool-persistence,
+  package-evaluation, handshake, BufferedFile, block-index, or tx_pool paths.
+* `origin/master` and `remotes/l0rinc/master` both resolve to
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. No relevant l0rinc commit applies
+  to this target, so none was cherry-picked. Any later production fix, minor
+  fix, oracle change, or cherry-pick must repeat the exact target,
+  corpus/artifact, mutation, assertion, status/stack, Core caller/input origin,
+  test gap, severity, and verifier commands, and state whether it preserves,
+  changes, or masks this clean-master behavior.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j2`; `git diff --check`; original and enhanced frozen-corpus replays;
+the four-worker command; enhanced mutated replay; legacy mutated replay; and
+the exact enhanced clean-artifact replay.
