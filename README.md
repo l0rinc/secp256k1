@@ -2821,3 +2821,147 @@ regression test was required.
 `clang-format --dry-run --Werror` reports pre-existing violations at
 `txorphan.cpp:212, 316, 331, 356, 484, 489, and 754`; unrelated lines were
 not reformatted. No fuzz, sanitizer, or mutation process remains running.
+
+## P2P headers presync block-index state oracle audit (2026-07-20)
+
+Source commit: `515620e10c51afdf26b63cc5f033527aca4acdfd` (`fuzz: assert
+low-work headers preserve block-index state`). The source parent was
+`302a530ac76bcd7d270819a6dce632b9eb5e7396`; the audit base was Bitcoin Core
+master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`, also the
+`l0rinc/master` tip. No l0rinc pull-request commit applied to this target.
+
+### Core boundary and severity
+
+`p2p_headers_presync` exercises Bitcoin Core's
+`PeerManagerImpl::ProcessHeadersMessage()` and
+`PeerManagerImpl::TryLowWorkHeadersSync()` path at
+`src/net_processing.cpp:2813, 3007, and 3149`. The fuzzer supplies untrusted
+peer HEADERS, CMPCTBLOCK, and BLOCK messages. The generated chains are kept
+below `MinimumChainWork`, so this path must discard them without mutating the
+local block index or its candidate bookkeeping.
+
+The old oracle only compared the final block-index size. The new oracle
+snapshots each existing `CBlockIndex`, including its map object and hash
+pointer, predecessor and skip links, header and storage fields, chain work,
+transaction counters, status, sequence/time metadata, the best-header
+pointer, and the active-chain candidate set. It checks this state after every
+message and after the complete input, preventing an unchanged final size from
+hiding a transient or metadata-only state transition.
+
+Severity on master is informational/Low oracle hardening. Clean master
+reproduced no production failure. This target does not expose consensus
+failure, invalid-block acceptance, memory safety, or cryptographic impact;
+invalid peer blocks remain below the work threshold. A hypothetical mutation
+of best-header metadata could affect synchronization state, but that is
+mutation evidence rather than a master finding and is not High/Critical. No
+production fix or deterministic regression test is claimed.
+
+### Source and corpus identity
+
+The original harness source SHA-256 was
+`4a0ae1131b69c79bd8342aa3170371d62de55902ddcb4d390f7e3556eee355a3`.
+The strengthened harness source SHA-256 is
+`40df280c9922654b4aa9fab597d2d596c00918230f9d6bb038ea95057dc2b630`.
+The restored production `src/net_processing.cpp` SHA-256 is
+`afc14cf644760b60670fa82fb088b03ffa792d421a52c5f6c73b2e67672cf419`.
+
+The frozen manifest is
+`/tmp/bitcoin-p2p-headers-presync-20260720/manifest.entries`: 602 files,
+2,037,636 bytes, minimum 1 byte, maximum 46,865 bytes. Its sorted manifest
+SHA-256 is
+`4a8b3262415f96c956cac3e8a252f600ac255cb78586f749a6ec93e61072fcd3`.
+
+LibFuzzer appends discovered inputs to a corpus directory. The shared working
+directory consequently grew from the manifest's 602 files to 1,435 during
+the campaign. All authoritative normal, sanitizer, and worker replays used
+separate 602-file copies reconstructed from the manifest; the mutable working
+directory is not evidence.
+
+### Corpus and sanitizer replays
+
+The non-sanitized fuzz binary was built with `BUILD_FOR_FUZZING=ON`,
+`BUILD_FUZZ_BINARY=ON`, and an empty `SANITIZERS` setting. Its SHA-256 is
+`7f162170dd16e6bbead51d50b5e930518963edf1c4a6118b0e804f47d0ca1b1f`.
+The custom non-sanitized driver does not accept libFuzzer flags: the exact
+input was replayed by passing only its path and exited 0, with log SHA-256
+`76163b77031e432cdffce95fcdf014d394f841c6dbfac5ea50dd15cca9ba2cda`.
+The isolated 602-file corpus exited 0, with log SHA-256
+`93b1129e848e131a7e9af82e28274955a93bda2878dc9b821cb5e0560db7647f`.
+
+The sanitizer fuzz binary was built with `undefined,address,fuzzer`; its
+SHA-256 is
+`ce1cc7451fa815d06c71b9c6a2bbd63c238895cf24decbf52a12d8db1d5054d6`.
+With `ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1`, the
+isolated corpus replay exited 0 after 714 executions, added zero units, and
+peaked at 501 MiB. The sanitizer log SHA-256 is
+`db0332428f7ad26f8dfebec633636897ea3f320f83ab90aec84abe8090bd3fbe`.
+No sanitizer report or artifact was produced.
+
+A four-worker sanitizer run used `-jobs=4 -workers=4 -max_total_time=60`
+with timeout, RSS, value-profile, final-stat, and isolated-corpus arguments.
+It started from 602 inputs, completed 7,724 executions, added no artifacts,
+and peaked at 503 MiB. The parent log SHA-256 is
+`79102f162a402413c1c4a1e5b905bc88b504ca1b67408c91f64fefc7e499cf59`.
+Worker log SHA-256 values are:
+
+    fuzz-0 b21360dca73d8abdff349d3fce5a38343be3fa99d1f83a15d2c5829f57d17156
+    fuzz-1 3e6a86ba931f4a97200e1508d943df158bd54c534be44f53f12acccfc5fd5a66
+    fuzz-2 9b2d7f4eddd1d9565f1d7ac58375a84dcec31c67415ce115e3f04486a1657a5f
+    fuzz-3 eb7000a72c7a1144c655c56c928c702e6a52028bb23d691a406b4fea790eb6e3
+
+No worker artifact or orphan fuzz process remained.
+
+The pre-change full-corpus baseline used the original size-only harness,
+exited 0 after 710 executions, added zero units, and peaked at 500 MiB. Its
+log SHA-256 is
+`3b25120b2af5d743cb3d0373462c59eb963ff2dd3d14b2f2a8216c78964b3e6e`.
+
+### Differential proof
+
+The exact input was
+`/tmp/bitcoin-p2p-headers-presync-20260720/first-failing-input`: 235 bytes,
+SHA-256
+`23ef66c19b8d4e22a53266e32bd6362a061ddc7383147d8a358d13901dfdf2e8`.
+
+A temporary production mutation inserted
+`WITH_LOCK(cs_main, ++m_chainman.m_best_header->nTimeMax);` in the low-work
+branch. The mutated production source SHA-256 was
+`bfddbac97e4710c81081a9814b002cbefde5bba89a88cb22a1a8483036f90722`.
+With the original harness, the mutated binary SHA-256 was
+`60fd815941c192237b60c9a529508bdc88e286bf9284860ce5a60af9e6fa6778`; the
+input exited 0 and the control log SHA-256 was
+`f68b57d0bde1e436d99166435d30b98c5ce0e30ccb76e9f19e0f7d8adc9c3d58`.
+
+With the strengthened harness and the identical mutation, the binary SHA-256
+was `dd3ba40fcc6175e5b20e925fbb7c9164e14ebeb643acaae6452221e3c0a5e129`.
+The exact input exited 134 at `index.nTimeMax == snapshot.nTimeMax`; the
+diagnostic log SHA-256 was
+`b2aaf163d5789ef3fffcbe899c2639255d906da0ef331d5efbd8cf0143c4d74f`.
+This proves the old size-only oracle accepts unchanged-size metadata
+corruption while the new assertion detects it. The mutation is synthetic and
+does not prove that clean master contains a production defect. It was removed
+before the source commit.
+
+Restoring production and rebuilding produced sanitizer binary SHA-256
+`ce1cc7451fa815d06c71b9c6a2bbd63c238895cf24decbf52a12d8db1d5054d6`; the
+exact input exited 0 with log SHA-256
+`f45c78dfc4e43509d1be69de556091858d87aca1f172c0462e45177db94316c1`.
+
+### Verification and test gap
+
+The normal build used:
+`cmake -S /tmp/bitcoin-secp256k1-audit-current -B
+/tmp/bitcoin-secp256k1-audit-current-normal-build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+-DBUILD_FOR_FUZZING=ON -DBUILD_FUZZ_BINARY=ON -DBUILD_TESTS=ON -DSANITIZERS=
+-DWITH_ZMQ=OFF`, followed by
+`cmake --build /tmp/bitcoin-secp256k1-audit-current-normal-build --target fuzz
+--parallel 8`. The sanitizer build used
+`ninja -C /tmp/bitcoin-secp256k1-audit-current-build fuzz`.
+
+`git diff --check` passed. `clang-format --dry-run --Werror` still reports
+the pre-existing missing trailing comma at
+`src/test/fuzz/p2p_headers_presync.cpp:80`; unrelated lines were not
+reformatted. The configured fuzz-only build has no `test_bitcoin` target, so
+the dedicated unit suite could not be executed in that build. No production
+behavior changed and no deterministic production regression test was added.
+No fuzz, sanitizer, or mutation process remains running.
