@@ -26095,3 +26095,79 @@ confirmed production bug on master; process-message block storage remains
 **Low** and requires a local disk/write failure. Invalid fuzzer state or an
 invalid block alone is not Critical. No temporary mutation or fuzz job
 remains.
+
+## 2026-07-20 Core process_messages peer-activity oracle on latest master
+
+### Contract and production fix
+
+Commit `00fead6cdf` moves the `m_last_tx_time` update into
+`PeerManagerImpl::ProcessValidTx`, the shared helper used by direct TX
+messages, orphan release, and package results. The direct-message-only update
+was removed. The `process_messages` harness now drains validation callbacks
+after each message and checks that a TX message which increases mempool size
+refreshes the selected peer's timestamp. The deterministic test
+`net_processing_tests/last_tx_time_tracks_orphan_acceptance` sends a valid
+child before its valid parent and checks both acceptance timestamps.
+
+### Master-relative severity and Core boundary
+
+This is a real *Low* severity master defect. Bitcoin Core's
+`CConnman::AttemptToEvictConnection` snapshots the field and
+`SelectNodeToEvict` protects the four peers with the newest novel mempool
+transactions; `getpeerinfo` also reports it. A remote peer can reach the
+missing paths using valid TX messages, so a useful inbound peer can lose
+eviction preference or show stale activity during connection pressure. This
+does not affect transaction validity, consensus, block processing, or memory
+safety. Invalid blocks and invalid witnesses cannot select this path, so it is
+not High or Critical on master. The field is not a cryptographic nonce.
+
+### Clean-master proof
+
+The audited `origin/master` is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b0`. Clean production hashes were
+`src/net_processing.cpp`
+`a3f72ab4671a01e2f8a42b661f25b39feaf7bdce0d9c21a19e5bc51dea704faf` and
+`src/net.h`
+`3707d357023e67ddbdbeb3b77fb1d0cbc62f0ce06be8f2d89c071e6090ffbd90`.
+Only the regression test was added to the clean worktree; no production
+mutation was necessary. With a mature-coinbase parent, a valid signed child,
+two TX P2P messages, and mock times `1700000001s` and `1700000002s`, clean
+master left the timestamp at `1700000001s` after orphan acceptance at the
+second time. The test exited `201`; failure log SHA-256:
+`c6f49503e9b7a1348e15cae553501286ba6250327e44cf089b45dc36ab48a1a3`.
+
+The immutable corpus has 3783 files and 49066585 bytes. Its canonical
+relative-name manifest SHA-256 is
+`1470d3be80014cf9e0e61fc6f5ed8705041188d6abfbb790aa7f99e41647e61d`.
+Clean normal replay and clean Clang undefined/address/fuzzer replay both
+completed without failures or artifacts. Their log hashes are respectively
+`adeb5cbab39f7cded5f0ad16973cd66fbe592106819c368ebd06543cb3b2b36f` and
+`496c3f1c64c22a9a63963e151df5cb85dfcca76f3643a31701b1de7fbe1d79f1`.
+
+### Fixed proof and audit context
+
+The fixed deterministic test exited `0` (log SHA-256
+`2106e52606f7e82e04974d92c2872015a196f6fdfe02f095c4c01502e7a53d55`). Four
+independent sanitizer workers replayed the full corpus with
+`-merge=0 -runs=500 -timeout=60 -rss_limit_mb=4096`; they completed
+5239/5220/5220/5216 executions, all exited `0`, produced no artifacts, and
+peaked at 613/611/617/609 MiB. Combined worker-log SHA-256:
+`dba05531dadbadf2246d853c551347e627f51f6475569709ffcdff709350b4cf`.
+
+The fuzzer oracle is deliberately narrow: it requires a labeled TX message
+and net mempool growth, rather than treating acceptance-looking input as
+valid. Existing findings remain reiterated: banman invalid-subnet/unban
+integrity is Low/nice-to-have; `ecmult_multi` scratch wrapping is Medium with
+low Core reachability; forced 10x26 magnitude-32 normalization and
+SHA/HMAC/RFC6979 retention are Medium; txdownloadman/txrequest, connman,
+node-eviction, and p2p-handshake found no confirmed master bug; and block
+storage remains Low and requires local write failure. Invalid fuzzer state or
+an invalid block alone is not Critical.
+
+The l0rinc/secp256k1 PR list was reviewed; no matching commit applies to this
+Bitcoin Core net-processing path, so none was cherry-picked. No reviewed
+later fix masks this clean-master failure. Any future cherry-pick or minor
+fix that changes the path must amend its commit and this ledger with the
+behavior change, clean-master or mutation result, preconditions and
+postconditions, assertion/status/stack, source and binary hashes, Core caller
+and input origin, master-relative severity, test gap, and verifier commands.
