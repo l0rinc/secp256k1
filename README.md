@@ -2233,3 +2233,162 @@ enhanced mutation replays; the parent-harness exact mutation replay; and the
 exact final clean replay. The fuzz-only build did not expose block-specific
 unit-test targets, and no deterministic production regression test was added
 because clean master has no confirmed production defect.
+
+## CBlockHeader::SetNull field-reset oracle audit (2026-07-20)
+
+Source commit: 8ec4b31dcb84659b5965bb7ec7b0dc896af3367c
+(fuzz: assert CBlockHeader::SetNull clears every field). It is based on
+source parent 9f63b1f80fb710e7035b94ba5d23ed5aa2ea628f and Bitcoin Core master
+18c05d93016b28a9afd4c716dfe00b6e0accb30b. The l0rinc fork was reviewed at
+the same master tip. No separate l0rinc/secp256k1 commit applies to this
+header reset contract, so none was cherry-picked.
+
+The old `block_header` oracle checked only `IsNull()`, which observes `nBits`,
+and compared two equally reset CBlock hashes. It could therefore accept a
+`SetNull()` implementation that left another header field stale. The new
+postconditions require `nVersion == 0`, null previous and merkle hashes,
+`nTime == 0`, `nBits == 0`, and `nNonce == 0` after resetting a copied header.
+The production implementation in `src/primitives/block.h` already assigns
+these values; this is fuzzer-side oracle hardening, not a production behavior
+change.
+
+### Core caller boundary and severity
+
+The shared reset is reached through `CBlock::SetNull()` at
+`src/node/blockstorage.cpp:1052` and `src/node/interfaces.cpp:460` for local
+block-file reads and reused block objects, through
+`PartiallyDownloadedBlock::FillBlock()` at `src/blockencodings.cpp:209` after
+remote CMPCTBLOCK/BLOCKTXN processing, and through
+`HeadersSyncState::Finalize()` at `src/headerssync.cpp:55` for a peer's initial
+header synchronization state. Fuzz input is serialized header data; the
+actual Core boundaries include both local disk I/O and remote header/compact-
+block state.
+
+No clean-master production failure was reproduced. Severity is
+Low/informational oracle hardening, not a production vulnerability claim. A
+stale nonce could affect a null header's later hash/serialization or local
+object state under the proof mutation, but current callers provide no
+consensus, remote invalid-block, memory-safety, or denial-of-service impact.
+An invalid block/header alone is not Critical, and a nonce with no
+cryptographic meaning is not a clearing-critical finding.
+
+### Exact identities and corpus
+
+Clean `src/primitives/block.h` SHA-256:
+`07aa61de74a4aa8b9c9f67d87a6a9a1cf2729bb452e3642d95facec23fe0fd27`.
+Parent harness SHA-256:
+`1fd8f88beea05396694aaf4ab5bf03afabb22c0f760da12bd4961be1db9a419a`.
+Enhanced harness SHA-256:
+`73d50144de66195f331c85cd97b0f2d3392676daa91a7768f40a1f8717f9324b`.
+Final clean ASan/UBSan/libFuzzer binary SHA-256:
+`9ba7494286e8a08b8d610ffd1029e08373ee1ad40983ed5622d4daa4fd0210bf`.
+
+Source corpus:
+`/mnt/my_storage/qa-assets/fuzz_corpora/block_header`.
+Immutable evidence copy:
+`/tmp/bitcoin-block-header-20260720/frozen-clean`, containing 121 files and
+285055 bytes. The path-independent sorted per-file manifest command was:
+
+    find . -type f -printf '%P\0' | sort -z | xargs -0 -r sha256sum | sha256sum
+
+Manifest SHA-256:
+`f1604f9015d4373416c06ef57ab3978045280524508f4a3d2851503dcf2f68b8`.
+
+### Clean replay and workers
+
+The final clean replay exited 0 after 122 executions, coverage 416, features
+2723, no new units, peak RSS 109 MiB, and no sanitizer, assertion, timeout,
+OOM, crash, or artifact. Its log SHA-256 is
+`4fbe932367f898b9029a99b234f1a5b7e3a7cab37a4933d853f8a08eb253cd0`.
+
+The exact corpus input
+`011392c3197834c907ef4cfe7ac14d4e5378b971` is 91 bytes with SHA-256
+`5602d6bbd84604b2a40a31f43af02cf962c76c3040f02b47d7482f546f922ed3`.
+The final clean exact replay exited 0; its log SHA-256 is
+`854a93afc682dc70d66c313deae0e316bb72ef19a37199c60ed017159486f6c4`.
+
+The seeded worker command used `-jobs=4 -workers=4 -max_total_time=60`.
+All workers exited 0 without diagnostics or artifacts. Jobs 0/1/2/3
+executed `26371/23883/24357/27375` units, added
+`266/279/282/285` units, and each peaked at 116 MiB. Individual worker log
+SHA-256 values are:
+
+    job0 45af5616ec334b432d1f2e18ee6323bfff868769326aa2ee007098a81aab5327
+    job1 61ce5905f6ff838a77fc42d9f71adc515a1d072e98a6981d65522b3c04030654
+    job2 4f4ed46325dd46efa14946e8338f6b8c4ff3f82735807266f48cb4f2ed51be16
+    job3 5f8590dc27750e6914c5e940e2a33a3f792f9f7af6fb5f651c51438c388df6c9
+
+Worker launch log SHA-256:
+`bb681077aa138155db0d944e0377799a4c4165f6c0e02f59115f44dcc9bd7158`.
+
+### Differential proof
+
+The proof mutation replaced `nNonce = 0` at `primitives/block.h:51` with
+`nNonce = nNonce`, leaving every other production line unchanged. Mutated
+production header SHA-256:
+`7ba09aa9c1d23bff63489ffb633ac30a9a61ced9f89d6859aea72ab7d3dcee47`.
+Enhanced mutated binary SHA-256:
+`33c7de061ffa8b3c82ded2d547a911411cc4671705203a7e1c19a0468cf02c13`.
+
+The full mutation replay exited 77 after 21 executions at
+`src/test/fuzz/block_header.cpp:40` on `mut_block_header.nNonce == 0`.
+The generated libFuzzer artifact is
+`/tmp/bitcoin-block-header-20260720/mutated-artifacts/crash-ebecb783e9ff8c43d118b28e82937af2b9bb31da`,
+80 bytes, SHA-256
+`05ee4af6cd77992ec4c90eacb08380d22ade32db21e28713a69c34b6c2e6e89c`.
+The full mutation log SHA-256 is
+`82c2fe7c4c6aa9b678165ee1e282d0fe875f2910cd2dcad1e9080a3bc9bdcaee`.
+The exact trigger replay independently exited 77 at the same assertion; its
+stack/log SHA-256 is
+`1856ad1b46faf94a99a0b2aaafaf60fcae68f640f0e936547e3689debdd83903`.
+The trigger is a generated mutation artifact, not a claim that the byte
+sequence was already in the frozen corpus.
+
+The parent harness
+`1fd8f88beea05396694aaf4ab5bf03afabb22c0f760da12bd4961be1db9a419a` ran the
+same mutated production binary and the same 80-byte trigger once without a
+diagnostic and exited 0. Its legacy mutated binary SHA-256 is
+`c1905f4a53ccd7d4257bbea855f019b967f728b0830cc0ccbd141c97c256bd04` and its
+control log SHA-256 is
+`65906f76088bce8efdafdda98a9ce5303c0676cd3da677d766d8c6eccd0aff6d`.
+This proves the new field-level oracle closes an old `IsNull()`/hash-
+comparison gap; it does not prove a clean-master production defect. The
+production mutation was removed, and the restored clean binary is again
+`9ba7494286e8a08b8d610ffd1029e08373ee1ad40983ed5622d4daa4fd0210bf`.
+
+### Existing findings and cherry-pick context
+
+Existing findings remain Core-caller relative: private-broadcast failed-send
+retention is Medium and feature-conditional; empty HEADERS IBD handoff is
+Medium availability; ecmult scratch wrapping is Medium with low demonstrated
+Core reachability; forced 10x26 magnitude-32 normalization and
+SHA/HMAC/RFC6979 retention are reachability-limited Medium
+correctness/hygiene findings; last_tx_time, process-message local block
+storage failure, oversized transport types, and banman invalid-subnet/unban
+integrity are Low or nice-to-have under current callers. No clean-master
+production bug was established in the previously audited addrman, coins-cache,
+txgraph, txdownloadman, txrequest, connman, eviction, headers-sync, UTXO
+snapshot, mempool-persistence, package-evaluation, handshake, BufferedFile,
+block-index, tx_pool, policy-estimator, autofile, checkqueue, compact-block,
+PartiallyDownloadedBlock, or CBlock reset paths. Invalid fuzzer state is not a
+production finding, and an uncleared non-cryptographic nonce is not Critical.
+
+No additional l0rinc commit was cherry-picked for this target because the fork
+review found no applicable independent change. If a later cherry-pick, minor
+fix, oracle change, or follow-up alters this behavior, amend the relevant
+commit message and ledger with whether clean-master behavior was preserved,
+changed, or masked; exact corpus input or mutation, source and binary hashes,
+assertion/status/stack, Core caller and input origin, master-relative
+severity, test gap, and verifier commands must remain recorded. A potential
+fix is not proof that master was vulnerable unless clean master or the exact
+minimal production mutation reproduces the failure.
+
+Verifiers:
+`cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8`;
+`clang-format --dry-run --Werror src/test/fuzz/block_header.cpp`;
+`git diff --check`; the final clean frozen-corpus replay; the exact clean
+trigger replay; the seeded four-worker command; the full and exact enhanced
+mutation replays; the parent-harness exact mutation control; and the final
+clean identity check. The fuzz-only build did not expose a block_header-
+specific unit-test target, and no deterministic production regression test
+was added because clean master has no confirmed production defect.
