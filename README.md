@@ -2689,3 +2689,135 @@ at `utxo_total_supply.cpp:59-60` in the untouched `PrepareBlock`
 initializer; unrelated lines were not reformatted. The temporary source
 mutation was reverted before the source commit, and no fuzz or mutation
 process remains running.
+
+## TxOrphanage simulation oracle audit (2026-07-20)
+
+Source commit: `302a530ac76bcd7d270819a6dce632b9eb5e7396` (`fuzz: enforce
+txorphanage model ordering and state`). The audit base was Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; this was also the `l0rinc/master`
+tip. The source parent was
+`7935fe43242bdb4a79d392e417484ca974db0421`. No l0rinc pull-request commit
+applied to this target, and the prior ledger contained no
+`txorphanage_sim` source audit.
+
+### Oracle changes and Core boundary
+
+`txorphanage_sim` already compared a real `TxOrphanage` with a vector model,
+but most public state was checked only after the whole scenario. The new
+`AssertSimState` runs after every mutator and trim cycle. It compares
+announcement and unique-orphan counts, deduplicated usage, latency score,
+global limits, per-peer usage/latency/counts, work availability, witness-id
+lookups, and peer announcements. A later erase or trim can no longer hide an
+intermediate accounting mismatch.
+
+The old `GetTxToReconsider` model accepted any reconsiderable transaction.
+The new check requires the first simulation entry for the peer, matching the
+production `ByPeer` ordering of peer, reconsiderable state, and entry sequence.
+This is the oldest reconsiderable announcement for that peer.
+
+Bitcoin Core reaches this API through
+`TxDownloadManagerImpl::GetTxToReconsider()` at
+`src/node/txdownloadman_impl.cpp:574-576`, and consumes it in
+`PeerManagerImpl::ProcessOrphanTx()` at `src/net_processing.cpp:3322`.
+Remote peers can create multiple missing-input orphans, but an ordering
+mistake would only change which peer work item is retried first. Clean master
+has the correct implementation and no production bug was established.
+Severity is informational/Low oracle hardening. A hypothetical wrong-order
+implementation is reachability-limited peer-work scheduling/availability,
+not a consensus, invalid-block, memory-safety, or cryptographic issue, so it
+is not High or Critical. Existing findings remain rated against their actual
+Bitcoin Core callers and input origins.
+
+### Corpus and replays
+
+The frozen corpus was
+`/tmp/bitcoin-txorphanage-sim-20260720/frozen`: 1,123 files, 313,410 bytes.
+The sorted manifest SHA-256 is
+`4143e0e09efe651ea052a865279dc30a8d6799e59c12954cd915c75e35105c46`.
+
+The original `src/test/fuzz/txorphan.cpp` SHA-256 was
+`0689cbe0fa6babed429447dde57541b48f60d557a0564f39c4738c4415933e39`.
+The enhanced source SHA-256 is
+`79f0928611065ff8f90e558abc7d5e7b36a36ffc657b1ddae3c0bd1d13f217d5`.
+The restored production `src/node/txorphanage.cpp` SHA-256 is
+`7428f6933303e8237711a37cdabb3bba71745ccc7dd4b8cc0f5e39127847203a`.
+The final sanitizer fuzz binary SHA-256 is
+`c629d36231989a4889b2d6acf744b5cb17e311b0d7ccb801dca69427532c6b9f`.
+
+The original replay used `-merge=0 -runs=1123 -timeout=60 -rss_limit_mb=0
+-use_value_profile=1 -print_final_stats=1`, exited 0 after 2,126 executions,
+added zero units, and peaked at 536 MiB. Its log SHA-256 is
+`01f6f9fb08698356b6959235f65ab11bc267be2ed43bdf9706af8834b31d286d`.
+The final enhanced replay used the same command, exited 0 after 2,126
+executions, added zero units, and peaked at 540 MiB. Its log SHA-256 is
+`59f39295ccf360e7ab3e42e07e925eedc249f8ca8b4cce8f5883cda044b75309`.
+Neither replay produced an artifact.
+
+A four-worker run used `-jobs=4 -workers=4 -max_total_time=60` with the same
+timeout, RSS, value-profile, final-stat, and frozen-corpus arguments. Jobs 0,
+1, 2, and 3 each executed 2,126 inputs, added zero units, and exited 0; peak
+RSS was 540 MiB for every job and elapsed times were 164, 164, 164, and 165
+seconds. Worker log SHA-256 values, in job order, are:
+
+    8d38a0c956819ea52cc98a1400def2cd36fa54dbe489aaf12f6f32d6401c31d2
+    b429274483c3c299277492226c68ade276c6890feb7e2f951f5b1312ae36cd77
+    5668cd0b288b1065713f7806c8f4bdc6f573c991fbc2dce63ffa591e4a4b09d4
+    cbd0e86cd8871d18023e9b9dea82465db87e2b159b13158339837d6073f36172
+
+The worker launch log SHA-256 is
+`b175ba634bd7490b25bd4a814ac0d5739ba7f8a52b29dbe9d176a98ccbd64d1b`.
+No worker artifact or orphan process remained.
+
+The final binary contains `__asan_init` and UBSan handlers. With
+`ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1`, the frozen
+corpus replay exited 0 after 2,126 executions, added zero units, and peaked
+at 553 MiB. The sanitizer log SHA-256 is
+`9c9f316ec9cad7a6b1e3ffe0113f34b6412905841cd4ee8fc37e0b493fc4b827`.
+No sanitizer report or artifact was produced.
+
+### Differential proof
+
+A temporary production mutation changed
+`GetTxToReconsider()` from
+`lower_bound(ByPeerView{peer, true, 0})` to
+`upper_bound(ByPeerView{peer, true, UINT64_MAX})` followed by decrement. It
+therefore selected the newest reconsiderable announcement rather than the
+documented oldest one. The mutated production source SHA-256 was
+`9d305138b91037f88b8d28209da665fb25f8a0571bc2e6d583fd119d1e0fe90a`.
+
+The exact corpus input was
+`/tmp/bitcoin-txorphanage-sim-20260720/frozen/009d60a071cfdfd8d1024e28880ba9b153824743`:
+431 bytes, SHA-256
+`545ff4bf8cbc00948733f232f808d55cd938936c055943e53560b97a653fdcb0`.
+With the enhanced harness and this mutation, binary SHA-256 was
+`6589ca1dffb5d8fd4eab4d46748e1bec046d4a04bc2a82db302f9533ba4c7c55` and the
+full replay exited 134 at `txorphan.cpp:731` on the exact ordering assertion.
+The full mutation log SHA-256 is
+`ca629385cd7dd4ab539ecc33242c695095ddb79367be1f82f284099339fd7df8`.
+The one-input diagnostic log SHA-256 is
+`70361e74ba8b14e41ee7a8c3683834445f2693b332a41f6cfb570edf8434a1bb`.
+
+With the original harness source and the identical production mutation, the
+same input exited 0. The control binary SHA-256 was
+`755a98ba68835c5cbc4f7e8fcdba032c1c6645b1fea21271751471f39e7e6442` and the
+control log SHA-256 was
+`1d9114130f53f734c3e37ee9d86fdd257e4bc8182b69bd240045fbfd552ade97`.
+This proves the old model accepted a wrong-order implementation while the
+new assertion detects it. It is an oracle differential proof, not a claim
+that clean master is wrong. Production was restored before the source
+commit, and the exact seed then exited 0 with final log SHA-256
+`312358193b758843adff84632bc56dc673a03ec2da299fe27c3b7495d780806a`.
+
+### Verification and test gap
+
+`cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j 8`,
+`git diff --check`, baseline and enhanced corpus replays, the four-worker
+run, sanitizer replay, and both sides of the exact differential test passed
+as recorded above. The configured fuzz-only CMake build has no `test_bitcoin`
+target, so the dedicated orphanage unit suite could not be executed in this
+build; no production behavior was changed and no deterministic production
+regression test was required.
+
+`clang-format --dry-run --Werror` reports pre-existing violations at
+`txorphan.cpp:212, 316, 331, 356, 484, 489, and 754`; unrelated lines were
+not reformatted. No fuzz, sanitizer, or mutation process remains running.
