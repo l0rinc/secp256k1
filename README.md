@@ -1560,3 +1560,169 @@ Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
 fuzz -j2`; `git diff --check`; original and enhanced frozen-corpus replays;
 the four-worker command; enhanced mutated replay; legacy mutated replay; and
 the exact enhanced clean-artifact replay.
+
+## `autofile` ownership oracle
+
+Source commit `c3cb2b3d60` (`fuzz: assert AutoFile ownership postconditions`)
+strengthens `src/test/fuzz/autofile.cpp`. After `AutoFile::fclose()`, the
+target asserts `IsNull()`. At the terminal `release()` path it snapshots
+whether the wrapper was open, requires a non-null returned `FILE*` when it was
+open, requires `IsNull()` afterward, and closes a returned handle itself. The
+same null postcondition is checked for terminal `fclose()`. These are narrow
+ownership contracts matching `src/streams.h:429-443`; the target does not
+assume arbitrary fuzzed I/O succeeds or that malformed local files are valid.
+
+Master and clean identities:
+
+* Core base master is
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; source parent is
+  `4cb03a5556a6bea772e81d5a4c99720536aa54f3`. Production behavior is
+  unchanged, and this commit contains only a fuzzer change.
+* Clean `src/streams.h` SHA-256 is
+  `216fa033e467ecb86bdcf2db7ad14b0d81a0c85a9a3ba3d8eb2dde8138146fca`;
+  clean `src/streams.cpp` SHA-256 is
+  `22712c377e971375572841027cd903ab83861ce58dc748b57a611f7394e0397a`.
+* Original harness SHA-256 is
+  `bdd00db6a5d2e7cb47c275e8cfb2485d03beea46bf7379f617d76ef7d79778af`;
+  enhanced harness SHA-256 is
+  `36b47577fdbbf23d7c1a615f427a2a8c5398b02adfa7c7aed690f23331777c8c`;
+  final clean sanitizer fuzz binary SHA-256 is
+  `601abe1b28cacea8a12d434f8b15f9e629ef6b6ca092b94db40f4b433fe26ab4`.
+
+Frozen corpus and clean runs:
+
+* Target: `autofile`. Source:
+  `/mnt/my_storage/qa-assets/fuzz_corpora/autofile`. Frozen directory:
+  `/tmp/bitcoin-autofile-20260720/frozen`.
+* The corpus contains 339 files and 10,856,927 bytes. Its sorted
+  filename/content manifest SHA-256 is
+  `5d544536d7bb1d9cca828ec989c27001445df8c108a29908c8b3b99baeb1dff7`.
+  The frozen corpus was not modified.
+* The clean enhanced replay used:
+
+  ```text
+  env FUZZ=autofile /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+    -merge=0 -runs=339 -timeout=60 -rss_limit_mb=0 -print_final_stats=1 \
+    -artifact_prefix=/tmp/bitcoin-autofile-20260720/final-artifacts/ \
+    /tmp/bitcoin-autofile-20260720/frozen
+  ```
+
+  It exited 0 after 340 executions, cov 588, ft 3405, peak RSS 442 MiB, with
+  no artifacts. Log SHA-256:
+  `65af14a473f061aeccb0cf9f9c9592c0735a45025436759854298a84f9ed2424`.
+* The four-worker command was:
+
+  ```text
+  env FUZZ=autofile /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+    -jobs=4 -workers=4 -max_total_time=15 -timeout=60 -rss_limit_mb=0 \
+    -print_final_stats=1 \
+    -artifact_prefix=/tmp/bitcoin-autofile-20260720/final-worker-artifacts/ \
+    /tmp/bitcoin-autofile-20260720/workers
+  ```
+
+  Jobs 0, 1, 2, and 3 exited 0 after 7,292, 8,227, 8,631, and 10,255
+  executions. Each reached cov 588; ft was 3,409, 3,411, 3,409, and 3,413;
+  peak RSS was 450, 449, 455, and 448 MiB. Worker log SHA-256:
+  `8da88f73013b5371830239b960dd25919b93971981a352fb693b20e2c1d87a07`.
+  The disposable worker corpus grew to 419 files/13,300,135 bytes; the frozen
+  corpus stayed unchanged and no fuzz process remained.
+* The exact clean-control and mutation input is
+  `/tmp/bitcoin-autofile-20260720/frozen/039e526302bfbf6efb436b24eb2041bdbd1aa6b2`,
+  size 33,586 bytes, SHA-256
+  `59205c1014d464cdd514a00f555002bdb75ab5682151d41ce06750c4c4dd7a64`.
+  Clean exact replay exited 0; log SHA-256:
+  `7db037fe6ca1f95dfe5680e696a6417efba1b067a8be018e0b182d6f2a2582ab`.
+
+Differential proof that the oracle matters:
+
+* The final refined temporary production mutation changed `release()` from
+  returning the saved `m_file` to returning `nullptr`, while still closing a
+  non-null `m_file` and setting `m_file` to `nullptr`:
+
+  ```cpp
+  std::FILE* ret{nullptr};
+  if (m_file != nullptr) std::fclose(m_file);
+  m_file = nullptr;
+  return ret;
+  ```
+
+  This isolates the ownership-return-value contract. Mutated `src/streams.h`
+  SHA-256:
+  `56180b84a7173c85fe0b64eb727d2bdd8d1d9f9db7b98620aac1f574e25ebd8e`.
+  Enhanced mutated binary SHA-256:
+  `063d99fb72de0c08649a31486d2a82b36c9ec087f32928f9390eef446274f84e`.
+* The full frozen mutation replay reached the new assertion at
+  `src/test/fuzz/autofile.cpp:65`, `!was_open || f != nullptr`, after one
+  input. Log SHA-256:
+  `a89d2dbb04631975a9c4c009f4b5d330011384ad7173b2736f54ea5ea3f854d4`.
+* The exact input above reproduced the same assertion; exact mutation log
+  SHA-256:
+  `6b3e9bc5bf3542ec3cdd993ba888f37dcd3bfba905c013bca1abc883fa412cd6`.
+  LibFuzzer's signal handler remained alive after the assertion in this build,
+  so the known process was killed during controlled cleanup. No artifact was
+  emitted; the frozen path, size, content hash, command, assertion, and
+  mutated binary are the reproducible corpus condition.
+* The original harness with the same refined mutation exited 0 after 340
+  executions, cov 587, ft 3404, peak RSS 441 MiB, with no artifact or
+  diagnostic. Original harness SHA-256:
+  `bdd00db6a5d2e7cb47c275e8cfb2485d03beea46bf7379f617d76ef7d79778af`.
+  Legacy mutated binary SHA-256:
+  `f0626e8321e7b1ba2157bca1b39164d89e230e8cd70559a0879d83a19213f6ea`.
+  Legacy log SHA-256:
+  `dc042cca4cdd6d0038adb0f16031d4a628e72a5f32beb7600752b6793b2ca304`.
+  This is the differential proof that the new oracle catches a modeled
+  ownership-return regression the old target missed.
+* Earlier mutations were rejected as proof: removing `m_file = nullptr`
+  triggered an ASAN double-free in the legacy harness, and variants returning
+  `nullptr` without the isolated close/null behavior triggered legacy lifetime
+  failures. They do not demonstrate a new oracle gap.
+* Clean production plus the enhanced harness accepted the exact input with exit
+  0. No production mutation remains; no production fix or deterministic
+  regression test is claimed because clean master reproduces no failure.
+
+Bitcoin Core caller, input origin, and severity:
+
+* `AutoFile` is a local `FILE*` ownership wrapper used for addrman persistence
+  (`src/addrdb.cpp:62-82,127-128`), block/undo storage
+  (`src/node/blockstorage.cpp:834-842,997-1021,1106-1173,1293-1316`), mempool
+  persistence (`src/node/mempool_persist.cpp:47,153-227`), UTXO snapshots
+  (`src/node/utxo_snapshot.cpp:31-67`), fee estimates, indexes, RPC exports,
+  and external block loading. No known production `src` caller invokes
+  `release()` beyond tests/fuzzing; production ownership normally uses
+  `fclose`, RAII, or `OpenBlockFile` wrappers.
+* The fuzzed provider models local I/O and ownership transitions. It does not
+  show that remote peers or invalid block/witness bytes can directly reach
+  `release()`, and clean master has no failure.
+* Master-relative severity is N/A for production and Low/informational for
+  oracle hardening. The modeled bad return could cause a caller leak/close
+  omission, while a different mutation could cause a double-close, but neither
+  is a clean-master Core vulnerability here. A malformed local file or invalid
+  block alone is not Critical. A nonce without cryptographic meaning is not a
+  Critical clearing finding. Re-rate only from a clean-master reproduction with
+  a concrete Core caller and input origin.
+
+Existing findings and cherry-pick/masking context:
+
+* Existing findings remain Core-caller relative: private broadcast failed-send
+  retention is Medium and feature-conditional; empty HEADERS IBD handoff is
+  Medium availability; peer activity refresh, process-message local storage
+  failure, oversized transport types, and banman invalid-subnet integrity are
+  Low or nice-to-have in current callers; ecmult scratch wrapping, forced
+  10x26 normalization, and SHA/HMAC/RFC6979 retention remain reachability-
+  limited latent/hygiene findings. No clean-master production bug was
+  established in the previously audited addrman, coins-cache, txgraph,
+  txdownloadman, txrequest, connman, eviction, compact-block, headers-sync,
+  UTXO snapshot, mempool-persistence, package-evaluation, handshake,
+  BufferedFile, block-index, tx_pool, or policy-estimator paths.
+* `origin/master` and `remotes/l0rinc/master` both resolve to
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. No relevant l0rinc commit
+  applies to `autofile`, so none was cherry-picked. If a later fix, minor fix,
+  oracle change, or cherry-pick alters this target, its amended commit message
+  must repeat the exact target/corpus/artifact, mutation, assertion and
+  status/stack, Core caller/input origin, test gap, severity, verifier commands,
+  and whether it preserves, changes, or masks clean-master behavior.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j2`; `git diff --check`; clean frozen-corpus replay; four-worker command;
+exact clean replay; enhanced mutated replay; legacy mutated replay; and exact
+mutation replay.
