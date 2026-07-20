@@ -1894,3 +1894,179 @@ Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
 fuzz -j2`; `git diff --check`; clean frozen-corpus replay; seeded four-worker
 command; full enhanced mutation replay; exact enhanced mutation replay; full
 legacy mutation replay; and exact clean replay.
+
+## PartiallyDownloadedBlock one-shot oracle audit (2026-07-20)
+
+Source commit: 08f26f05c5 (fuzz: assert PartiallyDownloadedBlock is one-shot).
+It is based on Bitcoin Core master
+18c05d93016b28a9afd4c716dfe00b6e0accb30b, with source parent
+588e3877bd0285f3a10a2d490958f9c9b417e08c. The l0rinc fork was at the same
+master tip. No separate l0rinc/secp256k1 commit applies to this Bitcoin Core
+block-encoding state contract, so none was cherry-picked. The earlier
+compact-block status/cache oracle commits 01086e700fda and aef3a7b4d7f remain
+the preceding context.
+
+### Contract
+
+PartiallyDownloadedBlock::FillBlock clears header and txn_available at
+src/blockencodings.cpp:208-210 before returning READ_STATUS_OK or
+READ_STATUS_FAILED. Its first guard at line 191 must reject every later call.
+After the existing status matrix, the fuzzer now calls FillBlock a second time
+with an empty missing-transaction vector and asserts READ_STATUS_INVALID
+whenever the first call returned OK or FAILED. The assertion is conditional
+on the status proving that cleanup was reached; it does not assume every
+InitData failure is a valid FillBlock input.
+
+### Core caller and severity
+
+Remote CMPCTBLOCK announcements enter PeerManagerImpl at
+src/net_processing.cpp:4744-4815; remote BLOCKTXN replies enter
+ProcessCompactBlockTxns at 3564-3618. The status controls in-flight cleanup,
+peer punishment, full-block GETDATA fallback, and eventual ProcessBlock. The
+fuzzer uses serialized compact-block bytes and synthetic mempool/transaction
+state, so synthetic reachability is not proof of network reachability.
+
+No production bug was found on clean master. This is Low/informational oracle
+hardening, not a production vulnerability claim. The synthetic mutation
+replaced header.SetNull(); with a no-op while leaving txn_available.clear()
+unchanged. If present in production, a repeated BLOCKTXN could reach FillBlock
+with a retained header instead of the header-null guard. Current Core normally
+removes successful requests and explicitly handles a null header on duplicate
+replies; a caller-level reproduction of a retained failed partial block is
+required before assigning production severity. The mutation is not High or
+Critical. An invalid compact block alone is not Critical, and a nonce with no
+cryptographic meaning is not a clearing-critical finding.
+
+### Exact identities and corpus
+
+Clean src/blockencodings.cpp SHA-256:
+a87feb8df352ae9c868af6bacb5193261795153249e0a15ca33a05d686291838.
+Parent harness SHA-256:
+9c25e837ce502e3e04c7ccb521d3f4a112b626ba5a61fa0424afe1ada52fdc24.
+Enhanced harness SHA-256:
+d6e4f1d9033e6a35caf391c1f5d907bb43fe1b1c7778a64de5ed7275a3e9350b.
+Final sanitizer fuzz binary SHA-256:
+084799bc084b80612e8bda46a003eb51630d3482f1d0d221ca01437e2edd5f2f.
+
+The source corpus is
+/mnt/my_storage/qa-assets/fuzz_corpora/partially_downloaded_block.
+The immutable evidence copy is
+/tmp/bitcoin-partially-downloaded-block-20260720/frozen-clean, with 909
+files and 148804324 bytes. Its path-independent sorted per-file manifest was
+calculated with:
+
+    (cd frozen-clean && find . -type f -printf '%P\0' | sort -z | \
+      xargs -0 -r sha256sum | sha256sum)
+
+Manifest SHA-256:
+b2e29d7098214b92988a008c467bbce7c24dda1c2739c595b639ac7f69940945.
+An earlier exploratory unbounded invocation added generated units to a
+temporary copy; that directory was discarded. The evidence copy above was
+freshly copied from the source corpus and was never used for worker output.
+
+### Clean replay and workers
+
+The final clean replay used:
+
+    FUZZ=partially_downloaded_block /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+      -merge=0 -runs=909 -timeout=60 -rss_limit_mb=0 -use_value_profile=1 \
+      -print_final_stats=1 \
+      -artifact_prefix=/tmp/bitcoin-partially-downloaded-block-20260720/final-artifacts/ \
+      /tmp/bitcoin-partially-downloaded-block-20260720/frozen-clean
+
+It exited 0 after 910 executions, coverage 5304, features 53453, new units
+0, peak RSS 796 MiB, and no sanitizer, assertion, timeout, OOM, crash, or
+artifact output. Final replay log SHA-256:
+7f30209ec6b86bb484c621223c7129c38b36dbbb140f28909f50a7fd202784a4.
+
+The exact clean replay of
+0119eb7451e664436c34a42c54ecfc6eeff00c2f exited 0 after one execution. The
+input is 190055 bytes with SHA-256
+ce219bae33d1dcca1e0e565ea97693870c3efc4cf4c53d36431db1c4abf93fea.
+The exact clean log SHA-256 is
+6181a83a3352d232fea8b9da1b2e8bd1744cec93af7c4b8714b7c0effdc8c17f.
+
+Four seeded workers used:
+
+    FUZZ=partially_downloaded_block /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+      -jobs=4 -workers=4 -max_total_time=60 -timeout=60 -rss_limit_mb=0 \
+      -use_value_profile=1 -print_final_stats=1 \
+      -artifact_prefix=/tmp/bitcoin-partially-downloaded-block-20260720/worker-artifacts/ \
+      /tmp/bitcoin-partially-downloaded-block-20260720/workers
+
+All four exited 0 without sanitizer diagnostics or artifacts. Jobs 0, 1, 2,
+and 3 executed 1945, 1924, 1936, and 2125 units; added 44, 54, 59, and 74
+units; and peaked at 871, 880, 911, and 862 MiB. All reached coverage 5304.
+Combined worker log SHA-256:
+5566e578367d807733619cb7d5d4d12006f423926b5aecc7595a52579bbb66fb.
+Individual logs are retained under
+/tmp/bitcoin-partially-downloaded-block-20260720/worker-logs/:
+
+    job0 7e777fa1652851c7ceb7051c8833dee1fc682c9e78f430bcfd4d81e9133db883
+    job1 db8ce0ffa15c819b27f49e819d26c39e098fe303e31d64e09b6faa0bc5ccb843
+    job2 c5c2e7c1820f227d4003ead5c911c2707c15109ac7cee6c90458d8d4450bddc3
+    job3 03426dc3be533bf5faf52587ce8592f6e5090b5b5050de475a33bc8a5c74ce7e
+
+### Differential proof
+
+The mutation removed only header.SetNull(); and left txn_available.clear()
+unchanged. Mutated production src/blockencodings.cpp SHA-256:
+bf73330cb0d75fbf6b7a858980923a64b51063270154ec6108e576af5e1af4c8.
+Enhanced mutated fuzz binary SHA-256:
+ed34f9ae1caf3cb53146c69dbff225dffb22d8375a52f1f0d6b53c9461c4cae2.
+
+The full mutated replay exited 134 at
+src/test/fuzz/partially_downloaded_block.cpp:146 on the new assertion, with
+no artifact. Mutation log SHA-256:
+815ef55031925c1d2254ce45705966e937a3aed903c149971373e752701721d4.
+The exact seed above independently exited 134 at the same assertion; its log
+SHA-256 is
+a3b97501694233915b7f913bce94738a2ae7f0e9c265c5131c559ae1209f01a9.
+
+The parent harness
+9c25e837ce502e3e04c7ccb521d3f4a112b626ba5a61fa0424afe1ada52fdc24 ran the
+same mutated production binary and the same seed once without a diagnostic
+and exited 0. Legacy mutated binary SHA-256:
+eb7a97f884cff5d28f3eb61ee4ec6cadad085eb02cd049e70734c07dd9b32046.
+Legacy control log SHA-256:
+91680759cacd3130563e575f34c1673c32839370183107252ef1a5462d4e300b.
+This proves a previously silent oracle gap, not a clean-master production
+defect. No production mutation remains.
+
+### Existing findings and cherry-pick context
+
+Existing findings remain Core-caller relative: private-broadcast failed-send
+retention is Medium and feature-conditional; empty HEADERS IBD handoff is
+Medium availability; ecmult scratch wrapping is Medium with low demonstrated
+Core reachability; forced 10x26 magnitude-32 normalization and
+SHA/HMAC/RFC6979 retention remain reachability-limited Medium
+correctness/hygiene findings; last_tx_time, process-message local block
+storage failure, oversized transport types, and banman invalid-subnet/unban
+integrity are Low or nice-to-have under current callers. No clean-master
+production bug was established in the previously audited txdownloadman,
+txrequest, connman, eviction, headers-sync, UTXO snapshot,
+mempool-persistence, package-evaluation, handshake, BufferedFile, block-index,
+tx_pool, policy-estimator, autofile, checkqueue, or compact-block paths.
+Invalid fuzzer state is not a production finding, and an uncleared
+non-cryptographic nonce is not Critical.
+
+No additional l0rinc commit was cherry-picked for this target because the
+fork review found no applicable independent change. If a later cherry-pick,
+minor fix, oracle change, or follow-up alters this behavior, amend the
+relevant commit message and this ledger with whether clean-master behavior
+was preserved, changed, or masked; exact corpus input or mutation, source
+and binary hashes, assertion/status/stack, Core caller and input origin,
+master-relative severity, test gap, and verifier commands must remain
+recorded. A potential fix is not proof that master was vulnerable unless
+clean master or the exact minimal production mutation reproduces the failure.
+
+Verifiers:
+cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j8;
+clang-format --dry-run --Werror
+src/test/fuzz/partially_downloaded_block.cpp; git diff --check; the clean
+frozen-corpus replay; the seeded four-worker command; the full and exact
+enhanced mutation replays; the parent-harness exact mutation replay; and the
+exact final clean replay. The fuzz-only build did not expose
+blockencodings_tests or net_tests targets, and no deterministic production
+regression test was added because clean master has no confirmed production
+defect.
