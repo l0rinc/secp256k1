@@ -26921,3 +26921,128 @@ master behavior, exact precondition/postcondition, assertion/status/stack,
 clean-master or minimal-mutation proof, deterministic regression test when a
 production bug is confirmed, and whether a later minor fix changed or masked
 the behavior.
+
+## 2026-07-20 Core `utxo_snapshot_invalid` activation-rollback oracle
+
+This entry records Core commit `b91114946f`,
+`fuzz: assert failed UTXO snapshot activation rollback`, on Bitcoin Core
+`origin/master` `18c05d93016b28a9afd4c716dfe00b6e0accb30b`.
+
+### Contract and caller
+
+The `utxo_snapshot_invalid` target now snapshots the active chain tip and
+height, snapshot and assumeutxo role fields, target, UTXO best block and
+cache size, cache capacities, and `BlockManager::m_snapshot_height` before
+calling `ChainstateManager::ActivateSnapshot`. A failed activation must leave
+all of those values unchanged. Successful activation continues through the
+existing success assertions and chainman reset path.
+
+The production caller is the local `loadtxoutset` RPC at
+`src/rpc/blockchain.cpp:3535`, which reads a user-supplied snapshot file. This
+is not a peer-provided block or witness path. The result is therefore
+informational oracle hardening, not a Critical finding for malformed local
+bytes. A future clean-master proof that malformed snapshot data is accepted
+and changes the active UTXO set must be rated from that actual state and
+consensus consequence. Invalid block or fuzzer state alone is insufficient.
+
+### Master and fork boundary
+
+`src/test/fuzz/utxo_snapshot.cpp` was unchanged before this commit, with base
+SHA-256 `61466d3918ce656278392380b7f1f4b232222768d8e0b094eb97781e4db1f250`.
+The final harness SHA-256 is
+`ebe389b725d8980db7c0f73c5c66780038925431b09c958772e5eaf1071a893c`.
+
+The audit branch also contains earlier commit `1df24a61f7`, which changes
+`src/validation.cpp` only by moving `fNewBlock=true` until after block storage
+succeeds in `AcceptBlock`. Therefore the branch hash is
+`6f00f58f3cc9623fb02cfa8c776654e617b6a88e87c2b075bb855116b9ebfefc`, while
+unmodified `origin/master` has
+`1b49bd6539860b5e06c93e5ec73a2735ca4521fb8c28fcd4b50268c44a0018ab`. That
+delta does not overlap `ActivateSnapshot` or this oracle.
+
+The l0rinc history reviewed for this target includes `63b534f97e` (hardcoded
+snapshot sanity checks) and `2db00278ea` (snapshot fuzz-target corrections),
+both already represented in current master history. No l0rinc fork commit
+adds this failed-activation rollback contract, so no cherry-pick was applied
+and no later change is masking this result.
+
+### Frozen baseline
+
+The source corpus was `/mnt/my_storage/qa-assets/fuzz_corpora/utxo_snapshot_invalid`;
+the frozen copy is `/tmp/bitcoin-utxo-snapshot-invalid-20260720/corpus`.
+
+* 805 files, 18,925,105 bytes.
+* Manifest SHA-256:
+  `4b8990800dd067ea325721a3311795bd70cbf9a63dfa8aba45a8e8d35b4974b4`.
+* Unchanged-target baseline log SHA-256:
+  `ecb8525bb7499cd7b8c0b25421656fb1a059b5bf6b4e2f76c047d3473ce6c769`.
+* Baseline: 934 executions, coverage 6,702, features 33,133, peak RSS
+  443 MiB, exit 0, with no diagnostic or artifact.
+
+### Minimal mutation proof
+
+The exact `cleanup_bad_snapshot` call at `src/validation.cpp:5704`,
+`this->MaybeRebalanceCaches();`, was temporarily changed to
+`if (false) this->MaybeRebalanceCaches();`. This models a failed activation
+returning while the active chainstate still has the temporary 1% snapshot
+cache allocation.
+
+* Mutated `src/validation.cpp` SHA-256:
+  `211fb7d04df0b1abe4b19b9c67291d99dc5bf4667a7e2ed17e67183eb0dd4cb1`.
+* Mutation log SHA-256:
+  `49806b4fcbf22794adf43c5106d6b087ef2626b8e6f619d8655d0228078abce2`.
+* Result: exit 77 at `AssertChainstateUnchanged`, asserting
+  `m_coinsdb_cache_size_bytes == expected.coinsdb_cache_size_bytes`.
+* Mutation artifact SHA-256:
+  `a016fd16a5a7b0e4029b2571268000a5c8128664e84330144dead8847dd20542`.
+* Artifact input Base64: `xz71v+Vg`.
+* The exact artifact passed with restored production; fixed replay log
+  SHA-256:
+  `0cb54b36c72174f39c46e8fd70980cbe5285bd8641b88e943e8c9eb1c2294aee`.
+* Restored `src/validation.cpp` SHA-256:
+  `6f00f58f3cc9623fb02cfa8c776654e617b6a88e87c2b075bb855116b9ebfefc`.
+
+This proves the oracle detects a meaningful rollback regression; it is not a
+claim that unchanged master has that defect.
+
+### Final verification
+
+The final ASan/UBSan fuzz binary SHA-256 is
+`4ad32bb6c0a124a28c938cc75600c2741ffc5d251e2cff17effacd56f8957973`.
+The restored full replay log SHA-256 is
+`4aede5896b9054ffafd9b72f3d9e01ca2838fd274372ba02d2fd173faab8de63`:
+934 executions, coverage 6,732, features 33,086, peak RSS 445 MiB, exit 0,
+with no sanitizer or assertion diagnostics.
+
+The four-job replay log SHA-256 is
+`bbd68dc391e43003587a116118e83a7006df639289272e0b3a0287aeae68bee3`.
+With `-jobs=4 -workers=4`, jobs 0 through 3 all exited 0 with 3,349, 3,308,
+3,254, and 3,249 executions; peak RSS was 444, 441, 432, and 444 MiB.
+`git diff --check` passed, the production mutation was restored, and no fuzz
+jobs remained.
+
+### Severity and reiterated findings
+
+This commit found no confirmed production bug and adds no deterministic
+regression test for one. Existing ratings remain against unmodified master
+and actual Bitcoin Core reachability:
+
+* Private-broadcast failed-send retention: **Medium**, conditional feature.
+* Empty `HEADERS` initial-sync handoff: **Medium** availability/IBD stall.
+* Peer transaction activity refresh and process-message storage failure:
+  **Low**.
+* Oversized transport message types: **Low** in current Core callers.
+* `ecmult_multi` scratch wrapping and forced 10x26/SHA/HMAC/RFC6979
+  retention: **Medium**, with limited Core reachability.
+* Banman invalid-subnet integrity: **Low/nice-to-have** because Core RPC
+  validation drops invalid entries before affected state is used.
+* Tx download, tx request, connman, node eviction, handshake, compact-block,
+  headers-sync, and snapshot campaigns: no new confirmed master production
+  bug.
+
+An uncleared nonce is not Critical unless it carries cryptographic meaning.
+Every future finding must include the Core caller, input origin, master
+behavior, exact precondition/postcondition, assertion/status/stack,
+clean-master or minimal-mutation proof, deterministic regression test when a
+production bug is confirmed, and whether a later minor fix changed or masked
+the behavior.
