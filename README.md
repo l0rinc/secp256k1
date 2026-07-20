@@ -451,3 +451,110 @@ Verifiers: `clang-format --dry-run --Werror` on the changed harness files,
 replay, the data-stream replay, the exact mutation replay, and both four-worker
 commands above. Production was restored to its clean hash and no fuzz process
 or generated artifact remains in either source worktree.
+
+## Coins-cache transition oracle audit (2026-07-20)
+
+Scope and source state:
+
+* Base is exact master `18c05d93016b28a9afd4c716dfe00b6e0accb30b` on the
+  audit branch. Target is `FUZZ=coinscache_sim`; production behavior is
+  unchanged. The harness now calls the existing `CCoinsViewCache::SanityCheck`
+  after every simulated command, so dirty/fresh flags, the circular dirty
+  list, dirty-count accounting, and cached dynamic-memory accounting are
+  checked before a later reset, flush, or overwrite can repair an intermediate
+  defect. No duplicate best-block model was added because the coins-view and
+  stacked-view targets already cover best-block propagation.
+* Original harness SHA-256 was
+  `05a151e9bb8edb8a0b7aea6ab662de578684e0bfddb1efa578506c5dd89330ca`;
+  final harness SHA-256 is
+  `25d608c872df9bf66f16fe96a41de69b588119c5661e71c66c82bb06875dad49`.
+  Unchanged production `src/coins.cpp` SHA-256 is
+  `2c7ca3aab136509449d4810b5174f21ad8bbf6853d175a69d601fe7697c25096`.
+  The final ASan/UBSan/fuzzer binary SHA-256 is
+  `d18113d2809f067f61138f93da76329cb83ed3f54930d8c962519b7cbe069c08`.
+
+Corpus and clean verification:
+
+* Frozen corpus is `/tmp/bitcoin-coinscache-20260720/frozen`, copied from
+  `/mnt/my_storage/qa-assets/fuzz_corpora/coinscache_sim`: 305 files and
+  5,153,077 bytes. Sorted file-entry manifest SHA-256 is
+  `a8d126f8bfd18f1344561cc79347ee394a6094dff0aaeecf620b635a91bcc44c`.
+* The original execution-only baseline completed 309 executions, coverage
+  2021, features 13192, peak RSS 214 MiB, exit 0, with no artifacts. The
+  final clean replay completed 307 executions, coverage 2027, features 13223,
+  peak RSS 213 MiB, exit 0, with no artifacts; final log SHA-256 is
+  `c6b99abff0492f76526edac19c16e97da8c204402741b4ee80de34ccca9cebfd`.
+* Four independent sanitizer workers loaded the same 305-file corpus and
+  completed 307, 307, 308, and 310 executions. Each exited 0 with coverage
+  2027, peak RSS 214 MiB, and no sanitizer, assertion, timeout, OOM, or
+  artifact diagnostic. Parent log SHA-256 is
+  `91bd43feac067a11deb41601490ff2311d9d599c68f187dde712109800894bc9`.
+
+Differential oracle proof, not a master production finding:
+
+* A disposable production mutation removed the single `++m_dirty_count` in
+  `CCoinsViewCache::AddCoin` immediately after `SetDirty`. This models a
+  broken publication of a cache state that `BatchWrite` and `Flush` rely on.
+  Mutated production source SHA-256 was
+  `bad0f00f95371389bc6872725eb281cf77c430c15aa725300d73ded3f11d28f4` and
+  the enhanced mutated binary SHA-256 was
+  `7e3e83450368f6cc2a39b94143b221503f1f36a7b4db8216526ce4403c56315d`.
+* The exact proof input is four bytes `0d 00 00 05`, SHA-256
+  `cd318afe91129a721a28f401677a18e89f37e314718d9b03eb22a73b29f24244`,
+  Base64 `DQAABQ==`. Its reverse-consumed commands add a coin, then reset the
+  cache. Enhanced replay with `-handle_abrt=0` exits 134 at
+  `src/coins.cpp:365`, assertion
+  `count_dirty == count_linked && count_dirty == m_dirty_count`; log SHA-256
+  is `18fbdd06b54b6f22eb4bf3748eb57b1220b657e59b2d4b9a94638298a419eb75`.
+* The same mutated production code with the teardown-only harness, with the
+  per-transition checker invocation removed, accepts the exact input in exit
+  0 and 1 ms; log SHA-256 is
+  `5c775bfafa1a021c8f4ff1bb9396c54dd4739aa972f4d6dc0b553f2ab1292f39`.
+  This is the needed counterfactual: reset erases the damaged state before
+  the old final checker runs. The production mutation was restored, the clean
+  binary accepts the same input, and no deterministic regression test is
+  claimed because master did not fail.
+
+Bitcoin Core reachability and severity:
+
+* `CCoinsViewCache` is the UTXO cache used by chainstate block connection and
+  rollback. `AddCoin`, `BatchWrite`, and `Flush` participate in `UpdateCoins`,
+  `Chainstate::ConnectTip`, and periodic state flushes. `Uncache` is also
+  reached from mempool trimming and failed transaction/package cleanup. The
+  proof input directly exercises the cache API, not a serialized block or a
+  peer message, so it does not prove that an invalid block triggers anything
+  on master.
+* Clean master has no production failure, so this campaign reports no new
+  bug, severity, or production fix. If the modeled missing dirty-count update
+  existed in production, a Core-reachable cache accounting failure could be a
+  high-severity node-availability or UTXO-state-integrity problem; that is
+  mutation impact context, not a vulnerability claim against master. Invalid
+  fuzzer state alone is not Critical, and a nonce with no cryptographic
+  meaning is not Critical merely because it is uncleared.
+
+Cherry-pick context and reiterated findings:
+
+* No l0rinc fork commit applies specifically to this oracle, so no cherry-pick
+  was made. This commit is oracle-only and preserves master behavior. Any later
+  production fix, minor fix, oracle change, or cherry-pick must retain the
+  exact corpus/input, mutation, assertion, stack/status, Core caller and input
+  origin, test gap, severity, and verifier commands, and must say whether it
+  preserves, changes, or masks this clean-master behavior.
+* Existing findings remain master- and Core-caller-relative: private-broadcast
+  failed-send retention is Medium and feature-conditional; empty HEADERS IBD
+  handoff is Medium availability; peer activity refresh, process-message local
+  storage failure, and oversized transport types are Low in current callers;
+  ecmult scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979
+  retention are Medium latent or hygiene findings with limited reachability;
+  banman invalid-subnet integrity is Low/nice-to-have. Earlier
+  txdownloadman, txrequest, connman, eviction, handshake, compact-block,
+  headers-sync, coins-view, UTXO snapshot, mempool-persistence, package
+  test-accept, and addrman campaigns found no additional clean-master
+  production bug.
+
+Verifiers: `git diff --check`; `ninja -C
+/tmp/bitcoin-secp256k1-audit-current-build bin/fuzz`; the final 305-file
+replay; the exact proof replay; and the four-worker command
+`FUZZ=coinscache_sim /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+/mnt/my_storage/qa-assets/fuzz_corpora/coinscache_sim -runs=1 -jobs=4
+-workers=4`. No fuzz process remains.
