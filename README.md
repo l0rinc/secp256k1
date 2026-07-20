@@ -801,3 +801,163 @@ and the four-worker command above. `clang-format --dry-run --Werror` still
 reports pre-existing violations in the unchanged clock-consumption block at
 `p2p_handshake.cpp:83-85`; no unrelated formatting was changed. No fuzz
 process remained after the audit.
+
+## BufferedFile position-contract oracle audit (2026-07-20)
+
+Source commit: `e0c7faffd2` (`fuzz: assert BufferedFile position contracts`),
+based on master `18c05d93016b28a9afd4c716dfe00b6e0accb30b` and source parent
+`6f7968933991eb6c1551a695cf4a6bb3789a5d6b`. Production behavior is unchanged.
+The harness now checks two concrete `BufferedFile` contracts after fuzzed
+operations: `SetLimit(n)` succeeds exactly when `n >= GetPos()` and does not
+move `GetPos()`, while a successful in-range `SetPos(n)` sets `GetPos()` to
+exactly `n`. Failed `SetPos` remains tracked so the existing `FindByte` guard
+continues to prevent the known infinite-loop state.
+
+Exact identities and corpus:
+
+* Clean `src/streams.h` SHA-256:
+  `216fa033e467ecb86bdcf2db7ad14b0d81a0c85a9a3ba3d8eb2dde8138146fca`.
+  Original and enhanced `src/test/fuzz/buffered_file.cpp` hashes are
+  respectively
+  `acd84995c88c560d7769be836b9da8a1e570445a32f3259cd367886c4979b52e` and
+  `83d5253eef63cb1b1869d23a457b29db5e854fb3a4d1b2d52ca46512db89df4e`.
+  Final enhanced fuzz binary SHA-256:
+  `87922fc001598da25a4b52b5d835678d7b499f77a9791b0e756aa8a094415e85`.
+* Frozen corpus: `/tmp/bitcoin-buffered-file-20260720/frozen`, copied from
+  `/mnt/my_storage/qa-assets/fuzz_corpora/buffered_file`: 268 files and
+  3877306 bytes. The sorted path-independent per-file manifest SHA-256 is
+  `cd7bc11723fa433c97b190a73852a78e226ccd2c8250a0da7f8f4eb684596342`.
+
+Baseline, clean replay, and workers:
+
+* The original command was
+  `env FUZZ=buffered_file /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+  -merge=0 -runs=268 -timeout=60 -rss_limit_mb=0 -use_value_profile=1
+  -print_final_stats=1 -artifact_prefix=/tmp/bitcoin-buffered-file-20260720/original-artifacts/
+  /tmp/bitcoin-buffered-file-20260720/frozen`. It exited 0 after 505
+  executions with coverage 642, features 7225, peak RSS 412 MiB, and log
+  SHA-256 `53d3b1924a3a75650867827712b6b4c293149c6648520ce2395be40f8e3c8a37`.
+* The enhanced clean replay with the same command exited 0 after 505
+  executions with coverage 643, features 7167, peak RSS 426 MiB, and no
+  artifacts. Final log SHA-256:
+  `0d238a55264f14a04caa7f6f0a3d79265322241d90f97c520f356f77026da931`.
+* The required worker command was
+  `env FUZZ=buffered_file /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+  -jobs=4 -workers=4 -max_total_time=15 -print_final_stats=1
+  -artifact_prefix=/tmp/bitcoin-buffered-file-20260720/worker-artifacts/
+  /tmp/bitcoin-buffered-file-20260720/workers-input`. Jobs 3, 0, 2, and 1
+  exited 0 with 1153, 1192, 1230, and 1202 executions; each reached coverage
+  643 and features 2663, with peak RSS 446, 448, 454, and 430 MiB. No worker
+  produced an artifact or diagnostic. Parent log SHA-256:
+  `4e6e4158b191d660840423af6a5fd1d97cece988fa87e12f71f45d08d61d007a`.
+  Workers used a disposable writable corpus copy because libFuzzer can add
+  files; the frozen corpus was rechecked afterward.
+
+Differential proof 1, `SetLimit` boundary:
+
+* The temporary production mutation changed `if (nPos < m_read_pos)` to
+  `if (nPos <= m_read_pos)` in `src/streams.h`. Mutated header SHA-256 is
+  `911de47dccfb26fb30f75c327f463d9f6957a8c30bf0365d30e77211051eb47e` and
+  the enhanced mutated binary SHA-256 is
+  `2f535dd910bcf0894ef7bbb526d6ab397f3cea8873a336a0c0a67938c1f62172`.
+* The enhanced mutation replay exited 134 after 30 executions at
+  `buffered_file.cpp:51` on `limit_set == (requested_limit >= current_pos)`.
+  Log SHA-256:
+  `2ab9b58a0420dae92887b241f2da32efc547b292783a4e1606b72e73e6597765`.
+  Exact artifact:
+  `/tmp/bitcoin-buffered-file-20260720/mutation-limit-enhanced-artifacts/crash-2606a323cb5d03711b993be047d9199ff66eb193`,
+  19 bytes, SHA-256
+  `3d2e15783f79794fc45be34691184d83b68f2d2aa6c6ae56aa6cfc2b6af98a51`,
+  Base64 `KP+7u7u7u7tbu7sAAPcHPR5cEw==`.
+* The old harness with the same mutation and exact artifact exited 0 after
+  two executions; mutated binary SHA-256
+  `af155ae3e6df8962d688f900059de6aa2fecec45580e2350170a1d7b049b74d6`, log
+  SHA-256 `75a48e39afb3499bfd0f3c688e8da08aa4588a15142c4d99088aad9b4aceef63`.
+  Clean production plus the enhanced harness accepted the artifact with exit
+  0; clean proof log SHA-256
+  `03fab03383d2548bd78ed873e98c6c29ed50e8caff72b2778072323d418b9b27`.
+
+Differential proof 2, `SetPos` in-range exactness:
+
+* The temporary production mutation changed `m_read_pos = nPos` to
+  `m_read_pos = nPos + (nPos < nSrcPos)`. It leaves the position within the
+  source range but moves one byte past every strictly in-range request.
+  Mutated header SHA-256 is
+  `378f12df017dc02f1daa7fb9ef86f044c0edda8ca408cc93843149fbcef7f292` and
+  the enhanced mutated binary SHA-256 is
+  `9bd338ec5a9867e6c0b346d7854f934b6a115074fcd81e90cad8f438d62711e6`.
+* Enhanced mutation replay exited 134 after 209 executions at
+  `buffered_file.cpp:59` on `GetPos() == requested_pos`. Log SHA-256:
+  `1ef79852dbd172756d6d7809efb6ae3ef0477bd499a4c01a107958bcb44bda94`.
+  Exact artifact:
+  `/tmp/bitcoin-buffered-file-20260720/mutation-pos-inrange-enhanced-artifacts/crash-bb1511c98b4d70ece0cde7b253c340fa69e49f67`,
+  8238 bytes, SHA-256
+  `8f95c16ebcefaebd894da8c452c01b8c14a85f93f5eefa3cbde881594e46171d`.
+* The old harness with the same mutation and exact artifact exited 0 after
+  two executions; mutated binary SHA-256
+  `ac0d2a71d666246aee4dcc081cc5bd195f62fff7072f94a2ab0dcd9de2d36cf0`, log
+  SHA-256 `c4b046614a997aaef135d6d1df77c1d69dde5afc971ecd04108db9ee643e6bfe`.
+  Clean production plus the enhanced harness accepted it with exit 0; the
+  one-input clean replay log SHA-256 is
+  `b50ef5a7927b87258035e68ebcf489aa99d642109f9e5f2da331f6f6a38636b5`.
+
+Rejected mutation, retained to prevent overclaiming:
+
+* The naive mutation `m_read_pos = nPos + 1` generated enhanced artifact
+  `/tmp/bitcoin-buffered-file-20260720/mutation-pos-enhanced-artifacts/crash-efe9ad1bfd87b796aeabb85b8881275aaef361aa`, 103 bytes, SHA-256
+  `b3d81282266fa82871b639c77be2b057ecdb40162c2973da520eef9bb1b19401`,
+  enhanced log SHA-256
+  `6401eef002d6d6c5a98db8328a59f1b3b82dc3eef928347b985ef515b36a7f67`.
+  The old harness did not pass the artifact: it hit the pre-existing
+  production assertion `streams.h:538` (`m_read_pos <= nSrcPos`), exit 134;
+  old mutated binary SHA-256
+  `491c2a5c7ed8529371c927a0ba36700c91f4daa47d7e5122f57573ea23bc9283`, log
+  SHA-256 `e9e8503722e83ab41c327c985891696efe450b1bfbf6bbdf43e1fc0313b2d6c5`.
+  This is rejected evidence, not a claimed finding for the committed oracle.
+
+Bitcoin Core caller, input origin, and severity:
+
+* `ChainstateManager::LoadExternalBlockFile` in `src/validation.cpp:4983`
+  constructs `BufferedFile` for `-reindex` and `-loadblock` external blk.dat
+  parsing and uses `SetPos`, `SetLimit`, `FindByte`, and `SkipTo` around
+  `validation.cpp:5003-5057` before deserializing/importing candidate blocks.
+  The fuzz input is a synthetic file/operation stream. This is not a
+  peer-supplied invalid-block consensus path.
+* Clean master has no production failure. Master severity is N/A: this is
+  oracle-only hardening, with no production fix or deterministic regression
+  test claimed. If either modeled defect existed in production, the plausible
+  impact would be Medium external block-import/reindex parsing or availability
+  failure, not High/Critical; no network invalid-block trigger or consensus
+  invalidity impact was demonstrated. Invalid fuzzer state or invalid block
+  bytes alone is not Critical. A nonce without cryptographic meaning is not a
+  Critical clearing finding.
+* The old harness discarded `SetLimit`'s return value and only recorded
+  `SetPos` failure, so it missed both clean contract violations modeled above.
+
+Cherry-pick and masking policy:
+
+* `origin/master` and `remotes/l0rinc/master` both resolve to
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; no additional relevant l0rinc
+  commit applies to `BufferedFile`, so none was cherry-picked. Any later
+  production fix, minor fix, oracle change, or cherry-pick must repeat the
+  exact corpus/artifact, mutation, assertion, status/stack, Core caller/input
+  origin, test gap, and severity, and state whether it preserves, changes, or
+  masks this clean-master behavior.
+* Existing findings remain reiterated and master/Core-caller relative:
+  private-broadcast failed-send retention is Medium and feature-conditional;
+  empty HEADERS IBD handoff is Medium availability; peer activity refresh,
+  process-message local storage failure, oversized transport types, and banman
+  invalid-subnet integrity are Low or nice-to-have in current callers; ecmult
+  scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979 retention
+  remain reachability-limited latent/hygiene findings. No clean-master
+  production bug was established in the previously audited addrman,
+  coins-cache, txgraph, txdownloadman, txrequest, connman, eviction,
+  compact-block, headers-sync, UTXO snapshot, mempool-persistence,
+  package-evaluation, or handshake paths.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j4`; `git diff --check`; the original/enhanced frozen-corpus replays;
+exact mutated, legacy, and clean artifact replays; and the four-worker command
+above. `clang-format --dry-run --Werror` still reports the pre-existing
+include-order violation at `buffered_file.cpp:5`; no unrelated formatting was
+changed. No fuzz process remained after verification.
