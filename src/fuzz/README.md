@@ -26768,3 +26768,156 @@ finding must identify the Core caller, input origin, master behavior, exact
 precondition/postcondition, assertion/status/stack, clean-master or minimal
 mutation proof, regression test, and the possibility that a later minor fix
 has masked or changed the behavior.
+
+## 2026-07-20 Core `coins_view_stacked` parent-cache oracle
+
+This entry records the next Core-side oracle hardening result. It is a
+cross-repository audit note: the harness lives in Bitcoin Core, while this
+ledger is kept with the secp256k1 fuzz-oracle campaign so the findings and
+fork review remain in one chronological record.
+
+### Scope and master boundary
+
+The Core source was based on `origin/master`
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`, with the same merge-base. The
+committed Core change is `d90939f8bf`, `fuzz: guard stacked coins view parent
+state`.
+
+`coins_view_stacked` combines a memory-only `CoinsViewDB`, a mutable
+`CCoinsViewCache`, and `CoinsViewOverlay::StartFetching`, whose parent reads
+can run through the shared fetch pool. The target now wraps the parent cache
+in `MutationGuardCoinsViewCache`, captures a fresh snapshot after the
+intentional initial `TestCoinsView` seeding, and asserts that the parent is
+unchanged both while the overlay is active and after its reset guard exits.
+The existing guard still advances its expected snapshot only for the
+intentional `BatchWrite` transition.
+
+The production counterpart is the `Chainstate::ConnectBlock` path that
+prefetches validated block inputs through `CoinsViewOverlay`. A synthetic
+fuzzer block, or an invalid block rejected before that path, is not by itself
+a Critical finding. Severity must follow the actual Bitcoin Core caller,
+input origin, and master-branch consequence if a real production failure is
+found.
+
+### Fork review and no masking
+
+The relevant l0rinc/bitcoin fork commits were reviewed:
+
+* `439d23b19ef7f15f5757d8d4c5f28ac0aca28e52`, stacked coins-view harness.
+* `c53eedff90ea3b0fac66c2d9773f486ed21983a4`, parallel input fetching.
+
+The current Core master already contains the landed equivalents:
+`0e10937184438f8d81940336b183267e59f959b7`,
+`ab2a3792372c6b99b9d6749a1841dbb363264573`,
+`ce610a6ff445bb8a812e650c91f501a1ecf0b19c`, and
+`ede11b83141d0d0998cd95ebabf8d1656c6f7765`. No fork commit was cherry-picked
+for this target, so a later fix was not silently used to mask a follow-up
+result. No secp256k1 production change belongs in this Core harness commit.
+
+### The stale oracle and its correction
+
+The first implementation changed the stacked target to use the mutation
+guard but asserted against the constructor snapshot. Clean production then
+failed before the overlay contract was reached because the initial
+`TestCoinsView` had intentionally dirtied the parent cache. This was a stale
+or overbroad fuzzer oracle, not a production bug.
+
+* First failure log:
+  `b6d2f75ae06cb687e28cb6b9d4a4e94e6ace2558063be10630d0383a62e457d6`.
+* Result: exit 77 at `MutationGuardCoinsViewCache::AssertUnchanged`.
+* First failure artifact:
+  `7a9d87a5df09b14ae55d0a18fa2155f0085d58b04e37bc1ad8c8098395badb9d`.
+* Correction: add `CaptureSnapshot()` after intentional setup.
+* The same input then passed under the final source; final seed log:
+  `3a71e92b46897ad3186e0261d72d19dceb5e306586beab7002a3cf2c4995f046`.
+
+This correction is recorded so future work does not treat an assertion that
+fails on clean master as evidence merely because it is in a fuzzer harness.
+
+### Minimal mutation sensitivity proof
+
+To demonstrate that the new contract catches a meaningful broken state
+transition, the exact production line in `src/coins.h` was temporarily
+mutated from:
+
+    input.coin = base->PeekCoin(input.outpoint);
+
+to:
+
+    input.coin = base->GetCoin(input.outpoint);
+
+The mutation is intentionally non-production and models a parent cache read
+that can modify state during asynchronous prefetch.
+
+* Mutated `src/coins.h` SHA-256:
+  `786cbf2573c0532498fef8b46846644264219acd9250ccf869a70dbfcdd5b56a`.
+* Frozen-corpus mutation log:
+  `b1642f30852b6ae1197de6896c1513f14db80f0afc73fc43c0f9c43ebdc12138`.
+* Result: exit 77 after 393 executions at
+  `MutationGuardCoinsViewCache::AssertUnchanged`.
+* Mutation artifact SHA-256:
+  `21bd7a77296f1b524d96fa6d222fdd74d0bc32f43367471fbf919bdbd220642e`.
+
+The production file was restored exactly to master, SHA-256
+`03efc12ddf12f980c5e149d8d2e46199b29d056a768eef819fbfb2c442c3795e`. The
+mutation is proof that the oracle matters, not a claim that unchanged master
+currently has this defect.
+
+### Corpus and verifier record
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/coins_view_stacked` to
+`/tmp/secp256k1-coins-view-stacked-20260720/corpus`.
+
+* 15,659 files, 582,852,640 bytes.
+* Manifest SHA-256:
+  `2d943467d1de4351e8d77e47285c04c1baddeea96dcb7916cc098afb7ca1d716`.
+* Clean-master baseline log SHA-256:
+  `64d720d97a16fc0e32b1d31cadec47979f3124f6a46d2a7af5a3d8bf7916ae8e`.
+* Baseline: 17,643 executions, coverage 9,015, features 53,592, peak RSS
+  607 MiB, exit 0, no diagnostics or artifacts.
+* Final source hash:
+  `24b2d3fbbb746067089338bba0d8cc4958ea1974500e0014b76636e7bb76e2aa`.
+* Final ASan/UBSan fuzz binary SHA-256:
+  `57e94fc8125e6d3c69afd1c65d4febc205d7d76c037c756eb52e42c877f75bc8`.
+* Exact-source full replay log SHA-256:
+  `064f58a21d6764f1e7bff9663f1d1e245c64dddcc8d9d48eb19e99758418e3ed`.
+* Exact-source full replay: 17,665 executions, coverage 9,145, features
+  54,470, peak RSS 606 MiB, exit 0, no sanitizer or assertion diagnostics.
+* Exact-source four-job log SHA-256:
+  `c070aa16208f0c0dc4b68f5b2c5c8b27f933c643830e4cb0007a3fda35b15bcb`.
+  The command used `-jobs=4 -workers=4`; jobs 0 through 3 all exited 0 with
+  16,298, 16,311, 16,275, and 16,304 executions, respectively. Peak RSS
+  values were 601, 603, 594, and 602 MiB.
+
+The final source was rebuilt with `cmake --build ... --target fuzz -j8`.
+`git diff --check` passed. The installed `clang-format` rejects the
+unchanged `origin/master` version of this file as well as the final file, so
+the campaign did not commit unrelated formatting rewrites and does not claim
+that tool check passed. No fuzz process or generated file remains in the Core
+source worktree.
+
+### Severity and reiterated findings
+
+This commit is informational oracle hardening, not a confirmed production
+bug. Ratings below are against unmodified master and actual Bitcoin Core
+reachability:
+
+* Private-broadcast failed-send retention: **Medium**, conditional feature.
+* Empty `HEADERS` initial-sync handoff: **Medium** availability/IBD stall.
+* Peer transaction activity refresh and process-message storage failure:
+  **Low**.
+* Oversized transport message types: **Low** in current Core callers.
+* `ecmult_multi` scratch-size wrapping and forced 10x26/SHA/HMAC/RFC6979
+  retention: **Medium**, with limited demonstrated Core reachability.
+* Banman invalid-subnet integrity: **Low/nice-to-have** because Core RPC
+  validation drops invalid entries before affected state is used.
+* Tx download, tx request, connman, node eviction, handshake, compact-block,
+  and headers-sync campaigns: no new confirmed production bug on master.
+
+An uncleared nonce is not Critical unless that nonce carries cryptographic
+meaning. Every future finding must include the Core caller, input origin,
+master behavior, exact precondition/postcondition, assertion/status/stack,
+clean-master or minimal-mutation proof, deterministic regression test when a
+production bug is confirmed, and whether a later minor fix changed or masked
+the behavior.
