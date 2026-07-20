@@ -961,3 +961,177 @@ exact mutated, legacy, and clean artifact replays; and the four-worker command
 above. `clang-format --dry-run --Werror` still reports the pre-existing
 include-order violation at `buffered_file.cpp:5`; no unrelated formatting was
 changed. No fuzz process remained after verification.
+
+## P2P transport receive/session oracle audit (2026-07-20)
+
+Source commit: `b25efc953d3d57daf9fd525148740945f6be730e` (`fuzz: assert
+transport receive/session state contracts`), based on master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b` and source parent
+`e0c7faffd297d69bbfdd76ce21125d4bfdd371f3`. Production behavior is unchanged.
+The harness now checks that retrieving a completed message clears readiness,
+and that a completed V2 exchange reports V2 plus a non-null session ID while
+V1 and V1 fallback report V1 with no session ID. These are narrow public
+Transport contracts, not blanket accepted-message assumptions.
+
+Exact identities and corpora:
+
+* Clean `src/net.cpp` SHA-256:
+  `cb55514eeaf4ce16336675d9bdca55c24b9c3fc7dc0685c0cb9d6fd12e3363a9`.
+  Original and enhanced `src/test/fuzz/p2p_transport_serialization.cpp`
+  hashes are respectively
+  `2cd26f3fa04ba0c5049e9e431de6bdaa8826ca3a3b62c44be34c5262fa447dde` and
+  `2af472aaff5bf43ed97ce56541a16eb9edde94739aa5fbe4527dd5fb06455631`.
+  Final enhanced sanitizer fuzz binary SHA-256:
+  `768550809b7ad90ba7bcb6c683bcd3c85bbed77dffc14527ded1ed79c71d1972`.
+* V1 corpus: `/tmp/bitcoin-p2p-transport-serialization-20260720/frozen`,
+  copied from `/mnt/my_storage/qa-assets/fuzz_corpora/p2p_transport_serialization`:
+  292 files, 24999219 bytes, sorted path-independent manifest
+  `fb1dca3d34a2558a8e41e2cf1c2ad133c5d1665dd8943a52bbf750c240e79d47`.
+* V2 corpus: `/tmp/bitcoin-p2p-transport-serialization-20260720/v2-frozen`,
+  copied from `/mnt/my_storage/qa-assets/fuzz_corpora/p2p_transport_bidirectional_v2`:
+  1507 files, 2255646 bytes, sorted path-independent manifest
+  `38f6814040749148d27609a5919955324e753d64ad5adcdf9bfea02b77a8beb8`.
+  The frozen manifest remained unchanged after all runs.
+
+Clean replays and workers:
+
+* The V1 original replay (`-merge=0 -runs=292 -timeout=60
+  -rss_limit_mb=0 -use_value_profile=1`) exited 0 after 293 executions,
+  coverage 476, features 6510, peak RSS 304 MiB, with no artifacts. Log
+  SHA-256: `8da09079c4fc695bdbe83870958924e3518000906b676da186f5e26a814056f5`.
+  The enhanced replay exited 0 after 293 executions, coverage 476, features
+  6561, peak RSS 311 MiB, with no artifacts. Log SHA-256:
+  `3ce6e8a5ede3f9371692bc87068ac4dfc168109cbadf94eb01740a9fa1c6f4cf`.
+* The V2 original replay (`-merge=0 -runs=1507` with the same sanitizer and
+  value-profile options) exited 0 after 1508 executions, coverage 6604,
+  features 34013, peak RSS 792 MiB, no artifacts. Old clean binary SHA-256
+  `bb104bed40a1689464db1d1d2e1d5e5141195f0c2eade86a978653b1039c670f`; log
+  SHA-256 `64373d6540019ca463d77fc57c93a058a0b39eb465285eee37df1c8e7c47d4cc`.
+  The enhanced replay exited 0 after 1508 executions, coverage 6608,
+  features 34193, peak RSS 797 MiB, no artifacts. Log SHA-256:
+  `8bbab9794b946ca3be6f66837fdec495bde684a9a69308ff9775b4e74b4bbf46`.
+* The four-worker command was
+  `env FUZZ=p2p_transport_bidirectional_v2 /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+  -jobs=4 -workers=4 -max_total_time=15 -print_final_stats=1
+  -artifact_prefix=/tmp/bitcoin-p2p-transport-serialization-20260720/v2-worker-artifacts/
+  /tmp/bitcoin-p2p-transport-serialization-20260720/v2-workers-input`.
+  All jobs exited 0 without artifacts or sanitizer diagnostics. Jobs 0, 1,
+  2, and 3 processed 1632, 1628, 1664, and 1668 executions; all reached
+  coverage 6608 and features 20485; peak RSS was 739, 734, 745, and 736 MiB.
+  Worker log SHA-256:
+  `27051828ec03e4c78d8f2ad12fef43496487bddee6acc6690ea195ad21b3e444`.
+  The writable worker copy grew to 1509 files/2259969 bytes with manifest
+  `ef652d358a65803d57e2c897e6ae050f907edd3fd632c1760ec0ab4d5d8d2e4a`;
+  it was disposable and did not replace the frozen corpus.
+
+Differential proof 1, V2 session reporting:
+
+* The temporary production mutation added `m_recv_state != RecvState::APP`
+  to the `V2Transport::GetInfo` state gate, modeling a completed APP session
+  being reported as DETECTING with no session ID. Mutated `src/net.cpp`
+  SHA-256:
+  `2a679c5d0a11ea09e1364d389ff523b3755bbe1664b3663a69594afffff23c2b`.
+  Enhanced mutated binary SHA-256:
+  `e103f2d72c0cbfb87b33c69c5293c6f2054898eb79283bc05e215e11e0ccf406`.
+* The enhanced V2 mutation replay exited 77 after 209 executions at
+  `p2p_transport_serialization.cpp:340`, assertion
+  `info0.transport_type == TransportProtocolType::V1`. Log SHA-256:
+  `5f481ed7e80d06959d3a1340aeba50f12d48f99b516c7239909722d5161f5d93`.
+  Artifact:
+  `/tmp/bitcoin-p2p-transport-serialization-20260720/mutation-info-v2-artifacts/crash-2d2517af50ebf0b33b0c859b377fa29765f8a247`,
+  76 bytes, SHA-256
+  `900ad986195e4cc8e852bbdccad4f3201977feb0a0e0f676cfcaab31fdd7af1c`,
+  Base64
+  `cYAAAAAAAN3d3d3d3d3d3d3d3Snd3d3dFd3d3d3d3d3d3d3dAAAAPt3d3d3d3d3d3d3d3d3d3d3d3Wkw3d173d3dE/8AAADygAAAAA==`.
+* The original harness with the same mutation and exact artifact exited 0.
+  Its mutated binary SHA-256 was
+  `e9ca597124cdd2074fa6c2d6179a25e0806de85056a44054d840a9a17c044644` and
+  its log SHA-256 was
+  `ce843deb36d41cab0489d732556a193b5c38d03448f4e5deda0a1df6767ec76b`.
+  Clean production plus the enhanced harness accepted the same artifact with
+  exit 0; clean proof log SHA-256
+  `6d10a6bc1366550352c07fc2dd55d1247b0df15cf5af649b7dd72726867bcf6f`.
+  A V1-only replay did not exercise this V2 mutation and is not treated as
+  evidence; the proof domain is the V2 corpus.
+
+Differential proof 2, V2 receive-state reset:
+
+* The temporary production mutation removed
+  `SetReceiveState(RecvState::APP)` after `ClearShrink(m_recv_decode_buffer)`
+  in `V2Transport::GetReceivedMessage`. Mutated `src/net.cpp` SHA-256:
+  `ddef2e4a249724d9accf1645e40039d0d2f59cbd10faf26bcf87e96a18e02d3b`.
+  Enhanced mutated binary SHA-256:
+  `c9fe836cefe03acd8e8979ffbc26d010a81b16c54f36e968a0d313d53d3848b7`.
+* The enhanced V2 mutation replay exited 77 after 534 executions at
+  `p2p_transport_serialization.cpp:285`, assertion
+  `!transports[!side]->ReceivedMessageComplete()`. Log SHA-256:
+  `b575c14b3309d6a3fc4d9051478da1ba26516a95884a854c0f190c85edb9ad8f`.
+  Artifact:
+  `/tmp/bitcoin-p2p-transport-serialization-20260720/mutation-reset-v2-artifacts/crash-87ef6d0f4af3715f5642fc2fd081ef33105bd0d9`,
+  157 bytes, SHA-256
+  `c1f5e991be59d4d75ee6b8e0cbf0955e158c612486ed3d551122d0918477e98d`,
+  Base64
+  `n+eV5/OggYIhAELCwsLCvcL0GBoAAAAAAAAAAQAAAAAAAAzk///CQsLCwsK9wvQYGBgYGP/IyMjIGcIBCCEAKAADEgADEgDj4+PjAAAADOT/+r+12nZlcnNpb24AAAAAAP/CQsLCwsK9wvQYGBgYGP/IyMjLGQEAAAAAAAAA/+Nz46vjJ8LEwsIhAAAtMQAAAAAAACYBBwAAwsLCwg==`.
+* The original harness with the same mutation and exact artifact exited 0.
+  Its mutated binary SHA-256 was
+  `de656a1f0becd820ad9f05f3805767e7e1a6b7e6d667193fa5603101663de0f6` and
+  its log SHA-256 was
+  `98e870ed6c018c3ed09b2ba57d2644cccc30078453fe290306a61fe0ff675787`.
+  Clean production plus the enhanced harness accepted the artifact with exit
+  0; clean proof log SHA-256
+  `076d3f9a2097475a4b39fc8dde95a26d760bf7cf79236d906ce1da2401100533`.
+  V1 uses a separate `Reset()` implementation, so the V2 target is the
+  exercising domain for this mutation.
+
+Bitcoin Core caller, input origin, and severity:
+
+* Remote peer wire bytes reach `CNode::ReceiveMsgBytes` in `src/net.cpp:668-690`,
+  which calls `Transport::ReceivedBytes` and then `GetReceivedMessage`. This is
+  a real network input path, not synthetic block validation.
+* `Transport::GetInfo` is consumed by `CNode::CopyStats` at
+  `src/net.cpp:622-654`, `CConnman::GetNodeStats`, and `getpeerinfo` at
+  `src/rpc/net.cpp:217` and `308-309`. Before `fSuccessfullyConnected`,
+  `src/net.cpp:2081-2087` also uses DETECTING to label a handshake timeout.
+  Clean master has no failure: master severity is N/A. The modeled session
+  reporting defect would be Low/informational, not a consensus, invalid-block,
+  or Critical issue.
+* The reset mutation affects a real remote state transition. If present in
+  production, a subsequent packet could reach
+  `ProcessReceivedPacketBytes` with `APP_READY` instead of `APP` and violate
+  the `Assume` at `src/net.cpp:1218`. The differential proves the oracle catches
+  the contract, but the legacy harness did not reproduce a daemon crash and no
+  daemon-level crash is claimed. Counterfactual impact is tentatively Medium
+  remote-connection availability, not High/Critical on this evidence.
+* No production bug reproduces on clean master, so this is oracle-only
+  hardening with no production fix or deterministic regression test. Invalid
+  fuzzer state or invalid block bytes alone is not Critical. A nonce without
+  cryptographic meaning is not a Critical clearing finding.
+
+Cherry-pick and masking policy:
+
+* `origin/master` and `remotes/l0rinc/master` both resolve to
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; no additional relevant l0rinc
+  commit applies to this transport target, so none was cherry-picked. Any
+  later fix, minor fix, oracle change, or cherry-pick must repeat the exact
+  target/corpus/artifact, mutation, assertion, stack/status, Core caller/input
+  origin, test gap, severity, and verifier commands, and state whether it
+  preserves, changes, or masks this clean-master behavior.
+* Existing findings remain reiterated and master/Core-caller relative:
+  private-broadcast failed-send retention is Medium and feature-conditional;
+  empty HEADERS IBD handoff is Medium availability; peer activity refresh,
+  process-message local storage failure, oversized transport types, and banman
+  invalid-subnet integrity are Low or nice-to-have in current callers; ecmult
+  scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979 retention
+  remain reachability-limited latent/hygiene findings. No clean-master
+  production bug was established in the previously audited addrman,
+  coins-cache, txgraph, txdownloadman, txrequest, connman, eviction,
+  compact-block, headers-sync, UTXO snapshot, mempool-persistence,
+  package-evaluation, handshake, or BufferedFile paths.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j4`; `git diff --check`; original/enhanced V1 and V2 frozen-corpus
+replays; exact mutated, legacy, and clean artifact replays; and the four-worker
+V2 command above. `clang-format --dry-run --Werror` still reports pre-existing
+violations at `p2p_transport_serialization.cpp:69, 108, 177, 300-309, 361,
+388-389`; no unrelated formatting was changed. No fuzz process remained after
+verification.
