@@ -2966,6 +2966,124 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## `script_descriptor_cache` cache-state and merge oracle audit (2026-07-21)
+
+Source commit: `9876b0a9635fd794c3988e319067e1a811f2ee05` (`fuzz: model
+descriptor cache merge contracts`). Its parent is
+`ebcd9cdc6bf6639db4c35c89b7d28dec88e01987`; the audit base is Bitcoin Core
+master `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`l0rinc/master`. No l0rinc pull-request commit was relevant to this target,
+and no later fix or cherry-pick was used to mask clean-master behavior.
+
+### Target and Core boundary
+
+`FUZZ=script_descriptor_cache` exercises `DescriptorCache`, used by descriptor
+expansion and wallet descriptor-cache persistence. The relevant Bitcoin Core
+callers are `WalletBatch::WriteDescriptorCacheItems` and the corresponding
+load path in `src/wallet/walletdb.cpp`, plus descriptor expansion through
+`src/wallet/scriptpubkeyman.cpp` and `src/script/descriptor.cpp`. The cached
+values are public extended keys and local wallet state. They are not a peer
+consensus or block-validation boundary, so arbitrary invalid block bytes cannot
+reach this finding through the normal Core path.
+
+### Oracle and severity
+
+The harness now keeps an independent model of the parent, derived, and
+last-hardened maps. It checks miss/hit results before every cache operation,
+overwrites, complete getter maps after every transition, `MergeAndDiff`
+additions and diff contents, and conflicting-key `runtime_error` behavior with
+the primary cache unchanged. Arbitrary `CExtPubKey` bytes remain valid test
+values because the cache API stores values and does not make key validity a
+cache invariant.
+
+Clean master reproduced no production failure. This is Informational/Low
+oracle hardening only: a hypothetical cache inconsistency could make local
+wallet descriptor expansion or persistence incorrect, but it is not a
+consensus, invalid-block, memory-safety, concurrency, or cryptographic
+finding, and is not Critical. No production fix or deterministic regression
+test was added because no clean-master production bug was confirmed.
+
+### Exact artifacts and replay
+
+The original harness SHA-256 was
+`9736ac000f088154f7a8285e9d8917b505819202d5718d9c9777f93885cc2a0e`; the
+enhanced harness SHA-256 is
+`f62b94e597506899a5238e3ddf932ad5d356fc6496bf19a7e9f52a86c7a1668d`.
+Restored production `src/script/descriptor.cpp` is
+`55cad35197c4757b452b2693500c7ea9d4999360ade65b93da7f75265a320743`.
+
+The frozen corpus is
+`/tmp/bitcoin-script-descriptor-cache-20260721/frozen`: 164 files,
+5,407,791 bytes, minimum 1 and maximum 800,345 bytes. Its per-file manifest
+SHA-256 is
+`ad2f61a488c760da28c141474d770036e9ec483242f334e98de4a273b520054b`; its
+filename-list SHA-256 is
+`5b9e762072cc3b0daeb987efec4a402bcaadc6675faa3c9ec6a167dddb896fbe`.
+
+The pre-change sanitizer baseline used binary
+`4a0c17aaff79ca2cc8469a8f5cca44a93501f76503f9f6f6416e802af037c2e0` and log
+`9db5960067f350bdc037cef8b3681018ecaa40bc50483a23346c627668bfc888`;
+it exited 0 after 165 executions with no artifact. The final sanitizer
+binary is
+`193b2eb1e96d9e9cfaef355d756e7df72340ebfecf98b43f7f3e2d99157a6419`; its
+clean replay log is
+`e2021dc7b0975330e62a2ee5d714c8eb8b9faf9f5a6683fd293044a2cb846dc4`.
+It exited 0 after 165 executions, with no artifact and no corpus change. The
+final normal binary is
+`b2c68f906c9a347718de43eab46d8319f73bb62042de59c37f21973732896e66`; its
+all-file replay log is
+`4f670bff0115bfbfbb8f7c97f97123b64566e436230fa5e9ee8451c914d6ba32`.
+The normal run processed all 164 files and exited 0. The exact zero-byte
+clean-seed log is
+`b31c6dd00dd59ce1623b2955bf65ebea74f76d650686fd3f9fb8d17576141a40`.
+
+Four isolated sanitizer workers all exited 0 without artifacts or source
+corpus changes. Their log SHA-256 and summary were:
+
+- `16388cf2d17579e73ac81f6ea1f4b3e246abbe05272faf3a5bdb06564505edc1`: 9,149 executions, 631 MiB peak RSS, 581 new units.
+- `62f60ad810455642ccc5ba9b3542253091063dc2d4f4392bbcf2f2a0c8895622`: 9,232 executions, 634 MiB peak RSS, 560 new units.
+- `105382abd24089fc9a2e7dd16f366385da12663c716d26c84d1ac834d1599006`: 9,996 executions, 636 MiB peak RSS, 577 new units.
+- `4c6627ec8d8732647a5f4e300a4de49ce7b8fe1054a28e56e765a89867d94e67`: 9,280 executions, 634 MiB peak RSS, 545 new units.
+
+### Mutation proof and control
+
+A temporary production mutation changed the loop in
+`src/script/descriptor.cpp` that copies
+`other.GetCachedLastHardenedExtPubKeys()` during `MergeAndDiff` to a loop that
+is never entered. This skipped last-hardened entries during merge. The mutated
+production SHA-256 was
+`acab5b4be0255bf0cddbc597bb9817d202b64601505ddcbcae2b6dac848fd046`; the
+mutated sanitizer binary SHA-256 was
+`f2920b7881fc27d4747dfc2956cea7b04445f9158849e43db75638d17f2a4624`.
+
+The exact reproducer was the zero-byte input
+`/tmp/bitcoin-script-descriptor-cache-20260721/mutation-empty`, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The enhanced mutated log SHA-256 was
+`b5301fbbbbead866f6b8a45f00e108a89f3928d30da68844a928ee02c9e4d78c`; it
+exited 134 at
+`src/test/fuzz/script_descriptor_cache.cpp:63`, where the modeled
+`last_hardened` map detected the missing entry. No artifact was emitted.
+
+The original coverage-only harness, with the identical mutation and input,
+exited 0 without an artifact. Its mutated-control binary SHA-256 was
+`d780e4714c644316bc550213dc9b06a1361f06b6f6ca36fce287c082f5b5f41c`; its
+control log SHA-256 was
+`b97d588907134221aed352dcd5b39acf04311eb2f7d18ed494be3992e88008d8`.
+This differential proves that the new contract assertion is what makes the
+regression observable; it does not claim that clean master contains this
+production defect. The mutation was removed before the source commit.
+
+### Verification and test gap
+
+`git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/script_descriptor_cache.cpp`
+passed. Production was restored to the clean source before commit. The
+configured fuzz-only audit tree had no `test_bitcoin` target, so no dedicated
+unit-suite result is claimed. No deterministic production regression test was
+needed because no clean-master bug was confirmed. No fuzz, sanitizer, or
+mutation process remains running.
+
 ## `rpc` block-index and mempool postcondition audit (2026-07-21)
 
 Source commit: `ebcd9cdc6bf6639db4c35c89b7d28dec88e01987` (`fuzz: assert
