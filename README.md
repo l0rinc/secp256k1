@@ -2966,6 +2966,135 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## `rpc` block-index and mempool postcondition audit (2026-07-21)
+
+Source commit: `ebcd9cdc6bf6639db4c35c89b7d28dec88e01987` (`fuzz: assert
+Core state after RPC calls`). Its parent is
+`7ced372e5aa31981c47310585f62d252dba5c83c`; the audit base is Bitcoin Core
+master `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`l0rinc/master`. No l0rinc pull-request commit was relevant to this target,
+and no later fix or cherry-pick was used to mask the result.
+
+### Core boundary and severity
+
+`FUZZ=rpc` executes the existing safe RPC command set against
+`RPCFuzzTestingSetup`. These commands reach local block and chainstate,
+mempool, policy, address, and validation paths through `src/rpc/*.cpp`.
+File-writing, file-reading, DNS/network, and shutdown RPCs remain excluded by
+the existing target. The fuzz boundary is an RPC method and generated
+arguments, normally a local authenticated control path, not a peer message or
+direct invalid-block consensus input.
+
+The old harness executed one RPC and stopped checking at the exception
+boundary. The strengthened `CallRPC` synchronizes the validation-interface
+queue and invokes production `ChainstateManager::CheckBlockIndex()` plus
+`CTxMemPool::check()` after every successful RPC and after every RPC exception.
+This checks structural block-index and mempool contracts immediately after
+partial work. It does not assert that malformed RPC arguments are valid and
+does not claim full RPC output equivalence.
+
+Severity on master is Informational/Low oracle hardening, not a confirmed
+production bug. Clean master reproduced no production failure, consensus or
+invalid-block behavior, peer-triggerable acceptance issue, memory or
+concurrency fault, or cryptographic issue. RPC callers are local policy and
+control paths rather than peer block validation. A hypothetical RPC-induced
+block-index corruption could be a serious node-integrity problem, but the
+mutation below is synthetic and master did not reproduce it; no High/Critical
+production finding is claimed.
+
+### Source and corpus identity
+
+The original `src/test/fuzz/rpc.cpp` SHA-256 was
+`92a5092a3c34742ee707a3289f4154a0c588d231be029adb7ca134d85b530ae2`; the
+enhanced source SHA-256 is
+`4ae7bdae804c01a3d5080c4d45ab92a59364a496ab86689569975dcb2f112bcb`.
+Restored production `src/rpc/blockchain.cpp` is
+`6c1bc1260dfa0099161892d95a407ab50f6e9162ecd1bca1cff211d6eea3345f`.
+
+The frozen corpus is `/tmp/bitcoin-rpc-20260721/frozen`: 13,390 files,
+152,022,478 bytes, minimum 1 byte, maximum 1,048,576 bytes. The per-file
+`sha256sum` manifest SHA-256 is
+`8c2ca5f417c71c5a792c7792f5a02283ba9f84f084a183ff6a768ce5c34a0a09`; the
+sorted filename-list SHA-256 is
+`3f483973065efb3642eed401d8f6250bcd771f5ffa0e52e4973e89f8ecb219f2`.
+Authoritative runs used isolated copies so worker corpus state could not
+alter the frozen evidence.
+
+### Replay evidence
+
+The pre-change sanitizer baseline used binary SHA-256
+`677da14117f700461e315172280f2075419db1c0e83b951c9bffe40db37263a2`; its
+log SHA-256 is
+`34c805a5143e0a0e204e086f7d55be4aedd8fc0049d27751f10e6fc1cb632a55`.
+It exited 0 after 13,531 executions with no artifacts and a 786 MiB peak RSS.
+
+The final enhanced sanitizer binary SHA-256 is
+`4a0c17aaff79ca2cc8469a8f5cca44a93501f76503f9f6f6416e802af037c2e0`; its
+full-corpus log SHA-256 is
+`d3ae76b9ec46e1074a86dda616923bc782bdb04314cfd2b26add6dc18e276337`.
+The replay exited 0 after 13,534 executions, produced no artifacts, left the
+13,390-file corpus unchanged, and peaked at 807 MiB. The final normal binary
+SHA-256 is
+`241c669f4b3a08b46b2daba33c62f6f9bcf77411f980502c32a058a149ba9068`; its
+log SHA-256 is
+`db99d42dafe1be51f9f720e5716f0abb0fb47925bb49974dc715f38ec4b7c087`.
+It exited 0 after all 13,390 files in 6 seconds.
+
+Four sanitizer workers used
+`-max_total_time=60 -timeout=120 -rss_limit_mb=4096 -use_value_profile=1`,
+with isolated corpus and artifact paths. All exited 0, produced no artifacts,
+and left their 13,390-file corpus copies unchanged. Executions were 13,534,
+13,532, 13,531, and 13,533; peak RSS was 755, 800, 751, and 752 MiB. Worker
+log SHA-256 values were:
+
+    fuzz-0 0c0e70a029ae62d17f7783fc1fbf979b307db9cb56f9b2c173d2069b0ed4d6c1
+    fuzz-1 e44062cdf6681f36d54d7d945d7f105a6f041bf0705d32fc6191b50b5ef2bc21
+    fuzz-2 48c8ac6f8265d78e595ec57175475249235e517ad2a3419aa8e440d3fd23c7c2
+    fuzz-3 f1ed22ea69afcb4422028c5d15e35c826a6c5d1cc0fb0f232f92ad9e0c27cf56
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation inserted
+`++chainman.ActiveChain().Tip()->nHeight` in the `getblockcount` RPC handler
+immediately before its normal return. It models a read-only RPC corrupting the
+active block-index height while leaving the old harness with no postcondition
+to inspect. Mutated production `src/rpc/blockchain.cpp` SHA-256 was
+`77add976dffcc86784f2a2490d7bff73c87f5a417fd51a2877cb1deb3bf7a344`; the
+mutated sanitizer binary SHA-256 was
+`fad5f864778cb7c8502ba849e36272458fb9a4468b8951e0272a86fdece3106d`.
+
+The frozen corpus reached the mutation with the exact 17-byte artifact
+`/tmp/bitcoin-rpc-20260721/mutation-artifacts/crash-17a78f476a7e15300670119563801dc80e79abed`.
+It contains the ASCII bytes `getblockcount\\ttf`, SHA-256
+`d5ce33c0353aa0283e716556728a00d8b2fc5c6d0289efca3c03c56ba9118af5`, and
+Base64 `Z2V0YmxvY2tjb3VudFx0dGY=`. Enhanced replay exited 77 after 37
+executions at `validation.cpp:5195` in `ChainstateManager::CheckBlockIndex()`,
+called from `rpc.cpp:92` `AssertCorePostconditions`; the mutation log SHA-256
+is `928f554f4e6a1d95abb3d3ca34ef0cc09fe0d66f7b41bfec045ec0da61e0b87`.
+
+With the original harness, the identical mutation and artifact exited 0 with
+no artifact. The control binary SHA-256 was
+`cdec1b68a9599e88f1e0dc36d0a09132a5caeb07b81ae2af7f0e7b7b57509785`; the
+control log SHA-256 was
+`eb92ff239c163cbd0e0c136c91ac88c355caa0062bc6cee4fbe89156b82c34f7`.
+After restoring production and the enhanced harness, the exact artifact
+exited 0 with no artifact in the final sanitizer binary; the final-seed log
+SHA-256 was
+`7b3061b5f6ae10095b0016420001061da6ea48034f29032a6a9649c98ebf0b38`.
+This proves the old harness did not observe a block-index corruption caused
+by an RPC while the new postcondition did. No production fix or deterministic
+regression test is claimed because clean master did not fail.
+
+### Verification and test gap
+
+`git diff --check` passed, and
+`clang-format --dry-run --Werror src/test/fuzz/rpc.cpp` passed. The sanitizer
+and normal fuzz targets were rebuilt after restoring production. The configured
+fuzz-only build has no `test_bitcoin` target, so the dedicated unit suite was
+unavailable. No production behavior changed, no production bug is asserted,
+and no fuzz, sanitizer, or mutation process remains running.
+
 ## `validation_load_mempool` dump/load round-trip oracle audit (2026-07-21)
 
 Source commit: `7ced372e5aa31981c47310585f62d252dba5c83c` (`fuzz: verify
