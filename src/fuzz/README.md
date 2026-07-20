@@ -24323,6 +24323,7 @@ Existing findings remain reiterated at their master-relative ratings:
 
 No temporary production mutation remains, and no fuzz jobs were left running.
 
+
 ## 2026-07-19 Core banman independent ban-map oracle and invalid-subnet fix
 
 Commit a6e9b80aaf strengthens FUZZ=banman on exact latest Bitcoin Core master
@@ -25536,6 +25537,7 @@ nonce with no cryptographic meaning is not **Critical** by itself.
 No temporary production mutation remains, and no fuzz jobs were left running.
 
 
+
 ## 2026-07-20 Core process_message block-storage result oracle on latest master
 
 Commit `1df24a61f7` strengthens `src/test/fuzz/process_message.cpp` and fixes
@@ -25834,5 +25836,119 @@ Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
 magnitude-32 normalization is **Medium** latent internal correctness; SHA,
 HMAC, and RFC6979 retention is **Medium** memory hygiene; and an uncleared
 nonce with no cryptographic meaning is not **Critical** by itself.
+
+No temporary production mutation remains, and no fuzz jobs were left running.
+
+
+## 2026-07-20 Core p2p_handshake state-transition oracle on latest master
+
+Commit `02a4e3fd44` strengthens `src/test/fuzz/p2p_handshake.cpp` and adds a
+production-side postcondition in `src/net_processing.cpp`. The audit parent is
+`1df24a61f7`; exact `origin/master` is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`. The original target SHA-256 is
+`985e9c9fd569c40da2a4d814f3b7661e28e0dea0ba2b29b2ed3436ba58ed2b7d`; the
+final target SHA-256 is
+`329893f381ac1c7f7909852d53252bdb7811f65fce7fa9ec5708119e16bfff92`.
+The production `src/net_processing.cpp` SHA-256 before this campaign was
+`3abd669d8176c2779b53d7b81007113779958cd0d0a76da0347cd4f85ca69078`; the
+final hash is
+`59559186ffc9cc3521c1a40bd99905f0f36e117abc12e53175ed87538c088c85`.
+The final ASan/UBSan fuzz binary SHA-256 is
+`35400947577bfc5d478c7e7cc931688ebfa8cb6e25a3744c53236cf5908b6e3d`.
+
+### Contracts and rejected oracle
+
+After each `ProcessMessage` call, production code now asserts that any
+nonzero `CNode::nVersion` is at least `MIN_PEER_PROTO_VERSION` and that its
+negotiated common version is also at least that floor. The harness asserts
+that `nVersion` is write-once, `fSuccessfullyConnected` and `fDisconnect` are
+monotonic, and every nonzero version/common-version pair is valid. These
+contracts do not infer causality from the fuzzer's selected message label.
+
+The first attempted harness oracle did make that invalid inference. On the
+142-byte artifact
+`/tmp/bitcoin-current-p2p-handshake-oracle-replay-20260720/artifacts/crash-ae3bfb45d36e19a5d4d91012bf2b6f43221b0330`,
+SHA-256
+`e3f6e8bd850ee7b24e34d5f03a9a4e140023270bae6796a90b7f12c7287ce813`, it
+observed `type=feature` while `nVersion` changed `0->1303359483` and
+`fDisconnect` changed `0->1`. The replay ran 254 executions and exited 77;
+the trace log SHA-256 is
+`9084e5a85971c3acde23268101d2ec6c81f7017930795971ca0a2536469ffeb9`.
+`ReceiveMsgFrom` appends completed messages to the processing queue, while
+`ProcessMessagesOnce` can return before polling that queue. A later iteration
+can therefore process an earlier message than the one currently labeled by
+the harness. The label assertion was removed and classified as a
+stale/overbroad fuzzer oracle, not a production finding.
+
+### Exact differential proof
+
+The immutable QA snapshot is
+`/tmp/bitcoin-current-p2p-handshake-corpus-frozen-20260720`: 1,062 files,
+855,719 bytes, with sorted per-file-content manifest SHA-256
+`0dc31a0b098c2b7cda0980fd33f6ac84a142a7b043d975cbfca1006994708c1a`.
+A clean replay of that exact corpus completed 1,114 executions, exited 0,
+and produced no artifacts.
+
+For the negative proof, the temporary production mutation inserted the exact
+line `pfrom.nVersion = MIN_PEER_PROTO_VERSION - 1;` immediately after the
+real VERSION assignment in `PeerManagerImpl::ProcessMessage`. The enhanced
+binary aborted after 170 corpus inputs at
+`src/net_processing.cpp:5244`, with a stack through
+`PeerManagerImpl::ProcessMessages` and `src/test/fuzz/p2p_handshake.cpp:104`.
+The mutation artifact SHA-256 is
+`0cac2aa97ec73b36a540e724911d466026cc55259c566dbd32b598d9c8b3f90c`; the
+mutation log SHA-256 is
+`304ad87d604d0ebec381643896a4231fa60e7e2bec64c73a68fb6b8d317db2c0`.
+The mutation and its generated input were removed from the source tree before
+the final build.
+
+### Corpus, caller boundary, and severity on master
+
+The real Bitcoin Core caller is `PeerManagerImpl::ProcessMessages` and its
+`ProcessMessage` dispatcher in `src/net_processing.cpp`. The peer controls
+the incoming VERSION, VERACK, FEATURE, and other P2P messages, while the
+resulting `CNode` state is consumed by connection management, address-manager
+updates, relay setup, peer eviction, and transaction/block download paths.
+The clean master replay showed no invalid version propagation, unauthorized
+connected state, memory error, consensus effect, or production failure.
+
+This campaign claims **no production finding and no master severity**; if a
+severity label is required, it is **Informational/oracle hardening**. The
+invalid negotiated-version mutation proves that the oracle catches a serious
+protocol-state violation if one is introduced, but it is not evidence that
+master currently has that bug. Invalid block bytes are not the input origin
+for this path and cannot raise this result to Critical. No nonce-clearing
+issue is involved; the handshake nonce has no cryptographic-secret meaning,
+so its uncleared state is not Critical by itself.
+
+### Sanitizer run and masking rules
+
+Four ASan/UBSan workers ran for 301 seconds with `-jobs=4 -workers=4
+-max_total_time=300`. They completed 198,556, 200,032, 199,711, and 201,293
+executions, respectively; each exited 0, with peak RSS of 501, 499, 500, and
+500 MiB and no artifacts. The shared working corpus ended at 3,738 files;
+the immutable snapshot was not modified. The final worker log SHA-256 values
+are `7ed565f7b76934192dde2b9e5ac25dcff449e18ce09ac85f15c5740b02b4e07f`,
+`f5df6a738d5fffc0c2f94412c8017d2bfe389681134a0b936a37148313ecbcbe`,
+`0dc3a2e61148f4945ff642d48cd15da45a0355cd362169168daca43413440380`, and
+`0570ca3f3cbabd1fd522c4016948993f09c217a7886ac8ae5fe88252232a4f18`.
+The combined log SHA-256 is
+`cc661cfb5a7a3463284a6f113066c8dc2583409ae80a594ee79cb15940bbb57e`.
+`cmake --build /tmp/bitcoin-secp256k1-audit-current-build -j2` and
+`git diff --check` passed, and no fuzz processes remain.
+
+The l0rinc fork pull-request list was reviewed. No handshake-specific commit
+was cherry-picked. Any later fix or cherry-pick that makes a follow-up input
+green must state whether it preserves, changes, or masks this clean-master
+behavior and retain the exact corpus artifact or mutation, source/binary
+hashes, assertion/status and stack, Core input origin, caller boundary,
+severity, test gap, and verifier commands.
+
+Existing findings remain reiterated: `ecmult_multi` scratch-size wrapping is
+**Medium** with low demonstrated Bitcoin Core reachability; forced 10x26
+magnitude-32 normalization is **Medium** latent internal correctness; SHA,
+HMAC, and RFC6979 retention is **Medium** memory hygiene; connman and
+node-eviction campaigns found no confirmed production bug on master. An
+uncleared nonce with no cryptographic meaning is not **Critical** by itself.
 
 No temporary production mutation remains, and no fuzz jobs were left running.
