@@ -6292,9 +6292,11 @@ static void run_eckey_edge_case_test(void) {
     const unsigned char zeros[sizeof(secp256k1_pubkey)] = {0x00};
     unsigned char ctmp[33];
     unsigned char ctmp2[33];
+    unsigned char ctmp3[65];
     secp256k1_pubkey pubkey;
     secp256k1_pubkey pubkey2;
     secp256k1_pubkey invalid_pubkey;
+    secp256k1_ge invalid_ge;
     secp256k1_pubkey pubkey_one;
     secp256k1_pubkey pubkey_negone;
     const secp256k1_pubkey *pubkeys[3];
@@ -6475,6 +6477,27 @@ static void run_eckey_edge_case_test(void) {
     CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_combine(CTX, &pubkey, pubkeys, 1));
     SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(secp256k1_pubkey));
     CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) == 0);
+    /* Current behavior accepts a nonzero opaque point without curve validation. */
+    secp256k1_fe_set_int(&invalid_ge.x, 1);
+    secp256k1_fe_set_int(&invalid_ge.y, 1);
+    invalid_ge.infinity = 0;
+    CHECK(!secp256k1_ge_is_valid_var(&invalid_ge));
+    SECP256K1_CHECKMEM_UNDEFINE(&invalid_pubkey, sizeof(invalid_pubkey));
+    secp256k1_ge_to_bytes(invalid_pubkey.data, &invalid_ge);
+    SECP256K1_CHECKMEM_CHECK(&invalid_pubkey, sizeof(invalid_pubkey));
+    CHECK(secp256k1_pubkey_load(CTX, &invalid_ge, &invalid_pubkey) == 1); /* TODO: reject off-curve opaque public keys. */
+    len = sizeof(ctmp3);
+    SECP256K1_CHECKMEM_UNDEFINE(ctmp3, sizeof(ctmp3));
+    CHECK(secp256k1_ec_pubkey_serialize(CTX, ctmp3, &len, &invalid_pubkey, SECP256K1_EC_UNCOMPRESSED) == 1); /* TODO: reject off-curve opaque public keys. */
+    SECP256K1_CHECKMEM_CHECK(ctmp3, sizeof(ctmp3));
+    CHECK(len == sizeof(ctmp3));
+    CHECK(secp256k1_ec_pubkey_parse(CTX, &pubkey2, ctmp3, len) == 0);
+    pubkeys[0] = &invalid_pubkey;
+    memset(&pubkey, 255, sizeof(secp256k1_pubkey));
+    SECP256K1_CHECKMEM_UNDEFINE(&pubkey, sizeof(pubkey));
+    CHECK(secp256k1_ec_pubkey_combine(CTX, &pubkey, pubkeys, 1) == 1); /* TODO: reject off-curve opaque public keys. */
+    SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(pubkey));
+    CHECK(secp256k1_memcmp_var(&pubkey, &invalid_pubkey, sizeof(pubkey)) == 0);
     pubkeys[0] = &pubkey_negone;
     memset(&pubkey, 255, sizeof(secp256k1_pubkey));
     SECP256K1_CHECKMEM_UNDEFINE(&pubkey, sizeof(secp256k1_pubkey));
