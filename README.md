@@ -1726,3 +1726,171 @@ Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
 fuzz -j2`; `git diff --check`; clean frozen-corpus replay; four-worker command;
 exact clean replay; enhanced mutated replay; legacy mutated replay; and exact
 mutation replay.
+
+## `checkqueue` error-result oracle
+
+Source commit `588e3877bd` (`fuzz: assert checkqueue error-result propagation`)
+strengthens `src/test/fuzz/checkqueue.cpp`. `DumbCheck::operator()` returns
+`std::nullopt` for success and `1` for failure. The target now computes the
+expected optional error from the checks actually submitted to each queue and,
+after direct `CCheckQueue::Complete()` or explicit
+`CCheckQueueControl::Complete()`, requires both result presence and value to
+match. Unsubmitted checks are excluded. When explicit completion is not chosen,
+the existing control destructor still exercises RAII completion, but its return
+value is intentionally unobservable.
+
+Master and clean identities:
+
+* Core base master is
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; source parent is
+  `c3cb2b3d60b02f2eeb05e1ef695b1d6e19eeb59d`. Production behavior is unchanged.
+* Clean `src/checkqueue.h` SHA-256 is
+  `8451bd879402afebd8d67cc11ac3029d6d50ebe6d88c3877a0476fa162f1dea`.
+  Original harness SHA-256 is
+  `214b28b770133afba7afc0d31cc06afb508f5a81a4a45bc845d6251298a83cff`.
+  Enhanced harness SHA-256 is
+  `fb79d79f07287283d1c1d62f036d62685edfec332f6abb0b39891326993ff9cb`.
+  Final clean sanitizer fuzz binary SHA-256 is
+  `144ad53caebc307faedda9a68125424d46ac9df127216fe4fe7e53a5500704a1`.
+
+Frozen corpus and clean runs:
+
+* Target: `checkqueue`. Source:
+  `/mnt/my_storage/qa-assets/fuzz_corpora/checkqueue`. Frozen directory:
+  `/tmp/bitcoin-checkqueue-20260720/frozen`.
+* The corpus contains 98 files and 15,011 bytes. Sorted filename/content
+  manifest SHA-256:
+  `5988dbcb14d52fb5bf6e4b31d29b97f0f0b1b3449b29c0739e6cc8a5dbaee4d9`.
+  The frozen corpus was not modified.
+* Final clean replay:
+
+  ```text
+  env FUZZ=checkqueue /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+    -merge=0 -runs=98 -timeout=60 -rss_limit_mb=0 -print_final_stats=1 \
+    -artifact_prefix=/tmp/bitcoin-checkqueue-20260720/final-clean-artifacts/ \
+    /tmp/bitcoin-checkqueue-20260720/frozen
+  ```
+
+  It exited 0 after 197 executions, cov 353, ft 876, peak RSS 100 MiB, with
+  no artifacts. Log SHA-256:
+  `c63b199936cfffee12a02ad2a365956aaa8bb12cb272032165cfc028e9aeca91`.
+* The exact clean control for the mutation input below exited 0; log SHA-256:
+  `18e01ee9ef78a7a037bc5ba7773b0be489fe3797a555c8f82e5db2cad9a51293`.
+
+Multi-worker evidence:
+
+* The disposable worker directory was seeded from the frozen corpus before the
+  final run: 98 files/15,011 bytes.
+
+  ```text
+  env FUZZ=checkqueue /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz \
+    -jobs=4 -workers=4 -max_total_time=15 -timeout=60 -rss_limit_mb=0 \
+    -print_final_stats=1 \
+    -artifact_prefix=/tmp/bitcoin-checkqueue-20260720/worker-artifacts/ \
+    /tmp/bitcoin-checkqueue-20260720/workers
+  ```
+
+  All four jobs exited 0 with no sanitizer diagnostics or artifacts. Jobs 0, 1,
+  2, and 3 processed 1,645, 1,645, 1,636, and 1,642 executions; all reached
+  cov 353 and ft 876; peak RSS was 102 MiB for each. Worker log SHA-256:
+  `2039e501f7b7b00fcab7f023db1391709ec3d58b835619b25cabff4a0ac5df90`.
+  The disposable corpus ended at 103 files/15,223 bytes; the frozen corpus
+  stayed unchanged and no fuzz process remained.
+* An earlier setup attempt used an empty worker directory and omitted the
+  artifact directory, so all jobs failed before useful fuzzing. It is not part
+  of the evidence; the seeded command above is the valid worker run.
+
+Differential proof that the oracle matters:
+
+* Temporary production mutation in `src/checkqueue.h` changed
+
+  ```cpp
+  local_result.has_value() && !m_result.has_value()
+  ```
+
+  to
+
+  ```cpp
+  local_result.has_value() && m_result.has_value()
+  ```
+
+  This prevents the first failed check from moving into the shared result, so
+  `Complete()` can incorrectly return `std::nullopt`. Mutated header SHA-256:
+  `2fbcc107fed3a60b160275e164a7d8b01c899e0e7b239b2d4d94cbdecac82f7d`.
+  Enhanced mutated binary SHA-256:
+  `1bd86244075b76a5d25bddc3c32329f72b2470be5becf10e43e052111cca2364`.
+* The full frozen replay reached `checkqueue.cpp:60` after 42 executions.
+  LibFuzzer's signal handler stayed alive after the assertion, so the
+  controlled outer timeout returned 124 and no artifact was emitted. Mutation
+  log SHA-256:
+  `432fe56616704c24aae903acd0a48c8bac77dc047f2c4812caffd4f348618d04`.
+* Temporary tracing, removed before the final build, identified the generated
+  unit used for exact replay:
+  `/tmp/bitcoin-checkqueue-20260720/trigger-input`, 7 bytes, hex
+  `ffdb2801000200`, SHA-256
+  `e2897dec912296eb9d5dff96edeb1f186fa959032a3d8eda174e9d9e1b41ac2f`.
+  The non-instrumented mutated binary reached the same assertion,
+  `result.has_value() == expected_result_1.has_value()`. The controlled
+  timeout again returned 124 because the signal handler stayed alive; no
+  artifact was emitted. Exact mutation log SHA-256:
+  `b3ad394a7c6b35ddd40575086580db2d3a43e3eb82f3d481e0b3f3bf77c16ad7`.
+* The original harness with the same mutated production exited 0 after 197
+  executions, cov 336, ft 817, peak RSS 99 MiB, with no artifact or diagnostic.
+  Original harness SHA-256:
+  `214b28b770133afba7afc0d31cc06afb508f5a81a4a45bc845d6251298a83cff`.
+  Legacy mutated binary SHA-256:
+  `70fb35e735b0cf6e1ddc2b515d0b80a7b63878de83b88aa1f52f1165a8d7fd67`.
+  Legacy log SHA-256:
+  `d8db67dc305872db686f6d2ab57e3dc407f16b583c31ea22664c76a5d027dab3`.
+  This is the differential proof that the new oracle catches a modeled result
+  propagation regression the old target missed.
+* Clean production plus the enhanced harness accepted the exact 7-byte input
+  with exit 0. No production mutation remains. No deterministic production
+  test or fix is claimed because clean master reproduces no failure.
+
+Bitcoin Core caller, input origin, and severity:
+
+* `ChainstateManager` owns the production `CCheckQueue<CScriptCheck>` at
+  `src/validation.h:983` and initializes it at `src/validation.cpp:6162`.
+  `ConnectBlock` creates `CCheckQueueControl` at `src/validation.cpp:2527`
+  and converts a returned script-check error into `BLOCK_CONSENSUS` failure at
+  `src/validation.cpp:2627-2629`. Remote block processing and local
+  reindex/load paths use this block-validation boundary.
+* The fuzzer uses synthetic `DumbCheck` objects and harness bytes. It does not
+  prove that the 7-byte input is a remote block or that clean master accepts an
+  invalid block. The mutation models corruption of the queue result at the
+  production API boundary.
+* Master-relative severity for current master is N/A: clean master has no
+  production failure. The oracle change is Low/informational hardening, but
+  the modeled regression would be High/Critical if a real production defect
+  caused failed script checks for a remotely submitted invalid block to be
+  lost, because `ConnectBlock` relies on this result to reject the block. This
+  hypothetical consequence is not a current vulnerability. Invalid fuzzer
+  state or malformed bytes alone is not Critical. A nonce without cryptographic
+  meaning is not a Critical clearing finding.
+
+Existing findings and cherry-pick/masking context:
+
+* Existing findings remain Core-caller relative: private broadcast failed-send
+  retention is Medium and feature-conditional; empty HEADERS IBD handoff is
+  Medium availability; peer activity refresh, process-message local storage
+  failure, oversized transport types, and banman invalid-subnet integrity are
+  Low or nice-to-have in current callers; ecmult scratch wrapping, forced
+  10x26 normalization, and SHA/HMAC/RFC6979 retention remain reachability-
+  limited latent/hygiene findings. No clean-master production bug was
+  established in the previously audited addrman, coins-cache, txgraph,
+  txdownloadman, txrequest, connman, eviction, compact-block, headers-sync,
+  UTXO snapshot, mempool-persistence, package-evaluation, handshake,
+  BufferedFile, block-index, tx_pool, policy-estimator, or autofile paths.
+* `origin/master` and `remotes/l0rinc/master` both resolve to
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`. No relevant l0rinc commit applies
+  to `checkqueue`, so none was cherry-picked. If a later production fix, minor
+  fix, oracle change, or cherry-pick alters this target, its amended commit
+  message must repeat the exact target/corpus/artifact, mutation, assertion,
+  status/stack, Core caller/input origin, test gap, severity, verifier commands,
+  and whether it preserves, changes, or masks clean-master behavior.
+
+Verifiers: `cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target
+fuzz -j2`; `git diff --check`; clean frozen-corpus replay; seeded four-worker
+command; full enhanced mutation replay; exact enhanced mutation replay; full
+legacy mutation replay; and exact clean replay.
