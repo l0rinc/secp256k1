@@ -2966,6 +2966,135 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## `cmpctblock` state-transition oracle audit (2026-07-21)
+
+Source commit: `815fe5bf267815bbf70813314b7a0ea261d328e5` (`fuzz: check
+compact-block state transitions`). Its parent is
+`54c1ca5f5ae3cdedb0eaf206114b6fcb44a8fe8e`; the audit base is Bitcoin Core
+master `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`l0rinc/master`. No l0rinc pull-request commit was relevant to this target.
+
+### Core boundary and severity
+
+`FUZZ=cmpctblock` drives Bitcoin Core's compact-block peer path through
+`PeerManagerImpl`, including `CMPCTBLOCK`, `BLOCKTXN`, `HEADERS`,
+`SENDCMPCT`, and `TX` messages. It exercises compact-block reconstruction,
+partial block requests, block-index updates, mempool removal/reinsertion,
+validation callbacks, and BIP152 high-bandwidth state. The existing harness
+already checked local counters, timestamps, mempool sequence monotonicity,
+and selected peer-state transitions, but did not run the complete production
+block-index and mempool consistency contracts after each processing attempt.
+
+The new harness synchronizes validation callbacks and invokes production
+`ChainstateManager::CheckBlockIndex()` and `CTxMemPool::check()` under
+`cs_main` after each `ProcessMessagesOnce()` in both the guaranteed rejected
+transaction setup and the main transition loop, plus at final cleanup. The
+test setup fixes `check_block_index=1` and mempool `check_ratio=1`, so these
+otherwise optional checks are deterministic.
+
+Severity on master is Informational/Low oracle hardening. Clean master
+reproduced no production bug, invalid-block acceptance, consensus failure,
+memory/concurrency fault, or cryptographic issue. Compact-block data is
+untrusted peer input, but this audit found no master behavior that warrants a
+High/Critical rating. No production fix or deterministic regression test is
+claimed.
+
+### Source and corpus identity
+
+The original `cmpctblock` harness source SHA-256 was
+`47a590596e1c445a4ba83e50a98c81a678bfece307723d33c83fd28f29000630`; the
+enhanced source SHA-256 is
+`9caa805f289a50986c51a34de424a59b3629147b5339d0b862fcbb93a9f7652c`.
+Restored production `src/net_processing.cpp` is
+`afc14cf644760b60670fa82fb088b03ffa792d421a52c5f6c73b2e67672cf419`.
+
+The frozen corpus is
+`/tmp/bitcoin-cmpctblock-20260720-frozen`: 1,435 files, 3,705,961 bytes,
+minimum 5 bytes, maximum 31,412 bytes. The per-file `sha256sum` manifest
+SHA-256 is
+`b0cfeef40252982a88db251b9114df589491a212960dca46ad6ba6b79bf8b881`;
+the sorted filename-list SHA-256 is
+`0b79ef0e1bd7824dd6a8d4edae2a6225e7422eca0b4ff32edeb2df6eb42e7e00`.
+All authoritative runs used isolated copies so libFuzzer corpus growth could
+not alter the frozen evidence.
+
+### Replay evidence
+
+The original-harness sanitizer baseline used binary SHA-256
+`bbd23e03a665870c4a98e6ef804deed4ed173d3dcdab810614168ccec4626ce7`, exited
+0 after 1,437 executions, added no units, produced no artifacts, and has log
+SHA-256
+`a063219a725de3d1f041541bf2471a85c9a65a7c912487f35929e27ce023365d`.
+The enhanced sanitizer binary SHA-256 is
+`5a71a991479d01a285e2ba4cf7eb783e09927b8610403602c262d980e31e1d0f`; the
+1,435-file replay exited 0 after 1,437 executions, produced no artifacts,
+and left its isolated corpus unchanged. Its log SHA-256 is
+`483569cc742111116c958025135631f2c410889f1f82d50f644bf93639013d61`.
+
+The normal standalone fuzz binary SHA-256 is
+`6a07edad172e19761135fbe9e07104b3094af37964021e0ad3df4f1560fa23a4`; it
+passed all 1,435 files in 7 seconds with no artifacts. Its log SHA-256 is
+`df920458cf245ae9f651680d7724f111fe360057e9f9bcc36ae24024cbab813e`.
+The standalone driver was invoked with only the corpus directory because it
+does not parse libFuzzer flags.
+
+Four independent sanitizer workers used
+`-max_total_time=60 -timeout=60 -rss_limit_mb=0 -use_value_profile=1
+-print_final_stats=1`, isolated corpus copies, and isolated artifact paths.
+All exited 0 after 1,437 executions, left 1,435-file copies unchanged,
+produced no artifacts, and peaked at 513--519 MiB. Worker log SHA-256 values
+were:
+
+    fuzz-0 8e9a3100ec490d88f69d9103d363ea50f8ce4689da6b73dfae3326ed043084ea
+    fuzz-1 0cdbfe6a2f90b8b3c57621c03a04d4814aedde5f9c0bd0701ce9e33935756944
+    fuzz-2 b4f5fcc76739c119f854692637136ef8041cf3feb0152dcf7e25df900cbb8dd1
+    fuzz-3 4a57ef584ab55df5661f07a3f363f0379e5d713e866dca89da01a50bb23b4076
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production
+finding. A temporary production mutation inserted
+`WITH_LOCK(cs_main, ++m_chainman.ActiveChain().Tip()->nHeight);` at the start
+of `PeerManagerImpl::ProcessCompactBlockTxns()`. The mutated production
+source SHA-256 was
+`7228bdff1c4c807258e540907caef15b1d57c486f6637130334aa0840478faa0`.
+
+The exact frozen input was
+`/tmp/bitcoin-cmpctblock-20260720-frozen/277bb4e0a988575b6e5bbe0a3898e13b5f0577c5`:
+524 bytes, SHA-256
+`edf2326bb9d72cf71ada8f6cd3ce10452effb4ac7bf6d1cddedc7d0900904a6f`.
+With the enhanced harness, mutated binary SHA-256
+`635d6017392c599828b392151cac53b476978b0c408450d6eb98285cc996fe7f`
+exited 134 after 148 executions at `validation.cpp:5195` in
+`CheckBlockIndex()`. The mutation log SHA-256 is
+`c5077736d9047f3728a5ad8528d064e9181aa4cf9f6df95c92d6889eefd1773e`;
+the saved artifact has the input SHA-256 above.
+
+With the original harness and identical production mutation, binary SHA-256
+`de684c36ce03021710870c92df805aa560da95ad9d981bab1abb87b09443d03c`
+exited 0 after one fixed execution with no artifact; control log SHA-256 is
+`0480566eb7d6f581436428e89afd874ca450a679f0ca7e957b24b9f2a4a7536d`.
+This proves the old size/data-count oracle can accept unchanged-size index
+metadata corruption while the new production contract detects it. The
+mutation was removed before the source commit. With restored production, the
+exact seed exited 0 in the final sanitizer binary; log SHA-256 is
+`631ea378b353bdad583577da1d05e666e38aec8d050f6b0fc68b771da91d8f70`.
+
+### Verification and test gap
+
+`git diff --check` passed. `clang-format --dry-run --Werror` reports only
+pre-existing brace-spacing violations at `cmpctblock.cpp:101` and `:105`;
+unrelated lines were not reformatted. The sanitizer and normal targets were
+built with:
+
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-normal-build --target fuzz -j2
+
+The configured fuzz-only build has no `test_bitcoin` target, so the dedicated
+unit suite was unavailable. No production behavior changed, no production
+bug is asserted, and no deterministic regression test was required. No fuzz,
+sanitizer, or mutation process remains running.
+
 ## `process_messages` block-index and mempool postcondition audit (2026-07-20)
 
 Source commit: `54c1ca5f5ae3cdedb0eaf206114b6fcb44a8fe8e` (`fuzz: assert Core
