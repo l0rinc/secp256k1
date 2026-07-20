@@ -287,3 +287,167 @@ Verifiers were `clang-format --dry-run --Werror`, `git diff --check`,
 the clean replay, the exact witness replay, the documented production
 mutation replay, and the four-worker command above. No fuzz process or
 artifact remains.
+
+Fuzz-oracle audit: addrman state and transition contracts
+-----------------------------------------------------------
+
+Source commit `8d59855176` strengthens `data_stream_addr_man`, `addrman`, and
+`addrman_serdeser`. The base is Bitcoin Core `origin/master` and
+`remotes/l0rinc/master`, both `18c05d93016b28a9afd4c716dfe00b6e0accb30b0`;
+the source branch was at `d5a7b999c4388aa54655f65af2e95d64308001fb` before
+this commit. The l0rinc query
+`git log origin/master..remotes/l0rinc/master -- src/test/fuzz/addrman.cpp src/addrman.cpp src/addrdb.cpp src/net_processing.cpp`
+was empty, so there was no relevant commit to cherry-pick and no later fix was
+used to mask this result.
+
+Core caller and severity boundary:
+
+* `src/net_processing.cpp:5820-5878` receives peer `ADDR`/`ADDRV2` records,
+  filters them, and calls `AddrMan::Add`; `Good` and `SetServices` are reached
+  from connection handling at lines 3885 and 3702. `src/addrdb.cpp:196-225`
+  loads and serializes the local `peers.dat` state. These are address-gossip,
+  peer-selection, and local-persistence paths, not consensus or block
+  validation paths.
+* No clean-master production bug was confirmed. The result is Low/informational
+  oracle hardening. Invalid fuzzer state or an invalid block alone is not
+  High/Critical, and a nonce with no cryptographic meaning is not Critical
+  merely because it is not cleared. Any future failure must be rated from the
+  actual Core caller, input origin, and master behavior.
+
+Oracle contracts:
+
+* `GetEntries` output must agree with new/tried flags, bucket and position
+  bounds, reference multiplicity, unique address identity, `Size`, and the
+  existing production `CheckAddrman` invariant where the state is at most
+  4,096 entries.
+* `GetAddr` results must be valid and unique, exactly match the expected set for
+  small states, and be bounded, filtered, and drawn from the expected state for
+  large states. The oracle deliberately uses `GetNetClass` for `GetAddr` and
+  `GetNetwork` for `Size`/`Select`, matching their separate production
+  contracts.
+* `Select` must return an address from the requested table/network whenever
+  one exists, or an invalid address otherwise. `Good`, `Attempt`, `Connected`,
+  and `SetServices` have operation-local before/after assertions. Successful
+  deserialization and serialize/deserialize round trips receive the same
+  state checks.
+* The full table oracle is scheduled at every 64 operations for ordinary
+  states and every 1,024 operations for large states. Large `GetAddr` checks
+  use a 256-result cap and skip scans for network classes absent from a large
+  table; operation-local assertions remain on every transition. This bounds
+  harness amplification without weakening the exact small-state contracts.
+
+Frozen corpora and final verification:
+
+* `addrman`: source `/mnt/my_storage/qa-assets/fuzz_corpora/addrman`, frozen
+  at `/tmp/bitcoin-addrman-20260720/frozen`; 1,793 files and 104,247,504
+  bytes. `manifest.entries` SHA-256 is
+  `9ccbbc4d27321b245c0c9afa005cacfc2b6108b3e2c2920890bfcf2bacb76d4e` and
+  `manifest.sha256` SHA-256 is
+  `079f75b805076cbf69c7c35481e4a0479237d37e11e6c6f087bd516077731c72`.
+  The original execution-only clean baseline completed 1,794 runs, coverage
+  3,825, features 21,443, peak RSS 673 MiB, exit 0; log SHA-256
+  `eb2e835edef55d62a63b6a22ef033c7a9864a1c2f27f87e278022db7634dfd41`.
+* The final oracle replay used 1,547 existing inputs below 64 KiB,
+  4,666,251 bytes; the selected-file content manifest SHA-256 is
+  `c10e8dede3d3746dbb21b8712061490913f3e0fb0879e20a2089d451db988162`.
+  It completed 1,548 runs, coverage 4,656, features 27,545, peak RSS 463
+  MiB, exit 0, no artifacts; log SHA-256
+  `094c99623bd7bab192a61843440d443c035dc72a18b720a4a896e7486f75e0cb`.
+  Four sanitizer workers over the same subset all exited 0 after 1,548 runs
+  with the same coverage/features and 463 MiB peak RSS. Parent log SHA-256
+  `e644ff03f8628ab92ac0cf56340689656f89e139a8ed4742556034dd137314c4`;
+  worker logs: `9ed0294a41716eafe6266c22d1884ca08b5516197f4c8ec74ef29765cfee5e6e`,
+  `c68a1f09d692b80358b80700243a51b3929e1edbcd2d228367206d70c5d5aecc`,
+  `5750637309d5d76a8a2e340956df78a48137926f0cc4eec62b85e569b79219e7`,
+  and `973c6e7335af6b28597434f53c2192b1746714b6678281a534dbbf40e3879509`.
+* `addrman_serdeser`: source `/mnt/my_storage/qa-assets/fuzz_corpora/addrman_serdeser`,
+  frozen at `/tmp/bitcoin-addrman-20260720/serdeser/frozen`; 1,206 files and
+  23,454,548 bytes. `manifest.entries` SHA-256 is
+  `5696db9698d145dd4ee3549077e25860782f629e39fdaffee95136dcd238552e` and
+  `manifest.sha256` SHA-256 is
+  `7cf2c3323067272c3488e3f677935562ca4562e4cad6dd10b7d7fc6df756a3e5`.
+  The final full replay completed 1,207 runs, coverage 4,334, features
+  24,142, peak RSS 646 MiB, exit 0; log SHA-256
+  `f7a4d690100e3ddd5387336491a720df780c40d9bbb6e0015b1d07c000cdda63`.
+  Four workers all completed 1,207 runs, coverage 4,334/features 24,142,
+  exit 0, with peak RSS 645/643/645/647 MiB. Parent log SHA-256
+  `13369e9e0d5defc5f9a354013f5068e4931c20982b4fb89839700987913a6746`;
+  worker logs: `bf4e0e5e24bea95e86c73a341a655d5cf9fb3b363c0516aa8b97faba824da9a3`,
+  `7554ec518c624cba1d6cfeb31219bf32b58153da814a89f7f106b6ae63ec6c12`,
+  `78ed33109cb529e8bddc834b2acdb06b678d59e14b477643f3ecb7333c5fbecd`,
+  and `beb13690fc3d4b5882f7b20a3271cc709fb6af77150bf438dba1d73b8727cacd`.
+* `data_stream_addr_man` over the bounded existing subset completed 1,548
+  runs, coverage 764, features 1,086, peak RSS 402 MiB, exit 0, with no
+  artifacts; log SHA-256 `30165d99ba00e139df2abd6c44cbba2c99dd78fff2ba96c8b7a37dd4046705e3`.
+* Final clean hashes are `src/addrman.cpp`
+  `b96f2c0f11ba797c3f7e65a2b52f599df81d1723538f409f1286d4bda4d6f1bf`,
+  `src/test/fuzz/addrman.cpp`
+  `de7adae4681b5b772a23e1e8f74e0f8e7186089147f9a1d1c48ac3039683439a`,
+  `src/test/fuzz/util/net.h`
+  `3056982666282b25409d9837c606bf60499b8f0ac5f932e1b6d79a90ffaf48e1`,
+  and the clean ASan/UBSan fuzzer binary
+  `efb1010e208b8397b4e5ba8af8e52614ad5fd487a0d7b601e23f5b42d7079ae5`.
+  The complete 1,793-input final oracle replay was not used as a pass claim:
+  large inputs entered multi-minute production `AddrMan::Add` callbacks that
+  libFuzzer could not interrupt with `-timeout=60`. Those attempts were
+  terminated and classified as corpus execution cost, not findings; the
+  bounded subset and full serialization corpus are the completed final proof.
+
+Mutation sensitivity proof, not a clean-master production finding:
+
+* Temporarily changed `src/addrman.cpp:SetServices` from
+  `info.nServices = nServices` to
+  `info.nServices = ServiceFlags(info.nServices | nServices)`.
+* Mutated production source SHA-256
+  `98b1343039bce71a564a50f3a6cdc7f7605f9a0d22dace99f1a05d3839b133fe`;
+  mutated fuzzer binary SHA-256
+  `a8404400d4a34fbd8387a9f03fcc44b955919d8323c6386d0f59066794c80d9b`.
+* Existing corpus input `manageable64/6e49c6eda5177106613fced9a731a8f2b4594275`
+  is 738 bytes, SHA-256
+  `cfc6a6594fec02ca7c28a056feb657260bab60615a4fbc3c486876a160fb221b`.
+  The mutated run aborted after 1,075 executions at
+  `src/test/fuzz/addrman.cpp:386`, asserting
+  `after->nServices == n_services`; mutation log SHA-256
+  `ec2490f7d78040462adf8cbc03cd0de75947639fedfa3d533eba40ca691651bb`.
+  The restored final clean binary accepts the exact artifact in 22 ms; clean
+  replay log SHA-256
+  `af07f9f8738aaa54b2cd900c06b71575d412641e2e58e37b0c5d1e9014b09070`.
+  This proves oracle sensitivity to a modeled replacement regression, not a
+  master defect, so no production fix or deterministic regression test is
+  claimed.
+
+Rejected oracle and correction record:
+
+The first `GetAddr` filter assertion incorrectly used `GetNetwork` instead of
+the production method's `GetNetClass`. It failed on exact artifact
+`oracle-artifacts/crash-935ea9dc5c38a59f222ab627166b12a6e44b6e77`, SHA-256
+`076682611cdda4d348cdbdd76395a48f1c185ee29bced7a3fd1f851e111161f0`, with
+Base64 `EyAgXN+JiACzAALAgAAAAAAAIDxdIAAcAAAAAAAkAAAAAAATICAC2RNdWR7/00BR`.
+The stale log SHA-256 is
+`6f26d1368ab4bd6b4aa602f3a0671da3fdc61d6f078467bea696ae4734c439f6`;
+after changing only the oracle to `GetNetClass`, the exact artifact passed,
+with corrected replay log SHA-256
+`910863c7b1f02c508aa87abdc756d212a27959226a96b2b96c66ee05f41513a6`.
+This was a stale/overbroad harness oracle, not a production finding.
+
+Existing finding ledger is reiterated against unmodified master and actual
+Bitcoin Core reachability: private-broadcast failed-send retention is Medium
+and feature-conditional; empty HEADERS initial-sync handoff is Medium
+availability/IBD; peer transaction activity refresh and process-message
+storage failure are Low; oversized transport types are Low in current Core
+callers; ecmult scratch wrapping, forced 10x26 magnitude-32 normalization,
+and SHA/HMAC/RFC6979 retention are Medium latent or hygiene findings with
+limited demonstrated reachability; banman invalid-subnet integrity is
+Low/nice-to-have. The txdownloadman/txrequest, connman, eviction, handshake,
+compact-block, headers-sync, coins-view, UTXO snapshot, mempool-persistence,
+and package test-accept campaigns found no additional clean-master production
+bug. Severity is master- and Core-caller-relative: invalid fuzzer state or an
+invalid block alone is not Critical, and a nonce with no cryptographic meaning
+is not Critical merely because it is not cleared.
+
+Verifiers: `clang-format --dry-run --Werror` on the changed harness files,
+`git diff --check`, `cmake --build /tmp/bitcoin-secp256k1-audit-current-build
+--target fuzz -j2`, the bounded addrman replay, the full addrman_serdeser
+replay, the data-stream replay, the exact mutation replay, and both four-worker
+commands above. Production was restored to its clean hash and no fuzz process
+or generated artifact remains in either source worktree.
