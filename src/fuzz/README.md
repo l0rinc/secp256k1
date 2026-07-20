@@ -26171,3 +26171,81 @@ fix that changes the path must amend its commit and this ledger with the
 behavior change, clean-master or mutation result, preconditions and
 postconditions, assertion/status/stack, source and binary hashes, Core caller
 and input origin, master-relative severity, test gap, and verifier commands.
+
+## 2026-07-20 Core headers_sync_state transition oracle on latest master
+
+### Contracts added
+
+Commit `f0d0a9a801aa0eacd0f6b1dba4cbb1727933b4db` strengthens the
+`headers_sync_state` fuzzer and `HeadersSyncState` production boundary. A
+continuing result must be successful and leave a live state; every failed or
+non-continuing result must finalize. The presync-to-redownload transition now
+asserts a clean chain-start anchor, and redownload asserts keep the buffered
+headers within the configured bound. The harness independently checks exact
+presync work and height increments, `PRESYNC -> REDOWNLOAD -> FINAL`
+monotonicity, request-locator anchors, and contiguous headers released for
+block-index processing.
+
+### Master status and Core boundary
+
+No production bug is claimed on master; severity is *N/A/informational* for
+this oracle-hardening commit. Bitcoin Core reaches this state machine from
+peer-controlled `HEADERS` and compact-block header processing through
+`ProcessHeadersMessage` and `TryLowWorkHeadersSync`. The API assumes that the
+caller has already checked continuity and proof of work, and resulting headers
+still pass full `ProcessNewBlockHeaders` validation before block-index
+acceptance. The corpus produced no assertion, sanitizer, memory, consensus,
+or availability failure. An invalid block or invalid header alone is not
+Critical, and no cryptographic nonce or secret-clearing issue is involved.
+
+### Clean baseline and fixed replay
+
+The audited `origin/master` is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b0`. The immutable corpus contains
+2540 files and 294448585 bytes; manifest SHA-256:
+`dba55699aa40cfe988b416dda0e746bdb936a92e778c8daba339394835243282`.
+Clean master completed 2541 executions with exit `0` and no artifacts; the
+baseline log SHA-256 is
+`6930cb10b3b624192f608ad48b033f5443d7c248f261376787e2b7c2ab4d6803`.
+
+The fixed replay also completed 2541 executions with exit `0` and no
+artifacts; its log SHA-256 is
+`9a67f89e665918f365387a98c94959039fe97ad6ffa4de710afbea3e21bdde07`.
+Four independent sanitizer workers used
+`-merge=0 -runs=500 -timeout=60 -rss_limit_mb=4096`; each completed 2541
+executions, exited `0`, produced no artifacts, and peaked at
+676/665/662/661 MiB. Combined worker-log SHA-256:
+`d00af5a4a32044c68c975fb492319c5208b3c87ebb15c84ab5362c5ec3e908ab`.
+The deterministic `headers_sync_chainwork_tests` suite ran all three cases
+with exit `0`; log SHA-256:
+`15e64ac0c6a3907074aaaae54c607debc9f31e532a50f5e2cc72d7789695b483`.
+
+### Exact mutation sensitivity proof
+
+This was an oracle proof, not a production finding. The temporary mutation
+changed `if (!(ret.success && ret.request_more)) Finalize();` to
+`if (!ret.success) Finalize();` in `src/headerssync.cpp`. The mutated source
+SHA-256 was
+`7386b2f4e0331b7db55d38302e32b8706ffc94da17a57d1b324fd2ec83af152e`.
+The mutated fuzzer aborted after 325 corpus executions at
+`headerssync.cpp:139`, exit `77`. The artifact SHA-256 is
+`ae1aa5a1c4450dcecadab95cc261c239d0d8f058537bec5ac5651efeae3672bc` and
+the replay log SHA-256 is
+`c25197f13d09274374ed86ce27c68cf313b21c6a6dea0c97cf4e537019dc6a8e`.
+The original condition was restored and the full fixed replay passed.
+
+Existing findings remain reiterated: banman invalid-subnet/unban integrity is
+Low/nice-to-have; `ecmult_multi` scratch wrapping is Medium with low Core
+reachability; forced 10x26 magnitude-32 normalization and SHA/HMAC/RFC6979
+retention are Medium; txdownloadman/txrequest, connman, node-eviction, and
+p2p-handshake found no confirmed master bug; and process-message block
+storage is Low and requires local write failure. Invalid fuzzer state or an
+invalid block alone is not Critical.
+
+The l0rinc/secp256k1 PR list was reviewed; no matching commit applies to this
+Bitcoin Core headers-sync path, so none was cherry-picked. No later fix masked
+the clean-master oracle result. Any future cherry-pick or minor fix that
+changes these transitions must amend its commit and this ledger with the exact
+behavior change, clean-master or mutation result, preconditions and
+postconditions, assertion/status/stack, source and binary hashes, Core caller
+and input origin, master-relative severity, test gap, and verifier commands.
