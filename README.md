@@ -2966,6 +2966,145 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## `validation_load_mempool` dump/load round-trip oracle audit (2026-07-21)
+
+Source commit: `7ced372e5aa31981c47310585f62d252dba5c83c` (`fuzz: verify
+mempool dump/load round trips`). Its parent is
+`815fe5bf267815bbf70813314b7a0ea261d328e5`; the audit base is Bitcoin Core
+master `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`l0rinc/master`. No l0rinc pull-request commit was relevant to this target.
+
+### Core boundary and severity
+
+`FUZZ=validation_load_mempool` exercises `node::LoadMempool` and
+`node::DumpMempool`. Bitcoin Core calls these through startup/shutdown
+persistence in `src/init.cpp` and through the `importmempool` and
+`savemempool` RPC paths in `src/rpc/mempool.cpp`. The fuzz input is arbitrary
+local-file data and fuzzed open/read/write behavior. It is not a peer block,
+witness, or consensus-validation boundary, so malformed bytes alone do not
+justify a High or Critical rating.
+
+The old harness checked the live pool after fuzzed I/O, but it could not see
+whether a successful dump could be read back. `FuzzedFileProvider` deliberately
+discards writes, so the enhanced harness keeps that failure-path coverage and
+also performs a real-file round trip when `DumpMempool` succeeds. It reloads
+the file into a fresh `CTxMemPool`, requires `LoadMempool` to succeed, invokes
+the production mempool consistency check, verifies every unbroadcast
+transaction exists, and compares persistent transaction IDs, fee deltas,
+unbroadcast IDs, total transaction size, total fee, and `load_tried`. The fresh
+pool's sequence counter is excluded because it is runtime identity rather than
+serialized state.
+
+Severity on master is Informational/Low oracle hardening, not a confirmed
+production bug. Clean master reproduced no dump/load failure, consensus or
+invalid-block behavior, peer-triggerable acceptance issue, memory or
+concurrency fault, or cryptographic issue. A hypothetical dump-format defect
+could lose mempool persistence across restart or RPC export/import, but this
+audit did not reproduce one on master and found no Critical path.
+
+### Source and corpus identity
+
+The original harness source SHA-256 was
+`4de679169905895d57cefca73f3322e1afe975e2cfcdbb8b871581cf33fb7e7e`; the
+enhanced source SHA-256 is
+`b977739929bc138ceaad1d1a0317dc0e45153a19871127490de8c7e24bb4750e`.
+Restored production `src/node/mempool_persist.cpp` is
+`3ac7d1c297009783f55fd4ff5058c5efbd0896bc4dd04d342cc9d86807c6379a`.
+
+The frozen corpus is
+`/tmp/bitcoin-validation-load-mempool-20260720/frozen`: 1,425 files,
+112,122,591 bytes, minimum 1 byte, maximum 1,048,229 bytes. The per-file
+manifest SHA-256 is
+`234306bc52f95dd0830a42220cb9dd2ed858c15f0409ef86e4114278a3415e4d`; the
+sorted filename-list SHA-256 is
+`793d7e314b30622ee8d325037d7ca792dd7dbb2f881ced709d1c04c130e2ef40`.
+Authoritative runs used isolated copies so worker corpus growth could not
+change the frozen evidence.
+
+### Replay evidence
+
+The pre-change sanitizer baseline used binary SHA-256
+`5a71a991479d01a285e2ba4cf7eb783e09927b8610403602c262d980e31e1d0f` and
+log SHA-256
+`ce8560397d98a4d002be55d058f03513f4adf7b2b8955c0f0f3b21f05e189861`.
+It exited 0 after 1,426 executions with no artifacts and a 547 MiB peak RSS.
+
+The final enhanced sanitizer binary SHA-256 is
+`677da14117f700461e315172280f2075419db1c0e83b951c9bffe40db37263a2`; its
+full-corpus log SHA-256 is
+`fdfb49e796fd609e37179875e6608d9a271ad1d8b74381dc536a7583bc20ac34`.
+The replay exited 0 after 1,426 executions, produced no artifacts, left the
+1,425-file corpus unchanged, and peaked at 706 MiB. The final normal binary
+SHA-256 is
+`03b83e5cf1a85f495a19fa2b74c2cc655c1bbb4794664ca38628e3bbd742e393`; its
+log SHA-256 is
+`9bd2ffced509169ded83e38327817ddaa9a19aec57ae387733946e3831b00e17`.
+It exited 0 after all 1,425 files in 8 seconds.
+
+Four sanitizer workers used
+`-max_total_time=60 -timeout=120 -rss_limit_mb=4096 -use_value_profile=1`,
+with isolated corpus and artifact paths. All exited 0, produced no artifacts,
+and peaked at 738, 727, 716, and 702 MiB. Their log SHA-256 values were:
+
+    fuzz-0 cf90708cb20dbc56e5777b6c8fcacd5167f62a27e07a1d0d73f3ce8c812d62fb
+    fuzz-1 7e3763d313c61ff74cd452a1410d3b78efeeeb25a0d1b0639cd45e15c22d57f8
+    fuzz-2 b29684be91bf70e0432028ae67212172f80fafcc80ece6f6821b037d901bb503
+    fuzz-3 e92d44b8d0d8695c5a74ed85593804aecefb73a2322ea8cc992952441b73db3c
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation changed `file << version` to
+`file << version + 1` in `DumpMempool`, writing an unsupported format version
+while leaving the live pool unchanged. The mutated production source SHA-256
+was
+`29cb4de101abf553c5b12c38fb2562371c8691ba54ec8166776ff8beb780137e`.
+
+The exact replay input was
+`/tmp/bitcoin-validation-load-mempool-20260720/mutation-version-empty`: 0
+bytes, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+With the enhanced harness, mutated binary SHA-256
+`7fa27b53b9d8996515a01908d316bb7b214ba0cadf13445ef52f5be0f9759342`
+aborted at `validation_load_mempool.cpp:133` in `Assert(loaded)`. The fixed
+input log SHA-256 is
+`a4140de1a1c94c4d8e8ff613c3992e486359f192a27af9c458cb021eb1700f1a`.
+The full frozen-corpus replay also aborted on the empty generated seed; its
+log SHA-256 is
+`d88acd5f9a472780eb765acf4392f8473dc33de8523723a8b16d64f43cb0f498`.
+
+With the original harness, the identical mutation and exact input exited 0
+with no artifact. The original-harness mutated binary SHA-256 was
+`9e9a30de84e6f5661fe90b16af16b6c73b64fe430dbc57e16ed77798aec4f283`; the
+control log SHA-256 was
+`08dfb545670f2cccb488c6b89a87b1f41da2b0c6eb758a9c3ba1ed8610d80c38`.
+After restoring production and the enhanced harness, the exact input exited
+0 in the final sanitizer binary; the log SHA-256 was
+`7e1d2a8e7b8cc6f31a9f5e6609694bfadf32892bed83e89967aeb1e8501de903`.
+This proves the old harness did not observe a successful dump becoming
+unloadable, while the new round-trip assertion does. No production fix or
+deterministic regression test is claimed because clean master did not fail.
+
+A first mutation that removed one entry from the serialized `vinfo` snapshot
+was deliberately discarded. Its source SHA-256 was
+`3a0bad134fb575d9d8a73f6da859b5d98484e06439a967005ae6d5da316a4bd1`, binary
+SHA-256 was
+`c434b5ceaa4df7cdb79a33469a67264324fef724e4ac27ec37d00de8ed5fe68e`, and
+corpus log SHA-256 was
+`776e11d6d9d2ffb9a8dd1dde476396591565d4c7127bf2f61e9e613d57218587`.
+It exited 0 because the frozen inputs did not reach a non-empty reloadable
+pool; no finding is claimed from that mutation.
+
+### Verification and test gap
+
+`git diff --check` passed. The sanitizer and normal targets were rebuilt after
+restoring production. The configured fuzz-only build has no `test_bitcoin`
+target, so the dedicated unit suite was unavailable. `clang-format` reports
+only the pre-existing include ordering at
+`src/test/fuzz/validation_load_mempool.cpp:5`; no unrelated formatting was
+changed. No production behavior changed, no production bug is asserted, and
+no fuzz, sanitizer, or mutation process remains running.
+
 ## `cmpctblock` state-transition oracle audit (2026-07-21)
 
 Source commit: `815fe5bf267815bbf70813314b7a0ea261d328e5` (`fuzz: check
