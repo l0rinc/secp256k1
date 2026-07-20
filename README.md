@@ -214,3 +214,76 @@ Verifier commands:
     FUZZ=tx_package_eval /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz -runs=2115 /tmp/bitcoin-tx-package-eval-20260720/corpus
     FUZZ=ephemeral_package_eval /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz -runs=1671 /tmp/bitcoin-ephemeral-package-eval-20260720/corpus
     FUZZ=tx_package_eval /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz -jobs=4 -workers=4 -max_total_time=60 /tmp/bitcoin-tx-package-eval-20260720/corpus
+
+Fuzz-oracle audit: external block-file import index contracts
+---------------------------------------------------------------
+
+Source commit `d5a7b999c4` strengthens Bitcoin Core's
+`FUZZ=load_external_block_file`. The audit base is `origin/master`
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b0`; this branch also contains
+unrelated audit commit `1df24a61f7` in `validation.cpp`, outside the tested
+`LoadExternalBlockFile` hunk. The target calls
+`ChainstateManager::LoadExternalBlockFile` (`src/validation.cpp:4983-5150`),
+which Core reaches from `src/node/blockstorage.cpp:1276-1329` for `-reindex`
+and `-loadblock=`. Its input is local external block-file/reindex data, not a
+direct peer message. Clean master produced no production failure, so this is
+informational/Low oracle hardening, not a confirmed bug or Critical invalid-
+block vulnerability.
+
+The harness snapshots each existing `CBlockIndex` identity, parent pointer,
+height, chain work, version, block hash, merkle root, time, bits, and nonce
+before import. It then requires old entries to remain at the same addresses
+with unchanged identity/ancestry, every map key to match `GetBlockHash()`,
+every parent pointer to resolve to the same indexed object, contiguous
+parent/child heights, nondecreasing chain work, and an indexed active tip.
+Legitimate storage/status updates and new entries remain allowed. The old
+47-line target discarded the operation result and checked none of these
+contracts.
+
+l0rinc review and masking record: `origin/master` and
+`remotes/l0rinc/master` both resolve to `18c05d93016b28a9afd4c716dfe00b6e0accb30b0`;
+`git log origin/master..remotes/l0rinc/master -- src/test/fuzz/load_external_block_file.cpp src/validation.cpp src/node/blockstorage.cpp`
+was empty. No relevant l0rinc commit was cherry-picked. No later fix or
+cherry-pick was used to mask this clean-master result. Any later change must
+state whether it preserves, changes, or masks this behavior and amend the
+relevant commit and ledger with the exact evidence.
+
+Corpus and replay evidence:
+
+* Frozen corpus: `/mnt/my_storage/qa-assets/fuzz_corpora/load_external_block_file`, copied to `/tmp/bitcoin-load-external-block-file-20260720/frozen`; 577 files, 68,776,078 bytes; manifest SHA-256 `1eeba74f7240ff32ceeaba43a575786089dc7093e0ffde24960ce0febfaad324`.
+* Original harness baseline: 761 runs, coverage 2356, 15,395 features, peak RSS 654 MiB, exit 0; log SHA-256 `110dd194609b281aeb434e610e405312686e24a3dc95fc554e16a017ab0dab41`.
+* Final harness SHA-256 `c952cb659ce2a1a0ee4cc0a2d1ee6277336c43f7148c4e14af352f890bfab4af`; clean `src/validation.cpp` SHA-256 `6f00f58f3cc9623fb02cfa8c776654e617b6a88e87c2b075bb855116b9ebfefc`; final fuzzer SHA-256 `f967413c8ea4bf774a783b8e7231e777b149eeb6fdec55b5e1a14a8c9c4a3bde`.
+* Clean frozen replay used `-merge=0 -runs=1 -timeout=60 -rss_limit_mb=4096`: 761 runs, coverage 2413, 15,745 features, 648 MiB RSS, exit 0, no artifacts; log SHA-256 `62635443e5127c61c67ce5b5497ee95977fcc0c62f24226a6ec953614bc75a7e`.
+* Exact witness replay: 2 executed units, 178 MiB RSS, exit 0; log SHA-256 `b5d5b3764dfe69419401b1430bf704ee61445895b5942597235e79e258c1402d`.
+* Four ASan/UBSan workers used `-merge=0 -jobs=4 -workers=4 -runs=1 -timeout=60 -rss_limit_mb=4096`; all exited 0 after 762 units, coverage 2413, and produced no artifacts. Peak RSS was 648/649/649/651 MiB. Parent log SHA-256 `c9b60c5b7d0d0321fab99b3d54b2fd37f33c35915e492681537bc2db47eac04f`; worker logs: `7a08ae40d63cd3a01cd6fb8f0e4788303802e6863b73a65e5bb488b2b7840476`, `880b265ddfb776a5afd2fb663a970466162d85b01a7ceb546a4bfb706882f8d9`, `ef5f6e1630ee6f7bb104a41123c163c37c68606e770cc64a70a151e4e2822251`, `5939adc24092a51e5a9a71207223935246c4ca3d0835b44e5a8edf484b3d7285`.
+
+Mutation sensitivity proof, not a clean-master production finding:
+
+* Immediately after a successful `AcceptBlock` in `LoadExternalBlockFile`, add `m_blockman.LookupBlockIndex(hash)->nHeight++`. Mutated production `src/validation.cpp` SHA-256: `f5408af31fc728c364c61ade6fcf9114aa4f5ef82c4a3e9a64f7108c2f2054c9`; mutated fuzzer binary SHA-256: `82680aff8f379198c9d67ac58eb7e2dcba0eb9d5cfc202584dcdce64488e2665`.
+* Witness: `/tmp/bitcoin-load-external-block-file-20260720/python-block1-late-fuzz-seed.dat`, 164 bytes, SHA-256 `3252e3f6dfae7b61e4ba5bac39d444b385b8376c6f3d153035f8ea615deb6c39`:
+
+      +r+12pAAAAAEAAAABiJuRhEaC1nKrxJgQ+tbvyjDTzpeMyofx7K3PPGIkQ+M0CldtgFgCjFho6scTPli/NNrRPmoXCOwvAYIeqJeEdvlSU3//38gAAAAAAECAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wJRAP7///8BAPIFKgEAAAABUQAAAAAAAAAAAAAAAP////8=
+
+* The mutated run produced an assertion/libFuzzer deadly-signal abort after one input at `src/test/fuzz/load_external_block_file.cpp:89`, `index.nHeight == index.pprev->nHeight + 1`; the stack reached `AssertBlockIndexImportContracts`, the target at line 127, `test_one_input`, and `LLVMFuzzerTestOneInput`. Mutation log SHA-256: `b4413d9c945b13f3109e60b42bf6daeca495beff0470514dca1bf65b2b8f19e3`. No artifact was emitted because the oracle uses an assertion abort.
+* Restoring production made the same witness pass. This is proof that the oracle detects the modeled regression, not proof of a clean-master defect. No deterministic production regression test was added because no clean-master bug was confirmed.
+
+Severity ledger reiterated: private-broadcast failed-send retention is Medium
+and feature-conditional; empty HEADERS initial-sync handoff is Medium
+availability/IBD; peer transaction activity refresh is Low; process-message
+block-storage failure handling is Low/local-write dependent; oversized
+transport types are Low with current Core callers; ecmult scratch wrapping,
+forced 10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention are
+Medium latent or hygiene findings with limited reachability; banman invalid
+subnet/unban integrity is Low/nice-to-have. The txdownloadman/txrequest,
+connman, eviction, handshake, compact-block, headers-sync, coins-view, UTXO
+snapshot, mempool-persistence, and package test-accept campaigns found no
+additional clean-master production bug in their audited paths. Severity is
+master- and Core-caller-relative: invalid fuzzer state or an invalid block
+alone is not Critical, and a nonce with no cryptographic meaning is not
+critical merely because it is not cleared.
+
+Verifiers were `clang-format --dry-run --Werror`, `git diff --check`,
+`cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j2`,
+the clean replay, the exact witness replay, the documented production
+mutation replay, and the four-worker command above. No fuzz process or
+artifact remains.
