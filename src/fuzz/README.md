@@ -26084,6 +26084,151 @@ message and this ledger with the exact artifact/mutation, preconditions,
 postconditions, assertion/status/stack, source and binary hashes, Core caller
 and input origin, master-relative severity, test gap, and verifier commands.
 
+## 2026-07-20 Core empty HEADERS IBD handoff on latest master
+
+### Finding and severity
+
+Source commit `87638fd93d` fixes a master-relative initial-block-download
+availability bug and turns `p2p_headers_presync` into a direct regression
+oracle for it. On audited `origin/master`, a peer selected for initial headers
+sync could answer `GETHEADERS` with a valid empty `HEADERS` message. Core
+cleared that peer's low-work `HeadersSyncState`, but left
+`CNodeState::fSyncStarted` set and the global `nSyncStarted` count incremented.
+`PeerManagerImpl::SendMessages` therefore refused to select another useful
+peer until the long headers timeout.
+
+The master-relative severity is **Medium**. The input is a peer-controlled,
+protocol-valid serialized `HEADERS` message reaching
+`PeerManagerImpl::ProcessMessage` and `ProcessHeadersMessage` while Core is in
+IBD. A stale or malicious selected peer can delay initial chain
+synchronization and node availability for the headers timeout. The effect is
+remote and reproducible, but bounded; it does not alter consensus, accept a
+block, corrupt the block index, or create memory safety. Invalid block or
+witness bytes cannot trigger this empty-`HEADERS` transition, so it is not
+High or Critical on master. No nonce or secret-clearing issue is involved.
+
+### Fork context and production contract
+
+The production behavior from l0rinc commit
+`6da365ba9a0c99fcf94664bf89fdf5d059e120bd` (`p2p: avoid initial headers sync
+stalls`) is integrated in the same fix commit. That commit exists on
+`remotes/l0rinc/detached552` but is not an ancestor of audited
+`origin/master`; `origin/master`, `origin/HEAD`, and `l0rinc/master` were all
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b0`. It was integrated rather than
+cherry-picked as a separate parent because it is non-ancestor history with
+overlapping test changes. The clean-master oracle was run before restoring
+the production behavior, so the fork fix did not mask discovery.
+
+The empty-response path now releases `fSyncStarted`, decrements
+`nSyncStarted`, clears the peer's headers timeout, and preserves
+`m_last_getheaders_timestamp` so the same peer is not immediately selected.
+Production postconditions assert the per-peer state, global count, timeout,
+and timestamp coupling. The fuzzer sets mock time to genesis plus 48 hours,
+retains sync accounting while flushing handshake wire messages, sends empty
+`HEADERS` to the first selected peer, runs the real scheduler, and asserts
+that the second usable peer has a pending `GETHEADERS`.
+
+The existing `p2p_initial_headers_sync.py` expectation was corrected to
+require exactly one replacement `GETHEADERS`. The new
+`p2p_addnode_ibd_stall.py` connects an IBD node to a stale peer first and then
+checks that a useful peer immediately completes synchronization. This closes
+the previous test gap: the old functional assertion explicitly encoded that
+no replacement request should be sent after the empty response.
+
+### Clean-master proof
+
+The pre-edit production hash was
+`src/net_processing.cpp=cf4abdac6db9bdcc8a8fa36c626b8a1bef67a3e969f8c6bc6fb9f70c11e3eef7`.
+The pre-edit `p2p_headers_presync` source hash was
+`9ee9553fbcfc9a3c58100ec39c56d4a81d4bfd935f0195687839e754fc9fe4e8`.
+The frozen source corpus came from
+`/mnt/my_storage/qa-assets/fuzz_corpora/p2p_headers_presync`: 602 files and
+2,037,636 bytes. Its canonical manifest SHA-256 is
+`fd950e754f65a81f0745343e24135c94e47064503052b389b141f2c0bc580f8`.
+The first sorted input is
+`000b18569323404bbb4eb1cb307b43622e99fd5e`, SHA-256
+`23ef66c19b8d4e22a53266e32bd6362a061ddc7383147d8a358d13901dfdf2e8`.
+
+The original harness replay loaded all 602 seeds, completed 797 executions,
+exited zero, and produced no artifacts. Its log SHA-256 is
+`53c583bd2430fcbdd943f97850e1d0a37b444e83d0e1439b3c4f703ce3839911`.
+That negative result is evidence of the oracle gap, not proof that the path
+was safe: the old harness never sent the empty response or checked replacement
+peer selection.
+
+After adding the new harness oracle, production was restored exactly to the
+clean-master source hash above. The oracle source hash was
+`4a0ae1131b69c79bd8342aa3170371d62de55902ddcb4d390f7e3556eee355a3`, and
+the clean-master sanitizer fuzzer binary hash was
+`d96d47111a21254c4ad72d85c6bbb0b32852fa0118f0a5cb09112b882575feea`.
+Replaying the first frozen input aborted at
+`p2p_headers_presync.cpp:120` with exit 134:
+
+    Assertion `HasPendingMessage(replacement_peer, NetMsgType::GETHEADERS)` failed.
+
+The failure log SHA-256 is
+`8c69538f12039e3fc37887e628bc5426ac26153658cc7271d44ff4b72440f71c`.
+This is a clean-master production failure, not a synthetic invalid fuzzer
+state or an artificial source mutation.
+
+### Fixed proof
+
+Final hashes are:
+
+    src/net_processing.cpp=735aad6acba2ae0308070a5b61d5b2d163a7487772c15710a787a7ab4affaf4a
+    src/test/fuzz/p2p_headers_presync.cpp=4a0ae1131b69c79bd8342aa3170371d62de55902ddcb4d390f7e3556eee355a3
+    sanitizer fuzzer=7c1e5b4bcc5346e1a16d5ed85a4bae44e6f1f77f906412a9645bbfcb14ee0c6f
+
+The fixed seed replay exited zero; log SHA-256:
+`37687f36d45255b94c8d43830afeb42ce8afb05b090c40e5b19b9f806348beed`.
+The fixed corpus replay completed 714 executions, exited zero, produced no
+artifacts, and peaked at 501 MiB; log SHA-256:
+`9cc60d9f543ce0f8bceb1cc1b526ea87f3ac7200b265fa68861e82d62ec87393`.
+
+Four independent final ASan/UBSan workers used
+`-merge=0 -runs=1 -timeout=60 -rss_limit_mb=4096`. They completed
+710/713/714/713 executions, all exited zero, produced no artifacts, and
+peaked at 503/499/502/501 MiB. Worker log hashes are:
+
+    0e07d847d846c8b0c3724729e9d37f5c512d955be66180bd73dfaabe58835a26
+    19a383879bb34e59b6a1fefd255fd8e52f181c430afdfec61b3438e553182fc0
+    eafbcd79c8bae931526b7e2d4ae0e9c26ac707423fbbec82d1a2786da8df389e
+    9cdd5798d83af9b1e8fa217771ed99e544d31a799f1f5c70d8dc0ec7dd5ae4c2
+
+Focused verification passed with exit zero:
+
+    net_tests log: 902861a9734cda78e702966e5a72f4eecf34b150dc780ad16f7276a950cf2511
+    headers_sync_chainwork_tests log: c468cb446a9479e6d09c299f558edee7fc3ab2767c45f237d47656c33c43c352
+    p2p_addnode_ibd_stall.py log: dc4d04e30e24ee0288dc142613f3f4da5b6992b18ddb76fc48d2612af4e54178
+    p2p_initial_headers_sync.py log: b50b091b0c21bfcb50eefe18a78a9265fb30fcea3eb51ef4843de79e2d67286a
+
+The primary replay command was:
+
+    FUZZ=p2p_headers_presync ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1:symbolize=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz /tmp/bitcoin-p2p-headers-presync-fixed-final-corpus-20260720 -runs=1 -timeout=60 -rss_limit_mb=4096 -artifact_prefix=/tmp/bitcoin-p2p-headers-presync-fixed-final-artifacts-20260720/ -print_final_stats=1
+
+Both functional tests reported `Tests successful`. No temporary mutation,
+artifact, or fuzz job remains.
+
+### Existing findings and future cherry-picks
+
+Existing findings remain reiterated: banman invalid-subnet/unban map integrity
+is **Low/nice-to-have** because Core RPC validation drops invalid entries;
+`ecmult_multi` scratch-size wrapping is **Medium** with low demonstrated
+Core reachability; forced 10x26 magnitude-32 normalization and
+SHA/HMAC/RFC6979 retention are **Medium**; txdownloadman/txrequest, connman,
+node-eviction, and p2p-handshake have no confirmed production bug on master;
+and process-message block storage is **Low** and requires local disk/write
+failure. Invalid fuzzer state or an invalid block alone is not Critical. A
+nonce without standalone cryptographic meaning is not Critical merely because
+it is uncleared.
+
+Any future cherry-pick or minor fix that changes this path must amend its
+commit message and this ledger with the exact behavior change, clean-master or
+mutation result, preconditions/postconditions, assertion/status/stack, source
+and binary hashes, Core caller and input origin, master-relative severity,
+test gap, and verifier commands. If a later fix changes a follow-up trigger,
+state explicitly whether it masks or preserves the clean-master behavior.
+
 ## 2026-07-20 Core cmpctblock cache and state oracle on latest master
 
 ### Contracts added
