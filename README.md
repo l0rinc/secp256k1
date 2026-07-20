@@ -2573,3 +2573,119 @@ master controls, fixed exact and corpus replays, the seeded four-worker run,
 both differential mutations, sanitizer instrumentation,
 `clang-format --dry-run --Werror`, and `git diff --check`. No fuzz or mutation
 process remains running.
+
+## UTXO total-supply state oracle audit (2026-07-20)
+
+Source commit: `7935fe4324` (`fuzz: strengthen utxo total supply state
+oracle`). The audit base was Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; this was also the
+`l0rinc/master` tip. The source parent was
+`f5845897328d844480a0aea85f0cbbafff3a0f0b`. No l0rinc pull-request commit
+applied to this target, and no prior source audit covered
+`src/test/fuzz/utxo_total_supply.cpp`.
+
+### Oracle changes and Core boundary
+
+The original harness requested `CoinStatsHashType::NONE`, making
+`hashSerialized` a zero-value field, then compared only that field after a
+rejected `MineBlock()` transition. The new oracle requests
+`HASH_SERIALIZED`, asserts the implementation invariant
+`nTransactionOutputs == coins_count`, and compares the pre-transition and
+post-transition `CCoinsStats` values for height, block hash, transaction and
+output counts, bogo size, serialized hash, total amount, and coin count. It
+deliberately excludes `nDiskSize`: `ForceFlushStateToDisk()` may compact the
+database and legitimately change that estimate.
+
+The production API is used by Core's local `gettxoutsetinfo` RPC through
+`src/rpc/blockchain.cpp:1017`, and by AssumeUTXO snapshot loading and
+background validation through `src/validation.cpp:5928` and `6062`. A
+counter defect would make the local RPC's `txouts` result inconsistent. The
+rejected-block check targets state leakage across chainstate transitions.
+Peer-supplied invalid block bytes do not directly invoke this statistics
+routine in normal Core validation. No production bug was established on
+master. Severity is informational/Low oracle hardening, not High or
+Critical: this audit does not demonstrate a remotely triggerable consensus,
+memory-safety, or invalid-block vulnerability.
+
+### Corpus and clean replays
+
+The frozen corpus was
+`/tmp/bitcoin-utxo-total-supply-20260720/frozen`: 1,146 files, 716,166 bytes,
+manifest
+`8f7bca1b4c67f686008d09d1f285788c510dd7773cd205da547ef9bcfa26beb2`.
+
+The original fuzzer source SHA-256 was
+`23a7b4e91605c6d07c9fae4ffbd67dc20b0c916ecef8a909449ba0c80f23ca82`.
+The enhanced source SHA-256 is
+`f0ab4fdb2eb73531a7bb19a20da2c5c9265778f6a3ec7e886799c1136d36c340`.
+The final fuzz binary SHA-256 is
+`d53656f8a61924007e8f019dcacd324169e630c322a2716b21584d3f29578e0f`.
+
+Both full replays used `-merge=0 -runs=1146 -timeout=60 -rss_limit_mb=0
+-use_value_profile=1 -print_final_stats=1`. The original replay exited 0
+after 1,149 executions, added zero units, and peaked at 454 MiB; its log
+SHA-256 is
+`3a0da9bd84a8d6c152c548281fa764a88cc4f9ac0dc3d7ed1eab3f59e9c79d72`.
+The enhanced replay exited 0 after 1,149 executions, added zero units, and
+peaked at 446 MiB; its log SHA-256 is
+`cc4e777c2ff6cdddc9191bb148e5d057b74d61a3f159fb549f0affa4fe9dc2eb`.
+Neither replay produced an artifact.
+
+A four-worker run used `-jobs=4 -workers=4 -max_total_time=60` with the same
+timeout, RSS, value-profile, and final-stat options. Jobs 0, 1, 2, and 3
+each executed 1,149 inputs, added zero units, exited 0, and peaked at
+459/458/453/470 MiB respectively. The worker log SHA-256 values, in job
+order, are:
+
+    84ae5d5c7530a9eda1a4f3a14bde5a01cda452e6a375c3d85140c06a10b04c09
+    b17406ed8a7429bdde0d1d81185ceff8386d0a28d0e02ac48098763f0ceca6e1
+    695050a8620eb3caa93de1e617f7485479785f64cce5990cb08604c877f078a1
+    7882db03c163c11dda8624e67db44ae42c40a9131e2858bde89482e63109b85
+
+The worker launch log SHA-256 is
+`801791ec4272c19daecaaa5c62369285b383f1ab3d29328f887e9f7a78b0bf07`.
+No worker artifact or orphan process remained.
+
+### Differential proof
+
+The exact one-byte corpus input used for the production mutation was
+`/tmp/bitcoin-utxo-total-supply-20260720/frozen/241cbd6dfb6e53c43c73b62f9384359091dcbf56`:
+bytes `ad`, SHA-256
+`22adaf058a2cb668b15cb4c1f30e7cc720bbe38c146544169db35fbf630389c4`.
+
+A temporary production mutation removed only `stats.nTransactionOutputs++`
+from `src/kernel/coinstats.cpp`. The mutated source SHA-256 was
+`b12f8b4d766413f0c61e97dcf73f7bd55cf59e2864bc2eb4afefda37c714e803`.
+With the original harness source, whose SHA-256 was
+`23a7b4e91605c6d07c9fae4ffbd67dc20b0c916ecef8a909449ba0c80f23ca82`, the
+mutated binary SHA-256 was
+`9d82a4b1b41040c925fdef3f8827a29750abbaa866e9b3442f23cee1e92619fd` and
+the exact input exited 0. The control log SHA-256 was
+`7c904554738d69ef01743cfefd1e0cfac9d9ceaecc27eab2e60d7d35d4e41554`.
+
+With the enhanced harness and the identical production mutation, binary
+SHA-256 was
+`0414fcdce332e581333c8f7dcefe9b0d595fb009ff122ed65b8d692174f17eb4`.
+The exact input exited 134 at `utxo_total_supply.cpp:108` on
+`nTransactionOutputs == coins_count`; the diagnostic log SHA-256 was
+`16adab78b5c0a6295914913857c6e873f00628f49a8e566b2b99d08bc046e05f`.
+Restoring production and rebuilding reproduced the final binary hash above;
+the same seed exited 0 with no artifact, with log SHA-256
+`dd80088dead2cb2f0b92848cd92e9b71ec273a9a2540c072d1ba6446b286ad19`.
+
+This is a differential proof that the postcondition closes the original
+silent acceptance gap. The mutation is synthetic and does not prove that
+master contains a counter defect. Existing findings remain rated against
+their actual Bitcoin Core callers and input origins; this target adds no
+new production finding.
+
+### Verification
+
+`cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j 8`,
+`git diff --check`, clean-master replay, enhanced replay, four-worker replay,
+and both sides of the exact differential test passed as recorded above.
+`clang-format --dry-run --Werror` still reports two pre-existing violations
+at `utxo_total_supply.cpp:59-60` in the untouched `PrepareBlock`
+initializer; unrelated lines were not reformatted. The temporary source
+mutation was reverted before the source commit, and no fuzz or mutation
+process remains running.
