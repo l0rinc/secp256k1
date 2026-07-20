@@ -26084,6 +26084,7 @@ message and this ledger with the exact artifact/mutation, preconditions,
 postconditions, assertion/status/stack, source and binary hashes, Core caller
 and input origin, master-relative severity, test gap, and verifier commands.
 
+
 ## 2026-07-20 Core empty HEADERS IBD handoff on latest master
 
 ### Finding and severity
@@ -26530,3 +26531,240 @@ changes these transitions must amend its commit and this ledger with the exact
 behavior change, clean-master or mutation result, preconditions and
 postconditions, assertion/status/stack, source and binary hashes, Core caller
 and input origin, master-relative severity, test gap, and verifier commands.
+
+## 2026-07-20 Core private-broadcast retry-state oracle on latest master
+
+### Scope and contracts
+
+The latest-master audit branch is based on `origin/master`
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b0`. Production fix commit
+`a918be2797a90cc79f65458326f9866211935535` and oracle/test commit
+`4c043ff529554f861546cff4280c75a303ba57e0` cover the
+`private_broadcast` target.
+
+The old target mostly tracked whether transactions had been picked. The new
+model checks the complete public state contract after every operation:
+
+* `Add()` returns the exact `Added`, `AlreadyPresent`, or `QueueFull` result;
+  the model respects the configured cap.
+* `Remove()` returns exactly the number of confirmed sends and removes the
+  transaction from the model.
+* `PickTxForSend()` returns the transaction selected by the complete
+  lexicographic priority tuple, records node id, address, pick time, and
+  confirmation state, and rejects an empty-state mismatch.
+* `GetTxForNode()`, `NodeConfirmedReception()`, and
+  `DidNodeConfirmReception()` agree for known, unknown, confirmed, and
+  removed node ids.
+* `RemoveUnconfirmedNode()` removes exactly the unconfirmed records for a
+  disconnected node, retains confirmed records, and transfers removed picks
+  into the aggregate count and last-pick timestamp used for priority.
+* `HavePendingTransactions()`, `GetStale()`, and `GetBroadcastInfo()` match
+  exact membership, stale thresholds, insertion time, peer ordering, address,
+  sent time, and optional receipt time.
+
+This is a state-transition oracle, not an assumption that an accepted return
+value is valid. The production-side invariant belongs in
+`PrivateBroadcast::RemoveUnconfirmedNode()` and `PeerManagerImpl::FinalizeNode`;
+the fuzzer independently reconstructs the same contract and asserts it after
+the operation.
+
+### Existing fork commits and behavior masking
+
+The relevant l0rinc commit is `2032a4f520839c3d8db5dc91a45bb9911b6902f5`,
+`net: prune failed private broadcast send records`. It was not an ancestor of
+latest master and was cherry-picked before the oracle work. Current master
+already contained these related changes:
+
+* `08b7c61fc7`: enforce unique private-broadcast node ids.
+* `5aea3d0373`: cap outstanding private-broadcast transactions at 10,000.
+* `8ac222484c`: make the cleanup result `[[nodiscard]]`.
+
+The cherry-pick conflicted because the fork commit used an older boolean Add
+API and older test context. The resolution retained the master cap and
+`AddResult` API, adapted the fork tests to `AddResult::Added`, and preserved
+the fork cleanup plus aggregate retry accounting. No later change was silently
+dropped. The oracle was then tested with an exact `RemoveUnconfirmedNode()`
+no-op mutation, so the later cap, unique-id, and API changes do not mask the
+disconnect contract. Any future cherry-pick that changes this behavior must
+amend both its commit message and this ledger with the changed behavior,
+clean-master or mutation result, preconditions/postconditions,
+assertion/status/stack, source and binary hashes, Core caller and input origin,
+master-relative severity, test gap, and verifier commands.
+
+### Master-relative finding and Core boundary
+
+Before the fix, `PickTxForSend()` appended one `SendStatus` for each selected
+peer. When a private-broadcast connection disconnected before PONG confirmed
+receipt, `PeerManagerImpl::FinalizeNode()` scheduled another connection but
+left the unconfirmed status in the transaction. The vector was retained while
+the transaction was pending, exposed through `getprivatebroadcastinfo`, and
+scanned by priority and stale-state code. Repeated failed attempts therefore
+grew per-transaction memory and work without bound.
+
+Severity on unmodified master is **Medium**, conditional on
+`-privatebroadcast`. Bitcoin Core can enqueue locally originated transactions
+through `sendrawtransaction` and wallet broadcast paths. With private broadcast
+enabled, `PushPrivateBroadcastTx()` records a send and a private connection
+teardown reaches `FinalizeNode()`. A persistently failing private-broadcast
+route can therefore create feature-gated process resource and availability
+pressure. The current proof establishes queue-state growth and the cleanup
+contract; it does not claim a measured end-to-end RSS ceiling or remote-DoS
+exploit.
+
+Invalid blocks, invalid witnesses, malformed signatures, and ordinary peer
+validation inputs cannot reach this queue. There is no demonstrated consensus,
+transaction-validity, memory-safety, or cryptographic impact, so this is not a
+High/Critical finding under the Bitcoin Core caller model. No cryptographic
+nonce is involved in this state; no nonce-clearing severity should be inferred.
+
+### Corpus provenance and baseline
+
+No dedicated `private_broadcast` corpus was present in the available inventory.
+The existing `tx_pool_standard` corpus was frozen as an explicitly labeled
+proxy at `/tmp/secp256k1-private-broadcast-proxy-corpus-20260720`: 2,086 files
+and 10,126,800 bytes. The manifest is
+`/tmp/secp256k1-private-broadcast-baseline-20260720/manifest.sha256` with
+SHA-256
+`e9cb2a3edd03058a58a2483a76944429551e7b5bc1eef61c4a26b956101ba096`.
+
+The pre-strengthening replay ran 2,086 corpus inputs, exited `0`, executed
+3,089 units, reached coverage 1,827 and 15,896 features, and peaked at
+179 MiB with no artifact. Replay log SHA-256:
+`abd325da696d0cc981394f9b4f221a5961442ee99952342b08ce198f11eb67e3`.
+
+Four independent pre-strengthening workers all exited `0` with no sanitizer,
+assertion, timeout, OOM, or crash diagnostic. Log SHA-256 values were:
+
+* `f77a95bee2eb0ef936d6d2fe0ede67944c6b9c8226811d0a2d8039c48ff8ae89`
+* `5dae970330c098694f66c65f29874dc3a4cd229525ce061d79f325dfad8660a1`
+* `dd24565ef9dfd0f1e6f639231e1cf8aa6389c3306a521cb4686592c2bf87a988`
+* `80b8d8e62e2bd0db2d476a86e7db9fbf45eb8c89fde0abbe612217c61dfee407`
+
+They executed 4,762/4,773/4,762/4,773 units and peaked at
+188/187/188/187 MiB.
+
+The strengthened replay exited `0` with 3,089 units, coverage 2,038, 17,020
+features, 176 MiB peak RSS, and no artifact. Replay log SHA-256:
+`2edd6b5d64c2355212f348c66c25bb5101d72442800da28501aebe2f5412a532`.
+A libFuzzer `-workers=4 -jobs=1 -max_total_time=90` run exited `0` after
+4,870 units, coverage 2,051, 17,171 features, 27 new units, and 187 MiB peak
+RSS. Worker log SHA-256:
+`f968b962785bcfe5465f2a4190f1ae7b197dc4a7e86c4ffb08d0ad9d811192ca`.
+
+The proxy corpus did not reach disconnect cleanup and did not catch the
+no-op mutation. This is a negative reachability result, not evidence that the
+oracle is unnecessary. The targeted seed and deterministic regression test
+below are the proof that the new oracle matters.
+
+### Exact mutation and deterministic proof
+
+The exact production mutation was: after `LOCK(m_mutex)` in
+`RemoveUnconfirmedNode()`, replace the implementation with `return false;`.
+The mutated `src/private_broadcast.cpp` SHA-256 was
+`dbcc382cb9dc9a7af8f49375e7cea1e3718d85985f7c2c4eb9f733891e1a9225`.
+This models the pre-fix master behavior, whose source had no cleanup method or
+call from `FinalizeNode()`.
+
+The targeted seed
+`/tmp/secp256k1-private-broadcast-oracle-20260720/targeted-disconnect-seed`
+has SHA-256
+`e12ba133cfa0325aca9a5c8e19409c42d7885f71d4e871f21f330c12e42856d`. Its
+decoded control sequence is exactly:
+
+    Add -> PickTxForSend -> RemoveUnconfirmedNode
+
+With the no-op mutation, the fuzzer printed that sequence and aborted at the
+matching assertion (`test/fuzz/private_broadcast.cpp:236` in the recorded
+binary), exit `134`. The log SHA-256 is
+`1159ed950790f22ddf49e60321b3d524afe24b77b6770d68b832ea1dae413e03`.
+With production restored, the same seed exited `0`; log SHA-256:
+`5aa05a7aebfd0983282b472ad80c9e29388c1e547ed7caddce7d03ad54cccdc6`.
+
+The deterministic test
+`private_broadcast_tests/disconnected_unconfirmed_nodes_are_pruned` failed
+under the same no-op with exit `201`. Its log showed `peers.size()` and total
+peer counts growing from one retained record through six attempts, including
+the final total of six instead of one. Mutation log SHA-256:
+`64737ec93987436e53ff23b373287fbc131d2f945eca1aaef989c6db6059557b`.
+After restoring production, the focused test passed and the complete five-case
+`private_broadcast_tests` suite passed. Full-suite log SHA-256:
+`741a455fedd6ec388ff7c35b88fc1cfb752d517b00fed199e60d90eff9a089b1`.
+
+This is a confirmed production bug already fixed by the cherry-picked fork
+commit, not a claim that the unchanged master fuzzer found it unaided. The
+minimal mutation proves the new oracle detects the exact broken condition that
+exists on master before the fix.
+
+### Source, binary, and verifier hashes
+
+Exact origin/master hashes used for comparison were:
+
+* `src/private_broadcast.cpp`:
+  `25fad70e139be6df96483aaaf9cebfd8bc1f7901a5ce57a6a5cfe2b11a7cc4fd`
+* `src/private_broadcast.h`:
+  `4f44e6bcb3b988bc741b04cb93ed58dfb95c5d2b66c819f690f651c2b54bf9a1`
+* `src/test/fuzz/private_broadcast.cpp`:
+  `5cbfb20dde2cece7668d2cf9fc46f77d53d39b6b4e56c331ce27c1b025a9440b`
+
+Final tracked source hashes were:
+
+* `src/test/fuzz/private_broadcast.cpp`:
+  `2485ee6cb27bacea7327178dd6ebf7fb23faf59c26cb80ef7b38373e7d1522c5`
+* `src/test/private_broadcast_tests.cpp`:
+  `0039f272835f653fc9a8bb12a3cf74037fda724396b1f31b99f9ccfb49ccfec8`
+* `src/private_broadcast.cpp`:
+  `0358859f54988305e024aa57d4bf5b1644324a1717dc607d770bc858865192df`
+* `src/private_broadcast.h`:
+  `3afb7abf9ca2f9affbe7a24f41bb85efc88eb27652768447ed29b89304da9d5d`
+* `src/net_processing.cpp`:
+  `afc14cf644760b60670fa82fb088b03ffa792d421a52c5f6c73b2e67672cf419`
+
+Final binary SHA-256 values were
+`dfd11db6838dd67007bf08c14d998d4cde1c0a24b4d219b4ab9eee5143d796ea` for
+the sanitizer fuzzer and
+`36cb5c6876f07de6e59f4f079ff3a8bea00a16c08f0282bf6c71360b33148f3e` for
+`test_bitcoin`. Verifiers included:
+
+    clang-format --dry-run --Werror src/test/fuzz/private_broadcast.cpp
+    git diff --check
+    /tmp/bitcoin-secp256k1-audit-current-testbuild/bin/test_bitcoin --run_test=private_broadcast_tests --catch_system_errors=no --log_level=test_suite
+
+The fixed corpus and multi-worker commands used ASan/UBSan halt-on-error
+settings, `-merge=0`, an explicit run count or time limit, `-timeout=30`, and
+`-rss_limit_mb=0`. No temporary production mutation, generated artifact, or
+fuzz job remains.
+
+### Reiterated finding status
+
+All ratings below are against unmodified master and actual Bitcoin Core caller
+reachability. Invalid fuzzer state or an invalid block alone is not Critical.
+
+* Private-broadcast failed-send retention: **Medium**, conditional on the
+  feature; fixed in `a918be2797` and protected by `4c043ff529`.
+* Empty `HEADERS` initial-sync handoff: **Medium** availability/IBD stall on
+  valid peer input; fixed in `87638fd93d`.
+* Peer transaction activity refresh after orphan/package acceptance: **Low**;
+  valid remote transactions can affect eviction/activity accounting, but not
+  consensus or memory safety; fixed in `00fead6cdf`.
+* Process-message block-storage failure handling: **Low**, requiring local
+  storage/write failure; not an invalid-block critical path.
+* Oversized transport message types: **Low** in Core's current fixed-width and
+  RPC-validated callers; no demonstrated invalid-block or witness reachability.
+* `ecmult_multi` scratch-size wrapping: **Medium** internal/resource
+  correctness with low demonstrated Core reachability.
+* Forced secp256k1 10x26 magnitude-32 normalization and SHA/HMAC/RFC6979
+  retention: **Medium** latent correctness or memory-hygiene findings, not
+  automatically Core-critical.
+* Banman invalid-subnet/unban integrity: **Low/nice-to-have** because Core RPC
+  validation drops invalid entries before the affected state is used.
+* `txdownloadman`, `txrequest`, `connman`, node eviction, p2p handshake,
+  compact-block, headers-sync, and related state-machine campaigns: no new
+  confirmed production bug on master from their exercised inputs. Their
+  negative results remain useful oracle coverage, not vulnerability claims.
+
+No nonce is treated as critical merely because it is uncleared: only state
+carrying cryptographic meaning would support that severity. Every future
+finding must identify the Core caller, input origin, master behavior, exact
+precondition/postcondition, assertion/status/stack, clean-master or minimal
+mutation proof, regression test, and the possibility that a later minor fix
+has masked or changed the behavior.
