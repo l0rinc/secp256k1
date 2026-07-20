@@ -26084,6 +26084,142 @@ message and this ledger with the exact artifact/mutation, preconditions,
 postconditions, assertion/status/stack, source and binary hashes, Core caller
 and input origin, master-relative severity, test gap, and verifier commands.
 
+## 2026-07-20 Core cmpctblock cache and state oracle on latest master
+
+### Contracts added
+
+Commit `aef3a7b4d7f6a53f1e04a597d100cd3afce74550` strengthens
+`FUZZ=cmpctblock` and the production boundary around
+`PeerManagerImpl::AddToCompactExtraTransactions`. The production method now
+asserts a non-null transaction, a bounded `vExtraTxnForCompact` vector, a
+replacement cursor that addresses an existing slot, and a bounded cursor
+after every update. The harness also checks that block-index size and mempool
+sequence never decrease, that `m_last_block_time` changes only when block data
+was added, and that an unsupported `SENDCMPCT` version does not rewrite a
+previous negotiation.
+
+The harness resets the test chain and then explicitly leaves IBD. That is
+intentional: Bitcoin Core drops incoming `TX` messages while in IBD, while
+compact-block reconstruction and rejected-transaction caching are post-IBD
+paths. Peer 0 is a deterministic, fully handshaken inbound test peer; the
+other three peers remain fuzzed. Before fuzzed actions, peer 0 sends one
+unique missing-input transaction through the normal P2P message path. The
+harness sometimes generates more missing-input transactions afterward. This
+is a real remote transaction input class and does not assume that acceptance
+means validity. `max_extra_txs=1` is a legal test-only option that reaches the
+minimum empty/full/overwrite ring boundary; the production default is
+unchanged.
+
+### Master status, Core boundary, and severity
+
+The audited `origin/master` is
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b0`. No production bug is claimed on
+clean master; this is an informational/oracle-hardening commit. Core reaches
+the cache through `ProcessInvalidTx` for rejected remote transactions and
+through `ProcessValidTx` for replaced transactions. Compact-block recovery
+consumes the entries through `PartiallyDownloadedBlock`.
+
+The exact temporary mutation changed
+`(vExtraTxnForCompactIt + 1) % m_opts.max_extra_txs` to
+`(vExtraTxnForCompactIt + 1) % (m_opts.max_extra_txs + 1)`. If that mutation
+were present in production, it would violate the bounded cursor contract and
+could become a fatal memory-safety or availability problem. It is a mutation
+only and is not a vulnerability on master. Invalid block bytes alone do not
+reach this transaction-cache path and are not Critical here. The
+compact-block nonce is a public short-ID key, not a secret requiring clearing;
+no nonce-lifetime finding is claimed.
+
+Existing findings are reiterated for severity consistency: `last_tx_time` is
+Low on master; oversized transport message types are Low with current Core
+caller reachability; process-message block storage is Low and needs local
+write failure; banman invalid-subnet/unban integrity is Low/nice-to-have;
+`ecmult_multi` scratch wrapping is Medium with low demonstrated Core
+reachability; forced 10x26 magnitude-32 normalization and SHA/HMAC/RFC6979
+retention are Medium; txdownloadman/txrequest, connman, node-eviction,
+p2p-handshake, and headers-sync found no confirmed master bug. Invalid fuzzer
+state or an invalid block alone is not Critical.
+
+### Baseline and corpus
+
+Clean baseline hashes were:
+
+```
+src/net_processing.cpp=22aa8bc642e8be1718df1e1dd6c75101fb1e402c014aec1784c70098a903a878
+src/blockencodings.cpp=a87feb8df352ae9c868af6bacb5193261795153249e0a15ca33a05d686291838
+src/blockencodings.h=f69d67ef3401d03bf0054888a66c049bc93f833c9bdc7244cb35c3ba25f4aada
+src/test/fuzz/cmpctblock.cpp=d2ec0b8230b52392649cc24d9d2e4f54164ac4fafc891f3d2a165ac3627cd59f
+clean sanitizer fuzzer=c4237a653de74900797722ca8bd50da775c752c2247ea1ad1a2a8371258348a0
+```
+
+The immutable corpus is
+`/tmp/bitcoin-cmpctblock-corpus-frozen-20260720`: 1435 files and 3705961
+bytes. Its manifest SHA-256 is
+`21890c6ef9cfe69804ab881b8263178ba65f2be29532b6ff0c005dc4b1766425`.
+The clean baseline replay completed 1436 executions with exit `0` and no
+artifacts; log SHA-256:
+`fc10729c8f9d884a161ba00d7dbb16d4c6b41cfd1072947ade65087039c4d751`.
+
+### Exact mutation proof
+
+The mutated source SHA-256 was
+`a87941b403a84235f569dfa8d168feaf3c7b39a9332a061779ae14766432885e` and the
+mutated fuzzer binary SHA-256 was
+`883b48d85d4cc4c55bbf3f89cc2c9532ca53b7ee572a0c928628db442ede95fc`.
+The first sorted frozen input,
+`000bd1e24ae7350a08b76587ebf6c8f487cc131f`, has SHA-256
+`75da0ce2528c17158ab2156bc984771a300bb0949485420033da161d0f8a63b3`.
+It aborts on its first execution at `net_processing.cpp:1925` because the
+mutated cursor becomes `1` for a ring of size `1`. The single-seed replay log
+SHA-256 is
+`db1ae4a2314277e883b8393a8b3689eca6bfa017fded68888cae6ce64c7d5583`.
+The full-corpus mutation log SHA-256 is
+`44aa2318ee1ebd2262a2a86af3d1b90932e734c3c49482ec1e287a2bd3ee3342`.
+The assertion-style abort returned libFuzzer exit `72` and produced no
+artifact, so the seed hash is the reproducible proof input. The mutation was
+restored before the fixed verification run.
+
+### Fixed verification
+
+Final hashes were:
+
+```
+src/net_processing.cpp=cf4abdac6db9bdcc8a8fa36c626b8a1bef67a3e969f8c6bc6fb9f70c11e3eef7
+src/test/fuzz/cmpctblock.cpp=47a590596e1c445a4ba83e50a98c81a678bfece307723d33c83fd28f29000630
+final sanitizer fuzzer=70ec37c7b9271a6359a5fce3749812d052e5701ba54e02979e8716e760ad5c84
+```
+
+The fixed seed replay exited `0`; log SHA-256:
+`28911c53215018c1dca6908a83efb5baf277757abfb5a7ddcbf7a6f209f1af2d`.
+The fixed corpus replay completed 1437 executions, exited `0`, produced no
+artifacts, and peaked at 590 MiB; log SHA-256:
+`2cb921a400b1af2dc635e626692b9dcff05d6ecd86a687633cc17321944c5707`.
+Four independent ASan/UBSan workers used
+`-merge=0 -runs=1 -timeout=60 -rss_limit_mb=4096`; each completed 1437
+executions, exited `0`, produced no artifacts, and peaked at
+592/592/593/593 MiB. Worker log SHA-256 values:
+
+```
+c290e9b677f1c0c0520b447aefa8815666ed84baa7097590b0f797333a4e81cd
+2c9af062b15b341e1cfc9bbb142bc1ef787ca985b1bf5ef6a7274f34e8cbbba0
+adef8104491bc047c09e679de9666e91d5df6c69ae0cf1aebdcbcd09a3a958bb
+29277148437efb695ba3c251359f8da0ff04397331a7f796a1ea568b3def2efd
+```
+
+`blockencodings_tests` and `net_tests` both passed with exit `0`. Their log
+SHA-256 values are respectively
+`2c6f344dc0be8ac94ab24a56c896a0084f646d725124dc38e881047a8de61095` and
+`cd5ee105143ae286b5161208f912f272c86156fa2bcaa405d2d940483da4a010`.
+No deterministic production regression test was added because clean master
+has no confirmed defect; the exact mutation is the negative proof.
+
+The l0rinc/secp256k1 PR list was reviewed and no matching commit applies to
+this Core path, so none was cherry-picked. No later fix was cherry-picked to
+mask the clean-master result. Any future cherry-pick or minor fix that changes
+this behavior must amend its commit message and this ledger with the changed
+behavior, clean-master or mutation result, preconditions/postconditions,
+assertion/status/stack, source and binary hashes, Core caller and input
+origin, master-relative severity, test gap, and verifier commands.
+
 Existing findings remain reiterated: the banman invalid subnet/unban
 map-integrity defect is **Low/nice-to-have** on master because Core RPC
 validation drops invalid entries; `ecmult_multi` scratch-size wrapping is
