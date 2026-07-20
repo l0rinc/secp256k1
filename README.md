@@ -687,3 +687,117 @@ Verifiers: `git diff --check`; `cmake --build
 /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j4`; the clean proof
 replay; the mutated enhanced proof; the legacy counterfactual; and the
 four-worker command above. No fuzz process remains after the replay.
+
+## P2P handshake completion oracle audit (2026-07-20)
+
+Source commit: `6f79689339` (`fuzz: assert completed handshake version
+contract`), based on master `18c05d93016b28a9afd4c716dfe00b6e0accb30b` and
+source parent `12cb1074b46b13df0b0e6782bdf93575e3eafb14`. The harness now
+checks immediately after every `ProcessMessagesOnce` transition that
+`fSuccessfullyConnected` implies a completed VERSION/VERACK exchange and
+negotiated protocol/common versions at least `MIN_PEER_PROTO_VERSION`.
+Production behavior is unchanged.
+
+Exact identities:
+
+* Clean `src/net_processing.cpp` SHA-256:
+  `afc14cf644760b60670fa82fb088b03ffa792d421a52c5f6c73b2e67672cf419`.
+  Original and final harness SHA-256 values are respectively
+  `329893f381ac1c7f7909852d53252bdb7811f65fce7fa9ec5708119e16bfff92` and
+  `97f848223f9f2b543f7eeb1bc90f31a5e89ad26a5a470615aa69dece4d862971`.
+  Original clean binary SHA-256 is
+  `492ea119ae7bd6b1c81b4b92b1a6f59b4f92e4eea21a1b06387dd94c0e3793b9`;
+  final enhanced binary SHA-256 is
+  `83e6771828fd28ff3f1955d21749bfc689e40ad259e68b08838cd497d67a2301`.
+* Frozen corpus is `/tmp/bitcoin-p2p-handshake-20260720/frozen`, copied from
+  `/mnt/my_storage/qa-assets/fuzz_corpora/p2p_handshake`: 1062 files,
+  855719 bytes, sorted per-file manifest SHA-256
+  `a014406156c96cf3120f8699da9a4ed1c686f24e54c1e6c1ad01ab23ef1d3d0e`.
+
+Clean replay:
+
+* `-merge=0 -runs=1062 -timeout=60 -rss_limit_mb=0 -use_value_profile=1`
+  with the original harness exited 0 after 1113 executions, coverage 4118,
+  features 22809, peak RSS 466 MiB; log SHA-256
+  `43c466a2c4dbe39acf8ea9d3dc753778e1ef7839bf1413fef42f1fa9afa29ef2`.
+* The same command with the enhanced harness exited 0 after 1115 executions,
+  coverage 4118, features 22508, peak RSS 466 MiB, with no artifacts; log
+  SHA-256 `984e061e882b95fa32104212a3c6b351adf0cbc0d5bbe37cf3c6e7c27cc5952d`.
+* `-jobs=4 -workers=4 -max_total_time=15` exited 0 in all four jobs with no
+  artifacts or diagnostics: 16183 executions/502 MiB, 15984/503 MiB,
+  15941/506 MiB, and 3721/500 MiB. Combined log SHA-256 is
+  `7963fc099c1a9f5b5aa7f14e7f6b26bcb3436dd1b803a4920f834cf8dc689b67`.
+  This mode used a disposable writable corpus copy; libFuzzer can add files,
+  so the frozen copy was restored and its manifest rechecked afterward.
+
+Differential proof, not a clean-master production finding:
+
+* The exact temporary production mutation changed
+  `if (pfrom.nVersion == 0)` to
+  `if (pfrom.nVersion == 0 && msg_type != NetMsgType::VERACK)`, modeling a
+  missing gate that lets VERACK complete a peer before VERSION. Mutated
+  production SHA-256 is
+  `46ea9131cf5cb590d3e5f04f08490860ffddd375677dfbd89626fdbefa89a220`; the
+  enhanced mutated binary SHA-256 is
+  `7ba4c92bd14186279df595aedfe8c9e2e4216ffea508eeef2c8cfdfb7eaec31c`.
+* Enhanced mutation replay exited 134 after 144 executions at
+  `p2p_handshake.cpp:118`, assertion `version_after >=
+  MIN_PEER_PROTO_VERSION`. Log SHA-256 is
+  `aebcacc0faf7d70358d651f671ffcf9f1b3310e99986d50639615336900ad0ee`.
+  The proof artifact is 94 bytes, SHA-256
+  `5aed5e1a8b965e8be4d4a2f7b48a7a9d7ed09f33c487f562823217e96cd39570`,
+  Base64
+  `qTFOU1wylFRcKKhcAGVcK5FckZGRLJGRkZGRkZGRkZGRkZGR8/f5NaMA/xkfnh8fiB8fr4gfH6+wrq+vUK+A+f//AAD8ADIAAAkC/j97IA0NQQAAAJFnRwFnr68wMA==`.
+* The unchanged harness with the same mutation and exact artifact exited 0
+  after one execution. Its mutated binary SHA-256 is
+  `d712d07a109d14596bdb58bff9eec650848b0163c794797253376eef89122dfc` and
+  log SHA-256 is
+  `22b382334208b973b94e7e8ab0dcf82d3858f055c12b10ef71f58423d1a5b5fa`.
+  Clean production plus the enhanced harness accepted the same artifact with
+  exit 0; proof log SHA-256 is
+  `b5ae81fd7628f2d03bbc51582758d01901206f54d4c98664e33f2bd09c1c9b53`.
+
+Bitcoin Core reachability and severity:
+
+* The production caller is `PeerManagerImpl::ProcessMessage`, reached from
+  Bitcoin Core's network message processing for remote peer messages. The
+  fuzzer uses `ConnmanTestMsg::ReceiveMsgFrom` and `ProcessMessagesOnce`, so
+  the input origin is a remote message-ordering transition, not an invalid
+  block. Ordinary tests and the old oracle did not exercise this modeled
+  regression because their version assertion only ran when `nVersion` was
+  nonzero.
+* No production bug reproduces on clean master, so master severity is N/A and
+  no production fix or deterministic regression test is claimed. If the
+  mutated state gate existed in production, the impact would be a
+  peer-handshake protocol-integrity/availability risk, tentatively Medium,
+  not High/Critical. Invalid block bytes alone are not Critical; a nonce with
+  no cryptographic meaning is not Critical merely because it is uncleared.
+
+Cherry-pick and finding policy:
+
+* `origin/master` and `remotes/l0rinc/master` were both
+  `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; no additional relevant l0rinc
+  commit applied. A later fix, minor fix, oracle change, or cherry-pick that
+  changes the VERSION/VERACK gate must repeat the exact corpus, artifact,
+  mutation, assertion, status/stack, Core caller/input origin, test gap,
+  severity, and verifier commands, and state whether it preserves, changes,
+  or masks this behavior.
+* The reiterated ledger remains master- and Core-caller-relative: private
+  broadcast failed-send retention is Medium and feature-conditional; empty
+  HEADERS IBD handoff is Medium availability; peer activity refresh,
+  process-message local storage failure, oversized transport types, and
+  banman invalid-subnet integrity are Low or nice-to-have in current callers;
+  ecmult scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979
+  retention remain reachability-limited Medium latent or hygiene findings.
+  The addrman, coins-cache, txgraph, txdownloadman, txrequest, connman,
+  eviction, compact-block, headers-sync, UTXO snapshot, mempool-persistence,
+  package test-accept, and prior handshake campaigns found no additional
+  clean-master production bug.
+
+Verifiers: `git diff --check`; `cmake --build
+/tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j$(nproc)`; the
+original/enhanced replays; exact mutated, legacy, and clean artifact replays;
+and the four-worker command above. `clang-format --dry-run --Werror` still
+reports pre-existing violations in the unchanged clock-consumption block at
+`p2p_handshake.cpp:83-85`; no unrelated formatting was changed. No fuzz
+process remained after the audit.
