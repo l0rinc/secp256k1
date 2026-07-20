@@ -558,3 +558,132 @@ replay; the exact proof replay; and the four-worker command
 `FUZZ=coinscache_sim /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
 /mnt/my_storage/qa-assets/fuzz_corpora/coinscache_sim -runs=1 -jobs=4
 -workers=4`. No fuzz process remains.
+
+## TxGraph transition oracle audit (2026-07-20)
+
+Source commit: `12cb1074b4` (`fuzz: check txgraph invariants between transitions`).
+The change adds a bounded `TxGraph::SanityCheck()` after every 16 completed
+operations in `src/test/fuzz/txgraph.cpp`. This checks staged locators,
+clusters, indexes, and memory accounting before a later graph operation can
+repair an intermediate defect. The final source commit is based on master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`, with source parent
+`1ab6d0642f`.
+
+Exact source and build identities:
+
+* The original txgraph fuzzer SHA-256 is
+  `fdb21547290053462afe0881f4c501828cea214888f5ddd19d8fe6e3a4fdc13f`;
+  the final fuzzer SHA-256 is
+  `d0f8c9d56fda42eb5287e3e203d24c94c9f1378f8a61dab5aa27e718395f41a2`.
+* Clean production `src/txgraph.cpp` SHA-256 is
+  `9d93e3b9c6ab32e71884493d6e5cac221f7e67354359dae47b3298a4e3371499`.
+  The final sanitizer fuzz binary SHA-256 is
+  `5f17468e54cca1d32b0c6d1d960f6f7315f0f9d188573a9e256c7375e93d259e`.
+* The corpus source is `/mnt/my_storage/qa-assets/fuzz_corpora/txgraph`.
+  The frozen copy is `/tmp/bitcoin-txgraph-20260720/frozen`, containing
+  3234 files and 1466623 bytes. The sorted per-file manifest SHA-256 is
+  `7e6085982c68cbfe3b740a2545fae1789ebd2e011e4fb1b1464cd16a28a60e5d`.
+
+Baseline and replay evidence:
+
+* The original execution-only baseline completed 4237 executions with
+  coverage 10184, features 71213, peak RSS 539 MiB, exit 0, and no artifacts.
+  Its log SHA-256 is
+  `2c585cffa42f7067cfcf438770e48dfb9bee6ce80ba8463c7479b9312582fb39`.
+* The enhanced clean replay completed 4237 executions with coverage 10187,
+  features 71466, peak RSS 564 MiB, exit 0, and no artifacts. Its log
+  SHA-256 is
+  `0d73e1802ecba9136806dc454f2cfeb2c1ff5fa9df291bb36aa29ebcfc1588fc`.
+* The four-worker command was:
+  `FUZZ=txgraph /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz
+  -jobs=4 -workers=4 -max_total_time=60 -print_final_stats=1
+  -artifact_prefix=/tmp/bitcoin-txgraph-20260720/worker-artifacts/
+  /tmp/bitcoin-txgraph-20260720/frozen`.
+  Jobs 0, 1, 2, and 3 each processed 4237 executions, reached coverage
+  10187, exited 0, and reported peak RSS 564, 564, 564, and 563 MiB.
+  Worker log SHAs are respectively
+  `12428c8404caf9f653011cbd49ccb632185ea1cc91aded73a64739437c631908`,
+  `dbca6a697091848347c2c89a1aa7b3c26fdacf8f4193db04162f7a6bd921b5c1`,
+  `46e84f809a8459f4960e2e7e74186200e5911d85187cee8e7d86548f4aeef99f`,
+  and `ff6f8e93976ab5f6d2ece574055a860c4a822afa26d49e87e1240e007aecefb5`.
+  The parent log SHA-256 is
+  `6398fd01bd2428cd2fe1ae4844c37719cddaf08568c10dad7bcdfca45538cbe4`.
+  No worker produced an artifact or sanitizer diagnostic.
+
+Differential mutation proof, not a master production finding:
+
+* The temporary production mutation removed the line
+  `clusterset.m_cluster_usage += cluster_ptr->TotalMemoryUsage()` from
+  `TxGraphImpl::AddTransaction` near line 2252. Mutated production source
+  SHA-256 is
+  `15abf031f2926dda7b9a1cfbce876efb8ec812aa79564aa0615d704b7748438a`;
+  the enhanced mutated binary SHA-256 is
+  `01999abf4d2ea9f8563ee6d7c68f1512719b6f60cc7263717a9f593372d0ce3e`.
+* The exact proof input is 34 bytes at
+  `/tmp/bitcoin-txgraph-20260720/staging-reset-proof-final2`, SHA-256
+  `b0971a90eaf3f179a6d99a641864a7d637912de41dd2af6aaf0675d6551e2ea2`.
+  Its bytes are `38`, fourteen `10` bytes, `00 00 00 34`, and fifteen
+  `00` bytes. Base64 is
+  `OBAQEBAQEBAQEBAQEBAQAAAANAAAAAAAAAAAAAAAAAAAAA==`.
+  Because `FuzzedDataProvider` consumes configuration and command data from
+  the end, this is `StartStaging`, `AddTransaction` with size 1, fourteen
+  data-free `GetTransactionCount` operations, then `CommitStaging`.
+* With the enhanced oracle and the mutation, the proof exits 134 at the
+  `TxGraphImpl::SanityCheck()` assertion
+  `clusterset.m_cluster_usage == recomputed_cluster_usage` near line 3047.
+  At transition 16, stored staging usage is 0 and recomputed usage is 72.
+  The proof log SHA-256 is
+  `0550695eead3de78fbbd96c8f3aaa3a8d3892e9068d9cd6fd504a22fe00a1b2b`.
+* Clean master accepts the same proof with exit 0. The clean proof log
+  SHA-256 is
+  `b8444e3bae6ed6286f1c9738dda87e3eb20bfede229828f1a82c5764ac01edcc`.
+* The legacy fuzzer with the cadence removed, the same production mutation,
+  and the same proof exits 0. Its fuzzer source SHA-256 is the original
+  `fdb21547290053462afe0881f4c501828cea214888f5ddd19d8fe6e3a4fdc13f`,
+  its mutated binary SHA-256 is
+  `ba3e8e684f519c3e98da1c4eb9e83e7e20bc2e0209668c464f41cf39b5426257`,
+  and its proof log SHA-256 is
+  `5c113074a35db1fade28cfb98ddd8c3ccee0a3af5a9302089d99b4ab39bedc7e`.
+  `CommitStaging` repairs/removes the corrupted intermediate staging state
+  before the old final check. The mutation was restored before the final
+  clean build.
+
+Bitcoin Core reachability and severity:
+
+* Bitcoin Core uses `TxGraph` through `CTxMemPool::m_txgraph` in
+  `src/txmempool.cpp` for transaction admission, dependency and fee updates,
+  removals, `CommitStaging`, `Trim`, and `DoWork`. This proof exercises an
+  internal mempool graph transition. It is not an invalid-block consensus
+  path and does not establish that a peer-supplied invalid block triggers a
+  master failure.
+* Severity on master is none: clean master has no production failure, so no
+  production bug, fix, or deterministic regression test is claimed. If the
+  modeled missing accounting update existed in production, its impact would
+  be a Medium availability/resource-accounting risk, not High or Critical,
+  because the affected caller is mempool accounting rather than block
+  validity or consensus. Invalid fuzzer state alone is not Critical.
+* The prior ledger remains reiterated and master-relative: external block
+  import, addrman, and coins-cache campaigns found no clean-master production
+  bug; private-broadcast failed-send retention remains Medium and
+  feature-conditional; empty HEADERS IBD handoff remains Medium availability;
+  peer activity refresh, local process-message storage failure, oversized
+  transport types, and banman invalid-subnet integrity remain Low or
+  nice-to-have in current Core callers; latent crypto/hygiene findings remain
+  reachability-limited. A nonce without cryptographic meaning is not a
+  Critical clearing finding.
+
+Cherry-pick context and test gap:
+
+* No l0rinc fork commit applies specifically to this target, so no cherry-pick
+  was made. A later production fix, minor fix, oracle change, or cherry-pick
+  must retain the exact corpus/input, mutation, assertion, stack/status, Core
+  caller and input origin, test gap, severity, and verifier commands, and must
+  state whether it preserves, changes, or masks this clean-master behavior.
+* There is no deterministic production regression test for this target: the
+  proof is a deliberately mutated production build, while clean master
+  succeeds. The committed change is an oracle-only harness improvement.
+
+Verifiers: `git diff --check`; `cmake --build
+/tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j4`; the clean proof
+replay; the mutated enhanced proof; the legacy counterfactual; and the
+four-worker command above. No fuzz process remains after the replay.
