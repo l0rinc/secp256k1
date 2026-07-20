@@ -2392,3 +2392,184 @@ mutation replays; the parent-harness exact mutation control; and the final
 clean identity check. The fuzz-only build did not expose a block_header-
 specific unit-test target, and no deterministic production regression test
 was added because clean master has no confirmed production defect.
+
+## Compressed-amount deserialization oracle audit (2026-07-20)
+
+Source commits:
+`3c4ca02163819de727776031fc6cdb30fdad316f` (`compressor: reject out-of-range
+decompressed amounts`) and
+`f5845897328d844480a0aea85f0cbbafff3a0f0b` (`fuzz: assert deserialized
+compressed amounts are in range`). The first is an amended cherry-pick of
+l0rinc commit `40e996720e6c7aba9f5d3b90762abcb5337420ea`; the second is an
+amended cherry-pick of `f06ae0fdc2e195639b4b614f4e564ecdb45285c8`. The source
+parent is `8ec4b31dcb84659b5965bb7ec7b0dc896af3367c`; the audit base is Bitcoin
+Core master `18c05d93016b28a9afd4c716dfe00b6e0accb30b`, which was also the
+`l0rinc/master` tip.
+
+### Finding, caller boundary, and severity
+
+On clean master, `AmountCompression::Unser()` accepted every compressed
+`uint64_t` and assigned `DecompressAmount()` to `CAmount`. A value above
+`MAX_MONEY`, including one that becomes negative after unsigned-to-signed
+conversion, could therefore cross the serialized Coin boundary. The
+production fix rejects it with `std::ios_base::failure`, asserts the range
+contract on valid serialization, and adds Coin-side pre/postconditions and
+deterministic boundary tests.
+
+Bitcoin Core reaches this code from local chainstate reads at
+`src/txdb.cpp:88` (`CCoinsViewDB::GetCoin`), local undo files at
+`src/node/blockstorage.cpp:715` and `src/validation.cpp:2197/4699`, and
+locally supplied assumeutxo snapshots at `src/validation.cpp:5780/5839`.
+Ordinary peer block and transaction bytes do not use `TxOutCompression`, so an
+invalid network block cannot directly trigger this parser. The finding is
+Low severity on master: it is a real local serialization/integrity defect, but
+not a remote consensus, invalid-block, memory-safety, or High/Critical issue.
+The snapshot path already had an explicit `MoneyRange()` rejection, so that
+path was defense-in-depth; the chainstate and undo contract remained
+unguarded. A non-cryptographic nonce-clearing issue is not Critical.
+
+The l0rinc production commit also changed the existing snapshot error return
+to `Assert()`. That conflicted with the earlier audit branch. Resolution kept
+the explicit `MoneyRange()` error path, so the fixed compressor normally throws
+before the check while the check remains defense-in-depth. The functional test
+expects the deserialization failure. This is a deliberate branch-local
+conflict resolution, not evidence that the production fix is unnecessary. If
+a later fix or cherry-pick changes this ordering, amend both source commit
+messages and this ledger with whether clean-master behavior was preserved,
+changed, or masked.
+
+### Exact inputs and clean-master control
+
+Each generated input encodes `CompressAmount(MAX_MONEY + 1)` =
+`18,900,000,000,000,001`, followed by an empty script:
+
+    txoutcompressor_deserialize  a0c8adb1d183ff0106
+    coins_deserialize            00a0c8adb1d183ff0106
+    txundo_deserialize           0100a0c8adb1d183ff0106
+    blockundo_deserialize        010100a0c8adb1d183ff0106
+
+Input SHA-256 values, in the same order, are:
+
+    d4942b07bf29346a4b0d5067f23001fe9811a4d5e93c1e88f94c1547029deee0
+    f55052eabb656aaf082d05e499fcf196889a317b3c503cd5309018d2a093e62c
+    50a9d770cbf17d029145340d2f076534ebb44b98431d775f8ab5e13b0e5141dd
+    d0b9dc19a9253eac83343b321ec1bf44a18b9d4f9816b945b003331997bbd421
+
+Unmodified master `src/compressor.h` is
+`224e13896b124af1fde21b2db6bf18eda0ee32d76f4f7da0db6d8cf7e3309b24`;
+master `src/test/fuzz/deserialize.cpp` is
+`c3690351b7d84dc619a7b153f6a2e5365f725997b670c311023a2c2587b63681`; and
+the clean-master fuzz binary is
+`dd1eacc6471155ff6fd9f12d256b08512268dc17dd4f2fbf6768f4ff013ab3ef`.
+Each clean-master control ran one execution and exited 0 without a
+diagnostic. Log SHA-256 values are:
+
+    txout  ca9f87fa9f43d12b241d8d7e33de1f2eaaae28a2163d894e2a8be9969ded05ea
+    coins  5d050b5d7f5633d1e684f3f9a77e661fbe60546a1daf37113bc098dd169c32a5
+    txundo 63853f72885c4b39284e25f0c98c4aa11a6257c370fbc18df218173690c4995c
+    block  537f1eb8d296c0c31f8fbaf2099accc22f59f22117410d61f85a042890e8d98e
+
+This is the clean-master acceptance proof, distinct from the fixed-tree
+invalid-input result.
+
+### Fixed-tree replay and corpora
+
+The final fixed source hashes are:
+
+    src/compressor.h                 c304799fc99982f504ea226198a03f4ca3a89f560404725dbaa5a86477b90548
+    src/coins.h                      d95f5472d1cecf7e961684ff78b9895af3e28278c88e6aa00e784cee3fb6d1
+    src/validation.cpp               6f00f58f3cc9623fb02cfa8c776654e617b6a88e87c2b075bb855116b9ebfefc
+    feature_assumeutxo.py            962550c5cc6dc8eb97372e607151bc4964d7ca6bc275445b44d3ecc57dac3bf3
+    src/test/fuzz/deserialize.cpp     d1d0a094ae939f2ca3a9284de65e423810d86278cb864cd24ce21d2c6fa713ce
+
+The final ASan/UBSan/libFuzzer binary is
+`feedc9089ae828e36f688d6f3e42ebe964483fca7f54dcb6408c18d55a205b74`.
+All four exact fixed replays ran once, exited 0, and produced no artifact.
+Their log SHA-256 values are:
+
+    txout  13cf3f35a3fa25d3cc917416c92db3ab826f9da31aae27ac1f91da16dc0796a8
+    coins  c16c8421550c111dcebe4a2622ca1b345e5b1ccebe83d908492d1e26b5986567
+    txundo c8eff86ff35a63705189d82e004c67a4c1fd6e0b7bc75e88cca7382d8e0cc570
+    block  c50f6e9df4ea65b7103c7eedcc259aef59cbd9fd0eb733143169363c80b422a9
+
+Existing corpora were frozen before mutation: txoutcompressor (99 files,
+33938 bytes, manifest `e8ef9de26d33fc2d981cb0aef4a4dfb6a787fa2ef6b1d00353e95a8926305b82`),
+coins (108/35314, `98769bf334b2343ef72e41100f236acb663ac880452ba4bae59e31fa83895dd5`),
+txundo (216/17383548, `a309e79939f43d5c81e3e4821f4497633c944b68c2da00f261695aec10eb1502`),
+and blockundo (250/28090566,
+`cf473fe6ded44f2ce7227c4ee0087732eb343f0c95174812c634af239eae027d`). All
+four fixed replays exited 0 with no new units or artifacts; their logs were
+`4f40b96cb6590a1f1767c7ce8f83c57930308ff66857af4f4bb61551089e89f8`,
+`6a4464359e16f8808d8070f037849b073e6cfc2e19141eb0b3174da9e66b476b`,
+`7d0dc63d29e670825eed7c7690cf40d260a9be8650bc3899379463d57b9f0e89`, and
+`bbe0494f865817d02e3b309077825eeb6aa20d7bdbf6d4f0ea26bb100c3e8b88`.
+
+A seeded txoutcompressor run used `-jobs=4 -workers=4 -max_total_time=60`.
+All workers exited 0 without artifacts: jobs 0/1/2/3 executed 110/93/175/115
+units, added 31/7/54/31, and peaked at 104/104/105/105 MiB. Worker log hashes
+are `8326207f94cc0fd6e4aac760eff6c8855931a7a3054b1d170fab4477dde000f`,
+`ea0bf3220a59e8a719d8ddcdc0a22c6d3c080b2e266523ecfe58f9bfb3b4a26e`,
+`586b32a01c6e235d11f857d8a2e80bf33c39fe772b5be9a7d59218a2f6b9eb61`, and
+`4f4ee69238fd818ec5b69665156bc04d6b04d782f6ff0898daa3fab6a94badba`;
+launch log `3f0295fc853c167ddaa00ec00c2f6f52f52a1c2ce8cee9787b3bfa2b621e5e10`.
+
+### Differential oracle proof
+
+A narrow production mutation removed only `AmountCompression::Unser()`'s range
+guard. It produced compressor SHA
+`031da1dcbe683dc7f4cacb4a4d10e76accf9a4ba1f51ae4cdd43f0db9b4dbb03` and
+binary SHA `2b8f6dd82c3e4ea073e98697302abcd9cb6eef154fbfe28b89a078e1f8795c8a`.
+The exact inputs then aborted at production range assertions or
+`Coin::Unserialize()`, with logs
+`7ec4dc9fb8cb0533d05fb321d0faeb14e9fce222c84c07da93d804cb1382dd23`,
+`4bda675966d4d7a389d240fe6a47d689fd13a66dea7f5a335ed5434f423fe29d`,
+`8b0e32968d62183397d04c40f8d7bb9b4b8761f2c3e31a19149e029541ac5f84`, and
+`ad3391d405cb67367fbfd283d31c6edfaf2d69072553a4a774470e33ceb6767f`.
+This proves the production contract fails immediately, but does not by itself
+attribute the result to the fuzzer commit.
+
+For the independent oracle proof, a temporary mutation removed the production
+`Unser()` rejection, `AmountCompression::Ser()` range assertion, and both Coin
+`Assume(MoneyRange())` checks while retaining the new fuzzer assertions.
+Mutated compressor SHA:
+`4e271c01b7ef0ae3f08d187a9edbba5e105f58855acb0b415290d7a4bba2efa0`;
+mutated `src/coins.h` SHA:
+`00c282e0e85a29d3c16a6ae017bea2fec1e2bf9387f11a2f5252e04f492cf866`;
+mutated binary SHA
+`2759ae272cc0e82c83700527acd83258d44dc39c53a351b8255334e6cc602872`.
+Each exact input executed once and exited 77 at the new harness assertion,
+with no artifact: txout line 308 log
+`1e09fa5ea4dec3ac8247b2dbf6f62ab2b8987eaff72ea19065c330105d65a1f3`, coins
+line 234 log `4871401c8b112c1f530e3dc06e949f1160c128b08c0f67c4befdb1055c3cd37d`,
+txundo line 220 log
+`b715fdddebbc280bf4ae14afe92f19a956478c71c8a1071ff9336dbd95c2e2f6`, and
+blockundo line 229 log
+`059f2d436318c05c1d90af7f65dac8c6ca4641ba6ebadb60e09fde0236134ec8`.
+This synthetic mutation is the strongest proof that the postconditions close
+the old silent-acceptance gap; it is not a claim that the fixed tree accepts
+invalid amounts.
+
+### Existing findings, test gap, and verifiers
+
+The existing ledger remains Core-relative: private-broadcast failed-send
+retention is Medium and feature-conditional; empty HEADERS IBD handoff is
+Medium availability; ecmult scratch wrapping is Medium with low demonstrated
+Core reachability; forced 10x26 magnitude-32 normalization and
+SHA/HMAC/RFC6979 retention are reachability-limited Medium
+correctness/hygiene findings; last_tx_time, process-message local storage
+failure, oversized transport types, and banman invalid-subnet/unban integrity
+are Low or nice-to-have under current callers. No clean-master production bug
+was established in the previously audited addrman, coins-cache, txgraph,
+txdownloadman, txrequest, connman, eviction, headers-sync, UTXO snapshot,
+mempool persistence, package evaluation, handshake, BufferedFile, block-index,
+tx_pool, policy estimator, autofile, checkqueue, compact-block,
+PartiallyDownloadedBlock, CBlock, or CBlockHeader reset paths. Invalid fuzzer
+state is not a production finding. No other l0rinc commit applies here.
+
+`src/test/compress_tests.cpp` adds deterministic production coverage, but the
+fuzz-only build did not expose `test_bitcoin`/`compress_tests`, so those tests
+were not executed in this audit. Verification included the fuzz build, clean
+master controls, fixed exact and corpus replays, the seeded four-worker run,
+both differential mutations, sanitizer instrumentation,
+`clang-format --dry-run --Werror`, and `git diff --check`. No fuzz or mutation
+process remains running.
