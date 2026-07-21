@@ -4235,6 +4235,187 @@ FlatFilePos unit suite was unavailable. All temporary mutations and controls
 were restored, and no fuzz, sanitizer, mutation, or build process remains
 running.
 
+## `prevector` representation and transition oracle audit (2026-07-21)
+
+Source commit `b3abd1e1408e02961dfcf37d622fe646810dbb70` (`fuzz: assert
+prevector representation and transition contracts`) strengthens the generic
+prevector target with direct/indirect representation assertions, capacity and
+pointer contracts, per-transition checks, alternate-buffer checks, and a
+second model at Bitcoin Core's actual `CScriptBase` boundary.
+
+### Core boundary and severity
+
+`src/script/script.h:400` defines `CScriptBase` as
+`prevector<36, uint8_t>`, and `CScript` is the serialized script type used in
+transaction inputs and outputs. `src/serialize.h:863-891` serializes and
+deserializes prevector values, including `resize_uninitialized()` and writable
+byte spans. Core also uses prevector for compressed scripts, onion-address
+bytes, network selection, and dynamic-memory accounting through
+`src/memusage.h:106-110` and `allocated_memory()`.
+
+Invalid transaction or block bytes can reach these deserialization paths, but
+invalid block bytes alone do not prove an internal prevector invariant failure.
+Clean master reproduced no production failure, data corruption, memory error,
+consensus divergence, or caller-reachable state violation. The master-relative
+classification is therefore **Informational/Low oracle hardening**, not a
+production vulnerability, fix, or deterministic regression test. The modeled
+`allocated_memory() -> 0` mutation only undercounts indirect storage in
+`DynamicUsage`, so its current caller impact is Low diagnostic/resource
+accounting risk. A data-preservation or representation bug could be High or
+Critical if it changed script validation, hashes, or memory safety, but no such
+master bug was found. Invalid fuzzer state or an invalid block alone is not
+Critical, and a nonce without cryptographic meaning is not Critical merely
+because it is not cleared.
+
+The audit base is `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both
+`origin/master` and `remotes/l0rinc/master` resolved to it, and the source
+branch was rebased onto latest master before this sequence. The l0rinc history
+query for `src/prevector.h`, `src/test/fuzz/prevector.cpp`, and
+`src/script/script.h` was empty, so no target-specific l0rinc commit was
+cherry-picked. No later fix or cherry-pick masked clean-master behavior. Any
+later change to prevector representation, CScript serialization,
+memory-accounting behavior, or the proof input must amend its commit message
+and this ledger with whether it preserves, changes, or masks the result, and
+repeat the clean-master replay, exact witness, and mutated-production control.
+
+The reiterated master-relative ledger remains: **Medium**,
+feature-conditional private-broadcast failed-send retention; **Medium**,
+empty-HEADERS initial-sync availability/IBD risk; **Low** under current Core
+callers for peer transaction-activity refresh, process-message block-storage
+failure, and oversized transport types; **Medium but latent/reachability-
+limited** for ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention; and **Low/nice-to-have** for
+banman invalid-subnet and unban integrity. No additional clean-master bug was
+found in the audited addrman, coins-cache, coins-view, txgraph, txdownloadman,
+txrequest, connman, eviction, handshake, compact-block, headers-sync, UTXO
+snapshot, mempool persistence, package evaluation, RPC, descriptor cache,
+threadpool, cluster-linearization, policy estimator, pool resource,
+versionbits, signature-cache, CuckooCache, or FlatFilePos paths. Severity is
+based on actual Bitcoin Core callers and input origins.
+
+### Oracle contracts and corpus
+
+`src/prevector.h` now checks the direct/indirect encoding at capacity changes,
+pointer access, capacity queries, move/copy transitions, swap, and destruction:
+direct storage has `_size <= N`; indirect storage has a non-null allocation,
+`capacity > N`, and logical size no greater than capacity. The harness checks
+size/empty agreement, capacity bounds, exact indirect `allocated_memory()`,
+`data()`/`begin()` and `end()`/`data()+size` pointer contracts, and front/back
+agreement after every operation. Final checks cover both primary and
+alternate buffers, element addresses, iterator arithmetic, forward/reverse
+traversal, and serialization equivalence. `shrink_to_fit()` requires
+`capacity == max(N, size)`, preserving inline capacity when `size <= N`.
+
+The target runs `prevector<8, int>` to preserve the existing transition corpus
+and `prevector<CScriptBase::STATIC_SIZE, uint8_t>` to exercise Core's actual
+script representation. The old target performed one final content and
+serialization check only for `prevector<8, int>`.
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/prevector` to
+`/tmp/bitcoin-prevector-20260721/frozen`: 241 files and 898,976 bytes. Sorted
+relative filename SHA-256 is
+`d8125a24460e0d6db636c824d13ddff13e176a7780359da33f6f093412e71ee2`;
+filename-plus-size SHA-256 is
+`69fcb8093f5eba4bf2ac77370eb3ba6c5ea47025eb6d9190b3c0dbaa2478d68f`; and
+the relative-content manifest SHA-256 is
+`0a6c439bcb96bcbdbef05f7e6f81f850924ac0ac1881566d29cc63cd74853090`.
+
+The parent sanitizer binary was
+`4dd2a5a5d368fcb5a15db93e339bcdbdb8267904de077a34e480427df8fa47f4`.
+Its old-harness baseline exited 0 after 242 executions, coverage 885,
+features 5,751, peak RSS 572 MiB, and no artifacts; log SHA-256:
+`033d6055ff3980d9f80b57e1dd7cca81eaf0ebf40cc0331f73b907bdfb958ad5`.
+The parent normal binary was
+`97c39bd846e1ffad8bbf4ecd24f485642bf64b2f3d4c1e7c5891f6c7eca81c59`; its
+one-file driver passed all 241 inputs; log SHA-256:
+`02a7b3a86d2f4d6014c8456af5348162d286905fd433116b7443dcf0825d081b`.
+
+Final source SHA-256 values are `src/prevector.h`
+`76e704f34dda4fa02dd4d7cf2769d717b867b6a720c85934892d011269f584a4` and
+`src/test/fuzz/prevector.cpp`
+`190925e9761ce5ad50df06cf97e7847eca15d1650e44b86ca4c285a3b6d41d78`.
+The final sanitizer binary is
+`cd43bf93ad20199331178a1d2cf3d7e00dad7c29717e15b0491ac95d9a49ab8c`. The
+restored full replay exited 0 after 242 executions, coverage 1,546, features
+10,490, peak RSS 646 MiB, and no artifacts; log SHA-256:
+`b8cb6dd139ae79721b4361cc664b2ab415fe17f83355a13690f64cc1eac72391`.
+The final normal binary is
+`f6289dbea21d2cae5777465bf42e004b897d2c4cc346e7c67c90f122debbbf99`; its
+restored one-file replay passed all 241 inputs with no artifacts; log SHA-256:
+`02a7b3a86d2f4d6014c8456af5348162d286905fd433116b7443dcf0825d081b`.
+
+Four isolated sanitizer workers each exited 0 after 242 executions, with
+coverage 1,546, features 10,490, peak RSS 646-647 MiB, and no artifacts. The
+parent worker log SHA-256 is
+`52938de7701409d0fba40f4a9bec30a38cc3c75b7c9452e7253aaff61b35dfe1`.
+Worker logs, in order `fuzz-0` through `fuzz-3`, are:
+
+    ebd826135c9c9969fa13844c6026a26ee8521172c6d394b6db8f7c1e35ef75f9
+    781cd9d4f4b4e69c4ff7b33ec08311c8d4d068a0319252b77952f7f300d1da43
+    b6460ab49c75b90053e3dfcaf5382c68c57feff76cffc3316f192cf579ff48cd
+    517fa026c546aa16af3f581f56c0a902fd6021cdf4d967850b1ab480b5da59e9
+
+### Differential proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation changed the indirect branch of
+`prevector::allocated_memory()` to return `0`, modeling lost indirect memory
+accounting. Mutated production source SHA-256 is
+`896dd02436ff9ced86e1ff751e6ddda36046497ec2dbbe4c9ba4ad2524e49902`; the
+mutated enhanced sanitizer binary SHA-256 is
+`a5e82c72463ec1913186ca90f23ce8dc8d2278f5ef1528e143342376ff815d25`.
+
+The exact witness is
+`/tmp/bitcoin-prevector-20260721/frozen/04092d36e2ce88b4563db8b37d3ee5a498d5bcba`:
+two bytes, hex `ffc0`, Base64 `/8=`, SHA-256
+`36cf7346f0d0c76f16dd999870c6db6c7dd76557592e00b519bcefb73f0a80f6`.
+The enhanced mutation replay exited 134 at
+`src/test/fuzz/prevector.cpp:38` on the `allocated_memory()` postcondition,
+after one execution and with no artifact; log SHA-256:
+`4905ae1cf96e268c8d34e21f6ab1110a49e6d188d57287f732cff827b5899a4b`.
+
+The exact parent fuzzer control retained the same production mutation. Its
+fuzzer source SHA-256 was
+`44a6b68e157ef472276d30b41b7a32ea43e5bffa2246dbb195929b77905244dc`, its
+sanitizer binary SHA-256 was
+`1a6d1570461a7f6bc56dac16a06877a9fa301feab43c7edb81265d937bba46ac`, and
+the identical input exited 0 with no artifact; control log SHA-256:
+`ba70882405c81b9797659ce61f0605e57565c6427a43ef5c87cdd190dd7e5dfa`.
+After restoring both sources, the identical witness exited 0 with no artifact
+in final sanitizer binary
+`cd43bf93ad20199331178a1d2cf3d7e00dad7c29717e15b0491ac95d9a49ab8c`;
+restored witness log SHA-256:
+`dad8cac928e1be94cd6aec17f14c6e859700da844d507547e6717d4bffcfa33d`.
+The full restored corpus also passed. This proves that the new oracle detects
+the modeled accounting regression the parent harness accepts, while clean
+master does not reproduce it. No production bug or deterministic regression
+test is claimed.
+
+An earlier draft asserted `shrink_to_fit()` capacity equal to size
+unconditionally. Clean replay exposed that as an overbroad oracle for inline
+storage, where capacity remains `N` when size is smaller; the assertion was
+corrected to `capacity == max(N, size)`. The failed partial log SHA-256 was
+`87e7d27d88ec16d0c7dede5d0ac296e1a0d80772e179597073dd27d2d42fb896`.
+This was a harness correction, not a production finding.
+
+### Verification gap
+
+Sanitizer and normal targets were built with the configured fuzz-only builds
+using `cmake --build ... --target fuzz -j2`; restored sanitizer build log
+SHA-256 is `257a8940b778892489e78408bc7b2bf3867dce34df572cfcd62629ecdaaf3cd0`
+and the final normal incremental build log SHA-256 is
+`30edc0a59ade1119f97578482f343f9e8d73a385c2e0fb78f59ba6b61712c302`.
+`git diff --check` passed. `clang-format --dry-run --Werror
+src/test/fuzz/prevector.cpp` reports only the pre-existing include-order
+violation at line 5 (`#include <prevector.h>`); formatter log SHA-256:
+`48d42f59cccf9728e2704d8f0e01f4acb8a4754f53d72b01b7ce5a6ef79b1c34`.
+The configured fuzz-only builds do not provide `test_bitcoin`, so the
+dedicated prevector unit suite was unavailable. The normal replay used one
+input per process because its driver does not accept libFuzzer corpus options.
+All temporary mutations and controls were restored, and no fuzz, sanitizer,
+mutation, or build process remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
