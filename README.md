@@ -2966,6 +2966,162 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## `threadpool` lifecycle and shutdown oracle audit (2026-07-21)
+
+Source commit: `d490ea2da497d73bcfb9dc89e5c0e92a3dacb434` (`fuzz: exercise
+threadpool lifecycle contracts`). Its parent is
+`9876b0a9635fd794c3988e319067e1a811f2ee05`; the audit base is Bitcoin Core
+master `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`l0rinc/master`. The l0rinc path query for `src/test/fuzz/threadpool.cpp`,
+`src/util/threadpool.h`, `src/validation.cpp`, and `src/httpserver.cpp` was
+empty. No l0rinc commit, later fix, or cherry-pick was used to mask this
+clean-master behavior.
+
+### Target and Core boundary
+
+`FUZZ=threadpool` exercises the internal `ThreadPool` used for parallel
+prevout fetching and the HTTP worker lifecycle. `CoinsViews::InitCache` creates
+the `prevout` pool in `src/validation.cpp:1863-1871`;
+`CoinsViewOverlay::StartFetching` in `src/coins.cpp:369-404` submits ranged
+`ProcessInput` tasks while `ConnectTip` validates a candidate block, and falls
+back to single-threaded fetching when submission is rejected. The HTTP server
+uses the `http` pool in `src/httpserver.cpp:77`, submits REST/RPC work at
+`190-196`, interrupts it at `1266-1275`, and stops it at `1278-1283`.
+The fuzzer input is an internal task/lifecycle command stream, not a
+serialized block or peer message. No invalid block by itself triggers this
+finding on clean master.
+
+### Oracle and severity
+
+The old harness checked task completion and exception propagation but did not
+exercise `Interrupt`, shutdown rejection, restart, controller-thread
+`ProcessTask`, or ranged submission. The enhanced harness occupies every
+worker with a latch/semaphore, verifies that `ProcessTask` drains exactly the
+queued tasks on the controller thread, queues work before `Interrupt` and
+verifies accepted work completes while new single and ranged submissions
+return `SubmitError::Interrupted`, stops the pool and verifies the `Inactive`
+error, restarts it, and verifies every ranged future executes exactly once.
+The production header asserts the worker-count postcondition after `Start`,
+the interrupt flag immediately after `Interrupt`, and empty worker/queue plus
+a cleared interrupt flag after `Stop`.
+
+Clean master reproduced no production failure. This is Informational/Low
+oracle hardening only, not a confirmed production bug and not a consensus,
+cryptographic, memory-safety, or Critical finding. If the modeled mutation
+existed in production, accepting new tasks after `Interrupt` could extend HTTP
+shutdown work or prevent `CoinsViewOverlay` from taking its documented
+single-threaded fallback. The current prevout path handles a rejected
+submission, and the HTTP path returns service unavailable for rejected
+submissions. The proof input does not establish a remotely triggerable master
+defect or an invalid-block vulnerability. No production fix or deterministic
+regression test was added because clean master did not fail.
+
+Existing findings are unchanged and remain rated against master and actual
+Bitcoin Core callers: private-broadcast failed-send retention is Medium and
+feature-conditional; empty HEADERS initial-sync handoff is Medium
+availability/IBD; peer transaction activity refresh and process-message local
+block-storage failure are Low; oversized transport types are Low in current
+callers; ecmult scratch wrapping, forced 10x26 magnitude-32 normalization,
+and SHA/HMAC/RFC6979 retention are Medium reachability-limited correctness or
+hygiene findings; banman invalid-subnet/unban integrity is Low/nice-to-have.
+The previously audited addrman, coins-cache, txgraph, txdownloadman,
+txrequest, connman, eviction, handshake, compact-block, headers-sync, UTXO
+snapshot, mempool-persistence, package-evaluation, RPC, and descriptor-cache
+paths add no clean-master production bug to that ledger. A nonce with no
+cryptographic meaning is not Critical merely because it is not cleared.
+
+### Exact artifacts and replay
+
+The original harness SHA-256 was
+`2adfd0f70a470baa074ce8013aa8aec70ae07f3befb92f7e9199fcca4d2841b`; the
+enhanced harness SHA-256 is
+`73d44ba532fb0849892284ea2f20c23c67fd3fe54d9969e33deb6b9119d070ca`.
+The original clean production header SHA-256 was
+`c868c908500e1cb5bef2f6c4a78b1113c69df4f408e60e95e2c3e1c6b394eea6`; the
+final clean production header SHA-256 is
+`e06187fd24011f4de97c39d4ba2b07f58607e4f7e976ea3849e8d2763f680f5b`.
+
+The frozen corpus is `/tmp/bitcoin-threadpool-20260721/frozen`: 45 files,
+6,722 bytes, minimum 1 and maximum 2,047 bytes. Its filename-list SHA-256 is
+`4b250c1eb56e61f441602a4dd9570c2bf548eeaa9a636a05db93f2cc099c123c`; its
+per-file manifest SHA-256 is
+`c58aa8556c888dd04fbf7804a1a5f9e47df1c4d6be1513dde943b1769571542f`.
+
+The original sanitizer baseline used binary
+`193b2eb1e96d9e9cfaef355d756e7df72340ebfecf98b43f7f3e2d99157a6419` and log
+`9b9f5d4d6496708dbbf4d3dccb8d4aa4bff1ac021238f8c455331a93531aeda9`; it
+executed 49 corpus inputs and exited 0 with no artifact. The final enhanced
+sanitizer binary is
+`1bab0c98388bf2933366f7002b1424210e8de018428464d583c4df4f9c9520a7`.
+Its 45-file replay log is
+`ac2cd070d6e0ee59d028d8fec86364d588a33b5232c7c727e323e137e27671a8`; its
+exact zero-byte replay log is
+`2483dad6348e533933a96054e9322faaee621c8b975f1927a4b83eadc97893ab`.
+Both exited 0 with no artifact; the corpus replay completed 62 executions.
+The final normal binary is
+`693e9b7dde2ab71ada4254d6d11bd1e690460c061025be4d36c5579085c3197d`; its
+normal one-file-per-invocation log is
+`15b39c9ef80aa77e27d45f225a837a516c69d7d1e874ad8bee8df4630e4e0739`, and
+all 45 files exited 0.
+
+Four isolated enhanced sanitizer workers all exited 0 with no artifacts. The
+worker log SHA-256 and summary were:
+
+- `9da33f542c719b06e5cdd1db3900ac21586b16225eaecc9678a30a28cb68049a`: 63 executions, 112 MiB peak RSS.
+- `b614674c5c6a908f92b138369a66bdba206a4d42923b68fab4fbcb01726fff78`: 62 executions, 113 MiB peak RSS.
+- `a401a45bb5459f980874bd6a24e2191c4fcf872711665ed87e364affb0e23a78`: 60 executions, 112 MiB peak RSS.
+- `60a2edf8479489595a1feee189422cfb69ef0e232e71379b63ad496dded25e2b`: 60 executions, 112 MiB peak RSS.
+
+Each isolated corpus remained at the original 45 files. Their aggregate
+worker listing SHA-256 was
+`8e71e7645a9429b510c0bdf54a9ce75640601672dfee86cba36209c5c8bdbd93`.
+
+### Mutation differential
+
+A temporary production mutation changed the assignment in
+`ThreadPool::Interrupt` from `m_interrupt = true` to `m_interrupt = false`
+while retaining the production assertion. The enhanced mutated production
+header SHA-256 was
+`0abc9cdbfcba3c832e3eb7e8e50c9ba986efae966475702f6a5227215238ada9`; the
+mutated sanitizer binary SHA-256 was
+`6651bc87276efa99b7c7aa342708a6556a4b2e688fb607dad0038015c8de8b21`.
+The exact reproducer was the zero-byte input
+`/tmp/bitcoin-threadpool-20260721/empty`, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The enhanced mutation log SHA-256 was
+`6ad14508462d4b0fb8c6082e478507f7db78d80cd165f7975f7e587d2a347b65`; it
+exited 134 at `src/util/threadpool.h:280` on `assert(m_interrupt)` during
+`Interrupt()`.
+
+The original harness with the same mutation and exact input exited 0. Its
+control binary was built from the original harness and unformatted production
+header with the same mutation: production header SHA-256
+`15c6ffa52b5367041ce29c9f1a3b6592157b5cca3fd04a1d84e8344b19ffefb1`,
+harness SHA-256
+`2adfd0f70a470baa074ce8013aa8aec70ae07f3befb92f7e9199fcca4d2841b`, and
+control binary SHA-256
+`68e65458cbdbf79faa5f6395976c7a681309ecdec3c018c9e97e873f83610b89`.
+The control log SHA-256 was
+`9e379dfc6ff201b47eccf185bf036965b3fbb874abfd139aa3c2daaac833612b`.
+This establishes that the new lifecycle oracle, rather than the old
+coverage-only target, observes the modeled shutdown regression. The mutation
+was removed and the clean sanitizer replay was repeated before commit.
+
+### Verification and test gap
+
+`git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/threadpool.cpp
+src/util/threadpool.h` passed. The sanitizer and normal fuzz builds
+completed. The configured fuzz-only trees did not provide a `test_bitcoin`
+target, so no unit-suite result is claimed. No deterministic production
+regression test was needed because no clean-master bug was confirmed. The
+temporary control worktree and build were removed, and no fuzz, sanitizer,
+compiler, or mutation process remains running.
+
+Any later potential fix, minor fix, oracle change, or cherry-pick must state
+whether it preserves, changes, or masks this clean-master behavior and amend
+the relevant commit message and ledger with its exact proof.
+
 ## `script_descriptor_cache` cache-state and merge oracle audit (2026-07-21)
 
 Source commit: `9876b0a9635fd794c3988e319067e1a811f2ee05` (`fuzz: model
