@@ -3637,6 +3637,141 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `psbt` finalization and merge-oracle audit (2026-07-20)
+
+Source commit: `b8a6b4133cfa62640bd057a9eeb2a7cf0bfe0c9e`
+(`fuzz: harden PSBT finalization and merge oracles`), parent
+`8e62062cd2ad064f8d39f215c030f17392489924`. The audit base was latest
+`origin/master` `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`;
+`remotes/l0rinc/master` matched it. The exact target-scoped comparison was:
+
+    git log origin/master..remotes/l0rinc/master -- \
+      src/test/fuzz/psbt.cpp src/psbt.cpp src/test/psbt_tests.cpp \
+      src/node/psbt.cpp src/node/psbt.h src/rpc/rawtransaction.cpp
+
+It returned no output. No relevant l0rinc commit was cherry-picked. No later
+fix or cherry-pick was used to mask clean-master behavior. Any later change
+to PSBT decoding, finalization, signing, extraction, merge, RPC callers, this
+corpus, or this witness must amend its commit message with whether it
+preserves, changes, or masks the result; merge or amend deliberately if it
+changes a follow-up experiment.
+
+### Core boundary and severity
+
+`FUZZ=psbt` exercises PSBT parsing and the transaction/signature contracts
+used by Bitcoin Core's generic `finalizepsbt` RPC, wallet PSBT processing,
+GUI/external-signer flows, and PSBT combination. The confirmed master bug is
+**Low severity correctness/availability**: a caller-supplied PSBT with a
+nonempty invalid `final_scriptSig` could make `FinalizePSBT` report complete
+and make `FinalizeAndExtractPSBT` emit an invalid transaction. The generic raw
+RPC could therefore return `complete=true` for bytes that fail script
+verification. `walletprocesspsbt` rechecks with `CWallet::FillPSBT`, so this is
+not a wallet fund-loss, consensus, invalid-block, memory-safety, or
+cryptographic vulnerability. Invalid block/header bytes do not directly reach
+this private PSBT path.
+
+Severity is based on the problem on master and on how Bitcoin Core actually
+calls the method. Invalid input acceptance alone is not High/Critical. A
+nonce with no cryptographic meaning is not Critical merely because it is not
+cleared. The existing ledger is reiterated rather than reclassified: Medium
+feature-conditional private-broadcast failed-send retention; Medium empty
+`HEADERS` initial-sync availability/IBD risk; Low under current callers for
+peer transaction-activity refresh, block-storage failure, oversized transport
+types, banman invalid-subnet and unban integrity; and Medium but latent or
+reachability-limited ecmult scratch wrapping, 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention. Earlier container, network,
+storage, mempool, RPC, descriptor-cache, DER, EllSwift, BIP324, key,
+scriptpubkeyman, and wallet transaction audits found no other clean-master
+production bug.
+
+### Changes and regression
+
+The production finalizer now re-computes transaction data after finalization
+and verifies every finalized input. This prevents pre-existing invalid final
+fields from being treated as a complete signature set. Production merge and
+extraction assertions cover PSBT identity/shape and preservation of input and
+output fields.
+
+The fuzzer now checks analysis shape and role values, extracted transaction
+envelopes, final-input verification, merge identity and failure atomicity,
+AddInput/AddOutput count contracts, and the precise conditions under which
+`RemoveUnnecessaryTransactions` may discard non-witness UTXOs. The original
+round-trip and signature-data checks remain.
+
+The deterministic regression test uses the exact 550-byte PSBT produced by
+`FuzzedDataProvider::ConsumeRandomLengthString` from the 554-byte frozen
+witness. Four escaped backslash pairs are part of that harness transformation
+and are retained in the test's decoded hex.
+
+### Clean-master proof
+
+The frozen witness is
+`/tmp/bitcoin-psbt-20260720/frozen/98426b6bccbcee916f6db8a9f983e03155fe13e8`,
+554 bytes, SHA-256
+`8aa7244730e3bf0773e268ee53ff566b0f21b7a0b57ade5f0f6e7f84c09c2ceb`.
+The pre-audit `src/psbt.cpp` hash was
+`8f2e9ab16f3ec5635acd1606ffea5bef97e4ec04`, exactly the
+`origin/master` blob. With clean-master production and the enhanced harness
+(`d45bf2f98e5e4aaf01d2374ffca61bf463b8bfa5`), the clean sanitizer binary
+`6dddcb1d47336c7155ef42ce6aa68b1be36195fa2dbc01e032cedb8fe3ff2304` aborted
+at `psbt.cpp:208` because master returned success for an unverifiable final
+input; log SHA-256
+`fa9ca95670e1f6b223bc9ce26e32f426b100018ef0f5cb7fc6bc896c82dd56a0`.
+
+A matched clean-master control retained production hash
+`8f2e9ab16f3ec5635acd1606ffea5bef97e4ec04` and removed only the new final
+verification assertion from fuzzer source
+`66e7e0b0858265c5389c0648f8edf6e37e6c8b2d`. Its sanitizer binary was
+`1b5b61b63258515a800179134095b8b687710a0f0925654d4c4b74d92a12ed4b`; the
+same witness exited 0, log SHA-256
+`32a45cfb763f22ba016923e7118edf47203273bb25b15ac7beb2f9926695d265`.
+
+With the fix restored, source hashes are `src/psbt.cpp`
+`2ea7cee260a94c36c511da0876456bc703710672`, fuzzer
+`d45bf2f98e5e4aaf01d2374ffca61bf463b8bfa5`, and regression test
+`b8465aa22be39b31fe96b663d234f1e9cb69aeb8`. Sanitizer binary
+`398dcfecc9b3747c352e33fd353a78ac02b2e435562aa23410f5a544e398c8e8`
+replayed the exact witness with exit 0; log SHA-256
+`bd2df51a61a39cf837d94cbc6a9c1a9b609721fc44a316dbcdfe2c740d34e81f`.
+The pre-fix deterministic test failed because
+`!FinalizeAndExtractPSBT` was false; log SHA-256
+`49eafea6778d77d252d067c5c1d7b16cb4aee37913d0e1362f89dc32a821d19b`.
+The fixed `psbt_tests` suite passed; log SHA-256
+`b966cfcad4ccafae7a062230c248bb46c387e27d397f8634f734e120cedec171`.
+
+### Corpus and replay evidence
+
+The frozen source was `/mnt/my_storage/qa-assets/fuzz_corpora/psbt`, copied to
+`/tmp/bitcoin-psbt-20260720/frozen`: 6,134 files, 29,241,189 bytes, sizes
+4..835,312. Sorted filename and filename+size manifest SHA-256 values are
+`1fbec7cde6e93cd4791d7f5b24fa57d9e129efa9329b5dcca214661d5009c211` and
+`bc0ce131ed9893b3996f8303f3014395bf7d9a3eee74aa2965cb3a123df14f2c`.
+
+Before enhancement, sanitizer replay recorded 7,137 executions, coverage
+18,161, features 91,849, peak RSS 787 MiB, and no artifacts; log SHA-256
+`7f39fbc0f19b2d6b158b5efa710f2a0184d7dbf93dc0c28ee964c7752a7693b9`.
+The final normal binary
+`699c4583bc5c3618a77ccdd6d297d19473203245780b50853a8bf36086e46f55` passed
+all 6,134 files; log SHA-256
+`edbd54ed839d28794183f8e3905bb7a6bfc7718ee44f0e6006861cc0286fe424`.
+The final sanitizer replay recorded 7,137 executions, coverage 18,291,
+features 92,016, peak RSS 790 MiB, and no artifacts; log SHA-256
+`b8191c66b1eda7d1d530ed3c022bb37b21cacec5cd5a6ca41eb33daa69537fdb`.
+
+Four disjoint sanitizer workers processed 1,534/1,534/1,533/1,533 files and
+executed 2,537/2,537/2,536/2,536 units. Peak RSS was 585/490/485/506 MiB;
+no artifacts remained. Worker log SHA-256 values are
+`0285111ce121a664e0ef668b811ee97033c29449e2781fa518f43f833084fc9c`,
+`04285a82c3f08905598bf9bc3744123609b401ed417c8f7ef3a578d080182230`,
+`847b32049ae2c31ebbb3ee7d8a3776c3418cf531835430af926df0b4fb735a28`, and
+`bcd99c1fe34b39c4ec67553cf8b1dd7c42465c6d7c2197eeaadb280e69ad77e3`.
+
+Normal and sanitizer fuzz targets and `test_bitcoin` were rebuilt from the
+final source. The final test binary SHA-256 is
+`6b17a0247587ec498d0566af713fe51fbb8bbf6f0c68de07cae552101ef81db2`.
+`git diff --check` passed, and no fuzz, sanitizer, mutation, or replay process
+remains running.
+
 ## `wallet_create_transaction` construction-oracle audit (2026-07-20)
 
 Source commit: `8e62062cd2ad064f8d39f215c030f17392489924` (`fuzz: audit wallet
