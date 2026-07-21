@@ -4277,6 +4277,167 @@ The source commit message contains the same corpus condition, severity,
 caller analysis, fork comparison, and verifier requirement. No fuzz,
 sanitizer, mutation, or test process remains running.
 
+## Merkle deserialization prefix and extraction oracle audit (2026-07-21)
+
+Source commit: `c759644fc4` (`fuzz: strengthen merkle deserialization
+oracles`), parent `cf2cf0460e`, with source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+audit base was `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; both
+`origin/master` and `remotes/l0rinc/master` pointed there. The target-scoped
+l0rinc history over the merkle headers, RPC callers, deserializer, and fuzz
+utility paths returned no output. No fork commit was cherry-picked or allowed
+to mask this result.
+
+### Target selection and oracle
+
+`merkle_block_deserialize` and `partial_merkle_tree_deserialize` previously
+only deserialized an object and returned. The constructor-oriented
+`merkleblock` fuzzer already checked the `ExtractMatches` state contract, so
+that assertion was moved into `src/test/fuzz/util.h` and reused here rather
+than recreated. The existing `blocktransactions_deserialize` prefix check was
+also routed through the same canonical-prefix helper; this was a mechanical
+reuse, not a behavior change, and its old corpus was replayed after the edit.
+
+For every accepted object, `DeserializeAndAssertCanonicalPrefix` now requires
+the serialized object to equal the exact bytes consumed by `SpanReader`, with
+the remaining input explicitly accounted for. Trailing bytes remain allowed.
+For both partial-tree targets the extraction oracle pre-seeds the index output
+with `0xdeadbeef`, requires txid/index pair alignment, requires indices to be
+in range and strictly increasing, and requires repeated extraction to return
+the same root and vectors. This is an extraction/state oracle, not a proof
+validity claim; caller-side root verification remains required.
+
+### Bitcoin Core boundary and severity
+
+The relevant production callers are `verifytxoutproof` at
+`src/rpc/txoutproof.cpp:147-166` and `importprunedfunds` at
+`src/wallet/rpc/backup.cpp:61-87`. They parse RPC or wallet-supplied proofs,
+verify the partial-tree root, and allocate fresh output vectors. The
+`net_processing.cpp` merkleblock path constructs and sends filtered-block
+replies; it is not an inbound invalid-block acceptance path. No clean-master
+production bug was confirmed. This is **Informational/Low** parser-oracle
+hardening against master: a malformed proof can be rejected locally, but
+these methods cannot turn it into consensus acceptance, fund loss, memory
+corruption, or a cryptographic compromise. It is not Critical. No
+cryptographic nonce is involved; a nonce without cryptographic meaning does
+not require clearing.
+
+### Corpus identity and baseline
+
+The frozen `merkle_block_deserialize` corpus is
+`/tmp/bitcoin-merkle-deserialize-20260721/frozen/merkle_block_deserialize`,
+copied from `/mnt/my_storage/qa-assets/fuzz_corpora/merkle_block_deserialize`:
+82 files, 3,344,447 bytes, minimum/maximum 1/806,511 bytes. Its sorted
+filename manifest SHA-256 is
+`3194351dce6ab8f40007aec463049ea199470502c46c9652eb5cbb5bf111e542`; its
+filename/size manifest SHA-256 is
+`98686a173143936f1414c7a1cd98e30f035bd985350bab2745da111197e4c0c4`.
+
+The frozen `partial_merkle_tree_deserialize` corpus is
+`/tmp/bitcoin-merkle-deserialize-20260721/frozen/partial_merkle_tree_deserialize`,
+copied from `/mnt/my_storage/qa-assets/fuzz_corpora/partial_merkle_tree_deserialize`:
+89 files, 2,598,778 bytes, minimum/maximum 4/524,365 bytes. Its sorted
+filename manifest SHA-256 is
+`b6e092a79d026c542c7ac0b9e9e0dd8106c50de672ba939ace25942735c57c84`; its
+filename/size manifest SHA-256 is
+`01bad4896092a7da3b4ad2642d8b8ff8b30434ac43702034154cba21cfc32632`.
+
+Before the oracle, the normal replays ran 83 and 90 units with
+coverage/features 166/332 and 155/335, peak RSS 62/60 MB, and log SHA-256
+values `e8d642c53c2decf1fd374e754454bb4fb6518637f8910718bb83728af99ca9e2`
+and `128e0bf8cc8b96939f5bf5dafdc720823d58992e0d44ca462859487d421d688a`.
+The baseline ASan/UBSan replays ran 83 and 90 units with coverage/features
+234/584 and 218/605, peak RSS 146/139 MB, and log SHA-256 values
+`e618a6ca3f26806578fc6cf222c4e3c0fa1117d5ec4972dd549c12b7c2ed94ad` and
+`3da334ceb8d42f629af76456c25962ebd2b382f3a582160b6e258223f576680e`.
+
+### Mutation proof
+
+The temporary production mutation was
+`SER_READ(obj, obj.vHash.clear())` immediately after
+`READWRITE(obj.nTransactions, obj.vHash)` in `src/merkleblock.h`. It models
+successful consumption followed by silent loss of the parsed proof hashes.
+The `merkle_block_deserialize` replay failed at
+`deserialize.cpp:133` on witness
+`01a1e3e1d36242b21b99f58d295a66e8e11993f1`, 106,239 bytes, SHA-256
+`259412379d063ca77baac1219848b91a8f2ab59183764d8d3339c6803a5b231e`.
+Its exact-input log SHA-256 is
+`fb9756098bcaf5e020d21168b755ec799cf246c7c46e6d8c12d48abf075b9d6a`, and
+the full mutation-corpus log SHA-256 is
+`3d7ef09376ef776f141b5a2316b09a433a946c7e559172c83ded6a10874c0c92`.
+The `partial_merkle_tree_deserialize` replay failed at the same assertion on
+witness `00013359ebca06518ff1e224de58b5934f7490ef`, 3,509 bytes, SHA-256
+`c7209f2b75e5a367fb8f7428f5c2b5f3c6724d0b79e922517e63b8c9fd5ec2ee`.
+Its exact-input log SHA-256 is
+`8d960d0ff1519d8d44d4df3f89db62e1183174dd781b6b53b81f1c2025c216c2`, and
+the full mutation-corpus log SHA-256 is
+`15c4403f7f61d815a26555e6932115511fcd9779c6adc45ca037b73c5bd68a6a`.
+The mutation was removed before the source commit; no temporary production
+behavior remains.
+
+### Restored replay and workers
+
+The final normal and ASan/UBSan fuzz binary SHA-256 values are
+`4f55cc6fff5b3ce910d57628c6571777f15e83c19aa4b708c1fc4e5215f9d151` and
+`67ffd3877b4928b39cd46407c6fe397f18bb589b4462e2479bbb7e8b4dd8d42c`.
+Restored normal `merkle_block_deserialize` and `partial_merkle_tree_deserialize`
+replays ran 83/90 units, coverage/features 188/356 and 172/352, peak RSS
+62/61 MB; log SHA-256 values are
+`94d68f3008a54c88c308b1db897b506c3138b476bc78735bd7a8e94edc8735f0` and
+`4ad71d2e56d21c33d555f4ce7f652e65c5d1fd684f61a2c99fdcd4d628745f98`.
+Restored ASan/UBSan replays ran 83/90 units, coverage/features 281/633 and
+252/638, peak RSS 147/139 MB, and no sanitizer or artifact fault; log
+SHA-256 values are
+`1fbcf57327381831f2d73b535859f488c821c4a2c0886bb6b095a48dcd97f69e` and
+`b45a7888138e7e41fc998b9eeb7270d0f73b57f669309ce44197416e221b10cd`.
+
+Four disjoint ASan/UBSan workers were run for each target. The worker logs
+and replay summaries are:
+
+    merkle_block_deserialize worker0: 23 executions, coverage/features 248/491, peak 118 MB, log 3a131ba000494df46d2e6f126188130ccb135ca6c735dc57a532eceef9f167c7
+    merkle_block_deserialize worker1: 23 executions, coverage/features 258/506, peak 116 MB, log dfc3474849925a4a3a44469f0ed2b71ee1834613da281e068dd47a93faf8cbd2
+    merkle_block_deserialize worker2: 22 executions, coverage/features 259/488, peak 111 MB, log a78a0b96af22bd44b1aa038ee20d3fe56393f4e15b51b7f159af02164587e4a1
+    merkle_block_deserialize worker3: 22 executions, coverage/features 266/490, peak 119 MB, log 5556de7cac56b5b9a253170c7960156ee8faf54b19bfae9b9c72522cbc1ae3f2
+    partial_merkle_tree_deserialize worker0: 25 executions, coverage/features 244/552, peak 112 MB, log 4ef8843d9a3d28da0a4ead46feabb379c81c1e01f2a62624a95ed6b48e87d66c
+    partial_merkle_tree_deserialize worker1: 24 executions, coverage/features 248/537, peak 111 MB, log 08134d5cf556236f1179b3dbe62b68effaf9d058d0268731187711b997d68cd1
+    partial_merkle_tree_deserialize worker2: 24 executions, coverage/features 243/532, peak 112 MB, log e17c7f88525d3971b37ae8bbaa6c543240d67f0f5c0cbfd30de8995761642c55
+    partial_merkle_tree_deserialize worker3: 24 executions, coverage/features 237/546, peak 120 MB, log b5ed95bd121cf46070e9945daecf1024d98ca8e8af23b4a77d3f3a21ed5ecef1
+
+The worker filename unions exactly match the frozen manifests: SHA-256
+`3194351dce6ab8f40007aec463049ea199470502c46c9652eb5cbb5bf111e542` for
+`merkle_block_deserialize` and
+`b6e092a79d026c542c7ac0b9e9e0dd8106c50de672ba939ace25942735c57c84` for
+`partial_merkle_tree_deserialize`. The focused
+`merkleblock_tests,bloom_tests,pmt_tests` command passed all 17 cases; log
+SHA-256 `02fd698e4a6ebd51d2ae1f6f89b1893719229555144409963d75aa63e3fa72fc`.
+The earlier `merkleblock` and `blocktransactions_deserialize` corpora were
+also replayed after the shared-helper refactor: normal/ASan log SHA-256
+values are `47920a806000493ca1faa8406d28b3940b036697e35107f749d9943cfb59095d`,
+`8298c3583e8b54f754d5d20936fa2f118bb8d58d77ee866fd0014ee87df3d4e8`,
+`6c139c6556aac5e6bee886d4f0c0e0433627809554a6e9853fe859a9392ac4b0`, and
+`c0425d81edc201ebd7569e3dc958057f0b73083ac499597ebf2b5824ed635f1d`.
+
+### Findings carried forward and follow-up policy
+
+Existing findings remain rated against clean master and actual Core callers:
+generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening. Earlier BIP324, EllSwift, key, scriptpubkeyman,
+wallet, PSBT, tx_pool, block-index, snapshot metadata, scalar/field/group,
+DER, and related audits found no additional clean-master production bug.
+Latent ecmult scratch wrapping, 10x26 magnitude normalization, and
+SHA/HMAC/RFC6979 retention remain reachability-limited.
+
+A later caller-side pre-clear or potential cherry-pick could mask a parser
+oracle without fixing the production state transition. Amend that follow-up
+commit and this note, or merge the changes, and state whether it masks,
+preserves, or changes the master-relative behavior. Every claimed production
+bug still requires clean-master or minimal-mutation reproduction and the
+strongest deterministic proof available. `git diff --check` passed, and no
+fuzz, sanitizer, mutation, or test process remains running.
+
 ## `block_index` database round-trip oracle audit (2026-07-20)
 
 Source commit: `6909f22d74` (`fuzz: strengthen block_index database
