@@ -4438,6 +4438,144 @@ bug still requires clean-master or minimal-mutation reproduction and the
 strongest deterministic proof available. `git diff --check` passed, and no
 fuzz, sanitizer, mutation, or test process remains running.
 
+## Bloom filter deserialization oracle audit (2026-07-21)
+
+Source commit: `fff7127e04` (`fuzz: strengthen bloom filter deserialization
+oracle`), parent `24ffd8be60`, with source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+audit base remains `18c05d93016b28a9afd4c716dfe00b6e0accb30b`, identical for
+`origin/master` and `remotes/l0rinc/master`. The target-scoped comparison over
+the Bloom implementation, `FILTERLOAD` caller, target, stateful Bloom fuzzer,
+and Bloom tests found no l0rinc commits after that base. No fork commit was
+cherry-picked for this target.
+
+### Target contract and Core boundary
+
+`bloomfilter_deserialize` previously deserialized a `CBloomFilter` and only
+checked that its serialization was non-empty. It now uses the shared
+`DeserializeAndAssertCanonicalPrefix` helper: the canonical serialization must
+equal the bytes consumed from the input prefix, while unrelated trailing bytes
+remain allowed. The oracle does not assert `IsWithinSizeConstraints()`, because
+Core intentionally deserializes malformed filters before classifying and
+punishing them.
+
+Core deserializes inbound `FILTERLOAD` at
+`src/net_processing.cpp:5069-5076`, checks size and hash-function limits at
+`src/net_processing.cpp:5078-5082`, and only then installs the filter for
+transaction relay at `src/net_processing.cpp:5084-5089`. The filter is later
+used by `IsRelevantAndUpdate` at lines 6194 and 6251. The master-relative
+severity is **Informational/Low parser hardening**, not Critical. A malformed
+filter can be rejected or influence relay, privacy, bandwidth, and CPU, but
+this parser contract cannot cause invalid block acceptance, fund loss,
+consensus failure, memory corruption, or cryptographic compromise. A modeled
+post-read bit-vector loss could make a filter appear empty and match all
+transactions, which is relay amplification rather than a consensus or key
+security failure. No cryptographic nonce is involved; a non-cryptographic
+nonce would not need clearing.
+
+### Corpus and baseline
+
+The frozen corpus was copied byte-for-byte from
+`/mnt/my_storage/qa-assets/fuzz_corpora/bloomfilter_deserialize` to
+`/tmp/bitcoin-bloomfilter-20260721-clean/frozen/bloomfilter_deserialize`:
+43 files, 191,912 bytes, minimum/maximum 1/65,550 bytes. The sorted filename
+manifest SHA-256 is
+`fbd7c5d36e8921b558ceed12e48b1388711aad79e69ad3e2b2c0c1e33935d6db`; the
+filename/size manifest SHA-256 is
+`b8da57e2d8eb214bf20129cd19a6bc67c72a9380b9eef1c91211eee2771a25f4`.
+
+Before the oracle, the normal binary SHA-256 was
+`01fe97fdbe3fed0ed8e5967d5907aadb7e882768986179547e4152e38c83b305`. Its
+44-unit replay reached coverage/features 103/155, peaked at 59 MB, and has
+log SHA-256
+`2fc7fae5115833090a7114906f9deea32a73da576df39c74945b3fd191b77ad2`.
+The ASan/UBSan binary SHA-256 was
+`978ab814ab5c2fbb0024db912dedf123191780b4b607235ed0715fd54d349133`. Its
+44-unit replay reached 135/254, peaked at 117 MB, and has log SHA-256
+`0dca3597e9bf96f3731ead8de89c53b91bbd3d4589a5bae064463f8f804b2015`.
+
+### Mutation and matched control
+
+The temporary production mutation appended
+`if (ser_action.ForRead()) const_cast<CBloomFilter&>(obj).vData.clear()` after
+the `CBloomFilter` `READWRITE` in `src/common/bloom.h`. It models successful
+filter-byte consumption followed by loss of the decoded bit vector. The
+enhanced corpus run reached `deserialize.cpp:133` on the consumed-prefix
+assertion. Its mutation log SHA-256 is
+`da6b808db9366adc3b4dac32329162086b08949c94865bdbeff893894ad8c976`; the
+abort/symbolizer path was stopped after preserving the assertion output.
+
+The exact witness is
+`00e1f9f17eec4235675c8dda3fac47de7e8acb7d`, 65,550 bytes, SHA-256
+`31d05e2a5b528e3882493f9419ecde076b7e9c201c541423f4f83664be0d0c6b`.
+The direct mutated normal log SHA-256 is
+`0e450f70530c8a49e4bb686d875a8fbb54abbfb805d162f9350ed014b8213989`; the
+direct mutated ASan/UBSan log SHA-256 is
+`b3d73b87dd90ad2c80de30b09196dfc9ae6fea4760acfd0b71aa70b814230f1a`.
+Both fail at the canonical-prefix assertion. The exact witness is the
+strongest reproducible proof, but it demonstrates oracle sensitivity rather
+than a clean-master production vulnerability.
+
+A temporary `bloomfilter_deserialize_control` target retained the old
+`DeserializeFromFuzzingInput` behavior under the same mutation. The exact
+witness exited 0 in normal and ASan/UBSan modes; control log SHA-256 values are
+`664cd73bd02915575119d7d0882960a110233a6a6ff538f5aa9e37662868443b` and
+`d8342deaa6d3786c975b21dd5af03cea8976fbbbdde1aec0e07a109cf1d46056`.
+The mutation and control target were removed before the source commit. No
+production behavior changed and no clean-master bug is claimed.
+
+### Restored replay and tests
+
+The final normal fuzz binary SHA-256 is
+`430357fd8d624af0a14a46bffb2a7ac584d953a00272450b53e049994437e374`. The
+restored replay executed 44 units, reached coverage/features 103/156, peaked
+at 60 MB, and has log SHA-256
+`eed1abbc97ee54de451e73b1bebf7f0f7c4faf20a5238c9176c5e7491ec9bb04`.
+The final ASan/UBSan binary SHA-256 is
+`84a953ece18374acf131572874fef74ed0f739b36cd050691d84ca2722d59f11`. Its
+restored replay executed 44 units, reached 138/257, peaked at 117 MB, and has
+log SHA-256
+`1f7a3343ab22cefc79dacd1f9c596864642190691563d543d6c546921022bc34`.
+
+Four disjoint ASan/UBSan workers covered 11/11/11/10 files and executed
+12/12/12/11 units. Worker log SHA-256 values are
+`1da755a86dd0b79ca6f3670e68cd7a7ec645b7150c3c360e9de3e97df336df9b`,
+`edb012385c884e8ee2db060833e865dc8edb16c0611185732cd98bae705ee3ad`,
+`9ce9ecaeca6d6fe57f9a6d0bd33c2e65ebebd77759a60104e5f8a797e4a76b26`, and
+`428617a63c98aa1590163175aba799c231ec8b28043c13cc95d91127aed8b8ab`.
+Their filename union matched the frozen manifest SHA-256
+`fbd7c5d36e8921b558ceed12e48b1388711aad79e69ad3e2b2c0c1e33935d6db`.
+
+The focused `bloom_tests,net_processing_tests` command passed all 13 cases
+with exit 0; log SHA-256
+`8c163d62fd0f3b405391e091cfd97dd26375b85109acef0451440467b60d8cec`.
+No production mutation, control target, artifact, or sanitizer marker
+remained after restoration.
+
+### Existing findings and follow-up policy
+
+Existing findings remain rated against clean master and actual Bitcoin Core
+callers: generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening.
+
+Earlier BIP324, EllSwift, key, scriptpubkeyman, wallet, PSBT, tx_pool,
+block-index, snapshot metadata, scalar/field/group, DER, merkle, compact-block,
+and related audits found no additional clean-master production bug. Latent
+ecmult scratch wrapping, 10x26 magnitude normalization, and
+SHA/HMAC/RFC6979 retention concerns remain reachability-limited.
+
+Every future production-bug claim requires clean-master reproduction or a
+minimal production-code mutation modeling the exact broken condition, plus
+the strongest deterministic proof available. If a later l0rinc cherry-pick,
+caller-side fix, or minor fix changes a follow-up result, amend that same
+commit and this note with the exact target, corpus or mutation,
+assertion/failure, Core caller, severity, verifiers, and whether it masks,
+preserves, or changes clean-master behavior. `git diff --check` passed, and no
+fuzz, sanitizer, mutation, or test process remains running.
+
 ## Prefilled transaction deserialization oracle audit (2026-07-21)
 
 Source commit: `24ffd8be60` (`fuzz: strengthen prefilled transaction
