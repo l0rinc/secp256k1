@@ -3637,6 +3637,153 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `tx_pool` mempool state-transition oracle audit (2026-07-20)
+
+Source commit: `4a06bf618d` (`fuzz: strengthen tx_pool state-transition
+oracles`). The source parent was `b8a6b4133cfa62640bd057a9eeb2a7cf0bfe0c9e`.
+The audit base was Bitcoin Core `origin/master`
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`remotes/l0rinc/master`. The exact path query over
+`src/test/fuzz/tx_pool.cpp`, `src/txmempool.cpp`, `src/validation.cpp`,
+`src/policy/ephemeral_policy.cpp`, `src/node/txorphanage.cpp`, and
+`src/node/txdownloadman_impl.cpp` returned no l0rinc commits. Nothing was
+cherry-picked for this target, so no later fork fix masked or changed the
+clean-master behavior.
+
+### Core boundary and severity
+
+`FUZZ=tx_pool_standard` drives synthetic mature-coinbase transactions through
+`ProcessNewPackage(..., test_accept=true)` and
+`AcceptToMemoryPool(..., test_accept=false)`, including RBF, package policy,
+fee deltas, TRUC constraints, and callback bookkeeping. `FUZZ=tx_pool` feeds
+arbitrary deserialized transactions, including bypass-limits calls, through
+the same ATMP boundary. `Finish` also exercises block-template selection,
+block removal/re-addition, reorg descendant updates, recursive removal, trim,
+and expiry. These are direct Bitcoin Core mempool callers used by peer and RPC
+transaction admission and mining/reorg maintenance.
+
+The harness now snapshots entry identity and metadata, fee deltas,
+unbroadcast state, total size and fee, sequence, update counter, and load
+state. It asserts valid and invalid ATMP transitions, package result optional
+fields, callback/state correspondence, and `CTxMemPool::check()` after each
+transition and lifecycle operation. `removeUnchecked()` also asserts that
+`mapNextTx` agrees with `mapTx` before removal notifications expose the
+transition.
+
+No clean-master production bug was confirmed. The result is therefore
+Informational/Low oracle hardening, not a High/Critical vulnerability. The
+master code passed all controls and the added production assertion did not
+change valid behavior. Severity is based on actual Bitcoin Core callers: a
+future confirmed issue would need a reachable effect such as incorrect
+mempool state, stale or unsafe mining behavior, denial of service, consensus
+impact, or memory/concurrency failure. Invalid transaction or block-like bytes
+alone do not make a finding High/Critical. A nonce with no cryptographic
+meaning is likewise not Critical merely because it is not cleared.
+
+### Source and corpus identity
+
+The final modified source SHA-256 values are:
+
+    src/test/fuzz/tx_pool.cpp  d16322806b861ee519f2eb61a7bdab9e363bd130e05c2918d99efcd38ac9e8f6
+    src/txmempool.cpp          83e31f5f337ec700ed9af55fd36b796f3509e72cc545417c0774ac960c483ae8
+
+The normal and ASan/UBSan fuzz binary SHA-256 values are
+`0b46940956ef0554a04eabec6ff22be80c390183e0c72a387c908a85a0a838e4` and
+`c1c274763d908bb32f392ef455488f511d26d08a6886645b8de8915b0161ab55`.
+
+The frozen corpus copy was
+`/tmp/bitcoin-tx-pool-20260720/frozen`: 5,658 files and 41,820,925 bytes,
+with minimum size 1 byte and maximum size 840,495 bytes. The sorted filename
+manifest SHA-256 is
+`fe5326865d680ed6b8c6490092c21e9f679dfe9c52c67699439342d462ffa637`; the
+filename/size manifest SHA-256 is
+`1ec994bb592175d4ce6e56ea342d31264611068948afb0c6fd53ac60a7cd6931`.
+All authoritative runs used this frozen copy or hard-linked disjoint copies;
+no corpus growth was fed back into the evidence.
+
+### Full replay evidence
+
+All full replays used seed `20260720`, `-runs=5658`,
+`-print_final_stats=1`, and `LLVM_SYMBOLIZER_PATH=/bin/false`. Sanitizer runs
+used `ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1`.
+
+    target             build       executions  coverage  features  peak RSS  log SHA-256
+    tx_pool_standard   normal      5659        6180      25465     104 MB    ceb0da8df396e819f404d2132d7c6a1a8740e1ac07f88c794a5393cbff94e164
+    tx_pool             normal      5659        8716      55235     147 MB    dde614ae2c4ea929e33bb14a66eecaa1d1546439b25f8156d19e0bf7681d2364
+    tx_pool_standard   ASan/UBSan  5660        12892     54886     359 MB    2f310a0e2367ee409a84e056dd449bf9d8956a2fe0beabdf32aba53f39061751
+    tx_pool             ASan/UBSan  5660        19940     120601    564 MB    7c4f9b077a98a28baac82f8e9bcaf48606559c4f8af2e50c2a8b92cb695fac04
+
+Every run exited 0 and produced zero artifacts. Four independent ASan/UBSan
+workers also replayed disjoint shards. The sorted union matched the frozen
+manifest exactly. Each target's workers executed 1,417, 1,417, 1,416, and
+1,416 inputs. Standard peak RSS was 348, 341, 344, and 338 MB; generic peak
+RSS was 436, 409, 497, and 546 MB. All workers exited 0 with zero artifacts.
+Worker log SHA-256 values, in shard order, were:
+
+    standard  5fa0dcc11e7d3670b2f96c02f4c4270511781cb36ca70edf61d8be1be8934fc2
+              e9ccd541c814112e2cae96485efbcf26528013033c30ed8a76cc69d29fef19b1
+              a6cee835d7936929d06ce2eb315b10e04ab67eb29645c5525f2a16a15288a5e2
+              a13137907360db3fa00fee399bb5a06a215af402626e05ad97f9b9ca266025dd
+    generic   fed2c1ae53d633c4bb506fa303439664f5b1665ac5fb984910be04fb5d9f9af9
+              cb1246bddd0a7fa6f1f91fba23233aa36e7025274b76407318ba8adb60dd0f0a
+              a55e0e9b47fcdbec88957b24078c85e499d4d5283d26f39341d0426e6d7c944d
+              952a7db4d96d935e571ac1e87390814e3fd829457ea92828a401f8c8e4bd3d09
+
+### Differential oracle proof
+
+This is a proof that the new oracle matters, not a clean-master production
+finding. The exact production mutation deleted `nTransactionsUpdated++` from
+`CTxMemPool::addNewTransaction()`. With the enhanced harness and
+`FUZZ=tx_pool_standard -runs=5658 -seed=20260720 -shuffle=0`, the mutation
+failed at `AssertValidationDelta` after 26 units on frozen input
+`dfc4d02ef03ccd38dfd725e4c315470df3a2efa4` (156 bytes). The crash artifact
+was byte-identical to the corpus input and has SHA-256
+`7f68eca899e13d759f2357d2546b203aeca6ff7a5f1fd884c57dae96a3cc4729`;
+the mutation log SHA-256 is
+`229ea9e831b300487fb9baafdf9c0812197f7e1d4003d314f30156b1b90fe2b6`.
+
+The matched control kept the production mutation but removed only the new
+update-counter assertion. Replaying that exact artifact once exited 0 with
+no artifact; the control log SHA-256 is
+`78b24e6cd63bdfb642cdbc56c83357989f4a06466e08f880cdf71b930ab04940`.
+The existing `tx_pool.check()` and old harness therefore do not observe this
+metadata regression, while the new transition oracle does. The mutation was
+removed before the source commit. Because restored master has no failure,
+there is no deterministic production regression test to claim; the exact
+mutation, witness, control, and verifier commands are the strongest relevant
+proof.
+
+### Existing finding ledger and policy
+
+The confirmed generic raw `finalizepsbt` invalid nonempty `final_scriptSig`
+behavior remains Low: it is a correctness/availability issue in a private RPC
+path, not fund loss, consensus, memory safety, or cryptographic failure;
+`walletprocesspsbt` rechecks through `CWallet::FillPSBT`. Earlier audits retain
+their caller-based classifications: feature-conditional private-broadcast
+failed-send retention and empty-HEADERS initial-sync availability are Medium;
+peer transaction-activity refresh, block-storage failure, oversized transport
+types, and banman invalid-subnet/unban integrity are Low or hardening issues.
+The scalar/field/group, DER, EllSwift, BIP324, key, scriptpubkeyman,
+wallet-construction, and other stateful audits found no additional clean-master
+production bug. Latent ecmult scratch wrapping, 10x26 magnitude normalization,
+and SHA/HMAC/RFC6979 retention concerns remain reachability-limited findings,
+not Critical Bitcoin Core vulnerabilities.
+
+Any future cherry-pick or fix that changes a follow-up finding must be
+recorded in the same commit's message and in this ledger, stating whether it
+masks, preserves, or changes clean-master behavior. Findings are always rated
+against master and actual Bitcoin Core callers. A potential fix must not be
+treated as proof that a severe master bug was discovered if it merely masks a
+later oracle; merge or amend the notes and retain the clean-master control.
+
+### Verification and test gap
+
+`git diff --check` passed. Both fuzz-only normal and ASan/UBSan/fuzzer builds
+completed. The configured build did not provide `test_bitcoin`, so no
+dedicated unit test was available or claimed. No production behavior changed
+on master, no clean-master bug was confirmed by this target, and no fuzz,
+sanitizer, mutation, or replay process remained running.
+
 ## `psbt` finalization and merge-oracle audit (2026-07-20)
 
 Source commit: `b8a6b4133cfa62640bd057a9eeb2a7cf0bfe0c9e`
