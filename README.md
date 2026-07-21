@@ -4080,6 +4080,161 @@ violation at line 5 (`#include <cuckoocache.h>`); unrelated formatting was not
 changed. All temporary mutations and controls were restored, and no fuzz,
 sanitizer, mutation, or build process remains running.
 
+## `FlatFilePos` sentinel and serialization oracle audit (2026-07-21)
+
+Source commit `f55a2f1318abc4d5f236b6eca2066a8ee62f517c` (`fuzz: assert
+FlatFilePos sentinel and serialization contracts`) strengthens the flatfile
+target with the contracts that distinguish an unavailable disk position from
+a usable one. The production value constructor and `IsNull()` assert the
+public file-number domain `nFile >= -1`; the harness checks the `-1` sentinel,
+the exact `ToString()` form, and round-trips every non-null deserialized
+position through the production serializer.
+
+### Core boundary and severity
+
+Bitcoin Core uses `FlatFilePos` in block storage and `FlatFileSeq`, in
+`BlockFilterIndex`'s persisted filter position, and through `CDiskTxPos` in
+`TxIndex` and `TxoSpenderIndex`. `BlockManager::OpenBlockFile` reaches
+`FlatFileSeq::Open`, which relies on `IsNull()` to reject an unavailable disk
+position. A real predicate regression could redirect a null position into a
+numbered file path or make missing block data appear usable; the modeled
+impact is Medium/High depending on the reachable caller and state effect.
+
+Clean master reproduced no production failure, corrupt file, or
+caller-reachable state violation. The master-relative rating of this commit
+is therefore Informational/Low oracle hardening, not a production bug, fix,
+or deterministic regression test. Arbitrary invalid block bytes do not
+directly construct this internal file-position state, so they are not a
+Critical finding here. Current Core persistence paths serialize only usable
+nonnegative positions. The serializer's non-null-only behavior for the `-1`
+in-memory sentinel was considered and deliberately excluded from the
+round-trip oracle. A nonce without cryptographic meaning is not Critical
+merely because it is not cleared.
+
+The audit base is `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both
+`origin/master` and `remotes/l0rinc/master` resolve to it, and the source
+branch was rebased onto latest master before this audit sequence. The l0rinc
+pull-request history was reviewed for a target-specific prerequisite or fix;
+no additional relevant commit was cherry-picked for FlatFilePos. No later fix
+or cherry-pick was used to mask or alter clean-master behavior. Any later
+change to the null sentinel, serialization, file-open reachability, or proof
+input must amend its commit message and this ledger with whether it preserves,
+changes, or masks the result, and must repeat the clean-master replay.
+
+The reiterated master-relative ledger is: **Medium**, feature-conditional
+private-broadcast failed-send retention; **Medium**, empty-HEADERS
+initial-sync availability/IBD risk; **Low** under current Core callers for
+peer transaction-activity refresh, process-message block-storage failure,
+and oversized transport types; **Medium but latent/reachability-limited** for
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention; and **Low/nice-to-have** for banman invalid-subnet
+and unban integrity. No additional clean-master bug was found in the already
+audited addrman, coins-cache, coins-view, txgraph, txdownloadman, txrequest,
+connman, eviction, handshake, compact-block, headers-sync, UTXO snapshot,
+mempool persistence, package evaluation, RPC, descriptor cache, threadpool,
+cluster-linearization, policy estimator, pool resource, versionbits,
+signature-cache, or CuckooCache paths. Severity is based on actual Bitcoin
+Core callers and input origins; invalid fuzzer state or invalid block bytes
+alone is not Critical.
+
+### Oracle contracts and corpus
+
+The production assertions reject file numbers below the null sentinel before
+path construction or file access. The harness always checks default and
+explicit `FlatFilePos{-1, 0}` null values, equality of the sentinel state,
+the exact `FlatFilePos(nFile=..., nPos=...)` representation, and non-null
+serialization round trips. Null positions are intentionally excluded from
+the serializer round trip because `VARINT_MODE(... NONNEGATIVE_SIGNED)` does
+not preserve the negative in-memory sentinel and Core persists only usable
+positions; treating that mismatch as an unconditional acceptance contract
+would be an overbroad fuzzer oracle.
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/flatfile` to
+`/tmp/bitcoin-flatfile-20260721/frozen`: 36 files and 1,974 bytes. Sorted
+relative filename SHA-256 is
+`c647726c76d69bdc36e5eecf8f1754238d4e588b8a770b1f512e339f475ebfae`; sorted
+filename-plus-size SHA-256 is
+`0d1c13c95361eee809ef66ece6ba9d9bbfca75c67fed3e4b0f65aedf4751907c`; the
+sorted relative-content manifest SHA-256 is
+`829e18fe66f1f7d4ffd8ca37106ea591b662862f2bafd7041f7d1af20a3e80`.
+
+The parent sanitizer binary was
+`ccc0e9a8576dce3c84f4fc3d286f1e34cd6cb06d1fe7685a34863d0706dd3f7f`; its
+execution-only replay exited 0 after 37 runs, coverage 216, feature count
+414, peak RSS 97 MiB, and no artifacts; log SHA-256:
+`354110cfaeb0ec19068b1a4334971c739d1af46bb2b6faf644d60f172b0cad83`.
+The final clean source hashes are `src/flatfile.h`
+`5f6827fbf73e76b7d1a8b2352744fb67283df7066d0cfc592dc4612268e85dd5` and
+`src/test/fuzz/flatfile.cpp`
+`e522b9991bbe6bb750d091d735ca483274afc264cd0bb2088c5ea1caec6c81b0`.
+The final sanitizer binary is
+`4dd2a5a5d368fcb5a15db93e339bcdbdb8267904de077a34e480427df8fa47f4`; the
+clean frozen replay exited 0 after 37 runs, coverage 368, feature count 984,
+peak RSS 97 MiB, and no artifacts; log SHA-256:
+`4d74f7c8eaa84684f6ce449c9ca235950f233e76cae0e4a496a86579be5e48f6`.
+The final normal binary is
+`97c39bd846e1ffad8bbf4ecd24f485642bf64b2f3d4c1e7c5891f6c7eca81c59` and
+passed all 36 inputs with log SHA-256
+`85058f33d70ffa9e11134c8541113bd02da93ac8572a18dc1964fb1435044853`.
+
+Four isolated sanitizer workers each exited 0 after 37 runs with coverage
+368, feature count 984, peak RSS 97-98 MiB, and no artifacts. Worker log
+SHA-256 values, in order `fuzz-0` through `fuzz-3`, are:
+
+    075737c533f3c01708902a69647757cdc2fa0606dd3ce364db3322e8825bd73e
+    c7d808bb7ce8e2453d82e0c3ea969db930c5e7c70b2a67cb506fc0da4e819136
+    4fbc0195c86c9a782e6fbb544ef9c19d3abb42fbfe208d970db37b671baeaacb
+    fb7b253edd4bbf0cbe73ec847ae6f33aa7e8537b3ff11d8ba74b4e51aadec6c9
+
+### Differential proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation changed `FlatFilePos::IsNull()` from
+`return nFile == -1` to `return false`, modeling a null-predicate regression.
+The mutated production source SHA-256 is
+`eeb57515861a0c69723ed0c7f3091c7084535628ef1a9567ee61d93cd073ea8c`; the
+mutated enhanced sanitizer binary SHA-256 is
+`bdd58aab49dcb0c27f91c8fc4875d9b905dce0e91ff0045d25efc83c3fe7bd2e`.
+
+The exact witness was the empty file at
+`/tmp/bitcoin-flatfile-20260721/empty`, Base64 empty, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The enhanced mutation replay with `-runs=1 -handle_abrt=0` exited 134 at
+`src/test/fuzz/flatfile.cpp:21`, on
+`pos.IsNull() == (pos.nFile == -1)`, after one execution and with no artifact;
+mutation log SHA-256:
+`cca8528f41c9c28366c99e989bfe541b5a1fab36c727099b5f2f796b33a21c24`.
+
+The old-harness control retained the production mutation but restored only
+the parent fuzzer. Its source SHA-256 was
+`4714c2d89843f55fa5271951f80e64e8ea1475d9bedeeee5aa713118ff843db5`, its
+sanitizer binary SHA-256 was
+`12d4215dbbcffaa28062a048b56c65d48d753ad2cdda470aeb5551179766d671`, and
+the identical input exited 0 with no artifact; control log SHA-256:
+`54b2301531b3d0b495e9bfec613bd379d7bfda5b20dc8b126bcc106219ad0594`.
+After restoring both sources, the identical empty input exited 0 with no
+artifact in final sanitizer binary
+`4dd2a5a5d368fcb5a15db93e339bcdbdb8267904de077a34e480427df8fa47f4`;
+restored log SHA-256:
+`7223447cd4f011b6647fed763d5c83eb4ee100d5d78a628f9fa15637e62dbef9`.
+The new oracle therefore detects the modeled predicate regression that the
+old harness accepts, while clean master does not reproduce it. No production
+bug or deterministic regression test is claimed.
+
+### Verification gap
+
+Sanitizer and normal targets were built with the configured fuzz-only builds
+using `cmake --build ... --target fuzz -j2`; the normal verifier ran one input
+per corpus file because its non-sanitizer driver does not accept libFuzzer
+corpus options. `git diff --check` passed. `clang-format --dry-run --Werror
+src/test/fuzz/flatfile.cpp` reports only the pre-existing include-order
+violation at line 5 (`#include <flatfile.h>`); unrelated formatting was not
+changed. The fuzz-only builds do not provide `test_bitcoin`, so the dedicated
+FlatFilePos unit suite was unavailable. All temporary mutations and controls
+were restored, and no fuzz, sanitizer, mutation, or build process remains
+running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
