@@ -4438,6 +4438,174 @@ bug still requires clean-master or minimal-mutation reproduction and the
 strongest deterministic proof available. `git diff --check` passed, and no
 fuzz, sanitizer, mutation, or test process remains running.
 
+## Prefilled transaction deserialization oracle audit (2026-07-21)
+
+Source commit: `24ffd8be60` (`fuzz: strengthen prefilled transaction
+deserialization oracle`), parent `d2c982f090`, with source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+audit base was `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+`remotes/l0rinc/master` were identical. The target-scoped l0rinc history
+after that base was empty across `blockencodings`, compact-block networking,
+the target, and its focused tests, so no fork commit was cherry-picked and no
+fork behavior was available to mask this result.
+
+### Target contract and Core reachability
+
+`prefilled_transaction_deserialize` previously deserialized one
+`PrefilledTransaction` and discarded it after a weak non-empty-serialization
+check. The target now retains the reader, requires the canonical serialization
+to equal the consumed input prefix, allows unrelated trailing bytes, requires
+the decoded `CTransactionRef` pointer to be non-null, and round-trips both the
+index and transaction through canonical serialization. It intentionally does
+not require `!CTransaction::IsNull()`, a valid transaction, an ordered
+prefilled sequence, a block-position bound, or consensus validity. Those are
+later compact-block validity decisions, not standalone wire-parser facts.
+
+Core accepts inbound `CMPCTBLOCK` only after the normal capability gates and
+deserializes `CBlockHeaderAndShortTxIDs` at
+`src/net_processing.cpp:4611-4632`. Its prefilled transactions reach
+`PartiallyDownloadedBlock::InitData` at
+`src/net_processing.cpp:4752-4757` and the optimistic path at
+`src/net_processing.cpp:4803-4812`. `InitData` dereferences each transaction
+at `src/blockencodings.cpp:74` before checking `CTransaction::IsNull()` and
+the index-placement limits. Invalid compact blocks are rejected and can
+affect peer misbehavior accounting or trigger fallback downloads; successful
+reconstruction still passes through normal block validation before processing.
+
+The master-relative severity is therefore **Informational/Low compact-block
+parser hardening**, not Critical. A malformed peer compact block can cause
+rejection, availability/CPU/bandwidth cost, or a fallback `GETDATA`, but this
+pointer contract does not permit invalid block acceptance, fund loss,
+consensus failure, memory corruption, or cryptographic compromise. No
+nonce-clearing issue is involved; a nonce without cryptographic meaning does
+not require clearing.
+
+### Corpus and pre-change baseline
+
+The frozen corpus was copied byte-for-byte from
+`/mnt/my_storage/qa-assets/fuzz_corpora/prefilled_transaction_deserialize` to
+`/tmp/bitcoin-prefilled-20260721-clean/frozen/prefilled_transaction_deserialize`:
+179 files, 17,008,882 bytes, minimum/maximum 1/938,744 bytes. The sorted
+filename manifest SHA-256 is
+`ad0871fec2d2578779f229c9d20b3b4959ef677facf48a27027f01d93c722cfb`; the
+filename/size manifest SHA-256 is
+`f0d8aec186227141b9ab6d9ae6830612b6b470b6360199748afd9b608019907a`.
+
+Before this oracle, the normal binary SHA-256 was
+`85f4eb89ebb4a5cdc302c030e181fdaf11cf3bfd484c250bbc426809f89305a`. Its
+180-unit replay reached coverage/features 328/1309, peaked at 120 MB, and
+has log SHA-256
+`3b417aa6776341c165a1c0c82d48f4c91dd3f14b78df89c06c42f3cae55027d8`.
+The ASan/UBSan binary SHA-256 was
+`5b781c9a0d25528b0673ef0b911b93f5d7b73acdc6f4acb781a87b8ef7f9f351`; its
+180-unit replay reached 483/2088, peaked at 429 MB, and has log SHA-256
+`fbd7dc8c5e18f77f97964d6d7d4d841293614ec6e957130502a65f8a069ec018`.
+
+### Mutation and matched control
+
+The temporary production mutation appended
+`if (ser_action.ForRead()) const_cast<PrefilledTransaction&>(obj).tx.reset()`
+after the `PrefilledTransaction` `READWRITE` in `src/blockencodings.h`. It
+models successful wire consumption followed by loss of the transaction
+reference that Core immediately dereferences. The enhanced corpus run reached
+the new `deserialize.cpp:149` assertion. Its mutation log SHA-256 is
+`d1d8af7aebe583ca5aeb1a803a787b10f3e4018cd8a189ecc3c7a81fd57136ff`; the
+abort/symbolizer path was stopped after preserving the assertion output.
+
+The exact witness is
+`02555ce760140d8e8a39922b9e241a4bed445aef`, 142,706 bytes, SHA-256
+`f7e0386147d0ab4e0bf69d005f73306ca85d76dc83857abd4d949d1ab02e6965`.
+The direct mutated normal log SHA-256 is
+`a82aebd07192007031e8fd90f8e93ac9452f3e04a41c12c66c694cb814bcda52`; the
+direct mutated ASan/UBSan log SHA-256 is
+`f970b98c39df8a9a84e67b19029c690fc6ca14e95ec1856b625dbc82ff22975b`.
+Both fail at the new pointer assertion. This direct witness is the strongest
+reproducible proof, but it proves oracle sensitivity rather than a clean-master
+production vulnerability.
+
+A temporary `prefilled_transaction_deserialize_control` target performed only
+the old deserialize-and-discard operation under the same mutation. The exact
+witness exited 0 in normal and ASan/UBSan modes; control log SHA-256 values are
+`3912772c2b18c9e365191af8f6840a95d5cd7e80baadd2ca725ecd9e72a373ec` and
+`72fce750e282e2af040fa1a63a773c6dd7ed190bb9fc4dda6e03ce67af53f4ac`.
+The mutation and control target were removed before the source commit. No
+production behavior changed, and no deterministic production regression test
+was needed because clean master did not fail; the existing compact-block
+caller-level suite is the strongest applicable proof.
+
+### Restored replay and integration evidence
+
+The final normal fuzz binary SHA-256 is
+`01fe97fdbe3fed0ed8e5967d5907aadb7e882768986179547e4152e38c83b305`. The
+restored 179-file replay executed 180 units, reached coverage/features
+391/1540, peaked at 123 MB, and has log SHA-256
+`03b21863888ee9bc2990954b2d7650187f72b9002a363790aeb965df097a0e87`.
+The final ASan/UBSan binary SHA-256 is
+`978ab814ab5c2fbb0024db912dedf123191780b4b607235ed0715fd54d349133`.
+Its restored replay executed 180 units, reached 560/2344, peaked at 449 MB,
+and has log SHA-256
+`12971efef96d67fb4747bf0c2f573f5be87bfab940a39d310e7d0461b14e17bc`.
+
+Four disjoint ASan/UBSan workers covered 45/45/45/44 files and executed
+46/46/46/45 units. Worker log SHA-256 values are
+`b9a9d18413e81744433e79bfb489515b07394a1bec6a327d25c337e6394fe101`,
+`0704f740563cbe71b8b5b02854235f64b6ec8a174a57e131a059f0648594ee22`,
+`68779c267a4ac7aa8750ece326d8c3369c0686d085c37adf46d30579727c91ee`, and
+`a62109cc5d2416b342755849f453ebb27e3813f22a84b1a10d70c77cc848f60`.
+Their filename union matched the frozen manifest SHA-256
+`ad0871fec2d2578779f229c9d20b3b4959ef677facf48a27027f01d93c722cfb`.
+
+The related `block_header_and_short_txids_deserialize` regression corpus had
+220 files and 20,132,986 bytes, filename manifest SHA-256
+`3d661f940587a5b9c7be61fd594d2132bc2dbdfbf88e9c9ec5c6f4bda8f22e96`, and
+filename/size manifest SHA-256
+`b39ff61bb7ad8603b035b315048b1d96f5717e404021bf169f0aa6a18a3814ce`.
+Normal replay executed 221 units at coverage/features 381/2077 and 119 MB,
+log SHA-256
+`cb9b23ebada779cff1b7b2551f3a048bfec9acf3ed372fe6398b30622fa8f1dc`.
+ASan/UBSan executed 221 units at 582/3300 and 438 MB, log SHA-256
+`67352c3ce7feafaa400126ba2141551cc9aeac8ed00d330df11930219ddf0886`.
+
+The existing `cmpctblock` corpus had 1,435 files and 3,705,961 bytes,
+filename manifest SHA-256
+`0b79ef0e1bd7824dd6a8d4edae2a6225e7422eca0b4ff32edeb2df6eb42e7e00`, and
+filename/size manifest SHA-256
+`f7b3581ad44bd048cf2c0670b0059b53ec36634049acd1680668b20da35beb0b`.
+Normal replay executed 1,436 units at coverage/features 9695/30532 and
+103 MB, log SHA-256
+`02f413d19b525316495bd2a0303338a80ff2a387c3c310bddbc8e358bb00bbb4`.
+ASan/UBSan executed 1,437 units at 20119/67429 and 514 MB, log SHA-256
+`1fd3aff19171e684ed9a813b109544e208095448dc56b0c9a9afc3e93c79e92f`.
+The focused `blockencodings_tests,net_processing_tests` command passed all 9
+cases with exit 0; log SHA-256
+`0b7eafd710a4ab38119164698cfde96f0f0592a90cd614f5c7f96fd911d56424`.
+No production mutation, control target, artifact, or sanitizer marker remained
+after restoration.
+
+### Existing findings and follow-up policy
+
+Existing findings remain rated against clean master and actual Bitcoin Core
+callers: generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening.
+
+Earlier BIP324, EllSwift, key, scriptpubkeyman, wallet, PSBT, tx_pool,
+block-index, snapshot metadata, scalar/field/group, DER, merkle, and related
+audits found no additional clean-master production bug. Latent ecmult scratch
+wrapping, 10x26 magnitude normalization, and SHA/HMAC/RFC6979 retention
+concerns remain reachability-limited.
+
+Every future production-bug claim requires clean-master reproduction or a
+minimal production-code mutation modeling the exact broken condition, plus
+the strongest deterministic proof available. If a later l0rinc cherry-pick,
+caller-side fix, or minor fix changes a follow-up result, amend that same
+commit and this note with the exact target, corpus or mutation,
+assertion/failure, Core caller, severity, verifiers, and whether it masks,
+preserves, or changes clean-master behavior. `git diff --check` passed, and no
+fuzz, sanitizer, mutation, or test process remains running.
+
 ## GETBLOCKTXN request deserialization oracle audit (2026-07-21)
 
 Source commit: `d2c982f090` (`fuzz: strengthen GETBLOCKTXN request oracle`),
