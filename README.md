@@ -3931,6 +3931,155 @@ The fuzz-only builds do not provide `test_bitcoin`, so the dedicated unit suite
 was unavailable. The temporary production mutation and old-harness control were
 restored, and no fuzz, sanitizer, mutation, or build process remains running.
 
+## `cuckoocache` lookup and lifecycle oracle audit (2026-07-21)
+
+Source commit: `84de6de0a9` (`fuzz: assert CuckooCache lookup and setup
+contracts`). The production cache now asserts its setup and generation metadata
+contracts at setup, insert, and lookup boundaries. The fuzzer uses stable
+per-cache hashing, a nonzero `uint32_t` element domain, setup return-value
+checks, an ever-inserted model, and a fixed `UINT32_MAX` no-false-positive
+probe.
+
+### Core boundary and severity
+
+Bitcoin Core uses this cache for `SignatureCache` ECDSA/Schnorr result reuse
+and for `ValidationCache::m_script_execution_cache`. `CheckInputScripts`
+queries the latter before executing transaction input scripts and returns true
+on a hit. A real production false positive reachable there could bypass script
+execution and accept an invalid transaction or block; that modeled impact is
+High/Critical according to the exact reachability and effect. It is not a
+finding in this commit: clean master reproduced no production failure, memory
+error, or caller-reachable state violation. The master-relative rating of this
+commit is **Informational/Low** oracle hardening, with no production fix or
+deterministic regression test claimed. An invalid fuzzer input alone is not
+evidence of a consensus bug, and a nonce without cryptographic meaning is not
+Critical merely because it is not cleared.
+
+The audit base was `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both
+`origin/master` and `remotes/l0rinc/master` resolved to it, and the source
+branch was rebased onto latest master before this sequence. The l0rinc
+pull-request history was reviewed for a target-specific prerequisite or fix;
+no additional relevant commit was cherry-picked for CuckooCache. A later
+cherry-pick or fix that changes cache lookup, setup, hash reachability, or a
+proof input must amend its commit message with whether it preserves, changes,
+or masks this clean-master evidence and repeat the replay.
+
+The reiterated master-relative ledger is: **Medium**, feature-conditional
+private-broadcast failed-send retention; **Medium**, empty-HEADERS
+initial-sync availability/IBD risk; **Low** under current Core callers for
+peer transaction-activity refresh, process-message block-storage failure, and
+oversized transport types; **Medium but latent/reachability-limited** for
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention; and **Low/nice-to-have** for banman invalid-subnet
+and unban integrity. No additional clean-master bug was found in the audited
+addrman, coins-cache, coins-view, txgraph, txdownloadman, txrequest, connman,
+eviction, handshake, compact-block, headers-sync, UTXO snapshot, mempool
+persistence, package evaluation, RPC, descriptor cache, threadpool,
+cluster-linearization, policy estimator, pool resource, versionbits, or
+signature-cache paths. Severity is based on actual Bitcoin Core callers and
+input origins.
+
+### Oracle contracts and corpus
+
+The production assertions verify one-shot setup, table and epoch metadata
+sizes, valid `epoch_size`, nonzero `depth_limit`, and a bounded heuristic
+counter. The harness records every value passed to `insert` and requires every
+successful `contains` result to be in that model, including a `UINT32_MAX`
+sentinel immediately after setup. It also checks documented `setup()` and
+`setup_bytes()` return values. The old fuzzer hash consumed new provider bytes
+on every hash call; the replacement consumes one seed and derives stable
+hashes from the element and selector, restoring the cache hash precondition.
+
+The frozen corpus is `/tmp/bitcoin-cuckoocache-20260721/frozen`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/cuckoocache`: 158 files and 4,517,046
+bytes. Sorted relative filename SHA-256:
+`4dc4b8753cdd874fd2222df3ba92a0f9e556521001dc89acf014f751a48759c3`.
+Sorted filename-plus-size SHA-256:
+`cf957e572abfd46e4fdfad6435b89107f96f6ed1f9cfe2c1622dc35d046d518c`.
+Sorted relative-content manifest SHA-256:
+`44b409bdaa546bcc5b71f318e6a38054fa336e0652f3d9b387757a9db1966a2c`.
+
+The parent sanitizer binary was
+`ff99646c923730f57e8c4503a21f73ce981cc192c4d102294e619cd7147614ba`.
+The baseline replay exited 0 after 159 runs, coverage 326, feature count
+1440, peak RSS 188 MiB, and no artifacts; log SHA-256:
+`ec7316dffadb3bbdbaf684b6980f0081f817b392b445845500eb59766b669130`.
+The parent normal binary was
+`89ff25b6aa1aeef4798af464134e42a765b4a7c4899f188e1f9cecc3442d8f84`; its
+one-file driver passed all 158 inputs, log SHA-256:
+`c66309c81ff985b71637f61bb5c3f2c64f0d017e9adb49e2301fe48430d889d6`.
+
+Final production source SHA-256:
+`1ecdb687c2423ce94a97cca7ba12c42e0213587f1af1525ae1973a1c040cb39c`.
+Final fuzzer source SHA-256:
+`b8e484aa60bf78d603ded27136025ec353f367475acc0702e58057e9c189f052`.
+The final sanitizer binary was
+`8c34a81e7de98da046013b561c8f595ad8abfff2ce0c57e0af2bd6082c399f99`.
+The full replay exited 0 after 159 runs, coverage 287, feature count 839,
+peak RSS 398 MiB, and no artifacts; log SHA-256:
+`9776ed994eb103beb734db346e3a77ac0f053fa1142d56e7265b81e9ad3418e7`.
+A restored clean full replay had the same coverage/features, peak RSS 399 MiB,
+and log SHA-256
+`b8b14d5a78926f6021724592f4d3eb2b187a3aac1bd8d1ab702b73daba2a22cb`.
+The final normal binary was
+`0db6ad3950ba11a80ba18240da5e128ae6a67c7807d0f458b3cd2f9529166a47`; its
+one-file driver passed all 158 inputs with log SHA-256
+`c66309c81ff985b71637f61bb5c3f2c64f0d017e9adb49e2301fe48430d889d6`.
+
+Four isolated sanitizer workers ran `-merge=0 -runs=1 -timeout=120
+-rss_limit_mb=4096` against private copies. All exited 0 after 159 runs,
+coverage 287, feature count 839, peak RSS 398-399 MiB, and no artifacts. The
+worker log SHA-256 values, in order `fuzz-0` through `fuzz-3`, are:
+
+    adf32d304d14e203d4162cf253400889ee95fae8032f8d6288df3091fd93806b
+    e102d51b63be82d00f9ab17d094d272a9203d264414c11fcd6b8da1a4c6ac3c5
+    bac1d841f2413d7ddbc91aa60ada2090ffbfaf9994c4fbf2b6aabcf8194a2d11
+    c7d8ddb0ef69613c839a73ee469dc04a12671f2c5a5188041e3b8da20e80ec7c
+
+### Differential proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation made `contains()` return true immediately
+after its invariant check, modeling a false-positive lookup. Mutated
+production source SHA-256:
+`e95aa63a5dfae059ec905205255ff2487305a0ada728efafc05d406cb595b753`.
+Mutated enhanced sanitizer binary SHA-256:
+`4a42d236e0b9fae6e5cb4a21d48cadbd1b3fb93adb52f7fbb19083670cd41009`.
+
+The exact proof input was the empty file at
+`/tmp/bitcoin-cuckoocache-20260721/empty`, Base64 empty, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The enhanced mutation replay with `-handle_abrt=0` exited 134 at
+`src/test/fuzz/cuckoocache.cpp:51` on the no-false-positive assertion, after
+one execution and with no artifact; mutation log SHA-256:
+`f26605f9309d16e9aad5dd181a93c7f254374286a3e061a98ee5731e849dc50a`.
+
+The old-harness control retained the production mutation but restored only the
+original fuzzer. Its source SHA-256 was
+`f1b83cd1a114f43ceb8cf1353c09dae89284ea182036034be67d609cfe001a95`, binary
+SHA-256 was
+`731125fce3282f67d074b0724a80afff67480eda20003978de6e6297c97b5f0e`, and the
+identical input exited 0 with no artifact; control log SHA-256:
+`ac116e100f5ecd911ee96c932561550ac83e3818e17df0c5402fa378599382d4`.
+After restoring both source files, the identical input exited 0 with no
+artifact in sanitizer binary `8c34a81e7de98da046013b561c8f595ad8abfff2ce0c57e0af2bd6082c399f99`;
+restored log SHA-256:
+`0d1df4550b94cc54747fac2be6c58c48a445a73228e0d989325eeaf62a0a9434`.
+The old harness therefore accepts the modeled false positive, while the new
+oracle detects it and clean master does not reproduce it. No production bug or
+deterministic regression test is claimed.
+
+### Verification gap
+
+Sanitizer and normal targets were built with the configured fuzz-only builds
+using `cmake --build ... --target fuzz -j2`; the fuzz-only builds do not
+provide `test_bitcoin`, so the dedicated CuckooCache unit suite was unavailable.
+`git diff --check` passed. `clang-format --dry-run --Werror
+src/test/fuzz/cuckoocache.cpp` reports only the pre-existing include-order
+violation at line 5 (`#include <cuckoocache.h>`); unrelated formatting was not
+changed. All temporary mutations and controls were restored, and no fuzz,
+sanitizer, mutation, or build process remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
