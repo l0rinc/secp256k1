@@ -4782,6 +4782,182 @@ pre-existing file-wide violations in these legacy files; no unrelated
 formatting was changed. All temporary mutations, probes, workers, and build
 processes were restored or stopped, and no fuzz job remains running.
 
+## secp256k1 DER key import/export oracle audit (2026-07-21)
+
+Source commit `e39ccb415f80d805c1a8f01494f06de04f501e2d` (`fuzz: enforce
+secp256k1 DER key import contracts`) strengthens
+`FUZZ=secp256k1_ec_seckey_import_export_der` with explicit failure,
+round-trip, output-length, and empty-input contracts. It also makes the
+production DER importer establish those contracts at its boundary.
+
+### Finding and Bitcoin Core severity
+
+Untouched master computes `seckey + seckeylen` before inspecting the length.
+An empty serialized `CPrivKey` can reach this API from wallet loading, where
+`CPrivKey::data()` may be null and the length is zero. The clean-master
+enhanced fuzzer probe and a direct pointer-overflow UBSan probe did not report
+a runtime failure for this case. This audit therefore claims no confirmed
+clean-master production crash or vulnerability. The change makes the
+zero-length precondition explicit and keeps corrupt wallet data on a
+deterministic rejection path.
+
+Bitcoin Core reaches the parser from `src/wallet/walletdb.cpp:304-340`,
+through `CKey::Load` at `src/key.cpp:278-284`. The input is local wallet
+database state, not a peer message, block, or header. Rate this result
+**Low/nice-to-have defensive wallet-corruption hardening**, not High or
+Critical. An invalid block cannot trigger this path. The deterministic
+empty-key test proves the intended local failure behavior, but does not turn
+the source-level concern into a master-relative runtime bug. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared.
+
+### Audit provenance and cherry-pick context
+
+- Source parent: `111d79d1239b61c525c7932983ee5390ae87e66b`
+  (`fuzz: enforce VecDeque representation and move contracts`).
+- Audit base: `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+  `remotes/l0rinc/master` matched this commit before the audit sequence.
+- The l0rinc query over `src/key.cpp`, `src/key.h`, `src/pubkey.cpp`,
+  `src/pubkey.h`, `src/test/fuzz/secp256k1_ec_seckey_import_export_der.cpp`,
+  and `src/test/fuzz/secp256k1_ecdsa_signature_parse_der_lax.cpp` returned no
+  output. No relevant fork commit was cherry-picked.
+- No later fix or cherry-pick was allowed to mask the clean-master control.
+  A follow-up touching this parser, wallet-load boundary, or proof input must
+  amend the relevant source and evidence notes with whether it preserves,
+  changes, or masks this result, then repeat the clean-master control,
+  deterministic test, and corpus replays.
+
+### Reiterated findings
+
+The master-relative ledger remains:
+
+- **Medium**, feature-conditional private-broadcast failed-send retention.
+- **Medium**, empty-HEADERS initial-sync availability/IBD risk.
+- **Low under current Core callers**, peer transaction-activity refresh,
+  ProcessMessage block-storage failure, and oversized transport types.
+- **Medium but latent/reachability-limited**, ecmult scratch wrapping, forced
+  10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention.
+- **Low/nice-to-have**, banman invalid-subnet and unban integrity.
+- No additional clean-master production bug was found in the already audited
+  addrman, coins-cache, coins-view, txgraph, txdownloadman, txrequest,
+  connman, eviction, handshake, compact-block, headers-sync, UTXO snapshot,
+  mempool persistence, package evaluation, RPC, descriptor cache, threadpool,
+  cluster-linearization, policy estimator, pool resource, versionbits,
+  signature-cache, CuckooCache, FlatFilePos, prevector, bitdeque, or VecDeque
+  paths. Severity is tied to actual Bitcoin Core callers and input origins,
+  not an assertion failure alone.
+
+### Contracts and tests
+
+`src/key.cpp` now rejects `seckeylen == 0` before forming the end pointer.
+Every parser failure uses one helper that clears all 32 output bytes and
+checks that postcondition with `Assume`, preserving the existing invalid-key
+clearing behavior while making it uniform and auditable.
+
+The fuzzer initializes the import output with `0xa5` and requires failed
+imports to clear every byte. Successful exports must report the exact
+compressed or uncompressed DER size, and the imported key must equal the
+source key. Failed exports must report zero output length. An explicit
+`(nullptr, 0)` probe covers the empty `CPrivKey::data()` boundary.
+
+`src/test/key_tests.cpp` adds `key_load_empty_private_key`, verifying that an
+empty `CPrivKey` is rejected and leaves the `CKey` invalid.
+
+### Corpus and controls
+
+The corpus was frozen from
+`/mnt/my_storage/qa-assets/fuzz_corpora/secp256k1_ec_seckey_import_export_der`
+to `/tmp/bitcoin-secpder-20260721/import-frozen`: 74 files and 21,810 bytes.
+Manifest SHA-256 values are:
+
+- Sorted filenames:
+  `e5367dc0bcd88ff500d42a4eb4293e1d25c4035f7b924c2cb70b959db65ee8c2`
+- Filename plus size:
+  `62eb1464fd419d02d1e501d1064fefd9fadfcd6d6bf24845bc255c1f881be839`
+- Relative contents:
+  `0a72fb43af6e4aa80df1e96c74aacad5190331fb632d1be8310c5e79906e5168`
+
+Parent source SHA-256 values were `src/key.cpp`
+`e6ebcbe39d63f880268256d53d75eecc420379e5f3fa0209b0afba5125269af1`,
+the import/export fuzzer
+`2fab62aad055ccfc60587a6059690c51ae161e348308a58db9c46a16725d8ce1`,
+and the DER-lax fuzzer
+`e8a6469cb00e7f0326d6eae834a096ec64141b35c92ec6e5f982e9cc5d888219`.
+
+The old harness replay used sanitizer binary
+`8e5f162d5ae376514ab976cc077e6b3cb1bef6a099171572c36c2ad53d699e18` and
+processed 75 executions, coverage 2070, features 2295, peak RSS 100 MiB,
+and no artifacts. Log SHA-256:
+`59eb9842165009f5884ec53a239ffbebc2caf8c849011b2b8a81e5fa1ff37d57`.
+
+The exact clean-master empty witness is one byte `00`, SHA-256
+`6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d`.
+With clean-master production and the enhanced empty-input harness it exited
+0 with no sanitizer report. Log SHA-256:
+`351db6ce881317be38a8330b3bdf6180eb46dce5df8d78a279ac58b66f242364`.
+That negative control is why this is documented as defensive hardening, not a
+confirmed production vulnerability.
+
+An intermediate `fail` helper draft omitted its second `memset`. A generated
+312-byte input exposed that harness/refactor mistake, not production code.
+Artifact SHA-256:
+`478c0db68848dbae0e5316e6404ac087bac19fdfcdb05481a8d10e37e08518e4`;
+failing log SHA-256:
+`b14b0b1c4f02a6e0764f5c96712ab95461f3bff487da15d54f89f84612413976`.
+The helper was corrected and the exact artifact passed on the final sanitizer
+binary; replay log SHA-256:
+`40ae8618eaa301c49980cc007717646c54f4d72c56e4998a86a87fc97d757d8`.
+This correction prevents the intermediate false positive from being
+reiterated as a production finding.
+
+### Final verification
+
+Final source SHA-256 values are `src/key.cpp`
+`178be2285765a344f4f0d683110a120ca910dc1f00f59bf3caa8b23a57d8252e`,
+the import/export fuzzer
+`af162d790db21d75c071fd3554342d3705dec67b8dfd9d8ce59e9ee7a307c01f`,
+and `src/test/key_tests.cpp`
+`e546959fa7af7aa35efe76413ce1c02f8e9c7037c21fc653b005895f169f0171`.
+
+The final sanitizer binary
+`80975e16f194232d16ae75376e4a58d580b691d688d69fbc7ec7a84a565d1ecd`
+passed the full frozen replay: 75 executions, coverage 2106, features 2333,
+peak RSS 100 MiB, and no artifacts. Log SHA-256:
+`78d7db09ddd5b041784c6ee563c9442520582766cbc71433b4ad19dfc749c285`.
+The exact empty witness passed with no artifact; log SHA-256:
+`d5cda413a02667f22f7e96852bb716b8b1875a0396d7c5d26a8f3609f16656e8`.
+
+Four isolated sanitizer workers each processed 75 executions with no
+artifacts, coverage 2106, and features 2333. Combined log SHA-256:
+`17fa20d1717b1ce5e4745460546fe4d2c57669d222d528b93fd77c0b25ab3cdd`.
+Worker log SHA-256 values, `fuzz-0` through `fuzz-3`, are:
+
+    dac444a326581c941bd7fb1e5f9426e850f810c10371c618ab0ed443cbd7934c
+    08b8446d70549bb2fc05e5110edc04fcb8b3f9d289f0e2746bfb19b0ea24671
+    0c08c70202f3fc5bc40256df53ffc382b3feb672b0ec7d222847659032b23604
+    715e1b08a6de9f45b24030f82c58f78cb96dec2d8eb97d0244a8c83abe4f7018
+
+The normal fuzz binary
+`bc28657d80d805c731ba2d91b6bd4a5fe2d10c816e419a47277a88e85a07b512`
+passed all 74 corpus inputs with the one-file driver. Replay log SHA-256:
+`957bb94467fe34ea4cd8ba5df754dcf50d9c95294cd55a89bfafd324c3579429`.
+The normal build log SHA-256 is
+`825f5df3c71af6fd9fb1e38a2012e8cbb3db9135eaeedeeff4060b631b6c2a21`.
+
+The focused `key_tests/key_load_empty_private_key` test passed with no
+errors. The final `test_bitcoin` binary SHA-256 is
+`249c46413356dac1ae27fb87b3ed0fdf4a3f8ea301439d7c2f0efc64f1fa13a5`;
+unit log SHA-256:
+`1a69a2c1805afda53db7943f9e659cbdaad2ccedff559e37187c24d7c6b2961e`;
+test build log SHA-256:
+`29847f7e5e97f79f2ed73c89bb4d2844786ced2cb7d8acf777fff46596decfdb`.
+
+`git diff --check` passed. `clang-format --dry-run --Werror` reports the
+pre-existing file-wide violations in these legacy files; no unrelated
+formatting was changed. Formatter log SHA-256:
+`9084d1a70eb4589a423f9b9e2772869c757615e5361918196e4bdf46b7b81090`.
+All controls, probes, workers, artifacts, and build processes were stopped or
+restored; no fuzz job remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
