@@ -4416,6 +4416,208 @@ input per process because its driver does not accept libFuzzer corpus options.
 All temporary mutations and controls were restored, and no fuzz, sanitizer,
 mutation, or build process remains running.
 
+## `bitdeque` moved-from and transition oracle audit (2026-07-21)
+
+Source commit `26cba88343d701e31c2447d6c4d0b6d5f9dddd05` (`util: preserve
+bitdeque moved-from invariants`) fixes a clean-master moved-from state bug,
+adds production representation assertions, adds a deterministic regression,
+and turns the existing target into a transition oracle.
+
+### Finding, Core boundary, and severity
+
+The defaulted move constructor and move assignment copied
+`m_pad_begin`/`m_pad_end` while the backing `std::deque<word_type>` moved out.
+A moved-from object could report an underflowed `size()` and crash when
+reused. A 129-bit deque is enough to make the stale padding observable.
+
+Bitcoin Core stores the default `bitdeque<>` in
+`src/headerssync.h:235` as `HeadersSyncState::m_header_commitments`.
+`src/headerssync.cpp:206` pushes one-bit commitments during PRESYNC,
+`:266-274` reads and pops them during REDOWNLOAD, and `:54` clears and shrinks
+the deque at finalization. `HeadersSyncState` is owned through a `unique_ptr`
+in `src/net_processing.cpp:401,2839`; the current Core caller does not move
+and reuse this member. Invalid peer headers can exercise push/size/front/pop,
+but invalid block or header bytes do not trigger the moved-from path.
+
+Clean master reproduces the generic library bug, so this is a confirmed
+production correctness issue. Based on current Bitcoin Core reachability, the
+master-relative severity is **Low/nice-to-have API hardening**, not High or
+Critical network, consensus, or invalid-block impact. A future caller that
+moves and reuses the member would require a new caller-specific crash/DoS
+rating. An invalid fuzzer state or invalid block alone is not Critical, and a
+nonce without cryptographic meaning is not Critical merely because it is not
+cleared.
+
+The reiterated master-relative ledger remains: **Medium**,
+feature-conditional private-broadcast failed-send retention; **Medium**,
+empty-HEADERS initial-sync availability/IBD risk; **Low** under current Core
+callers for peer transaction-activity refresh, process-message block-storage
+failure, and oversized transport types; **Medium but latent/reachability-
+limited** for ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention; and **Low/nice-to-have** for
+banman invalid-subnet and unban integrity. No additional clean-master bug was
+found in the already audited addrman, coins-cache, coins-view, txgraph,
+txdownloadman, txrequest, connman, eviction, handshake, compact-block,
+headers-sync, UTXO snapshot, mempool persistence, package evaluation, RPC,
+descriptor cache, threadpool, cluster-linearization, policy estimator, pool
+resource, versionbits, signature-cache, CuckooCache, FlatFilePos, or
+prevector paths. Severity is based on actual Bitcoin Core callers and input
+origins, not on an assertion failure alone.
+
+The audit base was `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both
+`origin/master` and `remotes/l0rinc/master` resolved to it before this
+sequence, and the source branch was rebased onto latest master. The l0rinc
+history query for `src/util/bitdeque.h`, `src/test/fuzz/bitdeque.cpp`,
+`src/headerssync.cpp`, and `src/headerssync.h` returned no commits, so no
+relevant fork commit was cherry-picked. No later fix or cherry-pick masked the
+clean-master result. Any later change to bitdeque move semantics, padding,
+iterators, HeadersSyncState commitment handling, or the proof input must amend
+the relevant source and evidence commit messages with whether it preserves,
+changes, or masks this result, then repeat the clean-master witness, parent
+control, deterministic test, and corpus replay.
+
+### Contracts and regression test
+
+`src/util/bitdeque.h:134-145` adds `assert_valid()`: empty backing storage
+requires zero padding, each padding counter stays within one word, and a
+single backing word cannot have padding sum greater than `BITS_PER_WORD`.
+Multiple backing words may legitimately have both ends padded while retaining
+live bits, so the sum bound is intentionally limited to the one-word case.
+The assertion is checked around front/back extension and erasure, insertion,
+assignment, iterators, size/empty/max_size, shrink, clear, swap, and moves.
+
+`src/util/bitdeque.h:263-284` exchanges both source padding counters to zero
+in the move constructor and move assignment, validates both objects, and
+preserves self-move assignment. `src/test/fuzz/bitdeque.cpp:38-56` checks
+size, empty, max_size, iterator distances, front/back, and sampled logical
+positions after initialization and every operation while retaining a full
+final `std::deque<bool>` comparison. Lines `58-85` exercise move construction,
+move assignment, source reuse, and self-move at a 129-bit boundary.
+`src/test/util_tests.cpp:124-149` adds `bitdeque_move_state` as a deterministic
+regression.
+
+### Corpus and clean baseline
+
+The corpus was frozen from
+`/mnt/my_storage/qa-assets/fuzz_corpora/bitdeque` to
+`/tmp/bitcoin-bitdeque-20260721/frozen`: 931 files and 2,009,361 bytes.
+Manifest SHA-256 values are:
+
+- Sorted filenames:
+  `2d1e9c686aedac760d5a0d5d5abad6b55a8165794fc039ddcddcabab18ed6f0d`
+- Filename plus size:
+  `7feedf165b993e18434223b9f200d952c25f84f8476b8c6a3c1fb4c00fc5aca5`
+- Relative contents:
+  `2e903f3661092ee0ab2cf8a25ed3addd724307a74cfc4a4b121e07f26c46991d`
+
+The parent bitdeque header and fuzzer SHA-256 values were
+`99f8a473ee4437c88d74dec2bcc3eab282266201233f793f012d1975f21d0bb8` and
+`091e8295c4bbc123ce41ce57be97ab4eac1b78c35001b5d9f5d835f61b09b8cd`.
+Parent sanitizer binary
+`cd43bf93ad20199331178a1d2cf3d7e00dad7c29717e15b0491ac95d9a49ab8c`
+passed the old harness after 932 executions with coverage 1850, features
+14300, peak RSS 478 MiB, and no artifacts; log SHA-256:
+`b01bf9aeb4c084acf09435faa4bf6ff086c73fc476d4b550841b024ff27c9141`.
+The parent normal binary
+`f6289dbea21d2cae5777465bf42e004b897d2c4cc346e7c67c90f122debbbf99`
+passed all 931 one-file replays; log SHA-256:
+`19a7d35e2d3ece54e8bd4e46793d0eca9c80b9ee82a0794cd371362674eaeb68`.
+
+### Differential proof
+
+The exact witness is one byte, hex `01`, SHA-256
+`4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a`.
+It selects the moved-from contract probe without changing the existing
+operation provider.
+
+A direct clean-master probe used source SHA-256
+`8e6075c9cd5e29190f055865c5b34a732e415ef2ccff1e80c3ae82e2f473bd8d` and
+binary SHA-256
+`d8b0ada30f8b73d185aff347d48555a09417a97f7591414276120e2b889ad0c2`.
+Reusing the moved-from source exited 139 with a segmentation fault; log
+SHA-256:
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+The enhanced harness with clean-master production used fuzzer source SHA-256
+`f3a3ac4121426ed4df193bf99fc977e9683fe8c51153fdff0d7f1542335a8e37` and
+sanitizer binary SHA-256
+`bce227a2ea78ceeb55567b55b8c4fd72d148f05f3f44fec0fe977d9de091c19b`.
+The same `01` input exited 134 at
+`src/test/fuzz/bitdeque.cpp:65` on `source.size() == 0`; log SHA-256:
+`2f4e8ba77ea5378eceac7ba67ef978d38467286ca34ae5a2fed4584617b2b628`.
+The unchanged parent fuzzer with clean-master production used sanitizer
+binary SHA-256
+`57c5a43464d5e4755dff718f77d1c443c0b8c32912dda0ee326e5a516f196173`.
+The identical input exited 0 with no artifact; log SHA-256:
+`747fcc41f5d32edfc5375f996f0cecd1be2b616e80fcbb2dfc45c75e139db16f`.
+This proves a real clean-master production bug, rather than a harness-only
+finding or a hypothetical mutation.
+
+### Final replay and limits
+
+Final source SHA-256 values are `src/util/bitdeque.h`
+`e7b5e86644878ad06f8ce218c998f0c46da3233cc9627627b2daf54b2cc7bcbb`,
+`src/test/fuzz/bitdeque.cpp`
+`f3a3ac4121426ed4df193bf99fc977e9683fe8c51153fdff0d7f1542335a8e37`, and
+`src/test/util_tests.cpp`
+`6daa4e7ec2db1ac8f1df7f4eac70f26b1c6fb123f78322b0d1e55c9c02cd030e`.
+
+The final sanitizer binary
+`353176b7419abd8e7ef14af8a798cfa7b1efd3f7d3dec96934a5c78aabced765`
+passed the frozen corpus after 932 executions with coverage 1899, features
+14579, peak RSS 478 MiB, and no artifacts; log SHA-256:
+`be962759c38e254618c0781c557d60a27d857a4543af6df600960209bac85351`.
+The final normal binary
+`39ea68ad9e944281b4cf9db56ba6531017b58ed5200ea0d278a4ffacb2bb382a`
+passed all 931 one-file inputs; log SHA-256:
+`b614acfa8cc02474e006ac4bbb735838a86568d46a3670daac9dea3ffcdff602`.
+The exact witness passed in the final sanitizer binary with no artifact; log
+SHA-256:
+`4273ca032f1f7698e677fd3a12638da298834e7d640ae1dc98d1d58f0c813a7f`.
+
+Four isolated sanitizer workers each passed 932 executions with coverage
+1899, features 14579, peak RSS 478 MiB, and no artifacts. Parent worker log
+SHA-256:
+`4c06d485a3a0b7d2bb1e4eed81bff141e642004f21a9462ce3258e5b4a3d48a3`.
+Worker logs in order `fuzz-0` through `fuzz-3`:
+
+    7fce60b3f248224e70d1580f4dbd0620dbdc10f93ee5b4af71be7cdd15c84170
+    cbee19ecd376aef0fe1fb3c0cfe52e46a7672973ad34936ef36ca064f4a9c751
+    cce625428feb519fe0cec3b4ad9411e9a7ea744c2298e038f16edd23f98beae4
+    123c97b2b46f2c61e3f703d2f6de74ccdea0cf0d55106575380ba21e0c426817
+
+The dedicated unit test passed with no errors. Its final `test_bitcoin`
+binary SHA-256 is
+`c5197d4066f9be402af0fcf3f187d3cf4e61cb27d766ca0274014869a4fa07df` and
+the final unit log SHA-256 is
+`250baa69a4213c4e159bb31da85588c5352c319dbb5666982b66259c7b812b0c`.
+The test build used `BUILD_FOR_FUZZING=OFF`, `BUILD_TESTS=ON`,
+`BUILD_GUI=OFF`, `BUILD_BENCH=OFF`, and `WITH_ZMQ=OFF`.
+
+An earlier draft asserted `m_pad_begin + m_pad_end <= BITS_PER_WORD` for
+every nonempty backing deque. Clean replay showed that this is overbroad for
+multiple backing words. The first failing corpus input was
+`fd26003a81c8a64ec7a652b079037877d0b11841`, 939 bytes, SHA-256
+`02cbc506ab9d80abef453ad606e5f38007049f8ca2c7e73740b68443057d4564`.
+The broad-assertion sanitizer binary was
+`43a9f20396bd93d3116f7436e1249f156d4a10756291f5280adb3755b73d1f24`;
+partial sanitizer and normal logs were
+`9b078d8c5d88f42528f64e63a7bf6754a51799dd86948acc6fc4e3710ab66515` and
+`acd924618603e90f2392e489a3aebb511450d0bd78d3cdb90770ee278bc57773d`.
+This was an oracle correction, not a production finding; the one-word-only
+condition was then replayed across the complete corpus.
+
+Final sanitizer, normal, and test build log SHA-256 values are
+`12ff8e6b4d73121a65d63d8705021f37cb1a43f85d51e6a2a788192103eb954a`,
+`f49fadae7efc059340cfce19fb3a5fac631f8409cc613ebe0cee1bdd44ae1964`, and
+`768be2ad166a6d68a50daa62963ea86c897e5817665b4fab6bb6de04f0c8e6f5`.
+`git diff --check` passed. The configured fuzz-only builds do not provide
+`test_bitcoin`; the separate non-fuzz build supplied the deterministic test.
+`clang-format --dry-run --Werror` still reports pre-existing file-wide
+violations in these legacy files; no unrelated formatting was changed. All
+temporary mutations, parent controls, probes, workers, and builds were
+restored or stopped, and no fuzz process remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
