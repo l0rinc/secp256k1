@@ -3637,6 +3637,149 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `wallet_create_transaction` construction-oracle audit (2026-07-20)
+
+Source commit: `8e62062cd2ad064f8d39f215c030f17392489924` (`fuzz: audit wallet
+transaction construction contracts`), parent
+`af007794de201874b47826b16605871244185908`. The audit base was latest
+`origin/master` `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`;
+`remotes/l0rinc/master` was the same commit. The exact relevant comparison
+was:
+
+    git log origin/master..remotes/l0rinc/master -- \
+      src/wallet/test/fuzz/spend.cpp src/wallet/spend.cpp src/wallet/wallet.cpp \
+      src/wallet/wallet.h src/wallet/test/fuzz/coincontrol.cpp \
+      src/wallet/test/fuzz/coinselection.cpp
+
+It returned no output, so no l0rinc commit was cherry-picked for this target.
+There is no later fix or cherry-pick in this proof that can mask clean-master
+behavior. Any later change affecting wallet transaction construction, TXO
+refresh, selection, signing, fee/change accounting, this corpus, or this
+mutation witness must amend its commit message with whether it preserves,
+changes, or masks this result; merge or amend deliberately if it changes a
+follow-up experiment.
+
+### Core boundary, severity, and carried findings
+
+`FUZZ=wallet_create_transaction` exercises private wallet transaction
+construction reached from Bitcoin Core wallet interfaces and spend RPC paths.
+Invalid block or header bytes do not directly invoke this path. The clean
+master replay found no production bug, wallet corruption, consensus failure,
+memory/concurrency fault, or cryptographic failure. The rating on master is
+therefore **Informational/Low: oracle and harness hardening**, not a confirmed
+vulnerability. The missing `RefreshTXOsFromTx` was a harness setup defect, not
+a production finding. A future result must be rated from a clean-master
+reproduction and actual Core effect: wrong ownership, key/address loss,
+incorrect signing or fee accounting, wallet corruption, crash, or memory
+safety. Invalid-block reachability alone is not High/Critical. A nonce with no
+cryptographic meaning is not Critical merely because it is not cleared.
+
+The existing ledger is reiterated here rather than silently reclassified:
+Medium feature-conditional private-broadcast failed-send retention; Medium
+empty-`HEADERS` initial-sync availability/IBD risk; Low under current callers
+for peer transaction-activity refresh, block-storage failure, and oversized
+transport types; Medium but latent/reachability-limited ecmult scratch
+wrapping, forced 10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979
+retention; and Low/nice-to-have banman invalid-subnet and unban integrity.
+The earlier container, network, storage, mempool, RPC, descriptor-cache, DER,
+EllSwift, BIP324, key, and scriptpubkeyman audits found no additional
+clean-master production bug.
+
+### Oracle changes and harness boundary
+
+The original fuzzer discarded `CreateTransaction` results and directly
+inserted synthetic confirmed transactions into `mapWallet` without refreshing
+`m_txos`; direct inspection showed `AvailableCoins` size zero. The harness now
+uses `RefreshTXOsFromTx`, retains the original arbitrary `sign=true` call and
+fuzzed recipients/coin control, and adds a deterministic wallet-owned
+`MAX_MONEY` funding fixture with a preselected `sign=false` spend. This makes
+the accounting-success path reachable without changing production behavior.
+
+Successful results now require consensus structural validity, nonempty inputs
+and outputs, known wallet-owned nonduplicate inputs, `MoneyRange` values,
+exact input-minus-output fee accounting, recipient script and amount
+preservation, and correct change position/ownership or custom change script.
+Production `CreateTransactionInternal` also asserts that the final input count
+equals selected inputs and that the returned fee equals final transaction
+value accounting. These are narrow contracts, not blanket "accepted means
+valid" assumptions.
+
+### Corpus and replay evidence
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/wallet_create_transaction` to
+`/tmp/bitcoin-wallet-create-transaction-20260720/frozen`: 1,186 files,
+2,641,732 bytes, sizes 1..43,345. Sorted filename, filename+size, and
+relative-content manifest SHA-256 values are respectively
+`690ac5c0f9901547fe9a41f154af20616b0484bfd9df66188d949486d3b75a2f`,
+`9ee0b879a2998fe4f8c3b9eaaa92460c291b6d0e2b2b92cf16eec9ccd148467f`, and
+`76e5cfadabe3737bc5d5c6ed3d7c29d185145cf67853a90c804723443bbe0dc0`.
+
+The original normal binary
+`b6ed226ba6525f5d5a2c193dafb10842ef9719b7da7b2c95a3be880258892817` passed
+all files in 44 seconds; log
+`19c57dcb6dc91e610bb129293d21b15239d128c171db25ae985c411e5403f55e`.
+The original sanitizer binary
+`bb87358214a7647b8fd13262b09322c891827f25cf1ec41633c9b011ab7affba` passed
+1,188 executions with coverage 10,709, features 55,081, and peak RSS 570 MiB;
+log `4ad12c5709f511d4256ebd5a1c437b9b55fa9d8aff56b8ff3e09e2a62536c7cd`.
+
+The final source hashes are `src/wallet/spend.cpp`
+`bc2d38990b78cd7ff35e1fb5fded8c33f4dd19fd9bf4726c1f15540f6aeca700` and
+`src/wallet/test/fuzz/spend.cpp`
+`81f27bf060544cf880909715e8cb5921c2e6137e3a518caee48da2306470cf3b`.
+Normal binary
+`d15e6bac60a387dd6f4923dd6a4c30e65ae6228c406d9e13cc14593a567c15a0` passed
+all files in 57 seconds; log
+`3096e226f3b275df628969929a9c5a09995aeb34a938fd6caf754a891ffc160a`.
+Sanitizer binary
+`cad9a3ec0e6d04ecd04079644b21eaa5581dec367de7a07f62a8b07c50d0dd4f`
+passed 1,189 executions, coverage 17,810, features 101,613, and peak RSS
+638 MiB with no artifacts; log
+`87e8a546c31a981028a2c2453b15537d272a77b754c3ffe1735620b6dd897b03`.
+Four disjoint sanitizer workers processed 297/297/296/296 files and executed
+300/300/299/299 units; peak RSS was 592/612/585/608 MiB and no artifacts
+remained. Worker log hashes, in order, are
+`4de389256de0f4496920cae5e5efca60b704fe8cfa1e09af12471d29535e69a6`,
+`041ba2b833a1456c47bd0f2cac8599bee4661a41c4ec88ee88210715608dc994`,
+`3499945feb0a8c947c1169ae82641cbc4f319c1d10989c01b5ab6de79580eff0`, and
+`3a8e754e22b4b7ee9bfca23c930fe97063d240d058c49ca69d097cc1cabbedd4`.
+One 12-second libFuzzer slow unit
+(`6ecf119950523157289b15ea371959d9f1a69061cdd39f2357a3834d6e07547d`)
+was reported; it was not a failure and no generated unit was retained.
+
+### Differential proof and verification
+
+The exact witness is
+`/tmp/bitcoin-wallet-create-transaction-20260720/mutation-witness/witness`,
+1,082 bytes, SHA-256
+`79f446dc5ba329aaff856d88985e4cb645231b201db904fb1c56574353e9f19a`.
+The only production mutation changed the returned fee to `current_fee + 1`;
+mutated source hash
+`bcc3260ae5d43a237424c48f6989b8e7f1b13bb687936787f01b19b67e584282` and
+mutated sanitizer binary
+`03eb8c3eeb6c532a669fe3ebdf174fb4d9ecfec83d737155b886ea5668a8eede`.
+The enhanced harness aborted at `spend.cpp:74` on
+`result.fee == input_value - output_value`, exit 134; log
+`f0e2b00d333ac11232f69328b80b20950c909bc3055ef8bcb5d6e8065833342c`.
+A matched control retained the mutation, TXO refresh, deterministic fixture,
+and fixture-success assertion but removed only the two new postcondition
+calls. Its harness hash is
+`3af63f0334218c6980b1b12be898cb9512ca111fddb40ac00790819ee8806a9f`, binary
+hash `bff61b6d058d1ceb368ff03dc62ca58ad4865dd7e7843bde564c1d17553cef98`,
+and the same witness exited 0; log
+`ad14d324e0b15a5bd6e1d4bd6153058e68c65630da30266892c6a1dfb2af01a2`.
+Restored master exited 0 on the witness; log
+`43f1e34cc104a62e2876f77615b437affa8ffc10c1f9f46c60c63f7e8e9ed1f4`.
+This proves the oracle detects a modeled accounting defect and does not claim
+that clean master is broken.
+
+`git diff --check` passed. Focused `spend_tests` (3), `coinselection_tests`
+(4), and `wallet_tests` (14) passed with `*** No errors detected`. Formatting
+still reports pre-existing file-wide diagnostics in `spend.cpp`; no unrelated
+formatting was changed. No production fix or deterministic regression test is
+claimed, and no fuzz, sanitizer, mutation, or replay process remains running.
+
 ## `scriptpubkeyman` descriptor-wallet state oracle audit (2026-07-20)
 
 Source commit: `af007794de201874b47826b16605871244185908` (`fuzz: audit
