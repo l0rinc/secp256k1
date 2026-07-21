@@ -4958,6 +4958,197 @@ formatting was changed. Formatter log SHA-256:
 All controls, probes, workers, artifacts, and build processes were stopped or
 restored; no fuzz job remains running.
 
+## secp256k1 lax DER signature parser oracle audit (2026-07-21)
+
+Source commit `c953da7841661c6fffaab6f256bb1e73beb38fb1` (`fuzz: enforce lax
+DER signature parser contracts`) turns
+`FUZZ=secp256k1_ecdsa_signature_parse_der_lax` into a state/output oracle for
+Bitcoin Core's intentional pre-BIP66 signature compatibility parser.
+
+### Finding and Bitcoin Core severity
+
+The untouched master parser and its frozen corpus replay found no clean-master
+production bug. This commit makes no parser behavior change; the two
+production assertions only verify that libsecp256k1 can construct the
+documented canonical invalid signature used on parse failure and overflow.
+
+This target is consensus-adjacent. `CPubKey::Verify` and
+`CPubKey::CheckLowS` call the parser from `src/pubkey.cpp:284-294` and
+`:426-430`, while script evaluation reaches verification through
+`src/script/interpreter.cpp:349`, `:1177`, and `:1702`. Signature bytes can
+originate in block data. BIP66 strict-encoding checks precede current
+consensus verification, while historical pre-BIP66 blocks still require this
+lax parser. A confirmed memory, consensus, or invalid-block-triggered parser
+failure would therefore require a High/Critical review. None was reproduced
+on master here, so rate this result **Informational/Low oracle hardening** with
+no claimed production vulnerability or severity-raising fix. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared.
+
+The lax acceptance of negative integers, excessive padding, long length
+descriptors, ignored sequence lengths, and trailing garbage is intentional
+historical compatibility. The oracle does not assert strict DER rejection for
+those cases.
+
+### Audit provenance and cherry-pick context
+
+- Source parent: `e39ccb415f80d805c1a8f01494f06de04f501e2d`
+  (`fuzz: enforce secp256k1 DER key import contracts`).
+- Audit base: `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+  `remotes/l0rinc/master` matched this commit before the audit sequence.
+- The l0rinc query covered `src/pubkey.cpp`, `src/pubkey.h`, `src/key.cpp`,
+  and both secp256k1 DER fuzz targets. It returned no output, so no relevant
+  fork commit was cherry-picked.
+- No later fix or cherry-pick was allowed to mask clean-master behavior. Any
+  follow-up touching this parser, its Core callers, or a proof input must
+  amend the relevant source/evidence notes with whether it preserves, changes,
+  or masks this result, then repeat the parent control, deterministic test,
+  mutation witness, and corpus replays.
+
+### Reiterated findings
+
+The master-relative ledger remains:
+
+- **Medium**, feature-conditional private-broadcast failed-send retention.
+- **Medium**, empty-HEADERS initial-sync availability/IBD risk.
+- **Low under current Core callers**, peer transaction-activity refresh,
+  ProcessMessage block-storage failure, and oversized transport types.
+- **Medium but latent/reachability-limited**, ecmult scratch wrapping, forced
+  10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention.
+- **Low/nice-to-have**, banman invalid-subnet and unban integrity.
+- No additional clean-master production bug was found in the already audited
+  addrman, coins-cache, coins-view, txgraph, txdownloadman, txrequest,
+  connman, eviction, handshake, compact-block, headers-sync, UTXO snapshot,
+  mempool persistence, package evaluation, RPC, descriptor cache, threadpool,
+  cluster-linearization, policy estimator, pool resource, versionbits,
+  signature-cache, CuckooCache, FlatFilePos, prevector, bitdeque, VecDeque,
+  or DER key import/export paths. Severity is tied to actual Bitcoin Core
+  callers and input origins, not an assertion failure alone.
+
+### Contracts and tests
+
+`src/pubkey.cpp` now checks the return value of the compact-parser call used
+to initialize the output to a correctly parsed but invalid signature, both at
+entry and in the overflow reset. These are internal library-state contracts,
+not assertions about peer-provided DER.
+
+The fuzzer seeds the output with a valid compact signature before parsing. A
+return value of zero must overwrite it with the canonical all-zero invalid
+signature. For every strict DER input accepted by libsecp256k1, the lax parser
+must accept it and produce identical compact R/S values. Nonzero lax outputs
+are serialized back to strict DER and reparsed to verify stable round trips.
+`SigHasLowR` is checked for repeatability and against the compact R high-bit
+contract. Historical lax cases remain allowed to return an initialized but
+invalid signature.
+
+The harness explicitly exercises `(nullptr, 0)`, which the Bitcoin copy
+safely rejects before reading input. `src/test/key_tests.cpp` adds
+`ecdsa_signature_parse_der_lax_contracts`, covering empty/truncated output
+reset and a deterministic strict/lax signature round trip.
+
+### Corpus and baseline
+
+The corpus was frozen from
+`/mnt/my_storage/qa-assets/fuzz_corpora/secp256k1_ecdsa_signature_parse_der_lax`
+to `/tmp/bitcoin-secpder-lax-20260721/frozen`: 86 files and 422,212 bytes.
+Manifest SHA-256 values are:
+
+- Sorted filenames:
+  `5229123a7d108d0622c4a2cbd3d245bb25c9e580b84f7e774fedf95a4a6eeba4`
+- Filename plus size:
+  `b64d18c6447a1b89bdb4dc71a435d7f1402b0516d3b950060476b0caf0dc826c`
+- Relative contents:
+  `a4f2ef21802aac51073469f1c345d8b7de0a0cde6e226340b70e6cb8a453f7d4`
+
+Parent source SHA-256 values were `src/pubkey.cpp`
+`0c86716f3626f591e643bd327fe0e48f6cebba8da3aba91ec6587256d725f1c0`,
+the lax DER fuzzer
+`e8a6469cb00e7f0326d6eae834a096ec64141b35c92ec6e5f982e9cc5d888219`,
+and `src/test/key_tests.cpp`
+`e546959fa7af7aa35efe76413ce1c02f8e9c7037c21fc653b005895f169f0171`.
+
+The old harness replay used sanitizer binary
+`80975e16f194232d16ae75376e4a58d580b691d688d69fbc7ec7a84a565d1ecd` and
+processed 173 executions, coverage 2674, features 2925, peak RSS 106 MiB,
+and no artifacts. Log SHA-256:
+`64b53c74a9d33c771ae5ace8d167cdd81358419c0c6c8154329ec897918c1e85`.
+
+### Differential mutation proof
+
+The exact witness is the frozen one-byte input `bd` at
+`frozen/9034aaf45143996a2b14465c352ab0c6fa26b221`, SHA-256
+`68325720aabd7c82f30f554b313d0570c95accbb7dc4b5aae11204c08ffe732b`.
+
+A minimal production mutation removed the entire entry initialization call
+`Assert(secp256k1_ecdsa_signature_parse_compact(..., tmpsig) == 1)`, modeling
+lost invalid-signature initialization. The mutated `src/pubkey.cpp` SHA-256
+was `a4e7ed2362ac8e922671183d396872e724c42d842a332ef3b79b183ea534a6e3`.
+The mutated normal fuzz binary SHA-256 was
+`afdf1b250fa044c84adc17283cfb8744fd30d5cb848fde9deee0b07d61c28a83`.
+The witness immediately reported `Assertion is_zero(compact_lax) failed` at
+the new failure-output oracle; the normal wrapper returned an input-processing
+failure. Mutation log SHA-256:
+`478b06ab22b254cf19e45196909fade58dacb1cce62b3f5cd5dcdf1dd7f2dcab`.
+Mutation build log SHA-256:
+`6ca970154ac5be77b4caac6af52f1bada0954f74ec6c754233370cdf2fee78e5`.
+
+This proves the assertion catches a broken production state transition. It is
+mutation/oracle proof only: the mutation is not present on master and no
+hypothetical master vulnerability is claimed. The mutation was restored
+before all final builds and replays.
+
+### Final verification
+
+Final source SHA-256 values are `src/pubkey.cpp`
+`18791c14b0bd988808a4cb245895443173e1bfbbcd549c01efb0219e3cd5c175`,
+the lax DER fuzzer
+`2f0261b50aabbc3e3669d91a9cf491333b7f2936f1d715bff827d771104f105b`,
+and `src/test/key_tests.cpp`
+`ae55f08b1ac34641678f92b462cf189f7bb30dd421283c638c1381367dc516ba`.
+
+The final sanitizer binary
+`7ce8759c6bec658e46f48b0388e666e8a7dc0a9ec64724c29a7ed10387a68371`
+passed the restored frozen replay: 173 executions, coverage 2747, features
+3025, peak RSS 107 MiB, and no artifacts. Build log SHA-256:
+`f0ef578891c4125ed8ff1e730503e0e4d2914b9fe2b5609d963566c4ecd9fd92`.
+Replay log SHA-256:
+`5c6c8c9a47ae116640091ae5416075eef6bc51bf9d22186913c2f3d1b888d0e1`.
+The exact `bd` witness passed after restoration; log SHA-256:
+`9ffd8c866f382dc0d0af3f2a95f9389abe6281787fcf443e9396b54f23872913`.
+
+Four isolated sanitizer workers each processed 173 executions with no
+artifacts, coverage 2747, features 3025, and peak RSS 106-107 MiB. Combined
+log SHA-256:
+`5d0dfc63a5b8d805d8a2ff86c138f42d4cb985cfcf97dfb336f2a4297a84beab`.
+Worker logs, `fuzz-0` through `fuzz-3`, have SHA-256 values:
+
+    d9a17086008e11b5f6f9235940e555dc088dad0e4ffe05ea42bf4ce5a5dbf4b8
+    d04d8cf7a008d9bad882844263338757983e0fb1f7eddb1dc1c1a933e6df242e
+    22ff036c12f741e1dd4d6356dccfc676a8226c301e91dd87f9d8effe5f372b51
+    e748b0a1d3d408b087901b49ec7f4da22f86c185a68e9cb22ae038326185ee0a
+
+The final normal fuzz binary
+`5acfb8c2281c4672d480f8ac64579cbad56db18c5d2b51036ccff65f63216b0e`
+passed all 86 corpus inputs with the restored one-file driver. Replay log
+SHA-256:
+`aec1257f04fecb51ba470b5b512d7e6f325ff765b1187442385d0a04de62cda5`.
+Build log SHA-256:
+`573456345e57c513ca8d60db4bb6c29567546a30de5f83003bd49e690e1e5011`.
+
+The focused `key_tests/ecdsa_signature_parse_der_lax_contracts` test passed
+with no errors. Final `test_bitcoin` binary SHA-256:
+`0224706549a9d216a7e5b74da2678804b1495c059f0485d9b1eeeed55f2de5b6`;
+unit log SHA-256:
+`9bbff1778eff0410751cd209b1e3723a6381886bcddb8bf35194b55bdb417210`;
+test build log SHA-256:
+`5cd1623ea35b90ffb45734758c73aeee39fd0b285b9a925113dbfe660f4348d4`.
+
+`git diff --check` passed. `clang-format --dry-run --Werror` reports only
+pre-existing file-wide violations in the legacy files; no unrelated
+formatting was changed. Formatter log SHA-256:
+`bbbe150e2f222737908c77075317581799db78d4561c737564a9dd134b2c2919`.
+All mutation builds, probes, workers, artifacts, and test processes were
+stopped or restored; no fuzz job remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
