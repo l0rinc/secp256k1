@@ -3637,6 +3637,144 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `block_index` database round-trip oracle audit (2026-07-20)
+
+Source commit: `6909f22d74` (`fuzz: strengthen block_index database
+round-trip oracle`). Its parent is `4a06bf618d`, and the audit base is Bitcoin
+Core `origin/master` `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`remotes/l0rinc/master`. The relevant-path query over
+`src/test/fuzz/block_index.cpp`, `src/node/blockstorage.cpp`, `src/chain.h`,
+`src/dbwrapper.cpp`, `src/dbwrapper.h`, `src/txdb.cpp`, and `src/txdb.h`
+returned no l0rinc commits. No fork commit was cherry-picked, so no later
+change masked or altered this clean-master result.
+
+### Core boundary and severity
+
+`FUZZ=block_index` exercises `kernel::BlockTreeDB` file-info, last-file,
+reindexing, flag, batch-write, and `LoadBlockIndexGuts` round trips. Bitcoin
+Core uses this database while loading the block index during startup and
+reindex. It is persisted-database reconstruction, not a direct peer invalid-
+block acceptance path.
+
+The old harness forced every generated index to one hash and returned
+`blocks.back()` for every loader callback, so it did not verify per-record
+identity, predecessor reconstruction, or most serialized metadata. The new
+harness uses regtest's easy PoW target, gives each generated header a stable
+hash and genesis predecessor, maps each callback hash to a stable object, and
+compares every disk-serialized field after load. Production
+`LoadBlockIndexGuts` now asserts callback identity before assigning `pprev`.
+
+No clean-master production bug was confirmed. This is Informational/Low oracle
+hardening, not High/Critical. Severity follows actual Core startup, reindex,
+and block-index callers: a confirmed corrupted-persistence, unsafe block
+selection, startup denial of service, or consensus effect would need separate
+proof. Invalid transaction or block-like bytes alone do not make a finding
+High/Critical. A nonce with no cryptographic meaning is not Critical merely
+because it is not cleared.
+
+### Corpus and replay evidence
+
+The final source SHA-256 values are:
+
+    src/test/fuzz/block_index.cpp  c2a1583e8b38614d38491b2ba05551440a11eaec7984960ee3bbbea3f3d441dd
+    src/node/blockstorage.cpp      8b4b0b6105f11569d54435a239e2c72502fd5e21be64dc520333e5c72f5dbbbc
+
+The final normal and ASan/UBSan fuzz binary SHA-256 values are
+`8d4882c12acb9ba6b3b83a9936d654771507785472f986f85e757231ce87b99a` and
+`0dbdb573eadaa380226914d883c43c9162127737f364e6a65e3a1b3fa97dcaa5`.
+
+The frozen corpus is `/tmp/bitcoin-block-index-20260720/frozen`, copied from
+the existing `block_index` corpus: 467 files, 454,540 bytes, minimum 1 byte,
+maximum 19,926 bytes. The sorted filename manifest SHA-256 is
+`914f56dc05de40df08e5994583ab58d949eb672dfba83075b1694fdff67f7a46`; the
+filename/size manifest SHA-256 is
+`1d197f7a435798b0026f608687dfca9775ec600612838553a0cc9ea3999b95c3`.
+
+The unmodified baseline normal replay ran 468 units, reached coverage 2,009
+and 4,735 features, peaked at 62 MB, exited 0 with no artifacts, and has log
+SHA-256 `010bbd3f64f05672057fc38861ef893e30f66dd807eb5cc51124b97c88368ef7`.
+The baseline ASan/UBSan replay ran 469 units, reached coverage 3,995 and
+10,061 features, peaked at 479 MB, exited 0 with no artifacts, and has log
+SHA-256 `93b391da8f912d658227890d613afd6c95786158977058aba6f5cae68e7c7855`.
+
+The final normal replay ran 468 units, reached coverage 2,107 and 5,779
+features, peaked at 63 MB, exited 0 with no artifacts, and has log SHA-256
+`e4cc12cc844ac36541067f03bdce7d3a0c0e86b137b3fb1ba1096df13d4858f0`.
+The final ASan/UBSan replay ran 469 units, reached coverage 4,229 and 12,876
+features, peaked at 488 MB, exited 0 with no artifacts, and has log SHA-256
+`28fee931f9cce963a295f0f01fd7e3361f89d8a067d89519dbc9adf037f9dea8`.
+
+Four independent ASan/UBSan workers replayed disjoint shards of 117, 117,
+117, and 116 files. Their sorted union matched the frozen manifest exactly.
+They ran 119, 119, 119, and 118 units, all exited 0 with no artifacts, and
+peaked at 453, 452, 449, and 457 MB. Worker log SHA-256 values, in order,
+were:
+
+    cc892545637b5f19446e9e3fe09a663282002868c564557448c3d13d00e72957
+    bf3024c98c9b61b47fb82c227459d3fae656b4222948c7c75558bb8ed368c456
+    2826b01b0a642108765e9979595a51e811d82a79e5ad6fa3056b64c28741d154
+    8d9fbc57640c5884f65821fe112bbfdb9933d96cf5cdaf76a51c47e4b63b494b
+
+### Differential oracle proof
+
+This is an oracle-sensitivity proof, not a clean-master production finding.
+The exact production mutation changed
+`pindexNew->nTx = diskindex.nTx` to
+`pindexNew->nTx = diskindex.nTx + 1` in `LoadBlockIndexGuts`. It corrupts one
+persisted metadata field after deserialization without bypassing the PoW
+check.
+
+With `FUZZ=block_index -runs=467 -seed=20260720 -shuffle=0`, the enhanced
+target failed after 14 units at `AssertBlockIndexState` on frozen input
+`e0df3b4cb360aea89d4b096958035e44e92cdaff` (11 bytes). The witness SHA-256
+is `c0b8f05df646c53ae343fd389efe63e0c2d4dd51e55664282205a7e89dd6a4a6` and
+the mutation log SHA-256 is
+`caad26aa605a22a89dbab1f7b19c54d0155e1ff2850824afcd0f67f117583755`.
+
+The matched control kept the production mutation and removed only the new
+`AssertBlockIndexState` call. Replaying that exact witness once exited 0 with
+no artifact; control log SHA-256 is
+`e6ba7482c3d81eb3cfbbfb4715f74531f92c972ea6bd2120220fcf264ac370ca`.
+The old success-only oracle therefore accepts this modeled metadata
+regression while the new per-record state oracle rejects it. The mutation was
+restored before the source commit. Restored master has no failure, so no
+deterministic production regression test is claimed; the exact mutation,
+witness, rejection, and matched control are the strongest relevant proof.
+
+### Existing finding ledger and policy
+
+The confirmed generic raw `finalizepsbt` invalid nonempty `final_scriptSig`
+behavior remains Low: private RPC correctness/availability, not fund loss,
+consensus, memory safety, or cryptographic failure;
+`walletprocesspsbt` rechecks through `CWallet::FillPSBT`. Feature-conditional
+private-broadcast failed-send retention and empty-HEADERS initial-sync
+availability remain Medium. Peer transaction-activity refresh, block-storage
+failure, oversized transport types, and banman invalid-subnet/unban integrity
+remain Low or hardening findings.
+
+The scalar/field/group, DER, EllSwift, BIP324, key, scriptpubkeyman,
+wallet-construction, PSBT, tx_pool, block-index-tree, and other audited
+targets found no additional clean-master production bug in their stated
+contracts. Latent ecmult scratch wrapping, 10x26 magnitude normalization, and
+SHA/HMAC/RFC6979 retention concerns remain reachability-limited, not Critical
+Bitcoin Core vulnerabilities.
+
+Any future cherry-pick or fix that changes a follow-up finding must be
+recorded in the same commit message and audit notes, stating whether it masks,
+preserves, or changes clean-master behavior. Findings are rated against
+master and actual Bitcoin Core callers, not an isolated malformed input or a
+later accidental patch.
+
+### Verification and test gap
+
+`git diff --check` passed. Normal and ASan/UBSan fuzz builds, baseline and
+final full-corpus replays, the four-worker sanitizer replay, exact mutation
+rejection, and matched control acceptance all completed. The configured
+fuzz-only build did not provide `test_bitcoin`, so no dedicated unit test was
+available or claimed. No production behavior changed on master, no
+clean-master bug was confirmed, and no fuzz, sanitizer, mutation, or replay
+process remained running.
+
 ## `tx_pool` mempool state-transition oracle audit (2026-07-20)
 
 Source commit: `4a06bf618d` (`fuzz: strengthen tx_pool state-transition
