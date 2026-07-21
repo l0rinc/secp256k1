@@ -3637,6 +3637,233 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+---
+
+## descriptor_parse and mocked_descriptor_parse audit
+
+Source commit: `41ff6a5c63` (`fuzz: harden descriptor serialization and
+multipath oracles`). The audited source worktree was
+`/tmp/bitcoin-secp256k1-audit-current`, branch `codex/fuzz-oracles-current`.
+
+### Provenance and l0rinc comparison
+
+The descriptor work started at `6909f22d742dabd4350c54b369c3a1d55d0000a3`,
+whose parent was the preceding block-index oracle commit
+`4a06bf618d09d6f5b0b26d1fd5b800b4c41338d4`. Both `origin/master` and
+`remotes/l0rinc/master` resolved to
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`.
+
+The exact target-scoped comparison was:
+
+    git log origin/master..remotes/l0rinc/master -- \
+      src/script/descriptor.cpp src/script/descriptor.h \
+      src/script/miniscript.cpp src/test/fuzz/descriptor_parse.cpp \
+      src/test/descriptor_tests.cpp src/rpc/output_script.cpp \
+      src/wallet/scriptpubkeyman.cpp src/wallet/export.cpp \
+      src/wallet/rpc/backup.cpp
+
+It returned no output. No l0rinc commit was cherry-picked for this target,
+so no fork change masked, weakened, or altered the clean-master behavior.
+Any later cherry-pick or fix that changes a follow-up finding must be added
+to the same commit and note, explicitly stating whether it masks, preserves,
+or changes the master behavior. A nonce with no cryptographic meaning is not
+Critical merely because it is not cleared.
+
+### Oracle changes
+
+`src/test/fuzz/descriptor_parse.cpp` now checks strict checksummed public,
+private, and normalized serialization round trips. Private strings are
+compared with `ToPrivateString`, not public `ToString`; multipath parsing is
+required to contain a matching result rather than being incorrectly assumed
+to return exactly one descriptor. Every inferred script descriptor must be
+non-ranged and expand with an empty provider to exactly the original script.
+Both `descriptor_parse` and `mocked_descriptor_parse` use these checks.
+
+Production `src/script/descriptor.cpp` now makes `AddressDescriptor` and
+`RawDescriptor` populate the public descriptor when `ToPrivateString` returns
+false, as required by the `Descriptor` API. It also gives `InferDescriptor`
+the documented non-null/non-ranged `Assert` contract. During miniscript
+parsing, `KeyParser` tracks the active multipath alternative for comparison
+and serialization, and duplicate-key sanity is checked for every expanded
+path before descriptors are returned.
+
+### Findings and Bitcoin Core severity
+
+Two real clean-master production bugs were confirmed. Both are **Low
+severity correctness/availability findings on master**, not Critical
+Bitcoin Core vulnerabilities:
+
+1. `AddressDescriptor::ToPrivateString` and `RawDescriptor::ToPrivateString`
+   returned false without writing `out`. Bitcoin Core reaches this through
+   `DescriptorScriptPubKeyMan::GetDescriptorString(priv=true)` at
+   `src/wallet/scriptpubkeyman.cpp:1554-1565`; `src/wallet/export.cpp:30`
+   treats false as an export failure. `addr()` and `raw()` have no private
+   key to expose, so the fix is the public fallback. This is local wallet
+   export correctness/availability only: no fund loss, consensus effect,
+   memory safety, or cryptographic failure, and no peer invalid block or
+   transaction can directly trigger this path.
+
+2. Miniscript duplicate-key sanity was checked only for multipath path zero
+   before one-element key vectors were cloned. A later path could contain
+   duplicate public keys, then be emitted by `ToString()` as a descriptor
+   that strict parsing rejected. `getdescriptorinfo` parses local input and
+   returns `descs.at(0)->ToString()` at `src/rpc/output_script.cpp:199-205`;
+   wallet scriptpubkeyman inference paths at `src/wallet/scriptpubkeyman.cpp:
+   699-712` and `794-810` serialize and reparse descriptors, skipping those
+   that fail. This is local descriptor correctness/availability, not an
+   invalid-block consensus boundary. It is not High/Critical without proof
+   of a different Core caller or impact.
+
+The fuzzer also adds production assertions for the `InferDescriptor`
+contract, but clean master did not produce a null or ranged inference. No
+additional production bug is claimed from that hardening.
+
+### False oracle corrections
+
+The first private round-trip assertion was too strong: it compared a private
+`tr()` descriptor with public `ToString()`. The 56-byte witness had SHA-256
+`c7112224f70ab81cebc81061d918273d8809fb4ec307aa9b93b61696b91cb2bb`. The
+oracle now reparses and compares `ToPrivateString` output.
+
+The first public round-trip assertion also incorrectly required one Parse
+result. The 439-byte multipath witness
+`bdadb00bf32e7c6f0130833f06fd9be01cdca743` has SHA-256
+`18b3d8236f8c64b1f0190a390700734a53696717f0a3c108d5f7b760e86a875f` and
+legitimately expands to multiple descriptors. After that oracle correction,
+the same input exposed the real clean-master later-path duplicate-key bug.
+
+### Corpus identity and replay evidence
+
+The existing `descriptor_parse` corpus contains 3,281 files and 10,393,136
+bytes. The frozen copy is
+`/tmp/bitcoin-descriptor-20260721/frozen/descriptor_parse`, with minimum and
+maximum file sizes 1 and 528,799 bytes. Its sorted filename manifest SHA-256
+is `4560424f4b98846ae71ad0ffadd7a0dcedb9d60610ce5df3c4d2eece2193a715` and
+its filename/size manifest SHA-256 is
+`aa0d36472f6e7c68d00cb1e69e2e22f8d038865f967c827fcfd5d7dbd7f7f772`.
+
+The existing `mocked_descriptor_parse` corpus contains 3,798 files and
+4,620,231 bytes. The frozen copy is
+`/tmp/bitcoin-descriptor-20260721/frozen/mocked_descriptor_parse`, with
+minimum and maximum file sizes 1 and 510,318 bytes. Its sorted filename
+manifest SHA-256 is
+`74cd28919252b5f6d7db86e061c0847e0aeb695cd2ef229e7f5fce4e4117aba3` and
+its filename/size manifest SHA-256 is
+`779078568d9e6360030b5a217a8293350c97648649c862b45c6a93879e7d8cd1`.
+
+Baseline and final full-corpus results:
+
+    target                    run       executions cov    features  RSS
+    descriptor_parse          normal    3282       7460   43245     94 MB
+    descriptor_parse          final     3282       7523   44170     93 MB
+    descriptor_parse          ASan     3282       16691  111005    778 MB
+    descriptor_parse          final ASan 3282       16758  111585    776 MB
+    mocked_descriptor_parse   normal    3799       7529   46877     80 MB
+    mocked_descriptor_parse   final     3799       7565   47389     80 MB
+    mocked_descriptor_parse   ASan     3800       16780  116643    768 MB
+    mocked_descriptor_parse   final ASan 3800       16805  116872    850 MB
+
+Every listed run exited 0 with no crash, OOM, ASan, or UBSan artifact. The
+baseline/final log SHA-256 values, in the same order, are:
+
+    93454e0b6c3054cdbf1addf008238556b94e2ef96752767533c0036516554edf
+    7fad2e50b910dcc2797bda8fe8d24622da2cb781f572fd8d4cd83f6e10270a9e
+    94d0b5f0fe295f36cd09654071b140e6379d0227347326e45587a9726b7441c1
+    4d64d39f4a71c0990f9b2c4ded7b7bbe3a81a9f02441ec1d01c3e451ccd19197
+    c9f250176ea04beb74a7b646ebf99732d3f12e347980807a3e3685acb44c2e9a
+    edf91983af315299fc81ac2334b26717a52a4b2b72c8f8103851166caca1d808
+    2ed705ddbd2dfb9b7ee3ad0aacebe76eb54c8bec0609c76dc66a226e9826e77e
+    d8b20917bacc2e50e8cadd6bf67c08677d11511991e797e266cd2b7ffc8b5340
+
+Four independent ASan/UBSan descriptor workers used 821, 820, 820, and 820
+files, executed 823, 822, 822, and 822 units, and all exited 0 with only
+slow-unit files. Peak RSS was 677, 670, 606, and 682 MB. Their log SHA-256
+values were:
+
+    0becf876b473d2ae82f82af106a11a7521fa510be8e0ff960d0e1b5c1ca76d91
+    f74b456b15200d7d3f3a627ea6a26d0c9f563f0b630f025c9d39f4a6392604c9
+    58a20515aeaa70ffcd99d758224ef118e61be2198a5bc3f691bf6605bb06f0fc
+    7ebb4dd47a73970604ede28afb7ea1db4f8894181c1669a0238fb985732e9b93
+
+Four independent ASan/UBSan mocked workers used 950, 950, 949, and 949
+files, executed 953, 953, 952, and 952 units, and all exited 0 with only
+slow-unit files. Peak RSS was 641, 604, 681, and 675 MB. Their log SHA-256
+values were:
+
+    9f9b4e4137d3ee502e0320f4975eeeaa14b1f9b5ee1312a8c51b272660ffa2c8
+    b36ae58f69c862f76892d6f3fc763e392b6f41f8f1fe736722cd31a00c4c6856
+    33d43f615fec02d5ed7e420f7dbe6ceacba35841946386ed23ed21ac1bf6ba21
+    c4ce404104545e3d313b0fe65aae88d03c0797dc99e70c43e2766b87413f6234
+
+### Mutation and matched-control proof
+
+For the multipath bug, the exact production mutation changed the new loop
+from `for (size_t i = 1; i < num_multipath; ++i)` to
+`for (size_t i = num_multipath; i < num_multipath; ++i)`, skipping every
+nonzero-path duplicate-key check. The enhanced target hit
+`AssertDescriptorRoundTrip` (`!reparsed.empty()`) on the exact 439-byte
+frozen witness above. The enhanced log SHA-256 is
+`898021e47d5ab4f4a99e8130e8a79f32aa14c829902a374146441a8429c50603`.
+The matched control removed only the new round-trip/inference assertions and
+exited 0 on that witness; control log SHA-256 is
+`71f4ba2fc1b33eed4051004e08abf396d5bf21cc906228f8b549c27343ef829e`.
+The assertion signal handler emitted no artifact, so the log hash and clean
+control are the recorded proof. The mutation and temporary control target
+were removed before commit.
+
+For the serializer bug, the exact production mutation removed only
+`out = DescriptorImpl::ToString(/*compat_format=*/false)` from
+`RawDescriptor::ToPrivateString`, leaving `return false`. The corpus witness
+is the 11-byte input `raw(0181ae)` at
+`/tmp/bitcoin-descriptor-20260721/frozen/descriptor_parse/ff7979808a09646a4a6b89d8f5962d29706cdbfd`,
+SHA-256 `2dcd8fb2a0c628decdbefae2a67504d5edc74760464f2782b4be4f19cfc8a082`.
+The enhanced target hit `!private_string.empty()`; its log SHA-256 is
+`02f52183b15a465c5715b1b07d8dfd6243a8397d56f1e026f5fa7d058d6767ab`.
+The matched control exited 0; its log SHA-256 is
+`9deed9990ce57b5bf652d5aa3304ec4c22d20d6e8ab4987075d11391116044c7`.
+The mutation and temporary control target were removed before commit.
+
+After restoration, both exact witnesses exited 0. The final multipath log
+SHA-256 is `995aaf68a008ce0da8170f53549f08ec16bb6b76cf9f573416dbf76ab9151440`
+and the final raw log SHA-256 is
+`609ca21d2dbaf3407238db2d644832c5c632e7ac71afd653fbc4a2077db5266d`.
+
+### Deterministic tests and verification
+
+The separate non-fuzz configuration
+`/tmp/bitcoin-descriptor-test-build` built `test_bitcoin`. The command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin \
+      --run_test=descriptor_tests --log_level=test_suite
+
+passed all six descriptor cases, including
+`descriptor_private_string_without_private_keys` and
+`descriptor_multipath_duplicate_key_rejected`, with exit 0. The test log
+SHA-256 is `0b920eec499993b62be60d9673c2adeda27da7fbe261291fbb65ca8ee2b18764`.
+`git diff --check` passed. Final source SHA-256 values are:
+
+    src/script/descriptor.cpp             b0686563e0246bea07518235c87f0291eda8578e3e520e69f5eba380dcf5efe9
+    src/test/descriptor_tests.cpp         bd20ee3e6c8e402ff6f20874d7ba0a3831ae2826fbf70e8eee3bf93549e9f0e3
+    src/test/fuzz/descriptor_parse.cpp    428a869e8104b806196e939895bb5ad721d475aa818863b50ecbb216bd69a5a2
+
+### Findings carried forward
+
+Existing audit findings remain rated against clean master and actual Bitcoin
+Core callers. Generic raw `finalizepsbt` with invalid nonempty
+`final_scriptSig` remains Low private-RPC correctness/availability;
+`walletprocesspsbt` rechecks through `CWallet::FillPSBT`. Feature-conditional
+private-broadcast failed-send retention and empty HEADERS initial-sync
+availability remain Medium. Peer activity refresh, block-storage failure,
+oversized transport types, and banman invalid-subnet/unban remain Low or
+hardening findings. Earlier BIP324, EllSwift, key, scriptpubkeyman, wallet,
+PSBT, tx_pool, block-index, scalar/field/group, DER, and related audits found
+no additional clean-master production bug. Latent ecmult scratch wrapping,
+10x26 magnitude normalization, and SHA/HMAC/RFC6979 retention concerns are
+reachability-limited, not Critical Bitcoin Core vulnerabilities. An isolated
+malformed input or a nonce without cryptographic meaning does not raise
+severity; invalid blocks or transactions are Critical only when the real
+Bitcoin Core caller can actually reach an impactful failure.
+
 ## `block_index` database round-trip oracle audit (2026-07-20)
 
 Source commit: `6909f22d74` (`fuzz: strengthen block_index database
