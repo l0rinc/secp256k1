@@ -4438,6 +4438,168 @@ bug still requires clean-master or minimal-mutation reproduction and the
 strongest deterministic proof available. `git diff --check` passed, and no
 fuzz, sanitizer, mutation, or test process remains running.
 
+## CMessageHeader deserialization oracle audit (2026-07-21)
+
+Source commit: `fd87dbdc73` (`fuzz: strengthen CMessageHeader deserialization
+oracle`), parent `2dcc728d1e`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+audit started from Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+`remotes/l0rinc/master` resolved to that same commit. A target-scoped query
+over `src/protocol.h`, `src/protocol.cpp`, `src/net.cpp`, and
+`src/test/fuzz/deserialize.cpp` found no post-base l0rinc commits relevant to
+this target, so no cherry-pick was applied.
+
+### Contract and caller boundary
+
+`messageheader_deserialize` previously deserialized `CMessageHeader`, called
+`IsMessageTypeValid()`, and discarded the object. The new oracle uses the
+shared canonical-prefix check and a fixed-header round trip. Successful input
+must reproduce the exact serialized prefix, consume one fixed 24-byte header,
+and preserve `pchMessageStart`, all 12 `m_msg_type` bytes, `nMessageSize`, and
+all four `pchChecksum` bytes through serialize/reparse. The helper also asserts
+that the serialized size is `CMessageHeader::HEADER_SIZE`.
+
+The target still invokes `IsMessageTypeValid()` without requiring it to return
+true. Non-printable bytes, nonzero bytes after the first NUL, and other invalid
+message types are expected rejection inputs, not fuzzer failures. The shared
+prefix helper permits trailing bytes, although this corpus contains successful
+headers of at most 24 bytes. No production behavior changed.
+
+Bitcoin Core receives the untrusted V1 header in `CNode::ReceiveMsgBytes` at
+`src/net.cpp:668`, decoding it around `:743-755`. It then checks the network
+magic at `:763-764`, rejects sizes above `MAX_PROTOCOL_MESSAGE_LENGTH` at
+`:771-772`, verifies the checksum, and rejects invalid message types at
+`:829-840` before dispatch.
+
+The master-relative rating is **Informational/Low oracle hardening**, not a
+production vulnerability. A `CMessageHeader` is transport metadata: malformed
+peer bytes are rejected or cause a disconnect and cannot by themselves accept
+an invalid block, alter consensus or the UTXO set, move funds, or reach a
+cryptographic key/signature transition. This is therefore not Critical under
+the Bitcoin Core caller model, despite direct peer control of the bytes. No
+clean-master memory, race, resource-amplification, or production failure was
+found, and this audit makes no DoS claim. A parser issue would warrant a higher
+rating only when the actual Core caller can carry it into an invalid-block,
+consensus, funds, or equivalent security-impacting transition.
+
+This audit did not involve a cryptographic nonce. Clearing or retaining a
+non-cryptographic nonce or version field is not Critical; severity follows the
+reachable caller effect, not the field name or cleanup appearance.
+
+### Corpus and pre-oracle baseline
+
+The frozen corpus is
+`/tmp/bitcoin-messageheader-20260721-clean/frozen/messageheader_deserialize`,
+copied byte-for-byte from
+`/mnt/my_storage/qa-assets/fuzz_corpora/messageheader_deserialize`: 71 files,
+1,594 bytes total, minimum/maximum 1/24 bytes. The sorted filename manifest
+SHA-256 is
+`4c0b37ee9c9bb8d77d72ec412f4bae5ca5aa84c11e97669a329948b3dd37c722`.
+The filename/size manifest SHA-256 is
+`5d0c65b081eabcaff29d7e4ef085c30c672e603fbd8234c23699859fcffb43f5`.
+
+Before adding the oracle, the normal replay exited 0 after 72 executions,
+reached coverage/features 112/124, peaked at 55 MiB, and produced log
+SHA-256
+`3df770ae401662a4cb8d4f95733ccad7f02e8632e7fbfcc80e7a5bf038ec4c62`.
+The ASan/UBSan replay also exited 0 after 72 executions, reached 118/151,
+peaked at 105 MiB, and produced log SHA-256
+`57c92f442c0386c5d6b6f127f92025e84a64e761c8eb50a6d32e6fd6bb7352d8`.
+
+Existing `net_tests` and `serialize_tests` exercise constructed headers and
+transport behavior, but the old target did not compare corpus bytes with the
+decoded object. Those tests and the previous success-only fuzzer therefore did
+not establish this raw-input invariant.
+
+### Differential sensitivity proof
+
+A temporary production-code mutation was inserted after `READWRITE` in
+`CMessageHeader`: on read only,
+`const_cast<CMessageHeader&>(obj).nMessageSize ^= 1`. A temporary
+`messageheader_deserialize_control` target retained the old deserialize-and-
+discard behavior. Both temporary changes were removed before the source
+commit.
+
+Against the exact frozen corpus, the enhanced normal target hit the
+`DeserializeAndAssertCanonicalPrefix` `memcmp` assertion after 10 executions.
+The wrapper returned 124 because libFuzzer remained in its
+symbolizer/termination path. The mutation log SHA-256 is
+`225c36853b78c1aca0cd1c9728daba690dd4dac935ba1f04ba28d4bcaab3b08b`.
+The matched normal control exited 0 after all 72 executions; its log SHA-256
+is `d56dd596d4556787b0ac5031b3fae86047574e577f5315655431a91044262eab`.
+
+Under ASan/UBSan, the enhanced target hit the same assertion after 10
+executions; its mutation log SHA-256 is
+`c8ae1d19d3cb06e612d0bdcc369384ae2a217e3f0d445aea8b4c3d27e99c1c9b`.
+The matched sanitizer control exited 0 after all 72 executions; its log
+SHA-256 is `9a75d896008e65450c72512fe369aac7a0c929f6060cb25d196cdddb5d15aa58`.
+
+This proves that the oracle detects a modeled production state corruption that
+the old target missed. It is not a clean-master production finding: no source
+mutation remains, no production fix is claimed, and no deterministic
+production regression test is claimed for this harness-only hardening.
+
+### Restored verification
+
+After removing the mutation and control target, the normal fuzz binary
+SHA-256 is
+`efedbaceb60f9830dc08e6648c6c78a3ee7d0edf3789f64171edcc5c8acf85f3`.
+Its restored replay exited 0 after 72 executions, reached coverage/features
+121/133, peaked at 54 MiB, and produced log SHA-256
+`fa997f6a2df91d57d2606db76a449639d3e170a5a27164cfe0875f8b44bbce22`.
+The restored ASan/UBSan fuzz binary SHA-256 is
+`033fcc4399e38f5d726515941419e9d00087b66efa81ad50707fbde1cd6caa69`.
+It exited 0 after 72 executions, reached 138/171, peaked at 104 MiB, and
+produced log SHA-256
+`de2a5e9051c193f5587229801b68635076e6ff3dfdaf478da976e58647ffb4d4`.
+
+Four disjoint ASan/UBSan workers processed 19/19/19/18 inputs. All exited 0
+without sanitizer diagnostics and reported peak RSS 104/103/104/103 MiB.
+Worker log SHA-256 values are:
+
+    worker0: 054449684525b995c34429abcd9fcae053a27acf461f0f3f226811f7c599de8b
+    worker1: 06a524517742cbdffcc48092aee4875ae13be07cdda2f9b762b97833fc3659f2
+    worker2: 9ec3b7d453db8da143e5937a37c9fcc620e63c8dd188ff1808d188686b4d34b
+    worker3: 018d66f10e25bb2bc1f649c709d71a59339cf2005efc94e44fe621366756e81c
+
+The 71-worker-file union exactly matches the frozen filename manifest:
+`4c0b37ee9c9bb8d77d72ec412f4bae5ca5aa84c11e97669a329948b3dd37c722`.
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=skiplist_tests,net_tests,serialize_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; its log SHA-256 is
+`6b59dd6e954a84262add338b1a947a3b551c6bb06278b335c3f337cbddb1e230`.
+`git diff --check` passed after restoration, and no fuzz, sanitizer, mutation,
+or test process remained running.
+
+### Findings carried forward and follow-up policy
+
+Existing findings remain rated against clean master and actual Core callers:
+generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync handoff are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening. Earlier addrman, coins-cache, txgraph,
+txdownloadman, txrequest, connman, eviction, headers-sync, UTXO snapshot,
+mempool persistence, package, handshake, `BufferedFile`, block-index,
+compact-block, Merkle, wire, snapshot metadata, Bloom, compressed amount,
+scalar/field/group, DER, EllSwift, wallet, PSBT, scriptpubkeyman, BIP324, and
+related audits found no additional clean-master production bug unless their
+notes say otherwise. Latent ecmult scratch wrapping, 10x26 magnitude
+normalization, and SHA/HMAC/RFC6979 retention remain reachability-limited.
+
+A later caller-side pre-clear or potential cherry-pick can mask a follow-up
+oracle without fixing the production state transition. Any such follow-up must
+amend its own commit message and this durable note, or merge the changes, and
+state the exact target, caller, corpus/mutation, assertion/failure,
+master-relative severity, and whether the change masks, preserves, or alters
+the behavior being tested. A potential fix is not proof. Every claimed
+production bug still requires clean-master or minimal-production-mutation
+reproduction and the strongest deterministic regression/functional proof
+available.
+
 ## CBlockLocator deserialization oracle audit (2026-07-21)
 
 Source commit: `2dcc728d1e` (`fuzz: strengthen CBlockLocator deserialization
