@@ -3637,6 +3637,137 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `key` BIP32 and uncompressed-key oracle audit (2026-07-21)
+
+Source parent is `16e576419f3b70a2465b76d03ea9d1f5b4ff4b85` (`fuzz: enforce
+BIP324 ECDH state contracts`). The audit base was latest `origin/master`
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; `remotes/l0rinc/master` was
+the same commit. The target-specific query
+
+    git log origin/master..remotes/l0rinc/master -- src/test/fuzz/key.cpp src/key.cpp src/key.h src/pubkey.cpp src/pubkey.h src/bip324.cpp src/test/fuzz/bip324.cpp
+
+returned no output. No relevant l0rinc commit was cherry-picked, and no later
+fix or cherry-pick was used to mask or alter the clean-master result. Any
+follow-up touching CKey derivation, serialization, wallet callers, the corpus,
+or this proof must amend the relevant source and evidence commit message with
+whether it preserves, changes, or masks this behavior; merge or amend
+deliberately if a potential fix changes a later experiment.
+
+### Core boundary, finding, and severity
+
+`FUZZ=key` previously built only a compressed `CKey`, derived only child index
+0, and did not use the uncompressed key after constructing it. It now checks
+both BIP32 branches against a byte-level HMAC/tweak reference, verifies that a
+failed tweak leaves the child invalid, and exercises uncompressed public-key
+serialization, ECDSA signing/recovery, WIF/DER export, and both `CKey::Load`
+validation modes. Production `CKey::GetPubKey` and `CKey::Derive` assert the
+documented success and state postconditions.
+
+Bitcoin Core reaches these private-key methods from wallet persistence and
+descriptor/HD key management: `src/wallet/walletdb.cpp` loads serialized
+private keys, descriptor setup calls `CExtKey::Derive` through
+`src/script/descriptor.cpp`, and wallet signing/address paths call
+`GetPubKey`, `GetPrivKey`, and `Load`. The fuzzer's arbitrary bytes first have
+to form a valid local private key; invalid block or header bytes do not invoke
+these methods. Clean master reproduced no production failure, so the result
+is **Informational/Low oracle hardening**, not a confirmed wallet bug, remote
+block vulnerability, consensus issue, High, or Critical finding. A real
+master-reproducing key mismatch, key loss, wallet corruption, crash, or
+memory-safety failure would be re-rated from the reachable Core effect. An
+uncleared nonce with no cryptographic meaning is not Critical merely because
+it is uncleared.
+
+### Reiterated master-relative findings
+
+The existing ledger remains: **Medium**, feature-conditional private-broadcast
+failed-send retention; **Medium**, empty-HEADERS initial-sync availability/IBD
+risk; **Low under current Core callers**, peer transaction-activity refresh,
+ProcessMessage block-storage failure, and oversized transport types; **Medium
+but latent/reachability-limited**, ecmult scratch wrapping, forced 10x26
+magnitude-32 normalization, and SHA/HMAC/RFC6979 retention; and
+**Low/nice-to-have**, banman invalid-subnet and unban integrity. No additional
+clean-master production bug was found in the already audited addrman,
+coins-cache, coins-view, txgraph, txdownloadman, txrequest, connman, eviction,
+handshake, compact-block, headers-sync, UTXO snapshot, mempool persistence,
+package evaluation, RPC, descriptor cache, threadpool, cluster-linearization,
+policy estimator, pool resource, versionbits, signature-cache, CuckooCache,
+FlatFilePos, prevector, bitdeque, VecDeque, DER key import/export, lax DER,
+EllSwift, or BIP324 paths. Severity remains tied to actual Core callers and
+input origins; an isolated assertion or invalid block alone is not Critical.
+
+### Corpus and replay evidence
+
+The authoritative corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/key` to
+`/tmp/bitcoin-key-20260720/frozen`. It contains 1,085 files and 34,658 bytes
+(minimum 1 byte, maximum 32 bytes). The sorted relative filename, filename
+plus size, and sorted relative-content manifest SHA-256 values are
+`d61e480c6b097cc876feabdd81b99363767147596b1e9e5fe7b1ba7a3f6fa442`,
+`5d34579845f3ff8e8f38921734acc31868ba75f199cfe8a338ecaa706d949ee2`, and
+`2d8647bc3a53f907fdf876a5f46f7c5767dcfef83e398a13d6279c2788650624`.
+
+The parent sanitizer binary was
+`560bcdd32529c81ade56c7aacb2f60e429f4611258a069e287a79a44368445d8`.
+Its baseline replay executed 2,088 units, coverage 7,106, features 13,993,
+peak RSS 145 MiB, and no artifacts; log SHA-256 was
+`7ec84b3089b02b70cd18bb5a040170988bb1186e19a674a4a1e4c5814a64f4ba`.
+The final sanitizer binary is
+`d16667652065cc1c80ba969ff2d5af4545adb24619875c5b6769cb712d8024e9`.
+The enhanced replay executed 2,088 units, coverage 7,280, features 15,194,
+peak RSS 154 MiB, and no artifacts; log SHA-256 is
+`800f985d465282eb50c09b41a24e752dd7b3a245b73ce3a20552ff1c535ed2ae`.
+
+Four isolated sanitizer workers each executed 2,088 units with no artifacts;
+peak RSS was 153-154 MiB. Worker log SHA-256 values, in order, are
+`cc72e912da60378f00b40a90226870aa09b507b6cf85e3077c994d5a71fb43a6`,
+`6eeaa226f0ec34dc40f26027ac459ffd043812914764586194cd6e6e74670825`,
+`e16450e664074e1963b7fc921722b3b3f53102016c088c5b4a0fbd9f6fcb7579`, and
+`9b92e007d7072b5a5ec0de4ec7023b1e8a4e0762033e3a929e5225d56aab3248`.
+The final normal binary is
+`073451378e29c81d3a4c69fc3b8836a641b8ec6cc3a6b3106d45d6ed11388a04`; its
+standalone driver passed all 1,085 files, with log SHA-256
+`db670f933a288c9c78bf5d04ad1b9b751928cec7a923b70bba1cf7dd5f160e77`.
+
+### Differential proof and verification
+
+This is oracle sensitivity evidence, not a clean-master production finding.
+The exact temporary production mutation changed
+`if ((nChild >> 31) == 0)` in `CKey::Derive` to
+`if ((nChild >> 31) != 0)`. The mutated source hash was
+`a31bee3a633f447a84e2f1bfbc5afdd05ff8528062fc819a881c848508229cd3`, and
+the mutated sanitizer binary hash was
+`8a0a26503865ffe8535e2e116a7fe404209762b9c1986241c49d0279800a1c`.
+The exact witness was
+`/tmp/bitcoin-key-20260720/frozen/00235b297abea064ae2e346e492ba338f52a048b`,
+32 bytes, SHA-256
+`92d12a2e5eeada32fa85804fc9e77a89b50625341cca39498d100fa0d67df638`.
+The enhanced mutated replay exited 77 at `key.cpp:143`,
+`child_key == reference_child`; mutation log SHA-256 was
+`0dd09dd4df0e1851616052bdaeb16bda5dcdf9b54332e9fff907e98f68247694`.
+The restored implementation passed the identical fixed witness in one unit;
+restored log SHA-256 was
+`f1a5002de0f6d98c50440610b900bb67047ed287327d5bcf2e1d19f426c69001`.
+This proves the added reference oracle detects a plausible hardened/non-
+hardened derivation regression accepted by the old target; it does not prove
+that clean master is defective. The mutation was restored before final builds.
+
+Verification commands and results:
+
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-normal-build --target fuzz -j2
+    FUZZ=key /tmp/bitcoin-secp256k1-audit-current-build/bin/fuzz -runs=1085 /tmp/bitcoin-key-20260720/frozen
+    FUZZ=key /tmp/bitcoin-secp256k1-audit-current-normal-build/bin/fuzz /tmp/bitcoin-key-20260720/frozen
+    cmake --build /tmp/bitcoin-bitdeque-test-build --target test_bitcoin -j2
+    /tmp/bitcoin-bitdeque-test-build/bin/test_bitcoin --run_test=key_tests
+    /tmp/bitcoin-bitdeque-test-build/bin/test_bitcoin --run_test=bip32_tests
+
+Both focused unit suites passed (`key_tests`: 9 cases; `bip32_tests`: 6
+cases). `git diff --check` passed. Clang-format reports only pre-existing
+file-wide diagnostics in `src/key.cpp` and its existing include diagnostic;
+none of the newly added lines are reported. No deterministic regression test
+was added because clean master has no confirmed production bug. All temporary
+mutations, workers, and build processes were restored or stopped.
+
 ## `pool_resource` allocation-lifecycle oracle audit (2026-07-21)
 
 Source commit: `88e65091f5dbc0ca86b5a361aab59432dc83e005` (`fuzz: assert pool
