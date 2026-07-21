@@ -3787,6 +3787,150 @@ so the dedicated unit suite was unavailable. No clean-master production bug
 was found, no deterministic regression test is claimed, all temporary
 mutations were restored, and no fuzz/sanitizer/mutation process remains.
 
+## `script_sigcache` cache-population oracle audit (2026-07-21)
+
+Source commit: `101c275213a6e3cf5744c69ff3c174c1b3df50d9` (`fuzz: enforce
+signature cache population contracts`). The target now checks the signature
+cache immediately after ECDSA and Schnorr verification and repeats the exact
+operation to exercise the cache hit path.
+
+### Core boundary and severity
+
+Bitcoin Core reaches `CachingTransactionSignatureChecker` through `CScriptCheck`
+in `src/validation.cpp`. Normal `CheckInputScripts` paths set `cacheSigStore`
+to true when successful checks are eligible for reuse. The cache must contain
+only successful ECDSA/Schnorr verifications; a hit returns true without
+repeating cryptographic verification.
+
+No clean-master production failure was reproduced. The master-relative rating
+of this commit is therefore **Informational/Low** oracle hardening, not a
+production vulnerability, fix, or regression test. The modeled mutation has
+different impact: if a production implementation cached a failed signature on
+a Core `cacheSigStore=true` path, a later identical invalid script could be
+accepted from a cache hit, potentially affecting invalid transaction/block
+validation. That hypothetical caller impact would be **High/Critical**, but
+it is not a finding against unmodified master and is not inferred from an
+invalid fuzzer input alone. A nonce without cryptographic meaning is not
+Critical merely because it is not cleared.
+
+The audit base was `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both
+`origin/master` and `remotes/l0rinc/master` resolved to it. The l0rinc
+pull-request history was reviewed for a target-specific prerequisite or fix.
+No additional relevant commit was cherry-picked for this target. Any later
+fix, minor fix, or cherry-pick must document whether it preserves, changes, or
+masks the proof input and repeat the clean-master replay.
+
+The existing master-relative ledger remains: **Medium**, feature-conditional
+private-broadcast failed-send retention; **Medium** availability/IBD risk in
+the empty-HEADERS initial-sync handoff; **Low** under current Core callers for
+peer transaction-activity refresh, process-message block-storage failure, and
+oversized transport types; **Medium but latent/reachability-limited** for
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention; and **Low/nice-to-have** for banman invalid-subnet
+and unban integrity. No additional clean-master bug was found in the audited
+addrman, coins-cache, coins-view, txgraph, txdownloadman, txrequest, connman,
+eviction, handshake, compact-block, headers-sync, UTXO snapshot, mempool
+persistence, package evaluation, RPC, descriptor cache, threadpool,
+cluster-linearization, policy estimator, pool resource, or versionbits paths.
+Severity is based on actual Bitcoin Core callers and input origins.
+
+### Oracle contracts and corpus
+
+The fuzzer saves the selected sighash, computes the exact ECDSA/Schnorr cache
+key, and asserts `signature_cache.Get(entry, false) == (store && result)`.
+It then repeats the same checker operation and requires the result to remain
+unchanged. This does not assume random signatures are valid; it checks the
+actual cryptographic result and the production store contract.
+
+The frozen corpus is `/tmp/bitcoin-script-sigcache-20260721/frozen`, copied
+from `/mnt/my_storage/qa-assets/fuzz_corpora/script_sigcache`: 590 files and
+17,567,030 bytes. Sorted relative filename SHA-256:
+`4ea2b472881e7feedf67e87b6469ebdd7ab733a27fb682f22c30571a3e8e9b69`.
+Sorted relative filename-plus-size SHA-256:
+`8c432258a019929b9e33c0c90faa8e6f5efe6b31dcf710905beec550adb6c06e`.
+Sorted relative-content manifest SHA-256:
+`c2815a630241b183c03b8f1777896d9fd7a44ab6e76e624bd81b9f83cc09dc4d`.
+
+The parent sanitizer binary was
+`ba3776955751574844773782906604fdbf72ee279780af965cd0ac0769274256`, with
+baseline log SHA-256
+`727dd3e5408ba9582004b08d9ecce22146e003f75a562fed370e4eca9d71c208`.
+The 590-file replay exited 0 after 591 executions, coverage 5258, feature
+count 13416, peak RSS 441 MiB, and no artifacts. The parent normal binary was
+`ddf52a676467c831c37c1635c42448e4cb6cf2efa7f27b1f5a1179943e669229`, whose
+one-file driver passed all 590 inputs; log SHA-256:
+`bd770249345cecfd05dde6861c80e5891a99c1d79d163bfc7709456a219c8a35`.
+
+Final fuzzer source SHA-256 is
+`2152f92427727231bbe6e964c50d08e95a5d8adef079d1ae5fc90234ee18ebaa`.
+Production `src/script/sigcache.cpp` is unchanged at
+`62da43b9482d4b5339ba5418d4ceb9b53f821b281866c3beb4980989d5d2c474`.
+The final sanitizer binary is
+`ff99646c923730f57e8c4503a21f73ce981cc192c4d102294e619cd7147614ba`.
+The clean replay exited 0 after 591 executions, coverage 5269, feature count
+14397, peak RSS 441 MiB, no new units, and no artifacts; log SHA-256:
+`88491b49d7df60a810a3f9b57c02558ab08a5647590483d43ff6a37ba7c37657`.
+The final normal binary is
+`89ff25b6aa1aeef4798af464134e42a765b4a7c4899f188e1f9cecc3442d8f84`; its
+one-file driver passed all 590 inputs, with log SHA-256
+`3cabf1511bf9f1185daf398f8876b01246ba149f5d8cadeb4bd2e4a42d095842`.
+
+Four isolated sanitizer workers each replayed the same 590-file corpus with
+`-merge=0 -runs=1 -timeout=120 -rss_limit_mb=4096`. All exited 0 after 591
+executions, coverage 5269, peak RSS 441-457 MiB, and no artifacts. Worker log
+SHA-256 values, in order `fuzz-0` through `fuzz-3`, are:
+
+    36035d61e31ac12a0583c7d584473ec967191af9b4b7cff92234e2e7d8130519
+    dee345b64c00191ad831a6a47a5da14175026994c5c593da9556b862dbf4cd93
+    17aca1bf68a33a4530582d181b6921b0ac5ffdac0b920366f284adf10786344d
+    f4c005574d56d8ab95d0887b2bb7455aec3581fbb9711cb7505309f3f8418735
+
+### Differential proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation added `if (store) m_signature_cache.Set(entry)`
+to the failed ECDSA verification branch. Mutated production source SHA-256:
+`a750a577e263adf970a422026700ab46d281b5a05846c99e891d6ffbff9faef8`.
+Mutated enhanced sanitizer binary SHA-256:
+`5c9078d07a7432cb4df3b9dc0de8318e1dfc0376d4e29a443037446325fa8a55`.
+
+The exact proof input is
+`/tmp/bitcoin-script-sigcache-20260721/frozen/08133b12ba09b43020ea434ed5f6e288b34f0314`:
+95 bytes, SHA-256
+`3f2656641695fc0fc23a3cccc294155d4109bce6bbeba09c30ee6d230b8e45c4`, hex
+`270500fefeebd1000042e4815c04306302110000003f0000ebd10000fe42190000fd070201015c5e2103000b047a00faffb2c368939e7fc03d8e7e7100a8432b1872a1e39f4126a4cd06b81eab32ac17fecc9c9c9c9c9c519c9c9c9c9c9c9c9c`,
+Base64
+`JwUA/v7r0QAAQuSBXAQwYwIRAAAAPwAA69EAAP5CGQAA/QcCAQFcXiEDAAsEegD6/7LDaJOef8A9jn5xAKhDKxhyoeOfQSakzQa4HqsyrBf+zJycnJycUZycnJycnJw=`.
+
+The enhanced mutated fixed-input replay with `-handle_abrt=0` exited 134 at
+`src/test/fuzz/script_sigcache.cpp:63`, assertion
+`signature_cache.Get(entry, false) == (store && result)`, after one execution
+with no artifact. Diagnostic log SHA-256:
+`1d4ce625516eaef92911fba39c35ad12b597948290ab4ee981f54a8b59810433`.
+The same production mutation with the old single-call harness used control
+fuzzer source SHA-256
+`cb5e9dfb3373c16e270840308705c9e0ee8a39aaff2e28d48a01b2e1dfc58e96` and
+binary SHA-256
+`c880729bf5bbf51c5d2f490ca78fd20fdde6fb752be3c840f7535df5eadcc228`.
+The identical input exited 0 with no artifact; control log SHA-256:
+`1718e8aa72e6d5186f3bcea5a87a04203483c5ffa3a9d085d2c59a28c4b49ff1`.
+After restoring production and harness source, the identical input exited 0
+in clean binary `ff99646c923730f57e8c4503a21f73ce981cc192c4d102294e619cd7147614ba`
+with no artifact; restored log SHA-256:
+`0bb47bb3b505941985077017435012535be17f36c6831d3c174f8cb69a8f3895`.
+This proves that the new oracle detects the modeled failed-cache population
+that the old harness accepts, while clean master does not reproduce it. No
+production bug or deterministic regression test is claimed.
+
+### Verification gap
+
+Sanitizer and normal targets were built with the configured fuzz-only builds
+using `cmake --build ... --target fuzz -j2`. `git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/script_sigcache.cpp` passed.
+The fuzz-only builds do not provide `test_bitcoin`, so the dedicated unit suite
+was unavailable. The temporary production mutation and old-harness control were
+restored, and no fuzz, sanitizer, mutation, or build process remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
