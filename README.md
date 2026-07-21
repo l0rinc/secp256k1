@@ -4438,6 +4438,176 @@ bug still requires clean-master or minimal-mutation reproduction and the
 strongest deterministic proof available. `git diff --check` passed, and no
 fuzz, sanitizer, mutation, or test process remains running.
 
+## CInv deserialization oracle audit (2026-07-21)
+
+Source commit: `f095258342` (`fuzz: strengthen CInv deserialization oracle`),
+parent `fd87dbdc73`, on source branch `codex/fuzz-oracles-current` in
+`/tmp/bitcoin-secp256k1-audit-current`. The audit started from the latest
+Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+`remotes/l0rinc/master` resolved to that same commit. A target-scoped query
+over `src/protocol.h`, `src/protocol.cpp`, `src/net_processing.cpp`,
+`src/test/fuzz/deserialize.cpp`, the related fuzzers, and protocol tests found
+no post-base l0rinc commits relevant to `CInv`, so no cherry-pick was applied.
+
+### Contract and caller boundary
+
+`inv_deserialize` previously parsed one `CInv` and discarded it. The new oracle
+uses the shared canonical-prefix check and a fixed-field round trip. Successful
+input must reproduce the exact serialized prefix, consume one `CInv` record,
+and preserve both decoded fields: the `uint32_t type` and `uint256 hash`.
+
+Truncated 1-byte and 4-byte inputs remain negative fuzzer inputs. Unknown
+inventory types remain valid decoded values: `CInv` serialization has no
+canonical enum restriction, and Core intentionally logs unknown types rather
+than requiring `IsGenTxMsg()` or `IsGenBlkMsg()` to be true. The oracle does not
+invent a domain constraint that the production contract does not have.
+
+Bitcoin Core decodes inbound `INV` vectors in
+`PeerManagerImpl::ProcessMessage` at `src/net_processing.cpp:4183-4185`, checks
+`MAX_INV_SZ` at `:4186-4189`, and uses known block inventory to update block
+availability and potentially trigger headers sync or block fetching at
+`:4211-4269`. Known transaction inventory is converted to `GenTxid` and sent to
+the transaction download manager at `:4219-4250`; unknown types are logged and
+ignored.
+
+The same wire record is decoded for `GETDATA` at `:4274-4283`, checked against
+`MAX_INV_SZ`, then either compared with the private-broadcast transaction at
+`:4289-4313` or queued for `ProcessGetData` at `:4316-4320`. `NOTFOUND` records
+are decoded at `:5169-5181` and filtered to transaction inventory before
+reaching `txdownloadman`.
+
+The master-relative rating is **Informational/Low oracle hardening**, not a
+production vulnerability. An arbitrary `CInv` can cause expected availability
+lookups, announcements, requests, or peer bookkeeping, but cannot by itself
+accept an invalid block, alter the UTXO set or consensus state, or move funds.
+No clean-master memory, race, resource-amplification, or production failure
+was found, and this audit makes no DoS claim. It is not Critical merely because
+an invalid block hash may appear in an inventory announcement; severity would
+rise only if the actual caller carried the value into invalid-block acceptance
+or equivalent security impact.
+
+This audit did not involve a cryptographic nonce. Clearing or retaining a
+non-cryptographic nonce or version field is not Critical; severity follows the
+reachable Bitcoin Core effect.
+
+### Corpus and pre-oracle baseline
+
+The frozen corpus is `/tmp/bitcoin-inv-20260721-clean/frozen`, copied
+byte-for-byte from `/mnt/my_storage/qa-assets/fuzz_corpora/inv_deserialize`:
+6 files, 82 bytes total, minimum/maximum 1/36 bytes. The sorted filename
+manifest SHA-256 is
+`c77d8c7f7b26da2c9e3b6129499f409659ba4cd210a338057f6c84044a444c0e`.
+The filename/size manifest SHA-256 is
+`afea795cc7f867d824be224d235dca7713003d8b57cb7305ab7cf072d6a8761c`.
+
+Before the oracle, the normal replay exited 0 after 7 executions, reached
+coverage/features 60/64, peaked at 55 MiB, and produced log SHA-256
+`a0aff785247c4785ba9a03a1f562c8e6d5a4ffa821d9d9b86f2b7a3b05ed3717`.
+The pre-oracle ASan/UBSan replay exited 0 after 7 executions, reached 98/104,
+peaked at 103 MiB, and produced log SHA-256
+`a2d1f32c0b56592855b12d2315422ebaca563cee803e371403cec6b550cd3db7`.
+
+Existing `net_tests` and `serialize_tests` exercise constructed protocol
+messages and Core processing, but the old fuzzer did not compare arbitrary
+decoded `CInv` bytes or fields against canonical reserialization. Those tests
+and the success-only fuzzer therefore did not establish this raw-input
+invariant.
+
+### Differential sensitivity proof
+
+A temporary production-code mutation was inserted after `READWRITE` in
+`CInv`: on read only,
+`const_cast<CInv&>(obj).type ^= 1`. A temporary
+`inv_deserialize_control` target retained the old deserialize-and-discard
+behavior. Both temporary changes were removed before the source commit.
+
+With the exact frozen corpus, the enhanced normal target hit the
+canonical-prefix `memcmp` assertion after 6 executions. The wrapper returned
+124 because libFuzzer remained in its symbolizer/termination path. The
+mutation log SHA-256 is
+`ecb53e82268bd2e95e5e4d6467c568d434fdcb32b3fa2d9b3a33ee111dd1af24`.
+The matched normal control exited 0 after all 7 executions; its log SHA-256
+is `7ea516413bc44eed4e1b630211ca6a7a1efc3cbaeaaa0595d6595a8a85bf7351`.
+
+Under ASan/UBSan the enhanced target hit the same assertion after 6
+executions; its mutation log SHA-256 is
+`c30bcce462fde3e3ae879d437784dc45d32765c09fb8dd3238407333bf973d90`.
+The matched sanitizer control exited 0 after all 7 executions; its log SHA-256
+is `c4ecf45cd87a932b0f70c84128fa6ba8164ff305133e8c465d638a1859162a78`.
+
+This proves that the oracle detects a modeled production state corruption that
+the old target missed. It is not evidence of a clean-master production bug:
+no source mutation remains, no production fix is claimed, and no deterministic
+production regression test is claimed for this harness-only hardening.
+
+### Restored verification
+
+After removing the mutation and control target, the normal fuzz binary SHA-256
+is `b523af95f969b3ca9e50e45fb2f16b3678da2be470be4727d17d22a959c39f9b`.
+The restored replay exited 0 after 7 executions, reached coverage/features
+67/72, peaked at 55 MiB, and produced log SHA-256
+`916544dca8127c0315976448556518af198d64e8b8388d34ef347424accfb49e`.
+The restored ASan/UBSan binary SHA-256 is
+`1d4a7d6c5f2850641637c4ebf85290ab9523931a7e46ba650838e606143f5f2b`.
+Its timestamp-verified replay exited 0 after 7 executions, reached 114/122,
+peaked at 103 MiB, and produced log SHA-256
+`563979e119239258154cd60aeedc096b94bebac1e90fa826d38a6125f43ce86a`.
+
+One initial post-restore ASan invocation was discarded: a timestamp check
+showed that it used the pre-restoration mutation binary and it hit the known
+mutation assertion. The fuzzer and symbolizer were terminated, the ASan target
+was rebuilt from restored source, object and binary timestamps were verified
+newer than `protocol.h`, and only the resulting clean replay above is evidence.
+
+Four disjoint ASan/UBSan workers processed 3/3/2/2 inputs. All exited 0
+without sanitizer diagnostics and reported peak RSS 104/103/104/103 MiB.
+Worker log SHA-256 values are:
+
+    worker0: 3a8c99bbf9b8c45db63c553193d6bfcb4339ab1723309187e41c611e3779bae5
+    worker1: 952e1d79cfc2d97bf730abaa5f63b3ecf7ca2b8e3576952247dec4a0853f96d0
+    worker2: 804056f28bb95ce2c7b3106336fb6be76ae8ae6839ef7e3b334e504be9744eac
+    worker3: a5e4dc4636275cadb1e8e2fe75acee25584ee43f85ad33b8e7948293dbd728c8
+
+The 6-worker-file union exactly matches the frozen filename manifest:
+`c77d8c7f7b26da2c9e3b6129499f409659ba4cd210a338057f6c84044a444c0e`.
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=skiplist_tests,net_tests,serialize_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; its log SHA-256 is
+`41865aeb836335b6d78727914d2e935716838e72127dd1916de1dae769caeb6c`.
+`git diff --check` passed after restoration, no crash/leak/timeout artifact
+remained in the source worktree, and no fuzz, sanitizer, mutation, symbolizer,
+or test process remained running.
+
+### Findings carried forward and follow-up policy
+
+Existing findings remain rated against clean master and actual Core callers:
+generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync handoff are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening. Earlier addrman, coins-cache, txgraph,
+txdownloadman, txrequest, connman, eviction, headers-sync, UTXO snapshot,
+mempool persistence, package, handshake, `BufferedFile`, block-index,
+compact-block, Merkle, wire, snapshot metadata, Bloom, compressed amount,
+scalar/field/group, DER, EllSwift, wallet, PSBT, scriptpubkeyman, BIP324,
+CMessageHeader, and related audits found no additional clean-master production
+bug unless their notes say otherwise. Latent ecmult scratch wrapping, 10x26
+magnitude normalization, and SHA/HMAC/RFC6979 retention remain
+reachability-limited.
+
+A later caller-side pre-clear or potential cherry-pick can mask a follow-up
+oracle without fixing the production state transition. Any such follow-up must
+amend its own commit message and this durable note, or merge the changes, and
+state the exact target, caller, corpus/mutation, assertion/failure,
+master-relative severity, and whether the change masks, preserves, or alters
+the behavior being tested. A potential fix is not proof. Every claimed
+production bug still requires clean-master or minimal-production-mutation
+reproduction and the strongest deterministic regression/functional proof
+available.
+
 ## CMessageHeader deserialization oracle audit (2026-07-21)
 
 Source commit: `fd87dbdc73` (`fuzz: strengthen CMessageHeader deserialization
