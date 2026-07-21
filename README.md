@@ -4158,6 +4158,125 @@ ecmult scratch wrapping, 10x26 magnitude normalization, and SHA/HMAC/RFC6979
 retention remain reachability-limited. No fuzz, sanitizer, mutation, or test
 process remains running.
 
+## `merkleblock` reusable-output oracle audit (2026-07-21)
+
+Source commit: `cf2cf0460e` (`fix: reset partial merkle match indices`),
+parent `1a71283cfe` and audit base `18c05d93016b28a9afd4c716dfe00b6e0accb30b`.
+The source worktree was `/tmp/bitcoin-secp256k1-audit-current` on
+`codex/fuzz-oracles-current`; `origin/master` and
+`remotes/l0rinc/master` were both that base, so no rebase was needed. The
+target-scoped l0rinc comparison over `src/merkleblock.cpp`,
+`src/merkleblock.h`, `src/test/fuzz/merkleblock.cpp`,
+`src/test/merkleblock_tests.cpp`, `src/test/pmt_tests.cpp`, and
+`src/test/bloom_tests.cpp` returned no output. No l0rinc commit was
+cherry-picked and no fork change masked this master behavior.
+
+### Finding and oracle
+
+`CPartialMerkleTree::ExtractMatches` is an output-parameter API: each call
+must overwrite the matched txids and their corresponding transaction indices.
+On master it cleared `vMatch` but not `vnIndex`. Reusing the index vector
+therefore retained stale entries, breaking pair alignment even when the tree
+was valid. The production fix clears both vectors at the start of the
+operation.
+
+The `merkleblock` fuzzer now deliberately pre-seeds `vnIndex` with
+`0xdeadbeef`, asserts equal output sizes, checks that extracted indices are
+in range and strictly increasing, and calls extraction twice to require an
+idempotent state transition. `merkleblock_extract_matches_reuse` adds a
+deterministic regression test with a real block, a pre-seeded index, and a
+second extraction. This is a real clean-master production correctness bug,
+not a sanitizer-only or mutation-only finding.
+
+### Bitcoin Core boundary and severity
+
+The current Core callers are `verifytxoutproof` at
+`src/rpc/txoutproof.cpp:147-166` and `importprunedfunds` at
+`src/wallet/rpc/backup.cpp:61-87`; both construct fresh match and index
+vectors before extraction. The `net_processing.cpp` merkleblock path only
+constructs and sends filtered-block proofs; this tree is not an inbound
+invalid-block acceptance path. Therefore the master-relative rating is
+**Low** API correctness. A caller that reuses the public output parameters
+could receive mismatched txid/index pairs, but current Bitcoin Core cannot
+trigger it through an invalid peer block, consensus validation, fund loss,
+memory corruption, or cryptographic compromise. No cryptographic nonce is
+involved; a nonce without cryptographic meaning would not require clearing.
+This is not Critical.
+
+### Corpus and differential proof
+
+The frozen corpus is
+`/tmp/bitcoin-merkleblock-20260721/frozen/merkleblock`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/merkleblock`: 432 files,
+45,510,755 bytes, minimum/maximum size 1/1,045,251 bytes. The sorted
+filename manifest SHA-256 is
+`cc200c7bc021933fcf9320e6ce09efbf6e1640e899a0df5b35e2afb1ed05e148`; the
+filename/size manifest SHA-256 is
+`2c85704dffd0235f968ed2ee142fb90284ac1ae71a86e86d6b9d5862b9c8371e`.
+
+On the unmodified master behavior, the pre-seeded oracle failed at
+`src/test/fuzz/merkleblock.cpp:24` while loading the corpus. The exact
+witness is `003b7523bbe7233986b96c4b3cb1e9579155a9f4`, 5,304 bytes,
+SHA-256 `5377bef9616e7447343946d18d29fe3fee3176fdb5dd3928216f2deea939c6b9`.
+The pre-fix corpus log SHA-256 is
+`ce317cad3d62c4c7dc3f184119a0e9f42f3fe67b1f5d1981fec0a41be4e51898`.
+The failure is caused by the exact corpus condition plus the pre-seeded
+index; no artificial production mutation is needed because master itself
+reproduces it. The post-abort symbolizer helper was stopped after preserving
+the assertion log.
+
+The restored normal binary SHA-256 is
+`0cb2fc1f40185873b4ffc0a0943a1d18b46a5dbb9bf1567f8e044f892781bda0`.
+The restored corpus replay executed 433 units (432 corpus files plus the
+seed), reached coverage/features 587/2,529, peaked at 152 MB, exited 0, and
+left no artifact; log SHA-256:
+`81fec82f151800338c5f25361d70f0ecc4bfb8393fd4e65b63309957ccb9f449`.
+The restored ASan/UBSan binary SHA-256 is
+`e7b9ff6f141df82c4bc5bec8bb46809ca0ab04a01aba7e1bd7abccb6dac5f8e9`.
+Its 433-unit replay reached coverage/features 1,033/5,178, peaked at
+523 MB, exited 0, and produced no sanitizer or artifact fault; log SHA-256:
+`337b7ac331c1b6fe3700e36dfe93919666350fedcf3fc2bc6921fa8dbf42aab6`.
+The exact witness passed restored normal and ASan/UBSan replays; their log
+SHA-256 values are `d445c7a321f2a4da1d58af53903e106731868c059e5ad984b4767c355e0a704a`
+and `7900321060d64d9f56d2d765e4b36580cf9f24ea709f69a697cff06720c32df3`.
+
+Four disjoint ASan/UBSan workers covered all 432 files, 108 per worker, and
+each exited 0 without sanitizer markers or artifacts:
+
+    worker0: 110 executions, coverage/features 999/4,843, peak 450 MB, log 93eb0f5b80c3f79782f3079a1ade2507831cf01af37c317984406fe3da1aa2e7
+    worker1: 110 executions, coverage/features 1000/4,715, peak 323 MB, log 01928b3b9eef7b68d73a17fb937945d0764242e17b5ff7906c505c3a145b8f54
+    worker2: 110 executions, coverage/features 1016/4,854, peak 432 MB, log 077bcaaee1e5ec3b98552d22982ba84e882683a76f3e181202303fbf25b80029
+    worker3: 110 executions, coverage/features 982/4,560, peak 259 MB, log 410f2e4c0fb47f647ae97f3e6549a02bfac13f90da2255c4dd48ec765b4663d5
+
+The worker filename union has SHA-256
+`cc200c7bc021933fcf9320e6ce09efbf6e1640e899a0df5b35e2afb1ed05e148`.
+The focused `merkleblock_tests,bloom_tests,pmt_tests` command passed all 17
+cases; log SHA-256:
+`3071ff8cd04d91386d6daa177e1bd144a05711dd46ea866eab15c8e68ac258ed`.
+
+### Findings carried forward and cherry-pick policy
+
+Existing findings remain rated against clean master and actual Core callers:
+generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening. Earlier BIP324, EllSwift, key, scriptpubkeyman,
+wallet, PSBT, tx_pool, block-index, snapshot metadata, scalar/field/group,
+DER, and related audits found no additional clean-master production bug.
+Latent ecmult scratch wrapping, 10x26 magnitude normalization, and
+SHA/HMAC/RFC6979 retention remain reachability-limited.
+
+The fixed behavior is intentionally at the library output boundary. A later
+caller-side pre-clear or cherry-picked potential fix would mask the fuzzer
+failure without repairing reusable API state; amend that commit and this
+note, or merge the changes, and state whether it masks, preserves, or changes
+the master-relative finding. Every follow-up claim still requires a clean
+master or minimal-production-mutation reproduction and deterministic proof.
+The source commit message contains the same corpus condition, severity,
+caller analysis, fork comparison, and verifier requirement. No fuzz,
+sanitizer, mutation, or test process remains running.
+
 ## `block_index` database round-trip oracle audit (2026-07-20)
 
 Source commit: `6909f22d74` (`fuzz: strengthen block_index database
