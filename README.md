@@ -3864,6 +3864,151 @@ malformed input or a nonce without cryptographic meaning does not raise
 severity; invalid blocks or transactions are Critical only when the real
 Bitcoin Core caller can actually reach an impactful failure.
 
+## `snapshotmetadata_deserialize` untrusted-file round-trip oracle audit (2026-07-21)
+
+Source commit: `baa8fcc2c1` (`fuzz: strengthen snapshot metadata round-trip
+oracle`). The source worktree was `/tmp/bitcoin-secp256k1-audit-current`,
+branch `codex/fuzz-oracles-current`, and the documentation worktree was
+`/tmp/secp256k1-oracles-next`, branch `codex/fuzz-oracles`.
+
+### Provenance and l0rinc comparison
+
+This pass started from source commit `41ff6a5c6351563700064e12fd1aca40df93e047`.
+The source branch is based directly on
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both `origin/master` and
+`remotes/l0rinc/master` resolved to that commit at audit time. The exact
+target-scoped comparison was:
+
+    git log origin/master..remotes/l0rinc/master -- \
+      src/node/utxo_snapshot.h src/validation.cpp \
+      src/rpc/blockchain.cpp src/test/fuzz/deserialize.cpp \
+      src/test/validation_chainstatemanager_tests.cpp
+
+It returned no output. No l0rinc commit was cherry-picked for this target, so
+no fork fix masked, weakened, or changed the clean-master behavior. Any later
+cherry-pick or potential fix that changes a follow-up finding must be amended
+into the same commit and note, explicitly stating whether it masks, preserves,
+or changes the behavior on master. A nonce with no cryptographic meaning does
+not need clearing and is not Critical.
+
+### Oracle and Core call path
+
+`src/test/fuzz/deserialize.cpp` now adds a postcondition after accepted
+`SnapshotMetadata` parsing. It serializes the accepted object, reparses it
+with the active network parameters, requires the serialized stream to be
+fully consumed, and compares the base block hash and coin count. The input
+buffer itself is intentionally not required to be empty: in production the
+metadata header is followed by serialized coins in the same snapshot file.
+Expected invalid-file exceptions remain part of the harness domain.
+
+The production type is `node::SnapshotMetadata` in
+`src/node/utxo_snapshot.h`. Its fields are explicitly untrusted and are
+validated by `Unserialize`; the fuzzer now also checks that an accepted state
+can reproduce the same serialized metadata. The principal Bitcoin Core
+callers are:
+
+* `loadtxoutset` in `src/rpc/blockchain.cpp:3528-3537`, which parses metadata
+  from a local snapshot file and passes it to
+  `ChainstateManager::ActivateSnapshot` in `src/validation.cpp:5614`.
+* `PopulateAndValidateSnapshot` in `src/validation.cpp:5780`, which validates
+  the base header, assumeutxo height/work, coin count, coin heights, and
+  `MoneyRange` while loading the snapshot.
+* `dumptxoutset` in `src/rpc/blockchain.cpp:3395-3397`, which writes the same
+  metadata format.
+
+No clean-master production bug was confirmed. Against master this is an
+**Informational/Low hardening finding** for local snapshot correctness and
+availability. Snapshot metadata is a local untrusted-file/RPC boundary, not a
+peer block or transaction validation boundary. It cannot be rated High or
+Critical merely because malformed bytes are accepted by the fuzzer; an invalid
+block or transaction is Critical only when an actual Bitcoin Core caller can
+reach an impactful failure. Existing deterministic chainstate tests already
+cover malformed snapshot counts and base hashes. Since there is no production
+fix or reproducible clean-master failure, this commit adds no redundant unit
+test; the existing caller-level tests remain the strongest applicable proof.
+
+### Corpus and replay evidence
+
+The existing `snapshotmetadata_deserialize` corpus has 16 files and 208 total
+bytes, with minimum/maximum sizes of 1/51 bytes. The frozen copy is
+`/tmp/bitcoin-snapshotmetadata-20260721/frozen/snapshotmetadata_deserialize`.
+The sorted filename manifest SHA-256 is
+`b1664d472369c2f2485bcb2031dc27f0df404a11a1180c1bb98ef8922f4e6ae5`; the
+filename/size manifest SHA-256 is
+`edddea25ed434fe4d7ebc689da9d5214ce20b3c0cc079148c52477081dd7c63e`.
+
+The pre-change normal replay ran 17 executions, reached coverage 630 and
+1,154 features, peaked at 55 MB, exited 0, and produced no artifact. Its log
+SHA-256 is `4755395134ff49b26be8e5fe89e832b3399a028e7eca945d4e275c85a464c8b3`.
+The final normal replay ran 17 executions, reached coverage 641 and 1,177
+features, peaked at 55 MB, exited 0, and produced no artifact. Its log
+SHA-256 is `b9baceafdac8dc3874fe7267723a2ab8a68d2387de9cd0729c01c9d52a11139e`.
+The final ASan/UBSan replay ran 17 executions, reached coverage 1,110 and
+2,042 features, peaked at 105 MB, exited 0, and reported no sanitizer or
+artifact fault. Its log SHA-256 is
+`ed5de1a1275a79dca99cfa907062f125ccf2f02bdc4336ee772913e47ba72aa9`.
+
+Four disjoint ASan/UBSan workers each ran four corpus files plus one seed, for
+five executions. All exited 0 with no sanitizer/artifact failure and peaked
+at 104 MB. Their log SHA-256 values were:
+
+    worker0 ee1e9428104c7169558eaecbcd6269bb8a2460d6293bf6d4f1e1073cd6a7df9
+    worker1 6f5508a818cd06748be7d349c607dc2d9291014e9827355c8b75a6f6599e5c83
+    worker2 62eb248536d997322d603e045466fdeed02b4355929ea817e17144c6830fab53
+    worker3 465f3ffc3b228ffb3069afcaac0ef45928e583424d7f92eed0f033c0f85dd07e
+
+The union of worker filenames exactly matches the frozen filename manifest;
+the union SHA-256 is `b1664d472369c2f2485bcb2031dc27f0df404a11a1180c1bb98ef8922f4e6ae5`.
+
+### Mutation and matched-control proof
+
+The exact valid corpus witness was
+`09f89addb7c67c8a5caf9172065e458878a579e9`, 51 bytes, SHA-256
+`9f34b5aba95f3313fe838a17ee2f39b2aed04f7fe0afd82ac91e8979f4b9c080`.
+The production mutation removed only `s << m_coins_count` from
+`SnapshotMetadata::Serialize`. With the enhanced harness, the witness failed
+immediately while reparsing with `DataStream::read(): end of data`; the
+wrapper exited 125 after one execution. Mutation log SHA-256:
+`23d5b177df8650eae3a6fc5d401bb52a8f5b23ee3fe251b9c2fd7ab4df58bb1f`.
+The matched temporary control target retained the old execution-only
+behavior and exited 0 on the same witness. Control log SHA-256:
+`51eb970117f9fd006622e98ae9783fa4b83f7c2ec2611f07a03c8cfd8211126c`.
+This is proof that the oracle detects the modeled serializer regression, not
+proof of a clean-master production bug. The mutation and control target were
+removed before the source commit.
+
+### Verification and findings carried forward
+
+The final normal fuzz binary SHA-256 is
+`93615c3c3dd31a3560300ec810da75d573b9346c57cc3da05680be5ad2fb1249`; the
+ASan/UBSan fuzz binary SHA-256 is
+`dec4519a21ae324a868171cb5b7789af5e71573cc6852f75a62927be25e42b36`.
+The final `src/test/fuzz/deserialize.cpp` SHA-256 is
+`004a618e444234afe49e7fe96231d5ffe70217c28ee010406cb8c0c8cb24b519`.
+`git diff --check` passed.
+
+The relevant `validation_chainstatemanager_tests` command was launched from
+`/tmp/bitcoin-descriptor-test-build/bin/test_bitcoin`. It reached the existing
+snapshot assertion-based negative cases, then hung in
+`chainstatemanager_snapshot_completion_hash_mismatch` with the process blocked
+in `futex`; it was stopped with exit 130. Log SHA-256:
+`21003b72a443b90cf68715cd2aedc66f0b967fc3a7d2a088d4c3e55b527a440c`.
+This is a test-environment limitation, not a fuzz failure.
+
+Existing findings remain rated against clean master and actual Bitcoin Core
+callers: generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening. Earlier BIP324, EllSwift, key, scriptpubkeyman,
+wallet, PSBT, tx_pool, block-index, scalar/field/group, DER, and related audits
+found no additional clean-master production bug. Latent ecmult scratch
+wrapping, 10x26 magnitude normalization, and SHA/HMAC/RFC6979 retention remain
+reachability-limited. Any later cherry-pick that alters a follow-up finding
+must be amended into the same commit/note with whether it masks, preserves, or
+changes master behavior. No fuzz, sanitizer, mutation, or test process remains
+running.
+
 ## `block_index` database round-trip oracle audit (2026-07-20)
 
 Source commit: `6909f22d74` (`fuzz: strengthen block_index database
