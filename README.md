@@ -5341,6 +5341,206 @@ lines. Formatter-log SHA-256:
 All mutation processes, probes, workers, artifacts, and tests were stopped or
 restored; no fuzz job remains running.
 
+## BIP324 ECDH state oracle audit (2026-07-21)
+
+Source commit `16e576419f` (`fuzz: enforce BIP324 ECDH state contracts`)
+strengthens `FUZZ=bip324_ecdh` with an arbitrary-peer-input and deterministic
+XDH-output oracle, and makes the CKey BIP324 ECDH success contract fatal when
+violated.
+
+### Finding and Bitcoin Core severity
+
+The clean-master target and frozen corpus replay found no production bug.
+Valid Bitcoin Core behavior is unchanged. The production changes only fail
+immediately on an impossible local-key/XDH failure and zero-initialize the
+fixed-size output before libsecp256k1 fills it.
+
+The actual Core boundary is network-reachable: a peer supplies 64 bytes to
+`V2Transport::ProcessReceivedKeyBytes` at `src/net.cpp:1128-1158`, the receive
+limit is `src/net.cpp:1284-1303`, and the bytes flow through
+`BIP324Cipher::Initialize` to `CKey::ComputeBIP324ECDHSecret`. Invalid block
+bytes do not invoke this path. XDH returns zero for an overflowing or zero
+local scalar, or for a hash callback returning zero. Core reaches this method
+with a checked valid scalar and the built-in BIP324 hash callback always
+returns one; arbitrary 64-byte EllSwift peer values are valid inputs. A
+separately proven remotely triggered crash, memory-safety issue, or transport
+DoS would require High/Critical review, but none was reproduced on master.
+This result is therefore **Informational/Low oracle hardening**, with no
+claimed clean-master vulnerability or severity-raising fix. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared.
+
+Severity follows the real Core caller and input origin. This is a BIP324
+transport contract, not block or consensus validation; an assertion failure in
+the harness alone is not a Critical finding.
+
+### Audit provenance and cherry-pick context
+
+- Source parent: `4ecc40ea7eee7c63fde8b1fecb57e9fef32f745a`
+  (`fuzz: enforce EllSwift decode and serialization contracts`).
+- Audit base: `18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+  `remotes/l0rinc/master` matched this commit before the audit sequence.
+- The l0rinc query over `src/test/fuzz/key.cpp`, `src/key.cpp`, `src/key.h`,
+  `src/pubkey.cpp`, `src/pubkey.h`, `src/bip324.cpp`, and
+  `src/test/fuzz/bip324.cpp` returned no output. No relevant fork commit was
+  cherry-picked, and no later fix was allowed to mask clean-master behavior.
+- Follow-ups changing this target, its Core callers, corpus inputs, or proof
+  conditions must amend their source/evidence notes with whether they
+  preserve, change, or mask this result. Merge or amend deliberately if a
+  potential fix changes a later experiment.
+
+### Reiterated findings
+
+The master-relative ledger remains:
+
+- **Medium**, feature-conditional private-broadcast failed-send retention.
+- **Medium**, empty-HEADERS initial-sync availability/IBD risk.
+- **Low under current Core callers**, peer transaction-activity refresh,
+  ProcessMessage block-storage failure, and oversized transport types.
+- **Medium but latent/reachability-limited**, ecmult scratch wrapping, forced
+  10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention.
+- **Low/nice-to-have**, banman invalid-subnet and unban integrity.
+- No additional clean-master production bug was found in the audited addrman,
+  coins-cache, coins-view, txgraph, txdownloadman, txrequest, connman,
+  eviction, handshake, compact-block, headers-sync, UTXO snapshot, mempool
+  persistence, package evaluation, RPC, descriptor cache, threadpool,
+  cluster-linearization, policy estimator, pool resource, versionbits,
+  signature-cache, CuckooCache, FlatFilePos, prevector, bitdeque, VecDeque,
+  DER key import/export, lax DER parser, or EllSwift paths. Severity remains
+  tied to actual Bitcoin Core callers and input origins.
+
+### Contracts and tests
+
+`CKey::ComputeBIP324ECDHSecret` now uses `Assert(keydata)`, value-initializes
+its fixed 32-byte `ECDHSecret`, and uses `Assert(success)` for the documented
+always-successful BIP324 XDH call. This prevents an impossible failure from
+silently returning an uninitialized secret.
+
+`bip324_ecdh` feeds an arbitrary fixed-size 64-byte peer EllSwift value into
+the same CKey/XDH path used by the transport and checks that repeated calls
+with identical inputs produce identical secrets. Its existing two-party
+oracle continues to check role mapping, shared-secret agreement, wrong-party
+separation, and distinct-encoding separation. The deterministic
+`key_ellswift` test adds an all-zero peer EllSwift input and repeated-secret
+check. The zero encoding is a valid arbitrary peer value, not invalid-block
+data.
+
+### Corpus and baseline
+
+The corpus was frozen from
+`/mnt/my_storage/qa-assets/fuzz_corpora/bip324_ecdh` to
+`/tmp/bitcoin-bip324-ecdh-20260721/frozen`: 1,533 files and 2,250,288 bytes,
+with minimum size 1 byte and maximum size 2,097,151 bytes.
+
+Manifest SHA-256 values:
+
+- Sorted filenames:
+  `08457a9cd0e75e805737e47a085ac822a186d64423fc69652ee7dcd9a0fc70d2`
+- Filename plus size:
+  `294c31e88390d22ca368751d6793f22df7c4fae36acc714c609651c35e400258`
+- Relative contents:
+  `f999202469812c5908ecdd02f6786c57fe98a5a902cce46bf72905bac13455c4`
+
+Parent source SHA-256 values were `src/key.cpp`
+`178be2285765a344f4f0d683110a120ca910dc1f00f59bf3caa8b23a57d8252e`,
+`src/test/fuzz/key.cpp`
+`eb362fa171c65cca69b395b6363128c91ce61b5df1f2daf0c2bbf937692fc479`, and
+`src/test/key_tests.cpp`
+`9cdc37a860dfdbcbc68031a323cdedd028168bab3ac91f2d0fb5794472873d40`.
+
+The pre-change sanitizer binary was
+`5f6e19b4e4549cc9e5e6272b87415d97f85d35970d108f4cc5169723b15f8383`.
+It processed 1,534 executions with coverage 5,127, features 13,867, peak RSS
+130 MiB, and no artifacts. Baseline log SHA-256:
+`68e6875d27f696ba471dc6bb0cf156b59862a3e27bd7fa6ba645815b2eeb8bc0`.
+The pre-change normal binary was
+`bb583a6c0cc9e59125079c79d1af128e465d0f0273ad2aae8d16e7290174a679` and its
+one-file driver passed all 1,533 inputs. Replay log SHA-256:
+`d1f2883f71237fd338a287d2e8434b174a81a13ed5f9e215b5280c1270a0f988`.
+
+### Differential mutation proof
+
+The target-specific witness is
+`frozen/00169efed183b750af496e0d48183197bed7fce8`, 34 bytes, SHA-256
+`91f766c92b02b5e32dbf8e5b653ba3f099cd8a006eaeb099451153cde619febd`.
+
+A minimal production mutation swapped the `party` mapping from
+`initiating ? 0 : 1` to `initiating ? 1 : 0` in
+`CKey::ComputeBIP324ECDHSecret`. The mutated `src/key.cpp` SHA-256 was
+`c5ba27fc9705623deded2f3babc7662c2649a7b0f6626d7e3c4e1ed8e1182f90`, and the
+mutated normal binary SHA-256 was
+`07fbea472eb6d3ca610e6153acf80310b0ef0b52a56cba9614e0ac9db7bd59cf`.
+The witness immediately failed at `ecdh_secret_1 == ecdh_secret_2` with exit
+1. Mutation build-log SHA-256:
+`e51a733af88c8523764980f779cd756c2ca3eda1d42b000af1abcb3ba903de74`;
+failure-log SHA-256:
+`02f64b9a22986ef60257a8b556a4f26316d425b28e8b60ebdfb82a71b2f9f779`.
+
+The largest corpus input,
+`frozen/552fb36372683570a82e04fab5280146524ec93d`, is 2,097,151 bytes,
+SHA-256
+`227cd4bd4d1e4a1f10f50b8e75d56ad431f4c1925dfb75d5f64af03229df87e3`, and
+was a non-triggering control under the same mutation. The scan continued
+until the 34-byte witness failed, avoiding a claim based on a corpus input
+that did not exercise two distinct valid parties.
+
+This is oracle/mutation proof only: the mutation is not present on master, no
+hypothetical master vulnerability is claimed, and the source was restored
+before final builds and replays.
+
+### Final verification
+
+Final source SHA-256 values are `src/key.cpp`
+`1b9ab9ac50d8e2e096374c84a4613a98f5482708b8d93b3a485bfe966ec66011`,
+`src/test/fuzz/key.cpp`
+`6cbbc14221239a0cb33385625de4b6de02ff0d17404109cc6832927038bc4902`, and
+`src/test/key_tests.cpp`
+`1ebe1acdadb4c9e693742a40baa8dbcfdcc433e1b7fa127c0ab236f927f8bbd6`.
+
+The final sanitizer binary
+`560bcdd32529c81ade56c7aacb2f60e429f4611258a069e287a79a44368445d8` passed
+the frozen replay: 1,534 executions, coverage 5,143, features 10,919, peak
+RSS 130 MiB, and no artifacts. Build-log SHA-256:
+`9a96a9c2fbf920d68eca8a9cde01e9d024ec5895a24b9a5177f2f843a2dba8fb`;
+replay-log SHA-256:
+`7a6752f2bb8c51afd23ebce49be42c6d5afcd6da3625cb8dd8431743fbfa71e0`.
+
+Four isolated sanitizer workers each processed 1,534 executions with
+coverage 5,143, features 10,919, peak RSS 130 MiB, and no artifacts. Combined
+log SHA-256:
+`00fc4d4ad6c2c1dfefb582f2278fa29aede85070b920dec9106ba84f0871b43b`.
+Worker log SHA-256 values, `fuzz-0` through `fuzz-3`, are:
+
+    544c162aa5da9ffc5ccdc69c6c18d800d4aa62b872124be50cb64ca612ab5aca
+    321635f2023353e28af2b3414ad1ac1582d79004f524c034d9d71968b4dfc7ce
+    a7ccf9130b711c19edad12816c1b59e2a3819228ef087b7286658b61b35927e5
+    de3c7836a20f0823556a91e1bcb2bc4ec7496eff1b3f5d6929c7f86122e55b3f
+
+The final normal fuzz binary
+`d0cbf5b79db46b35e3af684f8946c01bf2cc1cf475be33cf7a0c272541d3efaa`
+passed all 1,533 corpus inputs. Build-log SHA-256:
+`b1dbe504412b211d44eea0713dc5040857b0973c1a300604d0f4791660bfe461`;
+replay-log SHA-256:
+`361b166be8a02a1a8fdce7f4a4c7dfc9cf6f40618a1c86f7254ac6428f1a6a24`.
+The target-specific witness passed after restoration in both modes. Witness
+log SHA-256 values are
+`93c3632332df5e22040d9c156cf9411f0ba7fe72f150f610c9e2cbab0c1873b5` and
+`912706ba772835dbf8c23e3fb3558e12083c1b82770391409bc4e6002eaf898b`.
+
+`key_tests/key_ellswift` passed with no errors, including the zero
+EllSwift/XDH determinism check. Final `test_bitcoin` binary SHA-256:
+`103a326358154fbaa7deac6a2ca33561c08d5dafe9034796f75778b5eb58afb9`;
+test build-log SHA-256:
+`3fd07ce6e634f6edebb607567873dfcf28f78b0c3adf8c86e53de7204a553159`;
+unit-log SHA-256:
+`eca6438bd6fd0808d5992e545c2f889a0c1ea11f4800e6ad9c27f7470355dad6`.
+
+`git diff --check` passed. `clang-format-22 --dry-run --Werror` reported only
+pre-existing file-wide legacy diagnostics; none named the modified BIP324
+contract lines. Formatter-log SHA-256:
+`8e176b190c220715de6f615a2546048c9736ee181ccc685b4037486a02ea02ce`.
+All mutation processes, probes, workers, artifacts, and tests were stopped or
+restored; no fuzz job remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
