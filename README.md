@@ -4009,6 +4009,155 @@ must be amended into the same commit/note with whether it masks, preserves, or
 changes master behavior. No fuzz, sanitizer, mutation, or test process remains
 running.
 
+## `blocktransactions_deserialize` BLOCKTXN input-prefix oracle audit (2026-07-21)
+
+Source commit: `1a71283cfe` (`fuzz: strengthen BLOCKTXN deserialization
+oracle`). The source worktree was `/tmp/bitcoin-secp256k1-audit-current`,
+branch `codex/fuzz-oracles-current`; the source branch is based on
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, which was both
+`origin/master` and `remotes/l0rinc/master` at audit time.
+
+### Provenance and target selection
+
+The separate `chain` fuzzer already round-trips every serialized
+`CDiskBlockIndex` field, so `diskblockindex_deserialize` was deliberately not
+duplicated. `blocktransactions_deserialize` was selected because it is a
+peer-facing parser whose harness only deserialized `BlockTransactions` and
+then exited.
+
+The target-scoped comparison was:
+
+    git log origin/master..remotes/l0rinc/master -- \
+      src/blockencodings.h src/blockencodings.cpp src/net_processing.cpp \
+      src/test/fuzz/deserialize.cpp src/test/fuzz/chain.cpp \
+      src/test/blockencodings_tests.cpp src/test/net_tests.cpp
+
+It returned no output. No l0rinc commit was cherry-picked, so no fork change
+masked or altered the clean-master behavior. Any later cherry-pick or fix that
+changes a follow-up finding must be amended into the same commit and note,
+stating whether it masks, preserves, or changes master behavior. A nonce with
+no cryptographic meaning does not need clearing and is not Critical.
+
+### Oracle and Bitcoin Core callers
+
+The enhanced target uses a target-specific `SpanReader` path. For an accepted
+object it:
+
+* requires every deserialized `CTransactionRef` to be non-null;
+* reserializes the object and requires the bytes to equal the exact consumed
+  prefix of the original input, with the `SpanReader` remainder accounting for
+  the rest; and
+* reparses the canonical serialization and compares the block hash, transaction
+  count, and each transaction witness identity.
+
+Trailing bytes are intentionally allowed, matching the generic deserializer
+harness. The block hash is not required to be non-null or semantically valid at
+this parser boundary: `ProcessCompactBlockTxns` matches it to an outstanding
+request, and `PartiallyDownloadedBlock::FillBlock` checks compact-block
+consistency.
+
+Bitcoin Core deserializes a peer `BLOCKTXN` message in
+`PeerManagerImpl::ProcessMessage` at `src/net_processing.cpp:4876-4887` and
+passes it to `ProcessCompactBlockTxns` at `src/net_processing.cpp:3536-3620`.
+That caller handles invalid reconstruction by removing the request and
+misbehaving the peer, handles failed reconstruction by falling back to
+`GETDATA` or waiting for another download, and only sends a successful block
+to `ProcessBlock`.
+
+No clean-master production bug was found. This is **Informational/Low
+hardening on master**. The modeled regression causes compact-block
+reconstruction failure and extra-download/availability behavior, not invalid
+block acceptance, fund loss, consensus failure, memory safety, or cryptographic
+compromise. A malformed peer block or transaction is not Critical without a
+reachable impactful Core failure.
+
+### Corpus and replay evidence
+
+The existing corpus has 220 files and 20,081,783 bytes, with minimum/maximum
+sizes of 1/1,043,992 bytes. The frozen copy is
+`/tmp/bitcoin-blocktransactions-20260721/frozen/blocktransactions_deserialize`.
+The sorted filename manifest SHA-256 is
+`32275e3e880aadc181bddc4d688ee673ad123d4f06be7b8d6074f22c03f4891b`; the
+filename/size manifest SHA-256 is
+`f8c98fc97d518fa9168569796e442ba7610a223fc9c6e488d9b1aa4033e143fc`.
+
+The pre-change normal replay used binary SHA-256
+`93615c3c3dd31a3560300ec810da75d573b9346c57cc3da05680be5ad2fb1249`, ran
+221 executions, reached coverage/features 337/1,981, peaked at 153 MB, and
+exited 0. Its log SHA-256 is
+`d725b28e95087dceb502d3ab726a0831926eba8ac5f0f5c8a3691ec5c993ddac`.
+
+The final normal binary SHA-256 is
+`c6418f87b9b3f7fd517f73664bc927f0c4ad6a510355e78035b93b29c3444626`.
+The final replay ran 221 executions, reached coverage/features 417/2,339,
+peaked at 155 MB, exited 0, and produced no artifact. Log SHA-256:
+`661236011df432cbead1d376c506780af24bd115d4ee6b9af7c57953d0c6005f`.
+
+The final ASan/UBSan binary SHA-256 is
+`79f2a76b95821cc8a3efe833a032f898ceef7679b20c082fe581314e9953e6ef`.
+Its replay ran 221 executions, reached coverage/features 605/3,555, peaked at
+461 MB, exited 0, and produced no sanitizer or artifact fault. Log SHA-256:
+`c9d738d66ab31e95c5a64459cda72858f7bdf39e0b394f5c818664c8360b3f1d`.
+
+Four disjoint ASan/UBSan workers each ran 55 corpus files plus one seed, for
+56 executions. All exited 0 with no sanitizer or artifact fault; peak RSS was
+353, 174, 266, and 301 MB. Worker log SHA-256 values were:
+
+    worker0 716ab30a2fe977f5384955beca5a27f99ca7a4f4f86ac72d28d0ea8ac3738707
+    worker1 07a4dfe786799b4f15a607a51d1d8f0ef1cefe5b9de6e171a1242dfea5d1efdc
+    worker2 60b9dc154b100465f6a9fc7c96af7690a4af2609d6c7ec42ce6ab301b5c1849f
+    worker3 a552e3d9f802625449e49fdffde39ae436db22cb6edb33b4bafd9431ebe15403
+
+The worker filename union exactly matches the frozen manifest and has SHA-256
+`32275e3e880aadc181bddc4d688ee673ad123d4f06be7b8d6074f22c03f4891b`.
+
+### Mutation and matched control
+
+The temporary production mutation added `SER_READ(obj, obj.txn.clear())`
+after `BlockTransactions` serialization. It models a read-side deserializer
+that consumes valid transaction bytes but silently drops the parsed vector.
+The enhanced full corpus reached the consumed-prefix assertion after 11
+executions; mutation log SHA-256:
+`27b576284feb7fe4993d94649e92a32ebde5244143c117487724f13607820b36`.
+
+The exact witness was
+`08a5b5c28c3614512b2ec9c1c63eb3458acd54d7`, 123 bytes, SHA-256
+`a7f6641b68cbdeab1e3625987edcfe4a4aafd231db645778a42f96c21439f821`.
+The enhanced mutated target failed at `deserialize.cpp:161` on the consumed
+prefix contract; exact mutation log SHA-256:
+`e2e3b6eb2467cbe1d682da3285ab509d62fd2795b730ff2f1c21889c283dba31`.
+The matched temporary `blocktransactions_deserialize_control` target used the
+same mutation but only deserialized and exited 0 on that witness; control log
+SHA-256:
+`633608a50afda991b13005022c3699861e2d02afa9795e68d9428d1ea9a3e7a8`.
+The mutation and control target were removed before the source commit. This
+is oracle-sensitivity proof, not a clean-master production bug.
+
+### Verification and findings carried forward
+
+The exact witness passed restored normal and ASan/UBSan replay. Exact log
+SHA-256 values are `da9a671f26315e90aa3e42cfe4fd44b44d3728307197ba345bc2e5a7dd68af06`
+and `d2a548552a88f89565c4476a6dc894f0601bfa9997837110bffbe108e017a837`.
+The focused command
+`test_bitcoin --run_test=blockencodings_tests --log_level=test_suite`
+passed all eight blockencodings cases with exit 0. Its log SHA-256 is
+`b3985523672478baa98f63e7fb5e0730b6cc51033b708e87a9ad87686d39fa4a`.
+The final source file SHA-256 is
+`ea2ac3e1bd8899204c52ac428d81f59208266c52833ca9f3ace77ade16de739f` and
+`git diff --check` passed.
+
+Existing findings remain rated against clean master and actual Bitcoin Core
+callers: generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban are Low or hardening. Earlier BIP324, EllSwift, key, scriptpubkeyman,
+wallet, PSBT, tx_pool, block-index, snapshot metadata, scalar/field/group, DER,
+and related audits found no additional clean-master production bug. Latent
+ecmult scratch wrapping, 10x26 magnitude normalization, and SHA/HMAC/RFC6979
+retention remain reachability-limited. No fuzz, sanitizer, mutation, or test
+process remains running.
+
 ## `block_index` database round-trip oracle audit (2026-07-20)
 
 Source commit: `6909f22d74` (`fuzz: strengthen block_index database
