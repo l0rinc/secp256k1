@@ -4438,6 +4438,161 @@ bug still requires clean-master or minimal-mutation reproduction and the
 strongest deterministic proof available. `git diff --check` passed, and no
 fuzz, sanitizer, mutation, or test process remains running.
 
+## CBlockLocator deserialization oracle audit (2026-07-21)
+
+Source commit: `2dcc728d1e` (`fuzz: strengthen CBlockLocator deserialization
+oracle`), parent `fff7127e04`, with source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+audit base is Bitcoin Core master
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b`; `origin/master` and
+`remotes/l0rinc/master` resolve to that same commit. The target-scoped query
+over `src/primitives/block.h`, `src/test/fuzz/deserialize.cpp`,
+`src/net_processing.cpp`, `src/validation.cpp`, and `src/protocol.h` found no
+post-base commits on either ref. No l0rinc commit applied and none was
+cherry-picked. Existing `block_header` and `chain` fuzzers cover constructed
+locators and CDiskBlockIndex state, but not this raw success-only target.
+
+### Contract, caller boundary, and severity
+
+`blocklocator_deserialize` previously deserialized `CBlockLocator` and
+discarded it. The new oracle requires exact object-prefix consumption,
+canonical equality for the `vHave` hash-vector payload, and a complete
+serialize/reparse equality check. It intentionally excludes only the first
+four bytes from canonical comparison: CBlockLocator historically accepts a
+network or disk version and writes the ignored field as `DUMMY_VERSION=70016`.
+Trailing bytes remain allowed because `GETBLOCKS` and `GETHEADERS` append
+`hashStop`. The harness does not require a nonempty or sorted locator and does
+not duplicate the caller's 101-entry policy: null locators are meaningful and
+Core checks `MAX_LOCATOR_SZ` after parsing.
+
+Bitcoin Core deserializes inbound `GETBLOCKS` at
+`src/net_processing.cpp:4325-4328` and inbound `GETHEADERS` at
+`:4452-4455`. Both callers check `vHave.size()` against `MAX_LOCATOR_SZ=101`
+and disconnect oversized peers. Accepted hashes reach
+`Chainstate::FindForkInGlobalIndex` at `src/validation.cpp:129-147`, where
+they only select a block-inventory or header response point.
+
+The master-relative rating is **Informational/Low oracle hardening**, not
+High/Critical. This is untrusted peer input, but a locator is not a block or
+transaction and cannot by itself accept an invalid block, alter the UTXO set,
+move funds, affect consensus validation, or invoke cryptographic nonce/key
+logic. The parser may allocate before the caller-side size check, but this
+audit found no clean-master memory or concurrency failure and makes no denial
+of service claim. Invalid locator bytes alone are not an invalid-block
+vulnerability.
+
+### Corpus and baseline
+
+The frozen corpus is
+`/tmp/bitcoin-blocklocator-20260721-clean/frozen/blocklocator_deserialize`,
+copied byte-for-byte from
+`/mnt/my_storage/qa-assets/fuzz_corpora/blocklocator_deserialize`: 42 files,
+1,807,442 bytes, minimum/maximum 1/525,799 bytes. Sorted filename manifest:
+`efc0019ed210dae97bdd16f15271d46a1d177c6eb3cecfd18633c90432e80708`.
+Filename/size manifest:
+`4fcb15582c79450d8ecd266f547f2833084e1e600d03df7baa7706fca501d9c8`.
+
+Before the oracle, the normal fuzz binary was
+`430357fd8d624af0a14a46bffb2a7ac584d953a00272450b53e049994437e374`.
+Its 43-unit replay exited 0, reached coverage/features 99/212, peaked at
+59 MiB, and has log SHA-256
+`ca1965a56c93d4a02d4a93996472a107b77ff29e9bbd7767ad0a177e26b0536d`.
+The ASan/UBSan binary was
+`84a953ece18374acf131572874fef74ed0f739b36cd050691d84ca2722d59f11`.
+Its replay exited 0, reached 145/428, peaked at 122 MiB, and has log SHA-256
+`843a6a72ffdef8860e1fa7b6d9dd4790a484430039b9efce0921ed56f83f2098`.
+
+### Overbroad oracle and differential proof
+
+The first implementation reused the generic canonical-prefix memcmp,
+including the version bytes. It failed on corpus input
+`140b86c66169f4ac01edd09e21d539ad23b9e641`, 12,006 bytes, SHA-256
+`d5fdd4dedb36a741052be8618029401e06f61a298d830e76094f54450dc34275`.
+Its first four bytes are `bd 00 cf ff`, a historical version value. The
+direct stale-oracle log SHA-256 is
+`529e4a3f3b11d7f02327d132fcc944f248de65aa35d9209d1c49628ac57af3b9`.
+This was classified as a stale/overbroad oracle, not a production finding:
+CBlockLocator intentionally ignores and normalizes this field. The final
+oracle compares the consumed vector payload and exact length while preserving
+that contract.
+
+For oracle sensitivity, a temporary production mutation inserted the
+read-side-only operation
+`const_cast<CBlockLocator&>(obj).vHave.front() = uint256{}` immediately after
+`READWRITE(obj.vHave)` when the vector was nonempty. A temporary
+`blocklocator_deserialize_control` target retained the old deserialize-and-
+discard behavior. Both temporary changes were removed before the commit.
+On the exact witness, the enhanced normal and ASan/UBSan targets failed at
+`deserialize.cpp:198` on the `vHave` payload assertion; their logs are
+`aaec00cb2f639b15b333d2600854db21ac6debce0d0ab58ef0f1babae5cc7d2f` and
+`19e28e363231d823ea268d0d1943e2070118f90fa897e5851180ab2098147ecb`.
+The timeout status was 124 because libFuzzer terminated after the assertion
+while its symbolizer wrapper remained active. The matched old control accepted
+the identical witness and exited 0 in both modes; control logs are
+`f233f0432fe3dff7bd7917b328dd1652bee9db11b4eecab6391e90338ae147b9` and
+`76fb4009917ea9b64d3cf990ee8373f9ee0ae106a455c9e11e1d3b6914f6a9aa`.
+This proves oracle sensitivity to a modeled production state corruption, not
+a clean-master bug. No production fix or deterministic regression test is
+claimed.
+
+### Restored verification
+
+Final normal and ASan/UBSan fuzz binaries are
+`54f9b371736db2a8d7df9a87b495aa5b6ee43cb4a748a3e9657d09d7bd6f771b` and
+`0ee6b273576da613cab2af75e47a703279d52463ef593ea5f8c818db19ea03d2`.
+The restored normal replay exited 0 after 43 units, reached 126/265, peaked
+at 60 MiB, and has log SHA-256
+`1d9c2b9bac1e01fd7f9cd326798a1b7d273aa657f5dda822a10eb466c73f719b`.
+The restored ASan/UBSan replay exited 0 after 43 units, reached 182/495,
+peaked at 132 MiB, and has log SHA-256
+`ae305d4645a30fe826a5bf33a0390311cccea0d12ce1b8aedf7d32e75b2e7f21`.
+The historical-version witness replayed cleanly in normal and sanitizer
+modes; exact log SHA-256 values are
+`1d2e2f555c88dc2d4766f24c35e94a5449841544544145afe267c053f5b4f1f3` and
+`8987d0e05402e5cfd767adf2ed14280844b2f8f65399b8aec30331f667dbdc97`.
+
+Four independent ASan/UBSan workers covered disjoint 11/11/10/10-file
+shards and executed 12/12/11/11 units. All exited 0 without sanitizer
+diagnostics. Worker log SHA-256 values are
+`3fdd7ca085f8ef5b1b7d3e920e80f85919f70e4ee018864d1ff51708cb1ad500`,
+`78a7e94f0a7e70f937f8e0dec6d57a52f2e73458783db7b2bacc739893603ae3`,
+`7ee6f42591123533b1c62a788965ed650a6ecf32ae356bb901d301393b5921f3`, and
+`607dddb4e1d31a04761880d82d6bfc2d9935973274b0a5560d2adc04d469b7a7`.
+Their sorted union matched the frozen manifest exactly. The focused command
+`test_bitcoin --run_test=skiplist_tests,net_tests,serialize_tests
+--log_level=test_suite` passed with exit 0 and `*** No errors detected`; its
+log SHA-256 is
+`bf27f74cebaf324cafa6037cb4f7389d0e8eb5c8ab175df57c9c4322bdb85dc3`.
+`git diff --check` passed and no fuzz, sanitizer, mutation, or test process
+remains running.
+
+### Existing findings and follow-up policy
+
+The ledger remains rated against current master and actual Bitcoin Core
+callers: raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability are Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban integrity are Low or nice-to-have. Latent ecmult scratch wrapping,
+forced 10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention are
+reachability-limited correctness/hygiene concerns. Earlier addrman,
+coins-cache, txgraph, txdownloadman, txrequest, connman, eviction,
+headers-sync, UTXO snapshot, mempool persistence, package, handshake,
+BufferedFile, block-index, compact-block, Merkle, wire, snapshotmetadata,
+Bloom, compressed-amount, scalar/field/group, DER, EllSwift, wallet, PSBT,
+scriptpubkeyman, and related audits found no additional clean-master
+production bug unless their notes say otherwise.
+
+No cryptographic nonce is involved here. A nonce or version-like field with no
+cryptographic meaning is not a Critical clearing issue merely because it is
+not cleared. Every later fix, minor fix, or cherry-pick that can mask a
+follow-up result must amend the same commit and notes with the exact target,
+caller, corpus or mutation, assertion, failure status, Core severity,
+verifiers, and whether it preserves, changes, or masks clean-master behavior.
+A potential fix is not proof that master was vulnerable; a production-bug
+claim requires clean-master or minimal-production-mutation reproduction plus
+the strongest deterministic proof available.
+
 ## Bloom filter deserialization oracle audit (2026-07-21)
 
 Source commit: `fff7127e04` (`fuzz: strengthen bloom filter deserialization
