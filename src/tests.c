@@ -7093,15 +7093,44 @@ static int test_ecdsa_der_parse(const unsigned char *sig, size_t siglen, int cer
 }
 
 static void assign_big_endian(unsigned char *ptr, size_t ptrlen, uint32_t val) {
-    size_t i;
-    for (i = 0; i < ptrlen; i++) {
-        int shift = ptrlen - 1 - i;
-        if (shift >= 4) {
-            ptr[i] = 0;
-        } else {
-            ptr[i] = (val >> shift) & 0xFF;
-        }
+    size_t i = ptrlen;
+    while (i > 0) {
+        ptr[--i] = val & 0xFF;
+        val >>= 8;
     }
+}
+
+static void test_assign_big_endian(void) {
+    static const unsigned char two[2] = {0x00, 0x0C};
+    static const unsigned char six[6] = {0x00, 0x00, 0x01, 0x02, 0x03, 0x04};
+    unsigned char buf[6];
+
+    assign_big_endian(buf, sizeof(two), 12);
+    CHECK(secp256k1_memcmp_var(buf, two, sizeof(two)) == 0);
+    assign_big_endian(buf, sizeof(six), 0x01020304);
+    CHECK(secp256k1_memcmp_var(buf, six, sizeof(six)) == 0);
+}
+
+static void test_ecdsa_der_lax_long_form_lengths(void) {
+    /* SEQUENCE of two INTEGERs, every length in non-minimal 2-byte long form.
+     * Strict DER rejects these lengths, but lax DER accepts them and parses
+     * both integers as 0x80. */
+    static const unsigned char sig[16] = {
+        0x30, 0x82, 0x00, 0x0C,
+        0x02, 0x82, 0x00, 0x02, 0x00, 0x80,
+        0x02, 0x82, 0x00, 0x02, 0x00, 0x80
+    };
+    secp256k1_ecdsa_signature parsed;
+    secp256k1_scalar r, s, expected;
+
+    CHECK(test_ecdsa_der_parse(sig, sizeof(sig), 0, 1) == 0);
+
+    CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &parsed, sig, sizeof(sig)) == 0);
+    CHECK(ecdsa_signature_parse_der_lax(CTX, &parsed, sig, sizeof(sig)) == 1);
+    secp256k1_ecdsa_signature_load(CTX, &r, &s, &parsed);
+    secp256k1_scalar_set_int(&expected, 0x80);
+    CHECK(secp256k1_scalar_eq(&r, &expected));
+    CHECK(secp256k1_scalar_eq(&s, &expected));
 }
 
 static void damage_array(unsigned char *sig, size_t *len) {
@@ -7279,13 +7308,21 @@ static void random_ber_signature(unsigned char *sig, size_t *len, int* certainly
 
 static void run_ecdsa_der_parse(void) {
     int i,j;
+    test_assign_big_endian();
+    test_ecdsa_der_lax_long_form_lengths();
     for (i = 0; i < 200 * COUNT; i++) {
         unsigned char buffer[2048];
         size_t buflen = 0;
         int certainly_der = 0;
         int certainly_not_der = 0;
+        secp256k1_ecdsa_signature undamaged;
         random_ber_signature(buffer, &buflen, &certainly_der, &certainly_not_der);
         CHECK(buflen <= 2048);
+        /* Undamaged generator output must always be lax-parseable. This is the
+         * assertion that a mis-encoded length would break: a bogus length makes
+         * the lax parser fail, and the checks below then silently exercise
+         * nothing. */
+        CHECK(ecdsa_signature_parse_der_lax(CTX, &undamaged, buffer, buflen) == 1);
         for (j = 0; j < 16; j++) {
             int ret = 0;
             if (j > 0) {
