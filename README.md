@@ -3637,6 +3637,156 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `pool_resource` allocation-lifecycle oracle audit (2026-07-21)
+
+Source commit: `88e65091f5dbc0ca86b5a361aab59432dc83e005` (`fuzz: assert pool
+resource lifecycle contracts`). This audit extends the existing content-fill and
+teardown checks into a stateful oracle for cursor, chunk, range, alignment, and
+live-byte contracts.
+
+### Core boundary and severity
+
+Bitcoin Core uses `PoolResource` through `PoolAllocator` for the coins-cache
+unordered map in `src/coins.h` and for allocator-aware memory accounting in
+`src/memusage.h`; it is also covered by tests and benchmarks. It is not a
+consensus validator API. Arbitrary invalid block bytes do not directly call
+these allocator contracts, and this audit found no clean-master memory
+corruption, crash, or caller-reachable state failure. The clean-master rating
+for this commit is therefore **Informational/Low**, as oracle hardening rather
+than a production vulnerability or fix. A nonce without cryptographic meaning
+is not Critical solely because it is not cleared.
+
+The existing master-relative findings were reiterated while evaluating this
+target: **Medium**, feature-conditional private-broadcast failed-send
+retention; **Medium** availability/IBD risk in the empty-HEADERS initial-sync
+handoff; **Low** under current Core callers for peer transaction-activity
+refresh, process-message block-storage failure, and oversized transport types;
+**Medium but latent/reachability-limited** for ecmult scratch wrapping, forced
+10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention; and
+**Low/nice-to-have** for banman invalid-subnet and unban integrity. No
+additional clean-master bug was found in the already audited addrman,
+coins-cache, txgraph, txdownloadman, txrequest, connman, eviction, handshake,
+compact-block, headers-sync, UTXO snapshot, mempool persistence,
+package-evaluation, RPC, descriptor-cache, threadpool, cluster-linearization,
+or policy-estimator paths. Severity follows reachability through actual Core
+callers, so a defect that cannot be triggered by Core input is not Critical.
+
+The audit base was `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; both
+`origin/master` and `remotes/l0rinc/master` resolved to it. The l0rinc
+pull-request history was reviewed for a target-specific prerequisite or fix.
+No additional relevant commit was cherry-picked for `PoolResource`; no later
+fix was silently used to mask or change clean-master behavior. The exact
+mutation and control runs below are recorded so a future cherry-pick can be
+evaluated for behavioral masking.
+
+### Oracle contracts
+
+The production header now asserts after chunk allocation, pooled allocation,
+operator-new fallback, and deallocation that a chunk exists, the carving
+cursor remains within the latest chunk, the cached end equals the latest chunk
+plus the configured size, and the remaining distance is aligned to
+`ELEM_ALIGN_BYTES`.
+
+The harness maintains an ordered set of live `[begin,end)` ranges. It checks
+overflow-safe ordering and non-overlap against neighboring ranges, exact range
+removal, equality of live ranges and entries, every live allocation's
+alignment/non-empty span, periodic aggregate live bytes, deterministic content
+preservation, and the existing `PoolResourceTester` full-accounting teardown
+check. The ordered set replaced two prototypes that made large corpus inputs
+too slow: a full O(n^2) overlap scan and sampled sorting. Final insertion and
+removal are O(log n), with periodic linear byte accounting.
+
+### Corpus and clean replay
+
+The frozen corpus is `/tmp/bitcoin-pool-resource-20260721/frozen`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/pool_resource`: 721 files and
+4,218,720 bytes. Sorted-entry SHA-256:
+`a8c42255a322ecd7598fa32b7f03196beb636d31cdc966e576cef849ace6b0b`.
+Manifest SHA-256:
+`d77f87881c7caa95127e64021d58c0aef1d14126620395aa83537dc480ad577e`.
+
+The parent-harness sanitizer baseline used binary SHA-256
+`02355222337f678b830a6491e9404f634a20375d31b076259c86b2b9097a426e` and log
+SHA-256 `54626ee8f9ab62455be7f576f941b35eaf1b4c8f7b5b7a8db5c32d7b10c7a43f`.
+It exited 0 after 722 runs with coverage 1499, feature count 8320, peak RSS
+754 MiB, and no artifacts. The corresponding normal baseline binary was
+`e93fd784c733f2d7c2bb67a0dbd8a4f5231608f4450ab0e8f199197eb491e5e8`, with log
+SHA-256 `bf15229da1e2851ef123b54aa04da078386471fe182c89b86f7061c6364ea3ec`;
+its one-file driver passed all 721 inputs.
+
+Final source SHA-256 values are `1855ed015248a33fee86559a3201b8b28de1dac7e5673b4ee68fc3f6f0438b68`
+for `src/support/allocators/pool.h` and
+`ffca02ee7745538bea86f0052efd07c4de3a6e78cd1e76a491910688041884e2` for
+`src/test/fuzz/poolresource.cpp`. The final sanitizer binary is
+`abc742377ac9a8b633b6095a22e93e459b82e064cc431dd29f617b4159caa0b2`.
+The 721-file replay exited 0 after 722 runs, coverage 1840, feature count
+10789, peak RSS 757 MiB, no new units, and no artifacts; log SHA-256:
+`ad59d580baa6b0f0affab0a3535532df614bd4afcf5a1065f0bc1b1467550622`.
+The final normal binary is
+`70296333d5a764da382926752ad5e0170ec978cbd12a842864ff64d924f2b0fb`; its
+one-file driver passed all 721 inputs, with log SHA-256
+`a20ddbc896a3cae7d8e4136d8de366647ba07773a01c7e97ace6c7e383e12a46`.
+
+Four independent sanitizer workers each used a private copy of the frozen
+corpus with `-merge=0 -runs=1 -timeout=120 -rss_limit_mb=4096`. All exited 0
+after 722 runs, coverage 1840, peak RSS 752 MiB, with no artifacts. Every
+copy retained sorted-entry SHA
+`a8c42255a322ecd7598fa32b7f03196beb636d31cdc966e576cef849ace6b0b`. Worker
+log SHA-256 values, in order `fuzz-0` through `fuzz-3`, are:
+
+    b0a545a714beaedfab4cf07e895411d299a85cc926e9d1fd632724f29504a850
+    8538322995324ceb322cc93cf887703780e54b6bfbde2ac5e895294099495fda
+    e0c44aa910e0f53edd374e0d48d692456d10ace664b9895b6f4c61bd9fddd683
+    ab9e9e06e202087ca636686b8117e0ffa03387310763fee7f6a4975be46221a7
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary minimal production mutation changed `NumAllocatedChunks()` from
+`m_allocated_chunks.size()` to `return 0`. Mutated production source SHA-256:
+`598c4d48261f08def277b5c348f79712065c760fd8031e7a5a309d8b2fd5d982`.
+Mutated sanitizer binary SHA-256:
+`f60980f28cf7b8109b3975bd888fa07a8bd1e53a8a4c18fa5e713e0cfc71437f`.
+
+The frozen replay failed on its first execution (wrapper status 77/libFuzzer
+deadly signal) at `poolresource.cpp:46` on
+`m_test_resource.NumAllocatedChunks() >= 1`. The exact input was the empty
+file, Base64 empty, with SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+Mutation log SHA-256:
+`1e6f056da56c2f60e499a0065d4c7eca22e59d1ba35723498a897f45ab60eb86`.
+
+The control kept the production mutation but disabled only the new chunk-count
+assertion. Control fuzzer source SHA-256:
+`55078301bbd5ae106928c028e8cefd9c984c58d3e269a1803bb3967f7e0255dc`.
+Control binary SHA-256:
+`4e0c931a3dddca5f96b6493445edbc5bd05a19b0874f9c86dd494f80726f6322`.
+The identical input exited 0 with no artifact; control log SHA-256:
+`556f0d655fb438e4266a156b893b22a9e7cbbc16d61079c3b23f30515c1d2aac`.
+After restoring clean production and harness code, the identical input exited
+0 with no artifact in the final sanitizer binary; restored log SHA-256:
+`780df4d01fb9444664dd27bd86f02264879d321e17f269a5b7fac1d04adedd53`.
+This proves detection of the modeled broken public contract while making no
+claim that master contains that bug; it does not justify a higher severity or
+a deterministic production regression test.
+
+A separate temporary cursor mutation removed `std::exchange` when carving a
+pooled block. The existing `PoolResourceTester` teardown oracle caught it
+before the new range oracle produced an isolated failure, so it is not claimed
+as a new finding. Mutated source SHA-256:
+`7b23fef2b15e898afa57210902b5a482d32433aa7074b92318f69078f56a15f5`.
+
+### Verification gap
+
+Sanitizer and normal targets were built with the two configured fuzz-only
+builds using `cmake --build ... --target fuzz -j2`. `git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/poolresource.cpp` passed. The
+production header has pre-existing formatting violations and was not
+reformatted unrelatedly. The fuzz-only builds do not provide `test_bitcoin`,
+so the dedicated unit suite was unavailable. No clean-master production bug
+was found, no deterministic regression test is claimed, all temporary
+mutations were restored, and no fuzz/sanitizer/mutation process remains.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
