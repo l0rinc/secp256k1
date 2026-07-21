@@ -3637,6 +3637,151 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `scriptpubkeyman` descriptor-wallet state oracle audit (2026-07-20)
+
+Source commit: `af007794de201874b47826b16605871244185908` (`fuzz: audit
+descriptor scriptpubkeyman state contracts`). Parent:
+`bc36a929305fd697207bd2ee9ed94b4ff0d7ddef`. The audit base was latest
+Bitcoin Core `origin/master` `18c05d93016b28a9afd4c716dfe00b6e0accb30b4`;
+`remotes/l0rinc/master` matched it.
+
+### Provenance and severity
+
+The exact l0rinc comparison was:
+
+    git log origin/master..remotes/l0rinc/master -- \
+      src/wallet/test/fuzz/scriptpubkeyman.cpp src/wallet/scriptpubkeyman.cpp \
+      src/wallet/scriptpubkeyman.h src/wallet/wallet.cpp \
+      src/wallet/test/fuzz/spend.cpp
+
+It returned no output. No relevant l0rinc commit was cherry-picked. No later
+fix or cherry-pick was used to mask the clean-master result. Any later change
+to descriptor expansion, ownership, keypool state, this corpus, or this proof
+must amend its message with whether it preserves, changes, or masks the
+behavior; merge or amend deliberately when a potential fix changes a follow-up
+experiment.
+
+`FUZZ=scriptpubkeyman` reaches `DescriptorScriptPubKeyMan` through wallet
+descriptor creation and replacement, address generation, and keypool
+maintenance. Bitcoin Core's invalid block/header byte boundary does not
+directly invoke these private wallet transitions. Clean master reproduced no
+production bug, invalid-block consensus issue, wallet corruption,
+memory/concurrency fault, or cryptographic failure. This is
+Informational/Low oracle hardening, not a confirmed vulnerability. Re-rate a
+future finding from a master reproduction and actual Core effect such as wrong
+ownership, address/key loss, signing failure, wallet corruption, crash, or
+memory safety. A nonce with no cryptographic meaning is not Critical merely
+because it is not cleared.
+
+The existing master-relative ledger remains: Medium feature-conditional
+private-broadcast failed-send retention; Medium empty-HEADERS initial-sync
+availability/IBD risk; Low under current callers for peer transaction-activity
+refresh, `ProcessMessage` block-storage failure, and oversized transport
+types; Medium but latent/reachability-limited ecmult scratch wrapping, forced
+10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention; and
+Low/nice-to-have banman invalid-subnet and unban integrity. No additional
+clean-master bug was found in the prior container, network, storage, mempool,
+RPC, wallet descriptor, DER, EllSwift, BIP324, or key audits. These are not
+silently reclassified by this oracle-only change.
+
+### Oracle changes
+
+Production `DescriptorScriptPubKeyMan::GetNewDestination` now asserts that a
+successful descriptor-cache expansion returns a non-empty script list. The
+harness checks the matching state contracts after initial manager creation,
+descriptor replacement, generated destinations, `MarkUnusedAddresses`, and
+the final operation sequence:
+
+    GetScriptPubKeys() -> IsMine(script)
+    generated/marked destination -> GetScriptForDestination -> IsMine
+    generated/marked script -> GetScriptPubKeys().contains(script)
+
+This keeps the assertion at the ownership/keypool state boundary rather than
+assuming that an operation returning success is sufficient evidence.
+
+### Corpus and replay evidence
+
+The frozen corpus is
+`/tmp/bitcoin-scriptpubkeyman-20260720/frozen`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/scriptpubkeyman`: 10025 files,
+79091508 bytes, sizes 1..998620. Sorted filename, filename+size, and
+relative-content manifest SHA-256 values are
+`ebd8e558eebe79ab8a1ada6f642a7ff01f25a84a0a5b615a7c9d240326956259`,
+`586c03db27f367102518cdfca04cc1ec5aa16a67eeee324c9951d9dfd466a942`, and
+`827749723ef3db8cc5a74e17bfc26aebee24c9fbf56fc2e501bdc11eb3ee971d`.
+All authoritative runs used isolated copies.
+
+The baseline sanitizer replay was completed in four isolated chunks: 2510,
+2509, 2509, and 2509 executions; coverage 25330, 25229, 25398, and 25417;
+peak RSS 887, 857, 856, and 865 MiB; no artifacts. Log hashes:
+`c2cade7e754afdc9973a80a2b2e839405cab16361cbb5b434453b85990c8835a`,
+`6031b74d530333760d613e093a140391b30aa8e245995873ee05267866440ed1`,
+`3511eba1e05527a2cc709b02bd937b677246c917a401d20b6558f50e81d24c0`, and
+`0c50258640f4486f4e6e3a1c571dd5f484e201f79f8a45aba010e9b07205741d`.
+
+The enhanced sanitizer replay used the same four-way isolation: 2510, 2509,
+2509, and 2509 executions; coverage 25363, 25266, 25432, and 25452; peak RSS
+856, 853, 853, and 908 MiB; no artifacts. Log hashes:
+`f660fdf4f3fd9e0bd5f9cfd6fa4ba9633435f42b212da97737f9a40152e8e981`,
+`fe39316d3075db6969e70c9dd329a0970686de92eeb88c3ee1ff2254d5bb01b1`,
+`35dc2ec66d56dbafc5f38d92a0d2e5ab8cdbeb5cfe959aa47639999bb1bbc14c`, and
+`0ea0177eab3d2b89b38678205c1ed514d72612a72ba1424232356f1d95fd76fb`.
+
+Final source hashes are `src/wallet/scriptpubkeyman.cpp`
+`fd79083bd274a27d7b616d3c513b80229e75127af196025e59c1be875c413292` and
+`src/wallet/test/fuzz/scriptpubkeyman.cpp`
+`351738b0bc58c78d41176a36a9740c0e07a8d1b568a3e28e119267256f761580`.
+The sanitizer and normal fuzz binaries were
+`bb87358214a7647b8fd13262b09322c891827f25cf1ec41633c9b011ab7affba` and
+`b6ed226ba6525f5d5a2c193dafb10842ef9719b7da7b2c95a3be880258892817`.
+The normal binary passed all 10025 files in 51 seconds; log hash
+`b5c287dffca9dcf051abad290d881206bf8ead82ba28c46f8512440e0080e2de`.
+`scriptpubkeyman_tests`, `ismine_tests`, and `wallet_tests` passed 2, 1, and
+14 cases. The test binary hash was
+`53053cecc3eb32d4ec2e71a566cf8f1cdc47b28cab5e9e6de334c850a6ec394d`.
+
+### Differential proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation changed
+`m_map_script_pub_keys.contains(script)` in `IsMine` to `return false`.
+Mutated production source hash:
+`b1bb3e6c2661273eddb671af93de5064ee5f210e09db5ed4249e6e9a0047de2c`.
+Mutated enhanced sanitizer binary hash:
+`6b7b1333c24632ba476fb526550818d9cf4b3a4a238b80dcf5419a870b7f53f8`.
+
+The exact witness was
+`/tmp/bitcoin-scriptpubkeyman-20260720/frozen/0002e72fbe868c7c3f2d3ffbcdd06ce25f38968e`,
+5962 bytes, SHA-256
+`e792a4f2159ae7aad2df5230344c7aa040422bc9ab150a7f8ce05f77e21244d7`.
+Enhanced replay exited 134 at `scriptpubkeyman.cpp:96` on
+`assert(spk_manager.IsMine(script))`; log hash
+`073caf66a8a4d5c984b8dba20df346a704f5663304155ba7823e05d460abc383`.
+
+For the exact parent-harness control, only the new harness assertions were
+removed while the production mutation remained. The mutated production hash
+was unchanged, the control sanitizer binary was
+`bc4498eba652ce788c769a5a35eebd86817d4c96959a54db9afa6ff931a4193f`, and the
+witness exited 0 with no artifact; log hash
+`2364e0fe6cb7d0d7f7f62f090cbe0fe7ba692782f2a8fc14df0279774689b1d5`.
+Restored final source and harness replayed the witness with exit 0; log hash
+`0940e02263ea0e4e9baeccf491b024f5ec2f8e2c5724517fc41b764178fe7623`.
+Thus the new oracle catches the modeled broken ownership contract that the
+old harness accepted, while the clean-master replay proves no production bug
+was found.
+
+### Verification and test gap
+
+Built sanitizer and normal fuzz targets, ran the frozen corpus, four isolated
+sanitizer workers, normal replay, focused wallet tests, and mutation/control/
+restored witness replay. `git diff --check` passed. `clang-format --dry-run
+--Werror` reports pre-existing diagnostics at the legacy include and existing
+fuzzer lines 223, 227, 328, and 358 plus file-wide diagnostics in
+`scriptpubkeyman.cpp`; none of the added assertion lines were reported and no
+unrelated formatting changed. No production fix or deterministic regression
+test is claimed because clean master has no confirmed bug. No fuzz, sanitizer,
+mutation, or replay process remains running.
+
 ## `key` BIP32 and uncompressed-key oracle audit (2026-07-21)
 
 Source parent is `16e576419f3b70a2465b76d03ea9d1f5b4ff4b85` (`fuzz: enforce
