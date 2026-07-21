@@ -3637,6 +3637,160 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `cluster_linearize` permutation and transition oracle audit (2026-07-21)
+
+Source commit: `8c8beb430a` (`fuzz: enforce cluster linearization state
+contracts`). Its parent is `d490ea2da497d73bcfb9dc89e5c0e92a3dacb434`. The
+audit base is Bitcoin Core `origin/master`
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`, identical to
+`remotes/l0rinc/master`. The l0rinc pull-request paths were checked for this
+target and no relevant commit was cherry-picked. No later fix was allowed to
+mask clean-master behavior; any future cherry-pick or potential fix must say
+whether it preserves, changes, or masks this result and amend its notes when
+needed.
+
+### Core boundary and severity
+
+`FUZZ=clusterlin_depgraph_sim`, `clusterlin_depgraph_serialization`,
+`clusterlin_linearize`, and `clusterlin_sfl` exercise the dependency-graph,
+spanning-forest, and linearization state machines. `Linearize()` and
+`PostLinearize()` are reached through `GenericClusterImpl::Relinearize()` in
+`src/txgraph.cpp`; Bitcoin Core uses that graph through `CTxMemPool` for
+transaction admission, dependency and fee handling, removal, staging, and
+`DoWork`, and through block building. The fuzzers consume internally encoded
+dependency graphs. They do not pass an invalid peer block directly to this
+contract.
+
+The production-side oracle now requires `LoadLinearization()` to receive a
+complete, in-range, duplicate-free permutation of the active transactions.
+`Linearize()` and `PostLinearize()` assert that they preserve the transaction
+count. The SFL harness checks state after every transition and requires its
+cost not to decrease. Existing post-linearization checks still validate the
+topological permutation and diagram.
+
+Severity on clean master is **Informational/Low**, as oracle hardening rather
+than a production vulnerability. A malformed internal cached order could
+cause mempool linearization inconsistency or availability/resource behavior,
+but the audited boundary is not directly peer-controlled and this is not a
+consensus, memory-safety, cryptographic, or High/Critical finding. No clean
+master production bug, production fix, or deterministic regression test is
+claimed.
+
+### Existing findings reiterated
+
+The current master-relative ledger remains:
+
+- Private-broadcast failed-send retention: Medium and feature-conditional.
+- Empty HEADERS initial-sync handoff: Medium availability/IBD impact.
+- Peer transaction-activity refresh and `ProcessMessage` local block-storage
+  failure: Low with current Bitcoin Core callers.
+- Oversized transport types: Low with current callers.
+- Ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+  SHA/HMAC/RFC6979 retention: Medium latent/reachability-limited correctness
+  or hygiene findings.
+- Banman invalid-subnet/unban integrity: Low/nice-to-have.
+- Addrman, coins-cache, txgraph, txdownloadman, txrequest, connman, eviction,
+  handshake, compact-block, headers-sync, UTXO snapshot,
+  mempool-persistence, package-evaluation, RPC, and descriptor-cache audits
+  found no additional clean-master production bug.
+
+A nonce with no cryptographic meaning is not Critical merely because it is
+not cleared. Severity is based on Bitcoin Core reachability and impact.
+
+### Corpus identity and replay evidence
+
+Frozen copies came from `/mnt/my_storage/qa-assets/fuzz_corpora` and were
+isolated under `/tmp/bitcoin-clusterlin-20260721`. Their sorted-entry and
+manifest SHA-256 values are:
+
+    target                         files  bytes    entries SHA-256                                      manifest SHA-256
+    clusterlin_depgraph_sim       219    296837   fbe2ed63c9dfaadeeb1bb4a76a2f9e9827d8134fdb0ca758dfa9d87940792875  9d108627e31b49d648c9fcf5d34ecbc7ba97cdafcf41420b4bbb6f92dca19698
+    clusterlin_depgraph_serialization 189 15459   5b51f7f49fbeaaa9d2e6b522f1471d217a778c8a283461502bc9b3e037b2b8f5 87ee0df50f4521854801c9c0676a376c084c7e3262610b01510a77e02d0ec553
+    clusterlin_linearize           440    48277    14342098ce523d8d9422afe5cfa5d49b656f132c9e3da5916775de15358a800f d5e80a0a021bc27d9bc988ba72e24d33796a81068bff16cc66a7534ad1a971b2
+    clusterlin_sfl                 611    72558    2831c98083ae6800385db8a31e111ccdfb118b98b5342ad71d1395d2f0f39057 7948126db9926b5844399d16fd34361d8d9fea637bbc91b6c1504d4c5699177d
+
+The final sanitizer binary SHA-256 is
+`3db619b33bdc0a164bdbc3f6641ffedf71dbc64885e43a0efae0ce24fd68bd93`.
+Using `-merge=0 -runs=1 -timeout=60 -rss_limit_mb=4096
+-print_final_stats=1`, the frozen replays exited 0, produced no artifacts,
+and recorded these log SHA-256 values:
+
+    target                         runs  coverage  features  peak RSS  log SHA-256
+    clusterlin_depgraph_sim       220   681       3574      107 MiB   7ac02e6cae5794f32f8a326d2127b79b444479be442f087569f8f0db1e2233fa
+    clusterlin_depgraph_serialization 190 585      2544      104 MiB   8a84b9cd4636daa18e5c1dbcadb6152dd5f60cb65c5767f932b347c07cae59c6
+    clusterlin_linearize           441   1612      9718      124 MiB   d671de7f5f5b5e3f165acf6f1c821e34dc557e1c942d73f78ee79e0e58a37d0e
+    clusterlin_sfl                 612   1900      11838     303 MiB   b9b473be2c67786470d4553cad501c0d5ab0cf4c65d91bd4f4746660a0d62884
+
+Four independent sanitizer workers used `-jobs=4 -workers=4`, isolated
+corpus/artifact paths, and the same `-merge=0 -runs=1 -timeout=60
+-rss_limit_mb=4096 -print_final_stats=1` settings. Every worker exited 0;
+all 219/189/440/611-file copies stayed unchanged and no artifacts were
+created. Parent log SHA-256 values were:
+
+    sim         b64c35f402745abb487afaecb048f4f9bf81ecaff0d5273dd4fb02e114dfbba1
+    serialization 2c4e911f182fe6d9cbe4a62e1b04ce215255966f1d5a45cb876d8c023ef7fadc
+    linearize   43cee475b8452d91e0f1fecd9de0ab811ba3b09981ccf9a90561d3788dc5ced1
+    sfl         60e088f896d994757c52ba243657d967ad5ff312686ae940e88ab2be340de5fd
+
+The final normal standalone fuzz binary SHA-256 is
+`4b006cb6d23ec5fae503d74b1756741b4705efcfe04816bc8e914105fe32f79c`.
+Using the correct input-path interface, it passed all frozen files with no
+artifacts. The counts and log SHA-256 values were: sim 219/
+`ed5ebc3a93ef7b8b776d8de56a372aefeece03cecbba51735636602b0722a828`,
+serialization 189/
+`69cd117eed635d81e90bbcd738a01b4d9b210b529fc2bd0132958f413f31d6d5`,
+linearize 440/
+`c1116c1a74de2bc430244484ef032c550c42025835af96790ec3d82b9f489878`, and
+SFL 611/
+`42845c861bdc99326748df18f7903a59e34c78e5253e2ec24f843aa5648dad80`.
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary production mutation changed
+`forest.LoadLinearization(old_linearization)` to
+`forest.LoadLinearization(old_linearization.first(old_linearization.size() - 1))`.
+The mutated header SHA-256 was
+`e1ee3f989cbf11d9ce2ff4c6f26715cfd520c5991e8863bdaa68822ab615ec73`; the
+mutated sanitizer binary SHA-256 was
+`146a3df5a39e802cb3f9a46bba4684b94a9edf59eca6b47a03b7565c5dccd879`.
+
+The exact 7-byte input was
+`/tmp/bitcoin-clusterlin-20260721/clusterlin_linearize/mutated-artifacts/crash-1b810b5862c7a750c7f5f1bc5618b885505a832f`,
+SHA-256
+`d6bf0a550c19df04867b1db6f56cf798fa526d78aaf30d8724bc1c8a7693fe38`, bytes
+`ff 1f 2c 2c 1f 2c 2c`, Base64 `/x8sLB8sLA==`. The mutated run aborted at
+the new `LoadLinearization` size assertion on `cluster_linearize.h:1219`,
+from `Linearize:1827` and `cluster_linearize.cpp:1049`, after 12 executed
+units. Its log SHA-256 is
+`5f28284fd29c01c771cea8ee225f2557b9adb4e52513054332b9a1123a0797f3`.
+
+With the `LoadLinearization` guard removed but the temporary mutation kept,
+the same artifact exited 0 with no artifact; the control log SHA-256 is
+`90ab048efbe209be97267d3ba793ba6905bb223e8dbde0593b342defbb7bf4df`.
+With restored final production source, it also exited 0; the fixed-input
+replay log SHA-256 is
+`d7e9fd8ce6060518880023a4a75cf5a79b628d3230bb8974829577a5369b3c82`.
+This proves the strengthened oracle catches malformed internal caller state
+that the old harness accepted. It does not prove a peer-triggerable Bitcoin
+Core vulnerability. The final source changed an equivalent `seen[tx_idx]`
+check to bounded iteration only to avoid an unrelated GCC warning; the
+contract and proof are unchanged.
+
+### Verification and test gap
+
+`git diff --check` passed. `clang-format --dry-run --Werror` still reports
+pre-existing violations elsewhere in these files; unrelated formatting was
+not changed. The sanitizer and normal fuzz targets were built with:
+
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-secp256k1-audit-current-normal-build --target fuzz -j2
+
+These configurations have no `test_bitcoin` target, so the dedicated unit
+suite was unavailable. No production behavior changed, no deterministic
+regression test is claimed, and no fuzz, sanitizer, mutation, or replay
+process remains running.
+
 ## `process_messages` block-index and mempool postcondition audit (2026-07-20)
 
 Source commit: `54c1ca5f5ae3cdedb0eaf206114b6fcb44a8fe8e` (`fuzz: assert Core
