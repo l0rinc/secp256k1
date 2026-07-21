@@ -4618,6 +4618,170 @@ violations in these legacy files; no unrelated formatting was changed. All
 temporary mutations, parent controls, probes, workers, and builds were
 restored or stopped, and no fuzz process remains running.
 
+## `VecDeque` representation and move oracle audit (2026-07-21)
+
+Source commit `111d79d1239b61c525c7932983ee5390ae87e66b` (`fuzz: enforce
+VecDeque representation and move contracts`) strengthens `FUZZ=vecdeque` and
+adds matching production representation checks. The untouched master
+implementation and its corpus replay showed no clean-master `VecDeque`
+production bug; this commit claims no production vulnerability and makes no
+production behavior fix.
+
+### Core boundary and severity
+
+`VecDeque` backs the two FIFO queues in `src/cluster_linearize.h:774-781`.
+The current Core path reaches them through
+`GenericClusterImpl::Relinearize` at `src/txgraph.cpp:2157-2182`, from
+internal mempool and block-building cluster work. The fuzzer consumes encoded
+internal states, not peer messages or block bytes.
+
+Rate this result **Informational/Low oracle hardening**. A future corruption
+of a cluster queue could affect mempool linearization or availability, but an
+invalid block cannot directly trigger this container contract and there is no
+consensus, memory-safety, cryptographic, High, or Critical finding on master.
+Re-rate only if a Core caller establishes a triggerable impact. A nonce with
+no cryptographic meaning is not Critical merely because it is not cleared.
+
+The audit base was
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`; `origin/master` and
+`remotes/l0rinc/master` matched it before the sequence. The l0rinc query for
+`src/util/vecdeque.h`, `src/test/fuzz/vecdeque.cpp`,
+`src/cluster_linearize.h`, `src/txgraph.cpp`, `src/txgraph.h`, and related
+mempool paths returned no relevant commits, so nothing was cherry-picked. No
+later fix or cherry-pick was allowed to mask this clean-master result. Any
+later potential fix or cherry-pick touching `VecDeque`, cluster queues, or the
+witness must amend the relevant commit message with whether it preserves,
+changes, or masks this result, then repeat the parent control, mutation
+witness, unit test, and corpus replays.
+
+### Reiterated findings
+
+The master-relative ledger remains: **Medium**, feature-conditional
+private-broadcast failed-send retention; **Medium**, empty-HEADERS
+initial-sync availability/IBD risk; **Low** under current Core callers for
+peer transaction-activity refresh, ProcessMessage block-storage failure, and
+oversized transport types; **Medium but latent/reachability-limited** for
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention; and **Low/nice-to-have** for banman invalid-subnet
+and unban integrity. No additional clean-master production bug was found in
+the already audited addrman, coins-cache, coins-view, txgraph, txdownloadman,
+txrequest, connman, eviction, handshake, compact-block, headers-sync, UTXO
+snapshot, mempool persistence, package evaluation, RPC, descriptor cache,
+threadpool, cluster-linearization, policy estimator, pool resource,
+versionbits, signature-cache, CuckooCache, FlatFilePos, prevector, or
+bitdeque paths. Severity is tied to actual Bitcoin Core callers and input
+origins, not an isolated assertion failure.
+
+### Contracts and tests
+
+`src/util/vecdeque.h` adds `AssertValid()` for `size <= capacity`,
+null-buffer/zero-capacity pairing, and valid ring offsets. It is checked at
+allocation, resize, destruction, copy/swap/move, insertion/removal,
+reservation, access, comparison, and transition boundaries. These are
+representation contracts, not assumptions about user input.
+
+`src/test/fuzz/vecdeque.cpp` reuses moved-from sources after move construction
+and move assignment, checks self-move preservation, and compares the model
+after every completed operation. The moved-from check requires only a valid,
+reusable object; it intentionally does not require unspecified contents or
+capacity. The existing uint and `TrackedObj` models remain in use.
+
+`src/test/util_tests.cpp` adds `vecdeque_move_state`, covering wrapped
+contents, move construction, source reuse, move assignment, source clearing
+before reuse, and self-move. This is a deterministic API-contract test, not a
+claimed production regression for clean master.
+
+### Corpus and baseline
+
+The corpus was frozen from
+`/mnt/my_storage/qa-assets/fuzz_corpora/vecdeque` to
+`/tmp/bitcoin-vecdeque-20260721/frozen`: 437 files and 1,052,870 bytes.
+Manifest SHA-256 values are:
+
+- Sorted filenames:
+  `13269615ee55e8c0ed73bd16e48fb919ba364d6823f70bf0b2865e2d7c8a1ea2`
+- Filename plus size:
+  `8cb9cf2baac07e72c24f21eaebecb439e4d0145b978fa2b6d8e942dfd551eb29`
+- Relative contents:
+  `e2f1aa427d5abf0896a786a2df7b11778490208336eed47414086f0fe0bb13f1`
+
+Parent source SHA-256 values were `vecdeque.h`
+`afbb4908912203e75ff5fd098d431ad7c053022e346a2f2ed03640e57e8921e5` and
+`test/fuzz/vecdeque.cpp`
+`90d749a1606908cf8f689b0a16ccb70286a7f658e635b18d76e00812a266bac3`.
+The parent sanitizer binary was
+`353176b7419abd8e7ef14af8a798cfa7b1efd3f7d3dec96934a5c78aabced765`.
+Its untouched replay processed 438 executions, coverage 6761, features
+49715, peak RSS 568 MiB, and no artifacts; log SHA-256:
+`3df29a982c31c0280b48301b3863a5abd944eb7015c68281675050199d6846d9`.
+
+### Differential oracle proof
+
+A temporary production mutation removed the `pop_front()` wraparound:
+`if (m_offset == m_capacity) m_offset = 0;`.
+The mutated header SHA-256 was
+`a2e6d8dd1720f17ac97088b9bfbb67ef05cb32dcb791fce07691195671f4b283`, and
+the mutated sanitizer binary SHA-256 was
+`3ba927745237f24dcce1ebd52942f97ac4e2393446b24515f39c496ca0c3d048`.
+
+The deterministic witness is 11 bytes,
+`15 11 00 00 00 00 00 00 00 00 00`, SHA-256
+`79525d2e72cba3e17652e3a1a73f893a2690e022a8e996530a9372bafe674a71`.
+Because `FuzzedDataProvider` consumes from the end, it creates a default
+buffer, emplaces at the front, and then pops the front. The mutated build
+aborts at `AssertValid()` on `m_offset < m_capacity`; log SHA-256:
+`21afe658b1de791c44cc65169d946af5dfb4c0a573eac11c1160406b4b44ed38`.
+This proves immediate transition detection for a broken ring-buffer
+mutation. It is oracle proof only: the mutation is not present on master and
+no clean-master production bug is claimed. The temporary mutation was
+restored before the final build and replay.
+
+### Final verification
+
+Final source SHA-256 values are `vecdeque.h`
+`8cfb6824fb0b956f99aba1b368a2f2fe8f7efa24040aec5615892b10b270182e`,
+`test/fuzz/vecdeque.cpp`
+`22760a0ecb40684d17475fa08da715972a3aa6278417ab9d399f4c76d538dccb`, and
+`test/util_tests.cpp`
+`034f77628c78e7414d9e230bd6d0432201e8e017a0be07e80b500e34be60ec41`.
+
+The final sanitizer binary
+`8e5f162d5ae376514ab976cc077e6b3cb1bef6a099171572c36c2ad53d699e18`
+passed 438 executions with coverage 6958, features 51231, peak RSS 541 MiB,
+and no artifacts; log SHA-256:
+`f80a5f3c3c63738e5bee1de4fd35b6e5101f62cfaf3d5f22ff9a6f0a2e021571`.
+The final normal binary
+`d3ee3606016e668ce277760170c0a1d6e52f179f7946a21c8ede5bda438e469c`
+passed all 437 one-file inputs; log SHA-256:
+`d3842e9ef3d8e18986369c7425fa2a8abf8ed9825984c1028e8a5742af9441ab`.
+The restored final build passed the exact witness with no artifact; log
+SHA-256:
+`ca1ae45ede07fcb83546498fd642c34ccb0b307fb84e6edcf7f1b08ecc78ee86`.
+
+Four sanitizer workers each passed 438 executions with no artifacts. Combined
+worker log SHA-256:
+`f1f98b20a628aa4532b260248ef6008ec495b6510f5f0421753c8b2eedd2bb24`.
+Worker logs in `fuzz-0` through `fuzz-3` order:
+
+    087033b8877704e755191bb1a1c4ae8d5e32a0b34314deb8c485466aa917f138
+    19e0787d213615795f4f4994a3c76d424c0c05e6a338c017d81c2c0a650a3dd1
+    a86a00b87bcd6c842411a0a8326850557c84c321acadc4cfe67550cd721ad7d9
+    dc81277e4f52eaf35532749e2e3ced658eb0302517a47aeb2d26565dc5113bbc
+
+The dedicated unit test passed with no errors. Its final `test_bitcoin`
+binary SHA-256 is
+`cc1b61929fc5b562610ab1fb1857b11f13eb66f8a6a326ad155a9cd550e78634` and
+the unit log SHA-256 is
+`d859092cbc2ecda458764f0e60be9efb2fc575342d4c55d9206586183d6cfeec`.
+Build log SHA-256 values are sanitizer
+`d82740ff612a08b70493218c11e64c15d9d88670868bbca6ce7f4b1b71c22c5c`,
+normal `8b32d6df3d69e05c380aa674f4f93a66234b83add43a653320d29418e05a4a9a`,
+and test `db6ab7768bdf5a441fbcdb488b4c72f8f58fc0111b79248cc5daace21dc236d7`.
+`git diff --check` passed. `clang-format --dry-run --Werror` reports
+pre-existing file-wide violations in these legacy files; no unrelated
+formatting was changed. All temporary mutations, probes, workers, and build
+processes were restored or stopped, and no fuzz job remains running.
+
 ## Policy estimator stateful oracle
 
 Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
