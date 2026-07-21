@@ -3637,6 +3637,131 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## Policy estimator stateful oracle
+
+Source commit `d7ca28616e` (`fuzz: model policy estimator tracking contracts`)
+hardens `FUZZ=policy_estimator` with a production-side `FlushUnconfirmed()` map
+postcondition and a model of tracked transaction IDs, best-height gates,
+block-removal behavior, `removeTx()` return values, flush clearing, fee-query
+domains, horizon ordering, `FeeCalculation.best_height`, and read-only
+serialization. Serialization snapshots are sampled every 64 transitions. The
+production variable `m_has_no_mempool_parents` is mirrored with the explicit
+model name `tx_has_no_mempool_parents`; an earlier inverted harness model was
+caught by the final cleanup probe and was corrected, not reported as a
+production failure.
+
+### Audit boundary and severity
+
+The audited parent is `8c8beb430ab55a67a19dd2362c7fa43fbda9df3`. Both
+`origin/master` and `remotes/l0rinc/master` resolve to
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b4`. No additional l0rinc commit was
+relevant to this target, so no target-specific cherry-pick was made and no
+later fix masks clean-master behavior.
+
+Bitcoin Core uses this object for node-local fee estimation through mempool and
+block bookkeeping, RPC, and wallet policy surfaces. It is not a consensus
+validator, and arbitrary invalid block bytes do not directly invoke these fee
+query contracts. The clean-master classification is therefore Informational to
+Low oracle hardening, not High or Critical. No clean-master production bug was
+found and no deterministic regression test is claimed. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared.
+
+The reiterated master-relative ledger remains: Medium and feature-conditional
+for private-broadcast failed-send retention; Medium availability/IBD risk for
+the empty-HEADERS initial-sync handoff; Low for peer transaction-activity
+refresh, process-message block-storage failure, and oversized transport types
+under current Core callers; Medium but latent/reachability-limited for ecmult
+scratch wrapping, forced 10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979
+retention; and Low/nice-to-have for banman invalid-subnet and unban integrity.
+No additional clean-master issue was found in the previously audited addrman,
+coins-cache, txgraph, txdownloadman, txrequest, connman, eviction, handshake,
+compact-block, headers-sync, UTXO snapshot, mempool persistence,
+package-evaluation, RPC, descriptor-cache, threadpool, or cluster-linearization
+paths.
+
+### Corpus and clean replay
+
+The frozen corpus is `/tmp/bitcoin-policy-estimator-20260721/frozen`, copied
+from `/mnt/my_storage/qa-assets/fuzz_corpora/policy_estimator`: 800 files,
+39,548,144 bytes. Its sorted-entry SHA-256 is
+`e94be70b6fb472e634b5bafffdab99ec50aa283634b71c04cb4e7cb61a4f05c1`; its
+manifest SHA-256 is
+`50f54ad8e737e57611347deb99b046d6d4b3c18126a68648fbae785ddf2322b2`.
+
+The parent-harness sanitizer baseline binary SHA-256 was
+`3db619b33bdc0a164bdbc3f6641ffedf71dbc64885e43a0efae0ce24fd68bd93`; its log
+SHA-256 was `eb5c9a56c570b7feb682708010099b11829ba6bb940f7897d8e5d1c1be08d92f`.
+It exited 0 after 801 executions with coverage 2059, feature count 10963, and
+peak RSS 655 MiB. The normal baseline binary was
+`4b006cb6d23ec5fae503d74b1756741b4705efcfe04816bc8e914105fe32f79c`, with log
+SHA-256 `480be4ddb3631334ecb043aa4b498b976ca664935146ee20591b112aa77a292e`;
+its standalone driver passed all 800 inputs.
+
+Final source SHA-256 values are
+`9f824745f72edeb90215c3ecd2dd19e7288a178f0e3df8e96d464858d751ddbb`
+(`src/policy/fees/block_policy_estimator.cpp`) and
+`3544573ba0fc702a8953fa78b1fd632fd3ad876a2b6c4c02fbba28af6e450c0a`
+(`src/test/fuzz/policy_estimator.cpp`). The final sanitizer binary is
+`02355222337f678b830a6491e9404f634a20375d31b076259c86b2b9097a426e`.
+The `-merge=0 -runs=1 -timeout=120 -rss_limit_mb=4096` replay exited 0 after
+801 executions, coverage 2045, feature count 8626, peak RSS 646 MiB, with no
+new units or artifacts. Log SHA-256:
+`e1a0552d8bcbf29f5aa952443a77ead980672da7aad0696ea37c8d7d48135545`.
+
+The final normal binary is
+`e93fd784c733f2d7c2bb67a0dbd8a4f5231608f4450ab0e8f199197eb491e5e8`; its
+one-file-at-a-time standalone replay passed all 800 inputs with no artifacts.
+Log SHA-256:
+`7c2d53bf5e94f25a9d87be1606840d8e229e8dceef8d63afbf98712d9f5d30d8`.
+
+Four sanitizer jobs used `-jobs=4 -workers=4 -merge=0 -runs=1 -timeout=120
+-rss_limit_mb=4096 -print_final_stats=1` with four isolated 800-file copies.
+Each job loaded all four supplied copies, 3,200 files, and executed 3,201
+units. All exited 0, peaked at 660-667 MiB, retained the corpus entry SHA, and
+produced no artifacts. Parent log SHA-256:
+`b1f071bcd5902939a27c98f1fd7f3fcd1370bd215eb40d830a28c8e7100f1844`.
+
+### Differential proof
+
+This is an oracle proof, not a clean-master production finding. A temporary
+minimal production mutation changed
+`HighestTargetTracked(SHORT_HALFLIFE)` from
+`shortStats->GetMaxConfirms()` to `return 0`. Mutated production source
+SHA-256: `370fdaf9031618fb9e8e000510c3a45d530c8d2fda8f03e4dd7c41dbb9bf7c0f`.
+The mutated sanitizer binary SHA-256 was
+`b0a42a8c7c4e85b4beb3f0fe84ef29a89cc077e2de53fd6e79e6591365f1149d`.
+
+The exact six-byte input was
+`32 f7 ff 7f 7f 49` (Base64 `Mvf/f39J`), SHA-256
+`2e6f736176f0acefe7684d965d35448fa29d70ba65a22010625f08f0a51d244d`.
+The mutated fixed-input replay exited 77 after one execution at
+`policy_estimator.cpp:154` on
+`short_target > 0 && short_target <= medium_target && medium_target <= long_target`.
+Mutation log SHA-256:
+`6cc5276d93dfbd68a9d2064884e406ad40512854eb03c2959a7ccdca70481de6`.
+
+The control kept the production mutation but disabled only that new assertion:
+control fuzzer source SHA-256
+`86973b2d5117273d87c66ae083466dc1e5176694deac5dd01ccd87d5c393d65b`, binary
+SHA-256 `852141ce0e73e47a5eb600ee89abc7ee6b2ae19f6ad9e26d17f9611b78e664e1`,
+and log SHA-256
+`dea8b97b765a7eeae6594a2559d5c452d7ffca900b253f872fb22f188ecde45f`.
+The identical input exited 0 with no artifact. After restoring clean master,
+the identical input exited 0 in binary
+`02355222337f678b830a6491e9404f634a20375d31b076259c86b2b9097a426e`, with no
+artifact; restored log SHA-256:
+`171b98b9d72b098ba2e7d687304034e69abb3a28c2606792d480ecdfb27b1313`.
+All temporary mutations were removed before the source commit.
+
+### Verification gap
+
+Sanitizer and normal fuzz targets were built with the two configured `cmake
+--build ... --target fuzz -j2` commands. `git diff --check` passed and the
+fuzzer file passed clang-format dry-run; the production file retains unrelated
+legacy clang-format violations. The configured fuzz-only builds have no
+`test_bitcoin` target, so the dedicated unit suite was unavailable. No fuzz,
+sanitizer, or mutation process remains running.
+
 ## `cluster_linearize` permutation and transition oracle audit (2026-07-21)
 
 Source commit: `8c8beb430a` (`fuzz: enforce cluster linearization state
