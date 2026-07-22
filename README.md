@@ -3508,6 +3508,162 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `cmpctblock` collision-counter oracle audit (2026-07-22)
+
+Source commit: `9a2f9cedf76cd6f4c16b4e692fd65be3be17ef9d` (`fuzz: guard
+compact-block collision counters`), parent `6cfa9a776b`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`.
+After the previous checkpoint, the 95-commit source audit branch was rebased
+cleanly from the old base
+`18c05d93016b28a9afd4c716dfe00b6e0accb30b` onto the fetched latest
+`origin/master` `32eb52100296718f7c0469e3210ce1db73694793`. The l0rinc branch
+is `d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current
+`origin/master`; no unique l0rinc commit was applicable or cherry-picked for
+this target. Older sections retain their original base and evidence labels;
+this section is the first current-master replay after the rebase.
+
+### Upstream fix and target contract
+
+Current master already contains upstream commit
+`6aa5d8d9481f5e06b10095df7f46f0532f7ecdb7` (`blockencodings: fix extra
+transaction count`). Before that fix, a short-ID collision after an
+extra-pool transaction could decrement `extra_count` even when the
+invalidated slot came from the mempool. The current implementation tracks the
+slot source and decrements the counter only for an `EXTRA` slot; it also marks
+collided slots terminal.
+
+The existing `cmpctblock` fuzzer checked broad peer state, block-index, and
+mempool postconditions but could not observe the protected
+`PartiallyDownloadedBlock` counters. The new test-only subclass exposes those
+two fields without changing the production API. Every input additionally
+constructs an isolated mempool and a four-transaction compact block, provides
+one extra-sourced transaction, places another transaction in the mempool, and
+then supplies a mismatched extra entry with the mempool transaction's short
+ID. The expected current-master state is `mempool_count == 1`,
+`extra_count == 1`, the extra slot available, and the collided/missing slots
+unavailable.
+
+### Bitcoin Core boundary and severity
+
+Peer compact blocks reach `PartiallyDownloadedBlock` through
+`PeerManagerImpl::ProcessCompactBlockTxns`. `FillBlock` uses `extra_count`
+only in the `BCLog::CMPCTBLOCK` success message at
+`src/blockencodings.cpp:221-225`; it does not use the value to accept a block,
+update the UTXO set, select transactions, or move funds. The collision is
+peer-reachable, but the affected behavior is diagnostic accounting.
+
+The master-relative rating is **Low historical diagnostic-accounting
+correctness / oracle hardening**, not Critical. Current master has the fix and
+the deterministic `blockencodings_tests` regression coverage. No new
+clean-master production bug or production fix is claimed by this commit. A
+malformed compact-block object alone is not Critical; severity follows the
+actual Bitcoin Core caller effect. The compact-block nonce is a SipHash
+selector; this audit asserts no nonce-clearing contract and makes no
+cryptographic-nonce severity claim.
+
+### Corpus and restored replay
+
+The frozen corpus is `/tmp/bitcoin-cmpctblock-20260720-frozen`, copied from
+the project corpus. It contains 1,435 files and 3,705,961 bytes, with sizes
+5..31,412. The per-file SHA-256 manifest is
+`b0cfeef40252982a88db251b9114df589491a212960dca46ad6ba6b79bf8b881`; the
+sorted filename manifest is
+`0b79ef0e1bd7824dd6a8d4edae2a6225e7422eca0b4ff32edeb2df6eb42e7e00`.
+
+The final normal fuzz binary SHA-256 is
+`1fb0690035b57848a0479a2013d34614454bb42362440e41a38f4a3c3a7ce489`.
+The restored normal replay exited 0 after 5,889 executions, reached
+coverage/features 9,941/44,680, peaked at 114 MiB, and produced log
+SHA-256
+`0f44194b892c25441ce7c403d8cae678d2a2f9296df6c2c27318057cec62f56c`.
+
+The final ASan/UBSan binary SHA-256 is
+`66bdb502e0ca8c4f5be7cef4a9878153d9416675d296641ae6bd2b143c09c909`.
+Its timestamp-verified replay exited 0 after 1,437 executions, reached
+coverage/features 20,474/89,105, peaked at 511 MiB, emitted no sanitizer
+diagnostics, and produced log SHA-256
+`e1a5eb1d2d145c4dc1d1b72517f6609f8deb99a41738e4c3eabbbbadf94637d7`.
+
+### Differential mutation proof
+
+The exact witness was frozen file
+`000bd1e24ae7350a08b76587ebf6c8f487cc131f`, 1,493 bytes, SHA-256
+`75da0ce2528c17158ab2156bc984771a300bb0949485420033da161d0f8a63b3`.
+A temporary production mutation replaced
+`extra_count -= (tx_source[idit->second] == TxSource::EXTRA);` with
+`extra_count--;` in `src/blockencodings.cpp`. This is the minimal historical
+pre-fix condition and was removed before committing.
+
+With the enhanced normal fuzzer, the mutation failed at
+`AssertExtraTransactionCounterContract` with wrapper rc 77; the log SHA-256
+is `dd2c67aa5f7f092cdcd8c7f47e900d405b79eeb9b3977b3345aa6afb276adeae`.
+The matched old-harness normal control removed only the new helper call,
+processed the same witness under the same mutation, exited 0, and has log
+SHA-256
+`938088d15c6a7e712aff16a1e377b290624ffda0e53404966ee1065f9098989c`.
+
+Under ASan/UBSan, the enhanced mutation failed at the same assertion with
+wrapper rc 77; log SHA-256
+`f4b16632d65f331727cfdc6b41f64b5711e5d17344b10e6da14e06727ed4c7ea`.
+The matched sanitizer control exited 0; log SHA-256
+`3a1234cce830a5dec3ce3ed38ae201ce8f40d6f17fac6446001ba94ef096275d`.
+
+The proof shows that the new oracle detects the historical counter condition
+the old fuzzer missed. It does not turn a log-only historical bug into a
+consensus or security finding, and the upstream current-master fix is not
+being presented as proof of a new defect.
+
+### Worker and focused-test evidence
+
+An initial time-based four-worker sanitizer pass was excluded from the
+manifest evidence because libFuzzer grew each isolated corpus. The
+authoritative corpus-only replay used `-runs` equal to each shard size:
+361/361/361/360 executions, zero new units, no diagnostics, and peak RSS
+491/483/493/494 MiB. Worker log SHA-256 values are:
+
+    worker0: 873853192baccd91fd7f7eccbdab5c80dd62b0adca001fab379e67443123a1df
+    worker1: b453fe9ab6075425032886084114f1ab449b379989e7afd11a7537de54c5855e
+    worker2: 7967b3d76c39e9fb955c64667d500ab3416835e094691750a75c64267dc8474e
+    worker3: 247fab65006de2599391487cc5b14269f7d59592959cb0e7a42fbad6fc87b74a
+
+The 1,435-file worker union exactly matched the frozen filename manifest.
+
+The current-master focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=blockencodings_tests,net_processing_tests,validation_block_tests,validation_tests,serialize_tests,blockmanager_tests,net_tests,private_broadcast_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; log SHA-256 is
+`43cec9b034ebc991084aace546ae4f5913d4159bb5a7aaa45f36c097bde0d2f4`.
+No mutation, control target, fuzz, sanitizer, build, or test process remains
+running.
+
+### Findings carried forward and masking policy
+
+This current-master replay reiterates rather than upgrades the existing
+ledger: generic raw `finalizepsbt` invalid `final_scriptSig` is Low local RPC
+correctness; feature-conditional private-broadcast failed-send retention and
+empty HEADERS initial-sync availability remain Medium; peer activity refresh,
+block-storage failure, oversized transport types, and banman invalid-subnet/
+unban remain Low or hardening. Earlier addrman, coins-cache, txgraph,
+txdownloadman, txrequest, connman, eviction, headers-sync, UTXO snapshot,
+mempool persistence, package, handshake, `BufferedFile`, block-index,
+compact-block, Merkle, wire, snapshot metadata, Bloom, compressed amount,
+scalar/field/group, DER, EllSwift, wallet, PSBT, scriptpubkeyman, BIP324,
+CMessageHeader, CInv, CBlockLocator, CBlockFileInfo, and related audits found
+no additional clean-master production bug unless their notes say otherwise.
+Reachability-limited ecmult scratch wrapping, 10x26 magnitude normalization,
+and SHA/HMAC/RFC6979 retention remain non-findings. A nonce without
+cryptographic meaning is not a Critical clearing finding.
+
+The upstream fix changes the behavior guarded here and must be acknowledged
+in any follow-up rather than treated as proof. If a later cherry-pick, caller-
+side change, or minor fix can mask a follow-up failure, amend that same commit
+and this note, or merge the evidence, with the exact target, caller,
+corpus/mutation, assertion, failure mode, master-relative severity, and
+whether the change masks, preserves, or changes master behavior. Every new
+production claim still requires clean master or a minimal production mutation
+plus the strongest deterministic proof available.
+
 ## `cmpctblock` state-transition oracle audit (2026-07-21)
 
 Source commit: `815fe5bf267815bbf70813314b7a0ea261d328e5` (`fuzz: check
