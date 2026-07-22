@@ -3658,6 +3658,174 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `merkle` root, mutation-flag, witness-root, and path oracle audit (2026-07-22)
+
+Source commit: `ea4baac3a96e98d02fcea83dbb160cb66ec65e8c` (`fuzz: model
+Merkle roots, mutation flags, and paths`), on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+parent is `dcb5a472be4a837f18dc0d8c6b1536d8da904187`; the audit used fetched
+Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. Fetched `l0rinc/master` resolves
+to the same `32eb52100296718f7c0469e3210ce1db73694793`. The exact target-scoped
+query
+
+    git log origin/master..l0rinc/master -- src/test/fuzz/merkle.cpp src/consensus/merkle.cpp src/consensus/merkle.h src/validation.cpp src/test/merkle_tests.cpp
+
+returned no output. No relevant l0rinc/fork commit was silently cherry-picked
+or folded into this result.
+
+### Core boundary and severity
+
+The Merkle target is a direct consensus boundary in Bitcoin Core:
+
+* `src/validation.cpp:3853-3877` calls `BlockMerkleRoot`, compares the root,
+  and rejects duplicate-subtree `mutated` trees as
+  `BLOCK_MUTATED`/`bad-txns-duplicate` to defend against CVE-2012-2459-style
+  malleation.
+* `CheckBlock` reaches that check at `src/validation.cpp:3951-3953`.
+  Block construction in `src/node/miner.cpp:97,357`,
+  `src/rpc/mining.cpp:171`, and the coinbase proof path in
+  `src/node/interfaces.cpp:915-917` use the same Merkle implementation.
+
+A clean-master mismatch that accepts a duplicate-subtree block with an
+unchanged header root is Critical consensus risk: it can accept an invalid
+block and create chain-safety or invalid-state effects. An invalid block that
+reaches this checker is not downgraded merely because the fuzzer supplied it.
+Malformed fuzzer bytes that never reach a real Core transition are not
+Critical. A nonce with no cryptographic meaning is not Critical merely
+because it is not cleared.
+
+No clean-master production mismatch was found. This commit therefore claims
+no production bug and adds no production fix or deterministic regression test;
+the existing Merkle, block, validation, and serialization tests remain part of
+the proof.
+
+The existing findings ledger is reiterated: feature-conditional
+private-broadcast failed-send retention and the empty-HEADERS initial-sync
+handoff remain Medium; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention remain Medium but
+reachability-limited; peer transaction activity refresh, local block-storage
+failure handling, oversized transport types, compact-block diagnostics, and
+cache/index/storage/serialization/container issues remain Low or hardening.
+The txrequest, txdownloadman, connman, eviction, handshake, headers-sync,
+UTXO snapshot, mempool-persistence, package-evaluation, RPC,
+descriptor-cache, Signet, and other audited targets produced no additional
+confirmed clean-master production bug. Severity is based on clean master and
+actual Bitcoin Core callers, not malformed fuzzer state.
+
+### Oracle changes
+
+The old target checked only one-leaf roots, some path reconstruction, and
+path-size conditions; it discarded the mutation result and did not model the
+production algorithm independently. The strengthened target independently
+computes:
+
+* pairwise Bitcoin Merkle levels and duplicate-subtree detection;
+* the witness-root zero coinbase leaf and witness transaction hashes; and
+* a level-by-level proof path plus independent root reconstruction.
+
+It compares every production root, mutation output, witness root, and path to
+the reference, repeats the calls for determinism, exercises null and non-null
+mutation output pointers, and snapshots serialized block bytes plus all three
+mutable validation-cache flags after every operation. Production
+`ComputeMerkleRoot` now asserts the empty/single-leaf result and false
+mutation state, while `TransactionMerklePath` asserts valid positions and the
+bounded path contract.
+
+### Corpus and clean verification
+
+The corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/merkle` to
+`/tmp/bitcoin-merkle-audit-20260722/frozen`: 405 files, 52723024 bytes,
+minimum/maximum size 1/4289442. Manifests are:
+
+* entries with filename and size: `209e0d80b187f051d5d14b92f1c6c680c35921ad0a50590d2b871b981c362530`;
+* per-input SHA-256: `956b092cbe3a9ccd798aaa94849845104a16d50d558b082b496f2f56d70847ce`;
+* sorted names: `5352951f805cbe0974c4fdd37a97f9b99398dc292712a9cfee57acd7178f9735`.
+
+Final source hashes are `src/consensus/merkle.cpp`
+`874c2bb35ca1010717f41bf085949db979d37c19aa03a84abe89b74508995ed3` and
+`src/test/fuzz/merkle.cpp`
+`49a4385dc52d62a6a1e8eeaa1d3a1e999c910adbbc1549bc46d37d03e5823e27`.
+Final binary SHA-256 values are normal fuzz
+`2eade37502917ed05aa5a82dcda4a97e7ae8fff5b38cd74b2d3d54b6df294269`,
+ASan/UBSan fuzz
+`d8e5c158a811bb1973c8339b5c346a80f2d4e775c74876f7a083458900484df7`, and
+`test_bitcoin`
+`64ea209333b81a1caabaaf4d61b2e40f7789cdff04fc95cf89ad9b614d304589`.
+
+The final normal replay completed 406 runs with coverage 646/features 2809,
+peak RSS 127 MiB, and exit 0. Its log SHA-256 is
+`643478f2aaee72bd80151286378542c4932e96a3e431198ea39acbda5713129c`.
+The final ASan/UBSan replay completed 406 runs with coverage 1054/features
+5142, peak RSS 488 MiB, no sanitizer diagnostics, and exit 0. Its log
+SHA-256 is
+`fedb3c85676ac5f450c78e921fff643b2fd64ec9bef8d0b2b8942bc23252810d`.
+
+Four concurrent ASan/UBSan workers each completed 406 runs with coverage
+1054/features 5142 and no diagnostics. Worker log SHA-256 values are, in
+order, `63cfb724c0b039998d2fd65f301e5dd549d33b7e1d09a2e296e5a0c6c48b4364`,
+`c20c4d25e4dc47ba60b92d74529f7e8ac489a7f6792b42ce7abb6f8b27077aa0`,
+`d84eae44f740ddb9762a85f0fc55e222dc9a3d6edfa92ba5a663e0e32d9ea3b7`, and
+`d21fd835c32a871d7e4bdec757440089f4ec1445c73c69c7473fa9ab49ab9ceb`.
+
+The focused command
+
+    test_bitcoin --run_test=merkle_tests,validation_tests,validation_block_tests,blockencodings_tests,merkleblock_tests,pmt_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`. Its log SHA-256 is
+`315769354a5b0b073fe2f50a9dbb1924d4ad6a166ba36b6a3fdb52b6ee1c9df2`.
+
+### Differential mutation proof
+
+This is intentionally a modeled regression proof, not a clean-master
+vulnerability. The temporary production-only mutation changed
+`if (mutated) *mutated = mutation;` in `src/consensus/merkle.cpp` to
+`if (mutated) *mutated = false;`. It preserved the root while suppressing the
+duplicate-subtree rejection signal. The mutated production source hash was
+`d5ae403974cf1e13742e6c8d9211d3b03fbad4daae98626eff440354f61b7efa`; mutated
+normal/ASan fuzz binaries were
+`b08502fbba9d21e2c76963c032b5116bf7a01109ea6803844e8f78c2fa8fb6fa` and
+`c9d5fb408ec5bdaac49b6e8a3b2d903976c33c813f7da21314ab7d3096d1597f`.
+The saved enhanced patch SHA-256 was
+`ee75470a8217aa713c3a0bdc3d47035470eb1d04dd001e8685d59b13bcc0551a`.
+
+The full mutated normal replay reached the independent mutation assertion;
+its log SHA-256 is
+`9c909b281377844f7eeb70ab73200805b2e3a0bf86feb2e155871955f508cd62`.
+The first sorted triggering input was
+`0073ceae44103d8d74728e5f643d3264078c5a31`. Exact normal replay reached
+`src/test/fuzz/merkle.cpp:147`, `actual_mutated == expected.mutated`; its log
+SHA-256 is
+`2915198e21bfcbc0af88e37e53886c3d6c5f28dcccf760e68e956fd7073d342a`.
+The exact ASan/UBSan replay reached the same assertion with no sanitizer
+diagnostic; its log SHA-256 is
+`567ed581253c07f6dff096f13cdf417324d939ad3e75d6924bfb0d9ba1792278`.
+
+For the matched old-harness controls, only the enhanced harness was replaced
+with the original master version; the same mutation and exact witness were
+retained. Both normal and ASan/UBSan controls exited 0 while discarding the
+mutation result. Control log SHA-256 values are
+`e5942e5b97d689057dd4498ff7f549b25a91cda0df6019f5292863813270d19a` and
+`ba4bc5a5df441206f0309cfaa59bb441cc6c93dee2b04b39d970c92b6b30ad85`.
+
+If this mutation existed on master, `CheckMerkleRoot` could accept a
+duplicate-subtree block whose root matched the header. Its master-relative
+severity would therefore be Critical consensus invalid-block acceptance.
+That severity is not reduced because the mutation is temporary or because a
+minor patch could mask it. It is absent on clean master. No nonce-secrecy
+severity is implicated. The production mutation and old control harness were
+restored before the source commit.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+Merkle computation, duplicate detection, block validation, or Merkle callers
+must be classified as preserving, masking, or changing this result. If a
+potential fix changes a follow-up reproducer, amend the source commit and this
+note with the new caller, corpus or mutation, assertion, failure mode,
+master-relative severity, and before/after proof. Every confirmed production
+fix requires the strongest deterministic regression evidence. No fuzz,
+sanitizer, mutation, build, or test process remains running.
+
 ## `signet` BIP325 construction and consensus oracle audit (2026-07-22)
 
 Source commit: `dcb5a472be4a837f18dc0d8c6b1536d8da904187` (`fuzz: turn
