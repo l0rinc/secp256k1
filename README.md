@@ -3508,6 +3508,148 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `eval_script` result/error/state oracle audit (2026-07-22)
+
+Source commit: `2027789f72` (`fuzz: assert EvalScript result and state
+contracts`), parent `fc42f885bee7f0f4ca4afaccbce8e3b1e26835e6`, on source
+branch `codex/fuzz-oracles-current` in
+`/tmp/bitcoin-secp256k1-audit-current`. The source branch is based on latest
+Bitcoin Core `origin/master` `32eb52100296718f7c0469e3210ce1db73694793`.
+`l0rinc/master` is `d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of
+current master. The target-scoped query
+`git log origin/master..l0rinc/master -- src/script/interpreter.cpp
+src/script/interpreter.h src/test/fuzz/eval_script.cpp` was empty, so no
+unique l0rinc commit applies to this target. Production
+`src/script/interpreter.cpp` was restored unchanged; this commit changes only
+`FUZZ=eval_script`.
+
+### Oracle and Core boundary
+
+The old target evaluated arbitrary scripts for `SigVersion::BASE` and
+`SigVersion::WITNESS_V0` but discarded the return value, `ScriptError`, and
+resulting stack. The new oracle retains `ScriptError`, requires the production
+contract `result == (serror == SCRIPT_ERR_OK)`, then replays the same script
+from the same empty stack with the stateless `BaseSignatureChecker`. It
+requires identical result, error, and final stack. This detects stale error
+outputs, stateful or nondeterministic transitions, and partial stack
+corruption without assuming that every accepted fuzzer input is semantically
+valid.
+
+Bitcoin Core calls this code through `VerifyScript`: scriptSig and
+scriptPubKey are evaluated at `src/script/interpreter.cpp:2029` and `:2034`,
+P2SH redeem scripts at `:2080`, and witness execution reaches `EvalScript` at
+`:1874`. `src/validation.cpp:2030` reaches the boundary through `CScriptCheck`
+while validating transactions and blocks. The replay therefore checks a real
+consensus-validation contract, although the fuzzer's arbitrary script is not
+itself proof of a peer-triggerable block problem.
+
+### Severity and reiterated findings
+
+Clean current master produced no mismatch, production failure, invalid-block
+acceptance, consensus divergence, sanitizer report, or concurrency failure.
+The master-relative rating is **Informational/Low oracle hardening**, with no
+production vulnerability, fix, or severity-raising claim. The modeled defect
+below leaves a success result with a stale error while Core normally branches
+on the bool. If a real boolean divergence reached block validation, wrong
+script acceptance or rejection would be High/Critical according to the
+demonstrated invalid-block impact. Malformed fuzzer input alone is not
+Critical. A nonce with no cryptographic meaning does not create a critical
+clearance requirement.
+
+The reiterated master-relative ledger is unchanged: feature- and
+caller-dependent private-broadcast and empty-HEADERS findings remain Medium;
+cache/index, compact-block diagnostics, storage, serialization, and container
+findings remain Low or hardening unless actual Bitcoin Core reachability and
+impact prove otherwise. Any later fix, minor adjustment, cherry-pick, or
+follow-up commit must be evaluated against clean master before its severity is
+assigned. If it masks a stronger master behavior, that masking must be
+recorded rather than treated as proof that the stronger bug never existed.
+
+### Corpus and replay evidence
+
+The frozen corpus is
+`/mnt/my_storage/qa-assets/fuzz_corpora/eval_script`, copied to
+`/tmp/bitcoin-eval-script-audit-20260722/frozen`: 1,675 files, 897,350 bytes,
+sizes 1..10,010. The per-file manifest SHA-256 is
+`ef0f0642e604180b210bfb6d6156f034f8a7b494d33d5b3ecf2f60ace539b6d6`; the
+sorted filename manifest SHA-256 is
+`f5aabd2466ecd30b810f1bb323f0294abe83d27720f59b0572ea8fcf8271a6ff`.
+
+The final normal fuzz binary SHA-256 is
+`495c628d20fb73c6d77d8a268388e9db678f7f4c29c887afabfa63fee4226420`.
+The frozen replay exited 0 after 1,676 executions, reached coverage/features
+`879/9,169`, peaked at 54 MiB, added no units, and has log SHA-256
+`1f8016557aba475039cbee56571a7871723972dc9dcbca601136cd9223b10055`.
+The final ASan/UBSan binary SHA-256 is
+`0139efd97eb400d60cc41f516e78066c9dfe657aaecc274495e0f953ea5de598`.
+Its replay also exited 0 after 1,676 executions, reached
+`1,422/15,635` coverage/features, peaked at 367 MiB, added no units, and has
+log SHA-256
+`460807d7147b11b893f90223de4a2d4214f2133d590c2fa3ac422f0926c977c5`.
+
+Four isolated workers processed 420/420/420/419 inputs and all exited 0 with
+no artifacts. Their coverage/features and peak RSS were
+`1395/14347` at 171 MiB, `1390/14237` at 177 MiB, `1401/14373` at 163 MiB,
+and `1388/14364` at 166 MiB. Worker log SHA-256 values were:
+
+    worker-0: 2bce0c3ff7a20cf51cd19e7c81e9244aae1738a58d7f2b834090e4813100d1e7
+    worker-1: 463cf6883aceef8d47973f22216c401a4dfbe6275f79382b250c28587cd8da44
+    worker-2: 83707f23cfb248518d589ff438d2beaa7f58a89f78822466ab03ea7725261ef1
+    worker-3: b400650914982b44bbe2e4178e06282ed04aa24242f52cdda47c78dd6b7dbb54
+
+### Differential proof and existing coverage
+
+A temporary production mutation changed `return set_success(serror)` to
+`return true` at `src/script/interpreter.cpp:1248`. The enhanced normal and
+ASan/UBSan corpus runs failed at the new `eval_script.cpp:32` assertion. Their
+log SHA-256 values were
+`b054b09f10ea838dd1e9d78caad13271387c2dae711d7c7af411800753d4e994` and
+`3da9699746527ca7548ee94463d3a0f5c21d6d7355de874d29a9fe988baf1db9`.
+Both reduced to the empty input, libFuzzer identifier
+`da39a3ee5e6b4b0d3255bfef95601890afd80709`, artifact SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, and
+internal exit 77.
+
+Matched old-harness controls removed only the new assertions, used the same
+mutation and empty input, and exited 0. Normal and ASan/UBSan control log
+SHA-256 values were
+`9cc422505bc930868970e08e76a3397abc2030deaacc23308d73b1cbf6a46bc1` and
+`30e2a64de7520fd37304440cc04853422b1a85b3fa1abc02ac9e22ce9ef623ba`.
+After restoring production, the exact empty input exited 0 in both builds;
+final witness log SHA-256 values were
+`7871f63125f53137317aa6ef835a5be13df8e8d4f4cb23ca221207abbb2e136f` and
+`ff64406f6a7b6adb1270c8bfd741da2c97e62196989ebe7b4db1ddf367b1306e`.
+
+The existing `script_tests/script_PushData` deterministic tests also caught
+the exact production mutation with four failures; the mutation-focused test
+log SHA-256 is
+`8955b245cd2372a3fa6e8ba084cffe89e2cf72ace7602c37c5ee6e1ba43f51f5`.
+This is defense-in-depth over real corpus and state diversity, not a claim
+that clean master contained a production bug or that existing deterministic
+tests missed this mutation. No production fix or regression test is claimed.
+
+### Verification and follow-up
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_tests,sighash_tests,txvalidationcache_tests,sigopcount_tests,validation_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; its log SHA-256 is
+`889533826e8fde83ee9c98f93b3825561009b570c92ce21bb07aa2e50a493966` and the
+test binary SHA-256 is
+`709d7540dac6f5bf9abb2d7620f6ecc38437190a496d5e363a83d1451b2e21bf`.
+`git diff --check` and clang-format validation passed. All mutation sources
+were restored, and no fuzz, sanitizer, mutation, build, or test process
+remains running.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+EvalScript, VerifyScript, or ScriptError must be amended into the source
+commit and this note with the target, caller, assertion, corpus or mutation,
+failure mode, master-relative severity, and whether it masks, preserves, or
+changes the finding. Every future production claim requires clean-master
+reproduction or a minimal production mutation plus the strongest deterministic
+proof available.
+
 ## `sighash_cache` cross-script oracle audit (2026-07-22)
 
 Source commit: `fc42f885bee7f0f4ca4afaccbce8e3b1e26835e6` (`fuzz: check
