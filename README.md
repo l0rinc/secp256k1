@@ -3508,6 +3508,153 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `sighash_cache` cross-script oracle audit (2026-07-22)
+
+Source commit: `fc42f885bee7f0f4ca4afaccbce8e3b1e26835e6` (`fuzz: check
+sighash cache across script codes`), parent
+`6bcb8be04416f248ef94ff09a32c4057f25db651`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`.
+The source branch is based on latest fetched `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The target-scoped query
+`git log origin/master..l0rinc/master -- src/script/interpreter.cpp
+src/script/interpreter.h src/test/fuzz/script_interpreter.cpp` was empty;
+no unique l0rinc commit applied. Production source is unchanged.
+
+### Oracle and Core boundary
+
+The existing `sighash_cache` target compared cached and uncached
+`SignatureHash` results, but always used one `scriptCode`. The new oracle
+keeps one `SigHashCache` alive across 100 generated hash types and two
+guaranteed-distinct script codes. The alternate is a minimal `OP_NOP`
+script, changed to `OP_1` only if the generated script is identical, so
+large fuzzed scripts are not copied or hashed twice. For every generated
+transaction/input/amount combination and both `BASE` and `WITNESS_V0`, the
+harness compares cached and uncached results for both scripts, exercising
+cache hits, misses, hash-type buckets, and script-code replacement.
+
+Bitcoin Core reaches this contract through `validation.cpp:2030`, where
+`CScriptCheck` constructs `CachingTransactionSignatureChecker`;
+`interpreter.cpp:1718` passes that checker's `SigHashCache` into
+`SignatureHash`. `VerifyScript` reuses the same checker while evaluating
+`scriptSig`, `scriptPubKey`, and a P2SH redeem script at
+`interpreter.cpp:2029`, `:2034`, and `:2080`. Cross-script cache reuse is
+therefore a real caller boundary, not an impossible malformed-fuzzer state.
+
+### Severity and existing coverage
+
+Clean current master produced no mismatch or production failure. The
+current-tree rating is **Low/informational oracle hardening**, not a
+production vulnerability or fix. If the modeled defect existed on master,
+a wrong sighash could change consensus script validation and potentially
+accept or reject an invalid block; severity would be High/Critical according
+to the demonstrated invalid-block impact. No nonce-clearing or
+cryptographic-nonce claim is involved, and a nonce without cryptographic
+meaning is not Critical.
+
+The repository's `src/test/sighash_tests.cpp:sighash_caching` already
+deterministically checks a different script code through one cache and
+catches this exact mutation. The focused suite passed. This audit does not
+claim an existing test gap or a current production bug; it broadens the
+same contract to 585 real corpus inputs and diverse generated state. The
+prior ledger is unchanged: feature/caller-dependent private-broadcast and
+empty-`HEADERS` findings remain Medium, while cache/index, compact-block
+diagnostics, storage, serialization, and container findings remain Low or
+hardening unless Core impact proves otherwise.
+
+### Corpus and final replay
+
+The frozen corpus is `/mnt/my_storage/qa-assets/fuzz_corpora/sighash_cache`:
+585 files, 3,571,029 bytes total, with sizes 2..621,249. The per-file
+SHA-256 manifest is
+`5e2fa98613a257255d2da7fd9a160f1347f0aa4ddb180aaa01f66c80799b5f31`.
+The sorted filename manifest is
+`7a22bcb957c50657ddc942867439f7ef01613c90e2b771de2d2e36bd9d028e57`.
+Final and worker unions matched it exactly.
+
+The final normal fuzz binary SHA-256 was
+`3b65aebd0bff2499aa85f92227ab8e5a3a80e4d17e478db34a926785bbc3f33b`.
+The full replay exited 0 after 586 executions, reached coverage/features
+`636/8,522`, peaked at 110 MiB, emitted no diagnostics or new units, and
+produced log SHA-256
+`13109056f5ffa14fbb4ab82ef7e72dd2b93beb332c15ffb6dc152e60923cc69d`.
+
+The final ASan/UBSan fuzz binary SHA-256 was
+`4e618583b6551bd19aa1c7853197f2dc9c8885146afaed3bdc2a526824bde14e`.
+The full sanitizer replay exited 0 after 586 executions, reached
+coverage/features `1,038/14,690`, peaked at 579 MiB, emitted no sanitizer
+diagnostics or new units, and produced log SHA-256
+`c24a1eef8863ace6199799a6f01405c7e16c7395cb02c9f4bbe11c07f38c37dd`.
+
+Four strict ASan workers replayed shards of 147/146/146/146 inputs. They
+executed 148/147/147/147 units, with coverage/features
+`1000/13334`, `1030/13719`, `997/13235`, and `1030/13683`; peak RSS was
+254/496/224/496 MiB. Worker log SHA-256 values were:
+
+    worker0: f59c1dadef9a261404586c2979b71620099b9b529aaca0dd0b808d3cf5cc5868
+    worker1: 164f0310b85583b37aae46888c3f2c6d148a46172f1c28b263f96e5f26773e06
+    worker2: de3a22a2b84671d463c3fc12bd54541d8449444d6718eb8a8c2dbb2ea4291e59
+    worker3: 54699462edc98a2541b8178fa16f10d72df50a14ecd56ae9924fe63a669baf62
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=sighash_tests,script_tests,txvalidationcache_tests,sigopcount_tests,validation_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; log SHA-256 is
+`7f5d81527009a7edf50efbdbe42d96afa442853af43ad5384893ba760d704d05`.
+The test binary SHA-256 is
+`5790c7452a12dd9a0fef7caca988f673f6603c938f317b4f77fb7a15d16224a2`.
+
+### Differential proof and controls
+
+A temporary production mutation at `src/script/interpreter.cpp:1595`
+changed `if (script_code == entry->first)` to `if (true)`, modeling cache
+reuse across different script codes. Enhanced normal and ASan/UBSan corpus
+runs failed at `src/test/fuzz/script_interpreter.cpp:81`; the internal
+libFuzzer exits were 77. Their log SHA-256 values were
+`6f82ecfe4161eecbedd04905922244a9623d93fdc7c0d1da5a2588ed1e4ecb74` and
+`a905c7aa9532d1aa12aaf8ec7e8fe777b4425d03f3e0cd058d4221f02c97dc71`.
+
+Both runs reduced to the same 11-byte witness:
+`43 ff 43 43 43 43 43 da 4d f3 95`, SHA-256
+`6bcb62fc931a028b4b59c67fe9583d37e59b0a5c06a90982a21cec49cc7de3b6`.
+The normal and ASan crash artifacts were byte-identical. The libFuzzer
+artifact identifier was `427f1cffe1e6bef6c1439e1bfc6662e9e772770a`; the
+artifact SHA-256 was the witness hash above.
+
+Matched old-harness controls removed only the new two-script loop, used the
+same production mutation and witness, and exited 0 after one execution.
+Normal and ASan control log SHA-256 values were
+`269279767072043ce5dcf927624482122c2304d1fb4ccd7016630e5baf7f7c71` and
+`dc58c705ee4aede8a768855d5a83697fcbf5db811268d8d346e2f0f05bb4ede5`.
+After restoring production, the exact witness exited 0 in normal and
+ASan/UBSan builds; final witness log SHA-256 values were
+`69406050b24bffa30f74bcbe24548796b069ac4dfc50685acd1022b2d67a2b81` and
+`021476a6ab2fba05732ed45097893b5c778b3b625a5bfd201b8e4176e0185b66`.
+
+An initial implementation copied the full script into the alternate and
+timed out under ASan at 68 seconds on frozen witness
+`40612e90cc70779e70f10b5f00ab76c230937e11`, input SHA-256
+`79e47f1d0850c0c4eb08ec45d3a4f93c273454326a2ab3760a205411f912f1c1`;
+the timeout log SHA-256 was
+`66512e463aae0be24550a755e67520775cbfe77067b3a054cf1482bba21528ad`.
+The final bounded one-op alternate reduced the slowest ASan unit to 52
+seconds. This was a harness performance correction, not a production
+finding.
+
+The production equality check was restored before the final replay. No
+production bug, deterministic regression test, or fix is claimed. Any later
+l0rinc cherry-pick, fork/minor fix, or master change that alters
+`SigHashCache` or its caller behavior must be amended into this commit and
+this note with target, caller, corpus or mutation, assertion, failure mode,
+master-relative severity, and whether it masks, preserves, or changes the
+finding. Every future production claim requires clean-master reproduction or
+a minimal production mutation plus the strongest deterministic proof
+available. `git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/script_interpreter.cpp` pass;
+no fuzz, sanitizer, mutation, build, or test process remains running.
+
 ## `key` Schnorr/Taproot oracle audit (2026-07-22)
 
 Source commit: `6bcb8be04416f248ef94ff09a32c4057f25db651` (`fuzz: assert
