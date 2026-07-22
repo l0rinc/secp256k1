@@ -3658,6 +3658,182 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `decode_tx` state and serialization oracle audit (2026-07-22)
+
+Source commit: `75781112aa` (`fuzz: assert DecodeHexTx state and round-trip
+contracts`), parent `662b978b39dc28bf017c4f3a93086f97e6c8ef57`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+full source commit is
+`75781112aaddc49c488c7c92ebc12b7e5852b3a5`. The source branch is based on
+latest fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The exact target-scoped query
+
+    git log origin/master..l0rinc/master -- src/core_io.cpp src/core_io.h src/test/fuzz/decode_tx.cpp src/primitives/transaction.h
+
+returned no output. No unique l0rinc commit applied and no cherry-pick was
+needed. Production `src/core_io.cpp` is unchanged by this source commit,
+SHA-256
+`7590fcc75cef044feeb417e6e69de03a69a0804f5a81eef60a092add34844d4a`.
+The final enhanced harness SHA-256 is
+`efd89338a18cfab8894231f6fc882b1c9dd7b8d2bb0988397d59a54cc4e29367`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=decode_tx` target checked only a few Boolean implications and
+discarded transaction state. The new harness uses a non-empty sentinel
+transaction to require failure-state preservation for no-attempt, invalid-hex,
+and failed-decode paths; checks each successful witness/legacy result with a
+canonical `EncodeHexTx`/`DecodeHexTx` round trip; requires the all-flags result
+to be equivalent to at least one single-mode result; and independently mirrors
+the documented `CheckTxScriptsSanity` choice when both serializations succeed.
+
+Bitcoin Core callers include `wallet/rpc/backup.cpp:57`,
+`wallet/rpc/spend.cpp:813,911`, `wallet/rpc/wallet.cpp:534`,
+`rpc/rawtransaction.cpp:428,608,749,1775`,
+`rpc/mempool.cpp:98,347,1408`, `rpc/mining.cpp:396`, and
+`bitcoin-tx.cpp:820`. These callers generally use a fresh local transaction,
+and this target has no direct invalid-block consensus decode path. Clean master
+has no mismatch or production failure, so the current-tree rating is
+**Low/informational oracle hardening**, not a production vulnerability,
+deterministic regression fix, or Critical finding. The modeled failure-state
+clobber could matter if a caller reused a transaction after a failed decode,
+but no current Core caller or wallet/funds impact was demonstrated. A wrong
+transaction accepted or signed by a demonstrated caller would be rated from
+that concrete impact; a real invalid-block consensus path would be
+High/Critical. Malformed fuzzer input alone is not Critical. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention and empty-`HEADERS` initial-sync handoff are **Medium**;
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention are **Medium but latent/reachability-limited**;
+peer transaction-activity refresh, local `ProcessMessage` block-storage
+failure, oversized transport types, compact-block diagnostics, cache/index,
+storage, serialization, and container findings remain **Low** or hardening
+under current Bitcoin Core callers. Txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote. Later fork/minor/master
+changes must be classified as masking, preserving, or changing these ratings.
+
+### Corpus and replay evidence
+
+The frozen corpus came from `/mnt/my_storage/qa-assets/fuzz_corpora/decode_tx`
+and was copied to `/tmp/bitcoin-decode-tx-audit-20260722/frozen`: 458 files,
+12,380,914 bytes, sizes 1..1,048,576. The per-file manifest SHA-256 is
+`18781a5e2331ea8a28ac54c639fe4df571ce8023f0ba314ee2d6cd4a8b45ab7c`; the
+sorted filename manifest SHA-256 is
+`2e0ede3ae868b8dae5fca3aebdcdd7d97bdfc35cf240178ead8960e6b4c780e0`.
+
+The final normal fuzz binary SHA-256 was
+`f44646390e17811c0ae92d9821c77e71fe88443357c3450cc6fc7c80e45e6db1`.
+The replay exited 0 after 459 executions, reached coverage/features
+`655/2,151`, peaked at 190 MiB, produced no failure artifact, and has log
+SHA-256 `da49842cb2a01ffe034abf59dc89d241c7e49f3582a5e509ec027c3266a31325`.
+The final ASan/UBSan binary SHA-256 was
+`308f2782ef9fa727b4c40f456c116fa29f0a72d652c4351295cb7f5466c470c9`.
+It exited 0 after 459 executions, reached coverage/features `864/3,374`,
+peaked at 667 MiB, produced no artifacts or sanitizer diagnostics, and has
+log SHA-256
+`8f600c4afa9bf47cc151bf6a67ebb107d70c8d7125756c1929c63e31d4f0a12e`.
+
+Four final independent ASan workers replayed 115/115/115/113-file shards and
+executed 116/116/116/114 units. Coverage/features and peak RSS were
+`843/2,883` at 407 MiB, `850/2,913` at 574 MiB, `834/3,031` at 188 MiB, and
+`850/2,992` at 322 MiB. Worker log SHA-256 values were
+`275df7ab9b7aac3e5e60738f00a50af3a4450887275055e397003a0cf0a4e7ab`,
+`07f32ab8d553cb6d4598d3379d460dfc96bad7e21792b83978369a444b6a285a`,
+`9a568d9a60890619014b9e7f5f544682e53126a9f1244621994bb3ecce68a35e`, and
+`54181324f4634c29190e212ff5eec6c946d10b25f03ff9b27438b1f8b6302944`.
+The worker filename union exactly matched the frozen filename manifest.
+
+### Triage and differential proof
+
+The first generic round-trip assertion used `DecodeHexTx`'s default
+witness-only flags. Corpus witness
+`07432d9cf656dd90aa6e04010ab05a7888fe5e63`, 182 bytes, SHA-256
+`433cb5efdf00e039dec8ecd695e334d85e500147c20a653d6d07832dae99160b`, is a
+decoder-accepted zero-input legacy-form transaction. `EncodeHexTx` preserves
+that legacy form, but default witness-only decoding cannot parse its
+ambiguity. The assertion failed at `decode_tx.cpp:49` in normal and ASan
+diagnostics; log SHA-256 values were
+`5cfcbc71ccdd191ac858dae48b2689499ffb645d0a1d207dd9d2a8d17bca02cf` and
+`8b6b811b8b9f05a2473adc8125a5768d791f1d510ed73479b4e28d0dde249de3`.
+The verifier now decodes round-trip output with both modes. This is an
+invalid-shape harness assumption, not a production bug.
+
+A separate temporary mutation removing `CheckTxScriptsSanity(tx_extended)`
+from the early extended-return path was run over the full corpus; normal and
+ASan exited 0 with log SHA-256 values
+`6275be45f1347751a338b0c4a17da23da3246cf07ba8a3ad654c1d5c93d1a52` and
+`3fbe1507c92141aea28a001f9976085b41ba0047659fe25bd330d3a621c0a3e7`.
+The existing corpus did not exercise a divergent selection, so this negative
+result is not claimed as proof or a finding.
+
+The accepted differential mutation at `src/core_io.cpp:225` changed
+
+    return false;
+
+to
+
+    tx = CMutableTransaction{};
+    return false;
+
+This leaves the return value unchanged but clobbers caller state. Enhanced
+normal and ASan corpus replays exited 134 at
+`src/test/fuzz/decode_tx.cpp:59`, assertion
+`CTransaction(actual) == CTransaction(original)`; full mutation log SHA-256
+values were
+`5a50b30669fc884425842d228c0a6afc0ec9e7895f6af2ba63bd10acabcc2c57` and
+`ba8072923f94db03d9edcd6be900398e43804d966ac826f6521e4abae9dbee06`.
+
+The first deterministic witness was corpus file
+`00484a3ba43d7e836a2b822a5aa5f99fc81317ed`, 100,203 bytes, SHA-256
+`f2029268c9b1532292c4bcc49ab46bba99618f6eb2cae2f5a3af7f4d9d5df8e3`.
+Replaying that exact file under mutated normal and ASan binaries exited 134
+at the same assertion; log SHA-256 values were
+`b9e814a4f17549e19fe9186ad8ee77350364fd9ad7ccf4f0b2a21f600f355eb2` and
+`a04721fd369ea60db4cad65517996a56282cf00992de7ec9405cd3d2c373b693`.
+
+Matched old-harness controls removed only the new contract, retained the same
+production mutation and exact witness, and exited 0 after one execution in
+normal and ASan. Control log SHA-256 values were
+`f65e05c030feb1cc01e5951f21c880aea480d825adb2cdf3c1a6e21ddbd40d5c` and
+`3fc0863cc07aa12dd6f001f27ee971b70d1fedadafb789e07be254a7419bc038`.
+After restoring production and the enhanced harness, the exact witness exited
+0 in final normal and ASan binaries; log SHA-256 values were
+`16497f869f05f4aba4faca7c66cde5915db22e7dc8c40fea77a43945414e1fb7` and
+`70a6e457a1a103ee94cfcd91cc3b2df93a18fb12ebd03d65ad05a83560bc1175`.
+This proves the new oracle catches a modeled decode failure-state regression
+the old target accepts; it is not a clean-master production bug or security
+finding.
+
+### Verification and follow-up
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_parse_tests,script_tests,transaction_tests,validation_tests --log_level=test_suite
+
+exited 0 after 40 cases with `*** No errors detected`; test binary SHA-256 was
+`34ea5ace87a642e7e07f217048348351d91d7604463a6ef1e6b3178baeb7d9b3`, and log
+SHA-256 was `0cd7620b4ca0615d46def7bf580832b03b0483c9eeac3dcd9a3802d490d51e82`.
+`git diff --check` and clang-format validation passed. All temporary
+production mutations were restored; no production behavior changed, no
+production bug or deterministic regression test is claimed, and no fuzz,
+sanitizer, mutation, build, or test process remains.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+`DecodeHexTx`, `DecodeTx` serialization choice, failure-state preservation, or
+Core callers must be amended into the source commit and this note with target,
+caller, corpus or mutation, assertion, failure mode, master-relative severity,
+and whether it masks, preserves, or changes the result. Every production claim
+still requires clean-master reproduction or a minimal production mutation plus
+the strongest deterministic proof available.
+
 ## `parse_script` token-contract oracle audit (2026-07-22)
 
 Source commit: `662b978b39` (`fuzz: assert ParseScript token contracts`),
