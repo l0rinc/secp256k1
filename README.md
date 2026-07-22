@@ -6305,6 +6305,168 @@ bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
 ---
+## wallet_fees fee-contract oracle audit
+
+Source commit: `9c7fcaa1e8` (`fuzz: add wallet fee contract oracles`). This
+target was upgraded from execution-only calls into explicit production and
+harness contracts. The mocked estimator retains the exact value returned by
+each call. The harness checks `GetDiscardRate` against the estimator/discard/
+dust precedence, `GetRequiredFeeRate` against
+`max(m_min_fee, relayMinFee)`, absolute required-fee conversion, explicit
+coin-control rates and override behavior, fallback and mempool-minimum
+clamping, the final required-fee floor, `GetMinimumFee` conversion, and every
+`FeeReason` transition. `src/wallet/fees.cpp` also asserts that the two public
+absolute-fee APIs never return a negative amount.
+
+### Core caller and severity
+
+Bitcoin Core reaches these APIs through `wallet/spend.cpp:1155`,
+`wallet/rpc/spend.cpp:1446`, `wallet/feebumper.cpp:142`, and
+`wallet/interfaces.cpp:468/476` while building, bumping, or exposing fees for
+local wallet transactions. The inputs are local wallet settings, explicit
+fee options, estimator state, mempool policy, and transaction size. Invalid
+blocks, transactions, witnesses, or signatures cannot invoke this wallet-fee
+path.
+
+Clean master reproduced no production bug and no production fix is claimed.
+If the required-fee clamp were wrong on master, the demonstrated caller impact
+would be **Medium** wallet correctness/availability risk: a wallet could
+calculate an under-required rate and produce a locally rejected or stuck
+spend. It is not Critical without consensus impact, invalid-block acceptance,
+key compromise, forgery, memory safety, or a network-triggered path. A nonce
+or counter without standalone cryptographic meaning is not Critical merely
+because it is not cleared.
+
+### Branch and fork provenance
+
+The source branch was rebased onto `origin/master`
+`efa1800a885c1ae605e18605ef73957ea13e575c` before this audit. The reviewed
+`l0rinc/master` was `32eb52100296718f7c0469e3210ce1db73694793`. The exact
+target-scoped query was:
+
+    git log --oneline origin/master..l0rinc/master -- \
+      src/wallet/test/fuzz/fees.cpp src/wallet/fees.cpp src/wallet/fees.h \
+      src/wallet/test/spend_tests.cpp
+
+It returned no commits. No l0rinc commit was relevant to this target and no
+fork change was cherry-picked here. A later fork commit or minor follow-up
+must be checked for whether it preserves, changes, or masks this oracle before
+its severity is reassessed.
+
+### Corpus and source identity
+
+The frozen corpus is `/tmp/codex-wallet-fees-audit-20260722/frozen-corpus`:
+133 files, 3,031 bytes total, sizes 1..310 bytes. The sorted filename/size
+manifest SHA-256 is
+`c684706294a91a01b5e5c8fc9890bb71296ff5c8544aeaf4d88d9affc3051bba`.
+
+The final fuzzer source SHA-256 is
+`5d3dd070e4c0a1fbc7bb871776e28a99bc5fbb3135527d4837fc0ad5c541dde6`.
+The final production `src/wallet/fees.cpp` SHA-256 is
+`532ab797dbaf986b44dfac33dc9f9935011b6c54a23117fc5c403b88656e19d2`.
+
+### Differential mutation proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The temporary production-only mutation changed `src/wallet/fees.cpp:76` from
+`if (required_feerate > feerate_needed)` to
+`if (false && required_feerate > feerate_needed)`. It disabled only the final
+required-fee clamp while retaining nonnegative rates. Mutated production
+SHA-256: `e247c4605af603486d1c11a9ac8cdb7bc4a61ab749a166de1fc909daddc47c7f`.
+
+With the final enhanced harness, the normal mutated binary SHA-256 was
+`16e8da3b8dafbe38a639188baaf06a6f9e6f760e7ea83f4513a65172c86a2408`. The
+133-file replay exited 1 at `fees.cpp:161`, reporting corpus input
+`33a173ef9a0fbc3d6aa88cf8d0ec345ee413d1b2` (37 bytes, input SHA-256
+`558c6a5377aa865881d5a772b2d30ca4ec29a7a30fbbd52f9fb97822405d4c88`). The
+diagnostic log SHA-256 is
+`851d6f99b22c6941f823af2eee7eac93f5fda92146ac2d0692987df929f4a825`.
+
+The final enhanced ASan/UBSan mutated binary SHA-256 was
+`981a90041edcb1df2ed912275486368a21c005e76bef0774d907c1fabe23758d`. Its
+corpus replay exited 77 at the same `fees.cpp:161` postcondition, with no
+ASan or UBSan diagnostic. The libFuzzer failing unit was 61 bytes with base64
+`pf4AC74m/v////8a6AMAHAAAAABdAAAcAACcAIE=` and artifact identifier
+`19b1783929048c55286f60d29c4e1547d2c0403a`. The log SHA-256 is
+`786fa7fa2e3d8b8e7b85333c9882060bf5dfb13a0d58f529c2f6c8c19bcfcffb`.
+
+The old harness source SHA-256 was
+`73bd220bd5091055241f9eb2bd4339c8795e4793dd3edf3d2b76868801f8b615`.
+Under the identical production mutation, its normal binary SHA-256 was
+`dbb8329b326e8a256848702b7ac15a2f042a24c1e01e20eb6f1d9de1988874dc`; it
+exited 0 over all 133 files and its log SHA-256 was
+`1720cd4bd20ccfa07bbac4bdc3fe0a7bf44f57c2f080b57f514b2ddbba7e3def`.
+Its old ASan/UBSan binary SHA-256 was
+`72f2f76789c8d34641be16bf8276339a6e7dbb3c6a031a76d11698c1adc7bdd4`; it
+also exited 0 after 151 executions with no diagnostic and log SHA-256
+`27db6cefb1028ee31865db00713a758d046f37c62e7b44c0e857ed7a3550cc7f`.
+
+This proves that the old fuzzer discarded fee results which expose an
+underpayment transition. It does not claim clean master has this bug. The
+mutation was removed before the source commit. The configured builds were
+fuzz-only, so no dedicated wallet unit target was available; no deterministic
+production regression test is claimed for a mutation-only finding.
+
+### Clean replay and workers
+
+Final normal fuzz binary SHA-256:
+`c4aefb34e517aaf90e973974e499f7d1f24502d73b798edc009b5e8891529105`.
+The combined empty-seed plus corpus replay exited 0 after 134 files; log
+SHA-256: `e59e95637dfd3e81bcb112756b1c7a88298262ae94b4a6f5656cf50d1bfc2f1c`.
+Four independent normal workers each passed all 133 corpus files; their
+identical log SHA-256 was
+`1720cd4bd20ccfa07bbac4bdc3fe0a7bf44f57c2f080b57f514b2ddbba7e3def`.
+
+Final ASan/UBSan fuzz binary SHA-256:
+`4b9ef56f0d5ed64a6e06e07fc8986f284a76f08a2d8a056380a6167d2eb28098`.
+The 133-file replay exited 0 after 150 executions, coverage 2748, features
+3106, and about 497 MiB peak RSS with no diagnostics; log SHA-256:
+`19f2fa826db8e2b3b39aee160ae2e38db9c9ef017ac9c23d19b82e6aeadfa931`.
+The four final sanitizer workers all exited 0 with no diagnostics; execution
+counts were 150, 151, 152, and 154. Their log SHA-256 values were:
+
+    c2e0d405d196386c15d30e885fa0791739eec13a6d41018751215ed32cf3d0b8
+    5ad2aad70a1537795b90fca8285200d1e0bf93cc377f420a71ad87fa1738f487
+    2eadb34b42047c95ed6d61a0f2ddf2d34e4eae9f9aab075c37ea8b8cc28ddd39
+    4f72e74d35ceb879fb128365e60361389e0a1cae545f83894c5c143c89c5c3a2
+
+Build commands were:
+
+    cmake --build /tmp/bitcoin-fs-poly-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-fs-poly-asan-build --target fuzz -j2
+
+`git diff --check` passed. No fuzz, sanitizer, or mutation process remains
+running.
+
+### Existing findings and masking policy
+
+Existing findings are reiterated here so this target is not evaluated in
+isolation. Private-broadcast failed-send retention is Medium, feature-gated
+and fixed on master. Empty HEADERS initial-sync handoff is Medium
+availability/IBD stall. Peer transaction activity refresh, process-message
+block-storage failure, and oversized transport message types are Low.
+
+`ecmult_multi` scratch wrapping is Medium internal/resource correctness with
+low Bitcoin Core reachability. Forced secp256k1 10x26 magnitude-32
+normalization and SHA/HMAC/RFC6979 retention are Medium latent/internal
+findings with limited reachability. Banman invalid-subnet and unban integrity
+is Low or nice-to-have because Core RPC validation rejects invalid entries
+before affected state is used. The audited txdownloadman, txrequest, connman,
+eviction, handshake, compact-block, headers-sync, UTXO snapshot,
+mempool-persistence, cache/index/API, and serialization campaigns have no
+additional confirmed clean-master production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle green,
+amend the source commit and this note after rerunning clean master or the exact
+minimal mutation. Preserve before/after behavior, actual Bitcoin Core caller
+and input reachability, assertion/status/stack, corpus or mutation, failure
+mode, master-relative severity, and whether the trigger is preserved, changed,
+or masked. A minor or non-serious patch that accidentally hides a severe master
+condition does not lower its severity on master. Every confirmed production
+bug requires the strongest deterministic proof, a regression test, and a
+record of why existing builds/tests did or did not catch it.
+
+---
 
 ## descriptor_parse and mocked_descriptor_parse audit
 
