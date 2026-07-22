@@ -28184,6 +28184,164 @@ severe master inconsistency does not lower its severity on master. Every
 confirmed production bug requires the strongest proof, a deterministic
 regression test, and why existing builds/tests did not catch it.
 
+## 2026-07-22: independent HKDF-HMAC-SHA256 oracle
+
+Source commit: `1944091d6daa92519dc9042059c98fbdde1eabf1` (`fuzz: add
+independent HKDF-HMAC-SHA256 oracle`). This target was reviewed after the
+source branch was rebased onto `origin/master`
+(`efa1800a885c1ae605e18605ef73957ea13e575c`). The target-scoped review of
+`l0rinc/master` at `32eb52100296718f7c0469e3210ce1db73694793` used the exact
+query
+
+    git log --oneline origin/master..l0rinc/master -- src/test/fuzz/crypto_hkdf_hmac_sha256_l32.cpp src/crypto/hkdf_sha256_32.cpp src/crypto/hkdf_sha256_32.h src/bip324.cpp src/test/crypto_tests.cpp
+
+and returned no commits. No l0rinc change was cherry-picked for this target.
+
+### Scope and oracle
+
+The old harness constructed `CHKDF_HMAC_SHA256_L32`, called `Expand32` in a
+bounded loop, and discarded all 32 output bytes. The new harness contains an
+independent compact SHA-256 implementation, HMAC-SHA256 key normalization,
+and the RFC 5869 extract/expand model for the fixed one-block `L=32` output.
+Each production output is compared with the model, initialized from a
+nonzero sentinel, and requested twice on the same object to check that
+expansion does not unexpectedly mutate the extracted key. A known RFC 5869
+vector checks the reference model itself before the generated matrix runs.
+
+The deterministic prefix covers IKM and salt lengths 0, 1, 31, 32, 63, 64,
+65, 128, and 1024. Info lengths cover 0, 1, 55, 56, 63, 64, 127, and 128,
+including the HMAC compression boundary and the production API limit. Random
+inputs still exercise the original provider-controlled loop. Production
+assertions document that a nonzero IKM length requires a non-null IKM pointer
+and that `Expand32` requires a non-null 32-byte output buffer; zero-length IKM
+remains valid.
+
+### Core reachability and severity
+
+Bitcoin Core calls this class from `BIP324Cipher::Initialize` to derive the
+four length/packet keys, garbage terminators, and session ID from the ECDH
+secret and network-magic salt. Valid v2 peer handshakes can therefore reach
+the implementation. A clean-master derivation mismatch would be **Medium**
+availability/interoperability risk because peers could fail to establish or
+maintain encrypted transport. It is not High/Critical on this evidence:
+invalid blocks, transactions, witnesses, and signatures cannot directly reach
+the HKDF call, and no invalid-block acceptance, memory-safety issue, key
+compromise, or forgery was demonstrated. No clean-master production bug was
+confirmed, so this is an oracle-strengthening commit, not a production fix or
+a deterministic regression test for a master defect.
+
+The rating is for the problem on unmodified master and the actual Core caller,
+not for an artificial fuzzer state. A nonce or counter without standalone
+cryptographic meaning is not Critical merely because it is not cleared.
+
+### Mutation proof
+
+To prove that the new oracle executes a meaningful contract, the production
+line `src/crypto/hkdf_sha256_32.cpp:22`
+
+    static const unsigned char one[1] = {1};
+
+was temporarily changed to `{0}`. This mutation models appending the wrong
+HKDF block counter byte. It was restored before the final clean replay.
+
+* Mutated production source SHA-256:
+  `a8a3fdd2a1a9e427d5112549e608bb08f489f52a01bee2a0a50d15e465f6bd71`.
+* The new normal fuzz binary SHA-256 was
+  `43a2b6b03a8a1f1ea4a268f770ece69983c7a23ddfafade07935bbe0b40889b9`.
+  On the exact zero-byte seed, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, it
+  exited 1 at `AssertExpansion` line 206; log SHA-256:
+  `a8f312c2fcc12f802f837d3c95fcc357fdadfd205d37612a19d51fb1cb0dde44`.
+* The mutated ASan/UBSan binary SHA-256 was
+  `48718d7299ce8a9204c9e55bda82e620f333845a50af03e5b779d4ea529f26ad`.
+  With `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0` and
+  `UBSAN_OPTIONS=halt_on_error=1`, it exited 77 at the same assertion, with
+  no sanitizer diagnostic; log SHA-256:
+  `f0780bee405e8c9c2ad816a4f2b7ea33c73ac37cf3908f7286f12dd6616bd96f`.
+* The existing deterministic `hkdf_hmac_sha256_l32_tests` also catches this
+  exact mutation. Its mutated test binary SHA-256 was
+  `c9633b28861661f8ce46798a8a64ad6e783172a90217f43eb80ef2082a3b63dc`, the
+  log SHA-256 was
+  `eb32f8515cd019354887b0483217887b333442161eee912747380b501e135835`, and
+  the single test exited 201 with three failed vector checks. This note does
+  not claim that old deterministic tests missed this mutation. The value of
+  the new oracle is independent differential coverage of empty input, all
+  HMAC/info boundaries, repeatability, and the previously unchecked output.
+
+The pre-oracle old normal binary on the same empty seed exited 0; binary
+SHA-256 was
+`e38491d6470378d7a7583482d6decd737b6b9aa3b5ec3f11037ffaffafe9b14e` and log
+SHA-256 was
+`bed79c2b1f3edb52fc455862baa97628122c4f6963fb07fabf9d8f18e1daeb60`.
+The source-level control is exact: after consuming empty IKM and salt,
+`ConsumeBool()` is false and the old `LIMITED_WHILE` body containing
+`Expand32` is never entered. A direct old-binary relink against the mutation
+was attempted in a temporary worktree, but the changed path invalidated
+CMake's cache and started a full rebuild; it was canceled at 50% to avoid
+duplicate artifacts. No direct old-mutated-binary result is claimed.
+
+### Corpus and clean verification
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/crypto_hkdf_hmac_sha256_l32` to
+`/tmp/codex-hkdf-audit-20260722/frozen-corpus`. It contained 182 files and
+25089444 bytes, with minimum/maximum sizes 1/1048576. The sorted
+filename/size manifest SHA-256 was
+`3d19ed26791ad8690b534d427a99eef209a921ea20ad92330bbfe58007b18e67`.
+
+Final restored binaries:
+
+* Normal fuzz: `3ae348d2f1a37cd8f4b252ee4803a34a6fffb586f95e1e95cfb1ea9351938e12`.
+* ASan/UBSan fuzz: `c401dc3aa3e1a1a35e91f510d904f4bbfd1aa9c049c403610c0cb07edd451022`.
+* Focused test binary: `16c7394103d546b123a31d37006d5fd1f12409537c3d21d4fb5da4d9f91a6a64`.
+
+The final normal empty-seed control exited 0; log SHA-256:
+`bed79c2b1f3edb52fc455862baa97628122c4f6963fb07fabf9d8f18e1daeb60`.
+The final normal replay passed all 182 corpus files in 18 seconds; log
+SHA-256:
+`2e4785c9d5e1576ae28f6a70c483077a3d43ac0fa4b8d424bde41e4fd4dfec10`.
+Four independent normal workers each passed all 182 files and produced the
+same log hash. The final ASan/UBSan replay completed 183 runs with coverage
+343, features 1548, and peak RSS about 1787 MiB, with no sanitizer
+diagnostics; log SHA-256:
+`b2d2f53824cb5c9ae53f8c962c24fc99cb92ecba25d03e2b0aed5eaf506bafb8`.
+The focused command
+
+    test_bitcoin --run_test=crypto_tests,bip324_tests --log_level=test_suite
+
+passed with `*** No errors detected`; log SHA-256:
+`38ca5271df9b7de00185aff1e1008cb0328119888c23805ceadeb82778f8fdb3`.
+`git diff --check` and clang-format dry-run passed, and no fuzz,
+sanitizer, build, or test process remains running.
+
+### Reiterated findings and masking policy
+
+Ratings remain based on unmodified master and actual Bitcoin Core callers:
+private-broadcast failed-send retention is Medium, feature-gated and fixed on
+master, reachable through local `sendrawtransaction`/wallet paths rather than
+invalid blocks or signatures; empty HEADERS initial-sync handoff is a Medium
+availability/IBD stall; peer transaction activity refresh and process-message
+block-storage failure are Low; oversized transport message types are Low with
+fixed-width/RPC-validated callers; `ecmult_multi` scratch wrapping is Medium
+internal/resource correctness with low Core reachability; forced secp256k1
+10x26 magnitude-32 normalization and SHA/HMAC/RFC6979 retention are Medium
+latent/internal findings with limited reachability; and Banman invalid-
+subnet/unban integrity is Low or nice-to-have because Core RPC validation
+rejects invalid entries before affected state is used. The txdownloadman,
+txrequest, connman, eviction, handshake, compact-block, headers-sync, UTXO
+snapshot, mempool-persistence, cache/index/API, and other audited campaigns
+found no additional confirmed clean-master production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle green,
+rerun the clean-master baseline or the exact minimal mutation. Amend the
+affected commit and this note with pre/post behavior, actual Core caller/input
+reachability, assertion/status/stack, corpus or mutation, failure mode,
+master-relative severity, and whether the change preserves, changes, or masks
+the trigger. A minor or non-serious patch that accidentally hides a severe
+master inconsistency does not lower its severity on master. Every confirmed
+production bug requires the strongest proof, a deterministic regression test,
+and an explanation of why existing builds/tests did or did not catch it.
+
 ## 2026-07-22: crypto_poly1305 arithmetic and streaming oracle
 
 Source commit: `9d27dcb45a` (`fuzz: model Poly1305 arithmetic and streaming contracts`).
