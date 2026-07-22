@@ -3658,6 +3658,151 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `script_interpreter` same-transaction precomputation oracle audit (2026-07-22)
+
+Source commit: `0413a4bedb` (`fuzz: assert precomputed sighash equivalence`),
+parent `e91e0f9a61f5b9432d5d4b805a7764672eec737f`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+source branch is based on latest fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The exact target-scoped query
+
+    git log origin/master..l0rinc/master -- src/script/interpreter.cpp src/script/interpreter.h src/test/fuzz/script_interpreter.cpp
+
+returned no output. No unique l0rinc commit applied and no cherry-pick was
+needed. The enhanced harness SHA-256 is
+`284360cfef1e08041f4854996a3de22bfbdedfecd1a90d205df4d0d12732083c`; clean
+production `src/script/interpreter.cpp` is
+`57a6f328c7e6202f499e48366a86eb26e09c8ebb78e92eef7e839207230be333`.
+
+### Oracle and Core boundary
+
+The first `FUZZ=script_interpreter` block used to pair the transaction being
+signed with a `PrecomputedTransactionData` built from a different random
+transaction and discarded both results. That is invalid fuzzer-domain
+construction and provides no postcondition. The new oracle keeps the generated
+transaction and input index as the common domain, compares `SignatureHash`
+without precomputation against a cache built from that same transaction, then
+repeats the comparison with that precomputation and a fresh `SigHashCache` and
+with a cache hit. This covers the real BIP143 precomputation plus per-checker
+sighash-cache composition. The existing `sighash_cache` target remains the
+cross-script cache-replacement oracle, so this does not rediscover that check.
+
+Bitcoin Core reaches this contract when `validation.cpp:2030` constructs
+`CScriptCheck` with `CachingTransactionSignatureChecker`; the checker passes
+both `PrecomputedTransactionData` and `SigHashCache` into `SignatureHash` at
+`interpreter.cpp:1718`. `VerifyScript` reuses the checker at
+`interpreter.cpp:2029`, `:2034`, and `:2080` across `scriptSig`,
+`scriptPubKey`, and P2SH redeem-script evaluation. The witness path is part of
+consensus script validation and block checking.
+
+Clean current master produced no mismatch or production failure. The
+current-tree rating is **Low/informational oracle hardening**, not a
+production vulnerability, fix, or deterministic regression test. If master
+used a wrong precomputed hash and accepted or rejected an invalid block, the
+impact would be **High/Critical** because block script validation could be
+incorrect. Malformed fuzzer input alone is not Critical. No nonce-clearing or
+cryptographic-nonce claim is involved; a nonce without cryptographic meaning
+is not Critical merely because it is not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention and empty-`HEADERS` initial-sync handoff are **Medium**;
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention are **Medium but latent/reachability-limited**;
+peer transaction-activity refresh, local `ProcessMessage` block-storage
+failure, oversized transport types, compact-block diagnostics, cache/index,
+storage, serialization, and container findings remain **Low** or hardening
+under current Bitcoin Core callers. Txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote. Later fork/minor/master
+changes must be checked for masking, preserving, or changing these ratings.
+
+### Corpus and replay evidence
+
+The frozen corpus came from
+`/mnt/my_storage/qa-assets/fuzz_corpora/script_interpreter` and was copied to
+`/tmp/bitcoin-script-interpreter-audit-20260722/frozen`: 532 files,
+59,274,390 bytes, sizes 4..1,042,390. The per-file manifest SHA-256 is
+`8a6ef2ee9dd4d4261f0089c0aa4fb76359aff8dd1453155720e1d1d744122d29`; the
+sorted filename manifest SHA-256 is
+`68c6f776fac96ee0d0304a51ac52d1550dbdcd11ca5b7d20d8c5c36783011ffc`.
+
+The final normal fuzz binary SHA-256 is
+`4cac5a05249cf2c134b7402bd078692aad503d48438bea4718630e97a775459d`.
+The full replay exited 0 after 533 executions, reached coverage/features
+`660/2,991`, peaked at 176 MiB, added no units, produced no artifacts, and
+has log SHA-256
+`b8887aff70ee83bc02b3764c5a980de87206420281c89b1bedf9afd9b1701aee`.
+The final ASan/UBSan binary SHA-256 is
+`a9a0f479b5690fd2673f3abca9ec2f24090d8ea2693882b37f1afb0f4ed12bab`.
+Its replay exited 0 after 533 executions, reached coverage/features
+`1,026/5,223`, peaked at 515 MiB, added no units, produced no artifacts or
+sanitizer diagnostics, and has log SHA-256
+`6cd3247f6069fd2f555466201aa422dbd9c1ce63ec5ffe341001600cd199e5a5`.
+
+Four independent ASan workers replayed 133-file shards and executed 134 units
+each. Coverage/features and peak RSS were `993/4,623` at 490 MiB,
+`992/4,583` at 503 MiB, `1,015/4,734` at 473 MiB, and `996/4,609` at
+478 MiB. Every worker exited 0 without artifacts or sanitizer diagnostics;
+log SHA-256 values were
+`6ec48d0bfafc2538696a2a764d30ecc80da0703e7949ff853ef90a8d591bc284`,
+`44130f9397d220b61a1573ec2b36600c50c0e62def63845cb64853091dceaefe`,
+`a47cdbe0f4788bd0854da068d294cd613f613440ac44f128d79a75bc4b453fcd`, and
+`ac0b88f7d46389d3b28e5cebd635e1401d17038520c5dad30e2aaa54a8ee85b`.
+The worker filename union matched the frozen filename manifest exactly.
+
+### Differential proof and verification
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary mutation at `src/script/interpreter.cpp:1637` changed
+`cache->hashPrevouts` to `cache->hashSequence`, modeling a wrong BIP143
+precomputed component. Enhanced normal and ASan/UBSan corpus replays failed at
+`src/test/fuzz/script_interpreter.cpp:37` after 136 executions with internal
+libFuzzer exit 77. Mutation log SHA-256 values were
+`4d3ee51b433ead8346cca3660e462993765e25da2fa5eb28ad82319c49914dd2` and
+`e4696fbf7d1b7bd95e3d43d3b67a29c4b61a5acfb6ddd59da3cf1d1f1ce1d8bc`.
+Both produced the same 152-byte artifact
+`crash-4ae0d2d379b95a98ab37598cfad45b5450bd4cba`, SHA-256
+`5fee4509f363c6e6bf56cbc5e6ff296d962661481df9b863089b4d5600350ce9`.
+
+Matched old-harness controls removed only this new same-transaction
+differential, retained the existing `sighash_cache` target, used the same
+mutation and artifact, and exited 0 after one execution. Normal and ASan
+control log SHA-256 values were
+`0cc125dab4c77c440f544b35029b277e0e114dd210e2106f5c823c28e2fe0dc2` and
+`d86adbee2d4b9e982df23f68f0f03073a37eb213d24382a53df91f08c5e93397`.
+This proves the new oracle catches a precomputed-sighash regression the old
+`script_interpreter` harness accepts. After restoring production, the exact
+artifact exited 0 in normal and ASan/UBSan builds; final replay log SHA-256
+values were
+`66034167075c4f2dc06ab1b9b2bfa10f8376fa9dd11efac416c0eb9ef3f4046d` and
+`8e71aff5c17d06710fd53943647e881a72ac8732efaf640cd20cca52396eefdb`.
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_tests,sighash_tests,txvalidationcache_tests,sigopcount_tests,validation_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; test binary SHA-256 is
+`3d3ec37a6ee64c1c2678a16b832fcc87b0e39d85d2850a336feb39f2bd6709cd` and log
+SHA-256 is
+`c28d737dfd40ea49656f8c74b82c414da157dd26f8db8b4fd4b0bd6d3a994986`.
+`git diff --check` and clang-format validation passed. All temporary
+production mutations were restored; no production behavior changed, no
+production bug or deterministic regression test is claimed, and no fuzz,
+sanitizer, mutation, build, or test process remains.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+`SignatureHash`, `PrecomputedTransactionData`, `SigHashCache`, or these Core
+callers must be amended into the source commit and this note with the target,
+caller, corpus or mutation, assertion, failure mode, master-relative severity,
+and whether it masks, preserves, or changes the finding. Every production
+claim still requires clean-master reproduction or a minimal production
+mutation plus the strongest deterministic proof available.
+
 ## `script_flags` fresh-checker replay oracle audit (2026-07-22)
 
 Source commit: `fad946a20252fb2f28270ba0234f260d38f9c669` (`fuzz: replay
