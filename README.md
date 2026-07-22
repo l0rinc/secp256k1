@@ -3508,6 +3508,165 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `signature_checker` deterministic callback and result oracle audit (2026-07-22)
+
+Source commit: `d0d7cb6c97` (`fuzz: assert signature checker contracts`),
+parent `2027789f721830debc40d19a6600ae083706d3f5`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+source branch is based on latest Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The target-scoped query
+`git log origin/master..l0rinc/master -- src/script/interpreter.cpp
+src/script/interpreter.h src/test/fuzz/signature_checker.cpp` was empty, so
+no unique l0rinc commit applies. Production
+`src/script/interpreter.cpp` was restored unchanged; only
+`FUZZ=signature_checker` changed.
+
+### Oracle and Core boundary
+
+The old checker consumed a new fuzzer bit for every callback and discarded
+both EvalScript and VerifyScript results and ScriptError values. That made
+replay stateful and could not expose stale errors. The new checker captures
+fixed ECDSA, Schnorr, CHECKLOCKTIMEVERIFY, and CHECKSEQUENCEVERIFY outcomes;
+sets a Schnorr error when the modeled callback rejects; and runs each script
+under BASE, WITNESS_V0, and TAPSCRIPT with initialized Tapscript validation
+weight. It requires `result == (error == SCRIPT_ERR_OK)`, then replays with a
+fresh identical checker and compares result, error, final stack,
+code-separator position, and validation-weight state.
+
+For valid flag combinations, VerifyScript receives the same result/error
+postcondition. The harness compares a null witness with an explicit empty
+witness and repeats the call with a fresh checker. This covers the real
+stateless callback contract without treating arbitrary script acceptance as
+semantic validity.
+
+Bitcoin Core reaches VerifyScript through `src/validation.cpp:2030` and
+`CScriptCheck` while validating transactions and blocks. The interpreter
+evaluates scriptSig, scriptPubKey, and P2SH redeem scripts at
+`src/script/interpreter.cpp:2029`, `:2034`, and `:2080`; witness execution
+reaches EvalScript at `:1874`. The fuzzer therefore exercises a consensus
+validation boundary, even though arbitrary fuzzer input is not itself proof
+of a peer-triggerable block problem.
+
+### Severity and reiterated findings
+
+Clean current master produced no mismatch, production failure, invalid-block
+acceptance, consensus divergence, sanitizer report, or concurrency failure.
+The master-relative rating is **Informational/Low oracle hardening**, with no
+production vulnerability, fix, or severity-raising claim. A real boolean or
+ScriptError divergence at this consensus boundary that accepted an invalid
+block would be High/Critical according to demonstrated impact. Malformed
+fuzzer input alone is not Critical. A nonce without cryptographic meaning is
+not a critical-clearance issue.
+
+The txrequest and txdownloadman transition-model audits were already present
+in source history and were not repeated here. The reiterated master-relative
+ledger remains feature- and caller-dependent private-broadcast and
+empty-HEADERS findings at Medium; cache/index, compact-block diagnostics,
+storage, serialization, and container findings at Low or hardening unless
+actual Bitcoin Core reachability and impact proves otherwise. Later fixes,
+minor adjustments, fork commits, and master changes must be checked against
+clean master and recorded as preserving, changing, or masking a stronger
+behavior rather than silently replacing its severity.
+
+### Corpus and final replay evidence
+
+The frozen corpus is
+`/mnt/my_storage/qa-assets/fuzz_corpora/signature_checker`, copied to
+`/tmp/bitcoin-signature-checker-audit-20260722/frozen`: 1,495 files,
+1,530,040 bytes, sizes 1..217,149. The per-file SHA-256 manifest is
+`0c68a4a1a70225f6729dc4880eba216b630a2da5c52e95a757fb2a205db1f156`; the
+sorted filename manifest is
+`e04e19817fc436f1606352e6106fa6c1feb9285db5456a4161d07e228b518db1`.
+
+The final normal fuzz binary SHA-256 is
+`c383059b2882f6a585f34ff0143375000ecd5958479039094563cb2a940e5bdb`.
+The frozen replay exited 0 after 1,496 executions, reached
+coverage/features `1125/12171`, peaked at 68 MiB, added no units, produced
+no artifacts, and has log SHA-256
+`c8fc8e95f75e198e9acd602e1993fe0751aec837fd640c0cc76dbb468bd80a07`.
+The final ASan/UBSan binary SHA-256 is
+`bd89d4ce559616973769861e1da1ce543c52b40fbe2faacbf1c0f1dac9cc7069`.
+Its replay also exited 0 after 1,496 executions, reached
+`1758/20211` coverage/features, peaked at 412 MiB, added no units, produced
+no artifacts or sanitizer diagnostics, and has log SHA-256
+`660d5d2c5de4b35c5a265cd8e130f02205a9b96d26fc20b186380c9fa1876f8a`.
+
+Four isolated ASan workers processed 374/374/374/373 files and executed
+375/375/375/374 units. Their coverage/features and peak RSS were
+`1685/16917` at 199 MiB, `1656/17116` at 214 MiB, `1655/16908` at 153 MiB,
+and `1667/17383` at 161 MiB. Worker log SHA-256 values were:
+
+    worker-0: 475710319a536e698312df64ee42a2969963f997ca7ed3e99dfef66ca2c0a692
+    worker-1: a776519f0e58013c45a7de80e59752baf2dd3ee0dc48ab43180a1a6e39941c8f
+    worker-2: ac27daa40b34bc3656419287525f5141518ac7af37b5b8c8a8ee936df26f0171
+    worker-3: 3aebf2ce1a720d4afb0e6fad6c1d7dc5654cc20d0dfa214efb3d6464c4c8c498
+
+The worker filename union matched the frozen manifest exactly.
+
+### Differential proof and controls
+
+A temporary production mutation at `src/script/interpreter.cpp:1248` changed
+`return set_success(serror)` to `return true`. Enhanced normal and
+ASan/UBSan runs failed at `signature_checker.cpp:80` on the reduced empty
+input with internal exit 77. Mutation log SHA-256 values were
+`9fcfedc52a854535914bee46c2612d3c2eb4807cdc809a8ecc4878fc70818758` and
+`db3c6361e28eb63ba8b9e9d77f93524cf78e30fb0a2ca365fef1f36582025f9b`.
+The libFuzzer artifact identifier was
+`da39a3ee5e6b4b0d3255bfef95601890afd80709`; the zero-byte artifact SHA-256
+was `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+Matched old-harness controls removed only the new oracle, used the same empty
+input and production mutation, and exited 0 after two executions. Control
+log SHA-256 values were
+`a9313aea0472146cacca3fb6b3f676c15edc24956f4fa591cf341c5db507475e` and
+`f1343d836d55ec7d905fea8bbf523111ba64eb7f662a953f0858c4ec7541db0d`.
+Restored clean production accepted the same empty witness in normal and
+ASan/UBSan final runs; witness log SHA-256 values were
+`d2b471533d95404d672f8c343db6b5ca3b81b11ee3130ba1d2c8a1d5f5647f20` and
+`26bdf3ed8249a17c0c0e39b1bb5237a43fad549c3a8b76d68174521735d62b2`.
+
+The exact production mutation also caused four deterministic
+`script_tests/script_PushData` failures at `script_tests.cpp:991`, `:996`,
+`:1001`, and `:1006`; mutation-focused test log SHA-256 is
+`b4619f0f93fcc19ce22f38473f036f303d607a32fb09285a3a9804d016d40354`.
+This is defense-in-depth over callback and Tapscript state, not a
+clean-master production bug or test-gap claim.
+
+A separate temporary inversion of the production `CheckSequence` condition
+at `src/script/interpreter.cpp:599` was not reached by the frozen corpus or
+bounded generation searches, so it is not claimed as a finding or severity
+result. The normal search executed 8,846 units in 93 seconds with log
+SHA-256 `97f23ef1ab4d3e65a7f8fd6cb0eb6d01835e4f2656c36e6d33ebde705d6fd4f6`;
+the ASan search executed 23,124 units in 31 seconds with log SHA-256
+`8cfaafc88aeb6f87c9b0645dec837d874d9cff2f5479278891eb8f542b6d877`.
+Both exited 0 with no artifacts. This is a coverage gap to target separately,
+not evidence of a master bug.
+
+### Verification and follow-up
+
+The final focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_tests,sighash_tests,txvalidationcache_tests,sigopcount_tests,validation_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; final test log SHA-256 is
+`6b08cbfbe871510f6da0d54196160e3f7e3870a46314efe5f83412009af43002` and
+the test binary SHA-256 is
+`d390bdc15c8b4acf19fa775c592cfda9167c4a32e920f9b999aff3dd0e1df25e`.
+`git diff --check` and clang-format validation passed, production source was
+restored, and no fuzz, sanitizer, mutation, build, or test process remains.
+No production fix or regression test is added because clean master is
+correct.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+EvalScript, VerifyScript, ScriptError, or signature checker callers must be
+amended into the source commit and this note with target, caller, assertion,
+corpus or mutation, failure mode, master-relative severity, and whether it
+masks, preserves, or changes the result. Every future production claim
+requires clean-master reproduction or a minimal production mutation plus the
+strongest deterministic proof available.
+
 ## `eval_script` result/error/state oracle audit (2026-07-22)
 
 Source commit: `2027789f72` (`fuzz: assert EvalScript result and state
