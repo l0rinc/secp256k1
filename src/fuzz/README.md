@@ -27488,3 +27488,141 @@ behavior, exact precondition/postcondition, assertion/status/stack,
 clean-master or minimal-mutation proof, deterministic regression test when a
 production bug is confirmed, and whether a later minor fix changed or masked
 the behavior.
+
+## 2026-07-22 Core FSChaCha20 rekey state-transition oracle
+
+Source commit: `61b9fb2d3020c58a7fd6a65ec98e8ccb7b803cf5`, on Core
+`codex/fuzz-oracles-current`, rebased onto latest fetched Core master
+`efa1800a885c1ae605e18605ef73957ea13e575c`. The corresponding committed
+source hashes are `src/crypto/chacha20.cpp`
+`475365527b2efe7a99fc404e7b13414f3288722249726fc0b8636040e3ddddcc` and
+`src/test/fuzz/crypto_chacha20.cpp`
+`13872a0b34951216a0b05e05e247a8302c936703a285c47e5dd098bd6ad9cbc2`.
+
+### Contract and caller
+
+`FSChaCha20` keeps a chunk counter and a rekey counter. Each chunk must be
+consumed at most once, and the rekey transition must advance the ChaCha20
+counter to the next key domain before the next chunk is encrypted or
+decrypted. A zero rekey interval is invalid construction state. The
+production assertions now check both contracts at the constructor and at
+`Crypt` entry. The fuzzer has an independent `FSChaCha20Model`, paired sender
+and receiver operations, exact ciphertext comparison, and forced boundary
+cases for packet lengths 0, 1, 63, 64, 65, 127, 128, 129, and 4096 around
+the interval boundary. The model also checks decrypt symmetry, so a locally
+consistent but incorrectly rekeyed implementation does not pass merely
+because both sides share the same mistake.
+
+The relevant Bitcoin Core caller is `BIP324` in `src/bip324.cpp`, which owns
+the left/length send and receive `FSChaCha20` ciphers. Valid encrypted v2
+peer traffic in `src/net.cpp` reaches these transitions. A malformed block,
+witness, transaction, or signature does not reach this state machine, so this
+finding is not a consensus-invalid-block path.
+
+### Master result and severity
+
+Clean master produced no confirmed production bug. The strengthened oracle
+is a discovery guard for a real state-transition contract. The modeled
+minimal mutation was:
+
+```text
+src/crypto/chacha20.cpp:370
+m_chacha20.Seek({0, ++m_rekey_counter}, 0);
+->
+m_chacha20.Seek({0, m_rekey_counter}, 0);
+```
+
+The mutation makes the implementation reuse the prior rekey counter. The
+frozen 36-byte all-zero seed was
+`/tmp/codex-fscha20-audit/boundary-seed`, SHA-256
+`6db65fd59fd356f6729140571b5bcd6bb3b83492a16e1bf0a3884442fc3c8a0e`.
+The mutated source SHA-256 was
+`d7cfeac42d2209fe476a2941a89ea9570f995e5f7a3a4cca1428003ae8bb2aec`.
+Both normal and ASan/UBSan mutated binaries failed directly at
+`src/test/fuzz/crypto_chacha20.cpp:59` on `actual_cipher == model_cipher`
+(exit 134), without an ASan or UBSan diagnostic. Restoring the production
+line made both controls exit 0.
+
+If this counter/rekey mismatch existed on master, severity would be
+**Medium availability/interoperability**: a valid v2 peer could desynchronize
+the encrypted length stream after a rekey and disconnect. It is not High or
+Critical based on current Core call paths: no invalid block is accepted, no
+memory-safety failure or key compromise is demonstrated, and the peer must
+reach the valid encrypted transport state machine. This is a cryptographic
+stream-state oracle, not a claim that every uncleared nonce is a security
+bug. A nonce with no cryptographic meaning does not require clearing and is
+not Critical on that basis.
+
+### Corpus and replay proof
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/crypto_fschacha20` to
+`/tmp/codex-fscha20-audit/corpus`: 332 files, 112,288,429 bytes total, with
+file sizes from 1 to 1,079,966 bytes. Its sorted filename manifest SHA-256
+was `b64ec8e19f81dec371e838de3c5fabcf6d1c90ec1716a8fc1e7a89415151097e`.
+
+Post-rebase full-corpus controls used 333 units including startup. The
+normal run reached 156 coverage features and 780 feature traces, with 68 MiB
+peak RSS and exit 0; its log SHA-256 was
+`3979a518cece9dfa9865337c2613c66f7301eb3c889aa7945868f0d8103bca63` and
+the binary SHA-256 was
+`42b19e1a656f97224f2383d32029a6ddeeeb50d196442c191ffc9adc63724740`.
+The ASan/UBSan run reached 310 coverage features and 1,654 feature traces,
+with 539 MiB peak RSS, no sanitizer diagnostic or artifact, and exit 0; its
+log SHA-256 was
+`9b2e9d293705ce4f911d63fbe8750d7a6e703888c2c57ec370bdd24cbb0235bd`, and
+the binary SHA-256 was
+`b9597fa33e65eeb82748c466322274a01f9d7b88efa8f8e95fde4eccd476d410`.
+
+The four-worker runs used `-workers=4 -jobs=1 -max_total_time=90` with
+separate corpus directories. Normal workers completed 36,899 executions at
+405/sec, reached 347 corpus additions, and used 179 MiB peak RSS; aggregate
+log SHA-256:
+`05c310ff1e305ae24c80abe9f4ebf1319f4b79a5bad3c4a8a8d56f75ef812b14`.
+ASan/UBSan workers completed 7,296 executions at 80/sec, reached 124 corpus
+additions, used 646 MiB peak RSS, and emitted no sanitizer marker or
+artifact; aggregate log SHA-256:
+`e66f6cec3eaf5120293b2747f0e570bd144fc997a5e13fad1d636bf13b0e992a`.
+The final restored-boundary control logs hashed to
+`80874d74e925ce28cd6931d252340af72990c61f9fd5d3e8e0fe6d02163981a0`
+(normal) and
+`753e9cee49f9069fb5431c4bfd5518e78510049e6877128a76231b54a149c770`
+(ASan/UBSan). `git diff --check` passed. Focused Core tests
+`crypto_tests,bip324_tests,net_tests` ran 37 cases with no errors; the log
+SHA-256 was `c6e94054b14ec6a6caed9f964db3f2f286b04992e7f4ac123809ff937d4b9254`
+and the test binary SHA-256 was
+`be6c80fd2bee84c4398dd45faca902499d61a6555ef3f8423c8037513cde20a4`.
+
+### Existing findings and masking policy
+
+The campaign ledger remains: private-broadcast failed-send retention is
+**Medium** and feature-gated; empty `HEADERS` initial-sync handoff is
+**Medium** availability/IBD stall; peer transaction activity refresh and
+process-message storage failure are **Low**; oversized transport message
+types are **Low** in current fixed-width/RPC-validated Core callers;
+`ecmult_multi` scratch wrapping and forced 10x26/SHA/HMAC/RFC6979 retention
+are **Medium** with limited Core reachability; and Banman invalid-subnet
+integrity is **Low/nice-to-have** because Core RPC validation rejects invalid
+entries first. Tx download/request, connman, eviction, handshake,
+compact-block, headers-sync, snapshot, mempool-persistence, and prior crypto
+campaigns have no new confirmed clean-master production bug recorded here.
+Invalid fuzzer state alone, or an invalid block that cannot invoke the
+affected Core caller, is not a Critical finding.
+
+The l0rinc Bitcoin Core fork was fetched at `32eb52100296718f7c0469e3210ce1db73694793`.
+Target-scoped history for `src/test/fuzz/crypto_chacha20.cpp`,
+`src/crypto/chacha20.cpp`, `src/crypto/chacha20.h`, `src/bip324.cpp`,
+`src/bip324.h`, and `src/test/crypto_tests.cpp` was empty, so there was no
+relevant commit to cherry-pick. This audit therefore does not claim to have
+replayed a fork fix for this target. If a later cherry-pick or minor fix makes
+the oracle green, the related commit and this note must state whether it
+preserves, changes, or masks the clean-master behavior; the clean-master
+baseline or the exact minimal production mutation must then be rerun.
+
+Every confirmed future production bug must include its actual Core caller,
+input origin, clean-master behavior, exact precondition/postcondition,
+assertion/status/stack, strongest reproducible proof, deterministic
+regression test, severity on master, and an explicit explanation of why
+existing builds/tests did not catch it. No production bug is claimed here
+because the mutation proof validates the oracle rather than exposing a
+clean-master regression.
