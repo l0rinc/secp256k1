@@ -26922,6 +26922,168 @@ clean-master or minimal-mutation proof, deterministic regression test when a
 production bug is confirmed, and whether a later minor fix changed or masked
 the behavior.
 
+## 2026-07-22 Integrated `p2p_private_broadcast` caller oracle
+
+This is a follow-up to the earlier private-broadcast retry-state audit. It
+records the integrated caller proof in rebased source commit
+`3b340edb76` (`fuzz: model private broadcast caller transitions`) on the
+latest synchronized Bitcoin Core master boundary:
+
+* Core `origin/master`: `8f2ed31f70231506083f31d9b4839a93ad803029`
+* Core `l0rinc/master`: `32eb52100296718f7c0469e3210ce1db73694793`
+* Notes repo `origin/master`: `9e4ec507e984d589549c99010f5de25ba9de059b`
+* Notes repo `l0rinc/master`: `8c3e6e6d992456d3b9228305ae84a6703273cf70`
+* Target-scoped overlap in both repositories: empty.
+
+No l0rinc commit was cherry-picked for this target because the Core query over
+`p2p_private_broadcast.cpp`, `net_processing.cpp`, `net.cpp`, the
+private-broadcast implementation, and `net_tests.cpp`, and the secp256k1
+query over `src/test/fuzz` and its implementation files, returned no relevant
+commits. The already-known Core history is master commit `3504e14d22c9`
+(`net: prune failed private broadcast send records`) and the class-level
+fuzzer commit `4c874c56861a`; the former is already in master and the latter
+does not check the `ProcessPong()` caller transition.
+
+### Contract and implementation
+
+The previous harness exercised message processing but did not independently
+model the full queue lifecycle. The new model tracks transaction witness-key
+identity, insertion time, peer ordering, sent/received timestamps, retry
+counts, the last disconnected pick, and `CConnman::m_private_broadcast`
+`NumToOpen()`. It checks the model after each operation and covers:
+
+* `InitiateTxBroadcastPrivate()` admission and transaction identity;
+* priority-based peer selection and captured INV contents;
+* VERSION/VERACK/PING/TX/INV serialization contracts;
+* valid assigned-peer GETDATA and the TX response;
+* PONG confirmation and outstanding-nonce transitions;
+* malformed PONG and duplicate-entry invalid GETDATA rejection;
+* network TX removal, `AbortPrivateBroadcast()`, relay=false rejection, and
+  `FinalizeNode()` retry/cleanup behavior.
+
+Production assertions now enforce the ownership boundaries in
+`FinalizeNode()` and `PushPrivateBroadcastTx()`: an unconfirmed private peer
+must be removed completely, and a pushed transaction must be the transaction
+remembered for that peer. The test-only detach helper permits the harness to
+call the real finalizer without double-finalizing a manually owned synthetic
+private peer. No production behavior was changed beyond assertions.
+
+### Bitcoin Core reachability and severity
+
+The caller path is the locally originated transaction flow in
+`src/node/transaction.cpp`, selected by the RPC mempool policy in
+`src/rpc/mempool.cpp` and also used by wallet-originated broadcasts. It is
+conditional on the private-broadcast feature. An invalid block, witness, or
+signature received from the network cannot enter this local transaction
+queue, so malformed fuzzer state alone is not Critical.
+
+The focused mutation omitted
+`PeerManagerImpl::ProcessPong()->NodeConfirmedReception(pfrom.GetId())`.
+Restored master passed; the mutation failed deterministically on the model's
+`received` postcondition. If the omission existed in production, the
+master-branch impact would be **Medium**: with private broadcast enabled, a
+locally originated transaction could retain an unconfirmed peer, distort
+retry/reopen accounting, and create availability/resource pressure. It is
+not a consensus, invalid-block, signature, or memory-safety vulnerability,
+and therefore is not Critical. The PING nonce is only a correlation value,
+not cryptographic material; its retention or clearing is not a Critical
+erasure finding.
+
+This is proof that the new oracle detects a caller-wiring regression, not a
+claim that unchanged current master has that regression. The historical
+failed-send retention bug remains classified **Medium**, is already fixed in
+master, and must not be conflated with this mutation-only result. No later
+minor fix masked this particular transition: the mutation and restored
+control were run against the same source and the same input.
+
+### Frozen corpus and replay proof
+
+The explicit proxy corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/tx_pool_standard`, copied fresh to the
+audit directory. It contained 2,086 files and 10,126,800 bytes, with sizes
+from 1 to 525,258 bytes. The sorted names-and-sizes manifest SHA-256 is
+`33f6ea2cb1e6fb42b50a2a82c324e4f5660700ffadcc673ed712cc44f49c7536`.
+
+The exact mutation input was
+`00bdfba9eb2ac4d005e23c45405d4a83a41775c6`, SHA-256
+`8bf72cf63541612e3a92b82fcf542c9d6046eaad634a2e126ba84c963a600af1`.
+The mutated `src/net_processing.cpp` SHA-256 was
+`d6b4192724bd37f2f3b87c71fae934bfd9de9ef4dd3eac97f0bdc278235874db`.
+
+* Normal mutation replay: exit 134 on
+  `p2p_private_broadcast.cpp:216` (`received` mismatch); log SHA-256
+  `0cf58f7411cff40084e5100c3e7a2c9c68cfb1b6ec17bd69485b17d187bf8c38`.
+* ASan/UBSan mutation replay: exit 134 on the same assertion, with no
+  sanitizer diagnostic; log SHA-256
+  `75e13124188ad181920f1f6c8620d75733ec09d56418bc2fb5601c607103c906`.
+* Restored normal control: exit 0; log SHA-256
+  `f0d8950d01b3a5d66dd706d0fe02ce00758c93772f6a9c96687ae299490183b5`.
+* Restored ASan/UBSan control: exit 0; log SHA-256
+  `9911fe1eb5fcac7b0fc13b128f1c2b07980d94401a1e57a8db2eaf4b18714a9c`.
+
+The final restored normal replay ran 2,087 executions, coverage 2,906,
+features 9,506, peak RSS 99 MiB, and exited 0. Log SHA-256:
+`7af9c5b1d13e1e67bdeb0ac4a2e74bcabee4131da83df64e7a8fcefd9716a32c`.
+The final restored ASan/UBSan replay ran 2,910 executions, coverage 5,465,
+features 17,891, peak RSS 487 MiB, and exited 0 with no sanitizer,
+assertion, or artifact output. Log SHA-256:
+`429602dcbe31debf6ad86c347adab6af35d107df4a807b578a9fc3c7261aae9c`.
+
+The four-worker ASan/UBSan run used `-jobs=4 -workers=4`; all jobs exited 0
+with 2,902, 2,914, 2,909, and 2,899 executions, peak RSS 486, 486, 487,
+and 486 MiB, and no artifacts. Parent log SHA-256:
+`81776bbcb5ef7046154f7309db85f20729e42654e61487db764dec4e3a76a26d`.
+
+The normal fuzz binary SHA-256 is
+`858e4a0bb5030fb3e39e77dedf13b92a39a3e8ac955005227d177c5e4b7a6568`; the
+ASan/UBSan fuzz binary SHA-256 is
+`0aeeaaf5e4343a1daeae6eb8bef38d443f5776aa1f804926016abba2c3e814dc`.
+
+Focused verification rebuilt `test_bitcoin` and ran:
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin \
+      --run_test=private_broadcast_tests,net_tests,peerman_tests,\
+      net_peer_connection_tests,net_peer_eviction_tests,txdownload_tests,\
+      txrequest_tests --log_level=test_suite
+
+All 132 selected modules passed. Log SHA-256:
+`ce166051ea9301d8ed63d7c7f5e4fea505aa7002498c34336138ce96c9f2f190`.
+The resulting test binary SHA-256 is
+`7016ee57bd263464e8e4dd65f46c2029ccf61066fa2003391b25d18771dca18b`.
+`git diff --check` passed and no fuzz jobs remained.
+
+### Existing findings, reiterated
+
+All ratings remain against unmodified master and actual Bitcoin Core
+reachability:
+
+* Private-broadcast failed-send retention: **Medium**, feature-gated and
+  fixed on master; reachable through local Core broadcast paths, not invalid
+  blocks or signatures.
+* Empty `HEADERS` initial-sync handoff: **Medium** availability/IBD stall.
+* Peer transaction activity refresh and process-message block-storage
+  failure: **Low**.
+* Oversized transport message types: **Low** in current fixed-width and
+  RPC-validated Core callers.
+* `ecmult_multi` scratch wrapping and forced secp256k1 10x26 magnitude-32,
+  SHA/HMAC/RFC6979 retention: **Medium** or latent Medium with limited Core
+  reachability.
+* Banman invalid-subnet/unban integrity: **Low/nice-to-have** because Core
+  RPC validation rejects invalid entries before affected state is used.
+* Tx download, tx request, connman, eviction, handshake, compact-block,
+  headers-sync, UTXO snapshot, and mempool-persistence campaigns: no further
+  confirmed clean-master production bug.
+
+An uncleared nonce is not Critical unless it carries cryptographic meaning.
+Every future finding requires the Core caller and input origin, clean-master
+severity, exact precondition/postcondition, assertion/status/stack,
+clean-master or minimal-production-mutation proof, and a deterministic
+regression test when reproducible. If a later cherry-pick or minor fix
+changes the behavior of a follow-up commit, amend that commit and this note
+with the pre/post behavior, master severity, control/mutation evidence, and
+the reason existing tests missed it. Do not let an accidental non-serious
+fix hide a severe master-branch inconsistency.
+
 ## 2026-07-20 Core `validation_load_mempool` persistence-state oracle
 
 This entry records Core commit `a59470d823`,
