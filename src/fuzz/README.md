@@ -27814,3 +27814,206 @@ not lower that inconsistency's severity on master. Every confirmed
 production bug requires the strongest reproducible proof and a deterministic
 regression test, plus an explanation of why existing builds/tests did not
 catch it.
+
+## 2026-07-22: crypto_aeadchacha20poly1305 composition oracle
+
+Source commit: b2f8e7afc30522eab2e14412e663fd037fc00116
+
+This audit was run on Bitcoin Core origin/master
+efa1800a885c1ae605e18605ef73957ea13e575c after the source branch was
+rebased onto it. Core l0rinc/master was
+32eb52100296718f7c0469e3210ce1db73694793. The target-scoped query over the
+AEAD/FSChaCha20 fuzzer, ChaCha20/Poly1305 implementation, BIP324, and
+crypto tests returned no commits in `origin/master..l0rinc/master`. There
+was no relevant l0rinc change to cherry-pick and no fork behavior was
+silently folded into this result. The notes repository refs were
+origin/master 9e4ec507e984d589549c99010f5de25ba9de059b and l0rinc/master
+8c3e6e6d992456d3b9228305ae84a6703273cf70.
+
+### Oracle and contracts
+
+`FUZZ=crypto_aeadchacha20poly1305` now runs an independent
+`AEADChaCha20Poly1305Model` beside production. The model independently
+composes the public ChaCha20 and Poly1305 primitives: it derives the block-0
+Poly1305 key, pads AAD and ciphertext to RFC8439's 16-byte boundaries,
+appends the 64-bit AAD/ciphertext lengths, checks the tag, and encrypts or
+decrypts from ChaCha20 block 1. Actual and model ciphertexts are compared;
+authentication results and valid plaintext are compared on the receiver.
+The model also checks `Keystream` against production and against the
+zero-plaintext ciphertext stream.
+
+The deterministic prefix runs for every input, including an empty input. It
+covers AAD lengths `0, 1, 15, 16, 17, 31, 32, 33, 255`, plaintext lengths
+`0, 1, 15, 16, 17, 63, 64, 65, 127, 128`, empty split sides, split points
+`0, 1, midpoint, length-1, length`, and nonce words at zero, one, and
+uint32/uint64 carry boundaries. It also forces wrong-key, ciphertext-bit,
+and AAD-bit failures. The random phase retains the existing size and damage
+modes while allowing independent encryption and decryption split points.
+
+The existing production constructor, `SetKey`, and Encrypt/Decrypt buffer-
+size assertions remain the documented API contracts. No
+stronger output-buffer-on-authentication-failure assertion was added because
+the public API promises only the boolean validity result, not the contents of
+the output buffer after failure. The source change is therefore an oracle
+change, not a production behavior fix.
+
+Final source SHA-256 values:
+
+* `src/crypto/chacha20poly1305.cpp`:
+  `4b3a5bf35d0491555dab4a55ff75595994b8a244748fcfdef773f5b8bdfb98f9`
+* `src/crypto/chacha20poly1305.h`:
+  `b14fe99f5e0ac121b51516e537cc61bbecf4ec92b6a6c9f1eacd38b9755cef03`
+* `src/test/fuzz/crypto_chacha20poly1305.cpp`:
+  `62f350ba69866705117a91fd5ce623128f9e3ecb2876334f79e9481c6850c7e6`
+
+### Core caller and severity
+
+Bitcoin Core does not call `AEADChaCha20Poly1305` directly outside its
+`FSChaCha20Poly1305` wrapper. `BIP324Cipher` owns that wrapper in
+`src/bip324.cpp`, and valid v2 peer traffic reaches it through `src/net.cpp`.
+A clean-master AEAD composition mismatch, such as an RFC padding or tag
+length error, would be Medium availability/interoperability: valid v2
+traffic from a compliant peer could fail authentication or produce
+non-interoperable packets. It is not High or Critical because malformed
+blocks, witnesses, transactions, and signatures cannot reach this transport
+state; there is no invalid-block acceptance, memory-safety issue, or key
+compromise result. Invalid fuzzer state alone is not Critical.
+
+The nonce values used here are protocol inputs, not standalone secret
+material. A nonce or counter without cryptographic meaning is not Critical
+merely because it is not cleared. Clean master produced no confirmed
+production bug, so this note claims no production fix and adds no
+deterministic regression test. The existing `crypto_tests`, `bip324_tests`,
+and `net_tests` remain the relevant deterministic coverage.
+
+### Mutation and old-harness control
+
+The exact production-only mutation changed line 55 of
+`src/crypto/chacha20poly1305.cpp` from:
+
+    const unsigned cipher_padding_length = (16 - (cipher.size() % 16)) % 16;
+
+to:
+
+    const unsigned cipher_padding_length = (15 - (cipher.size() % 16)) % 16;
+
+This models a plausible RFC8439 off-by-one in Poly1305 ciphertext padding.
+The final mutated production source SHA-256 was
+`9189f79e551103ad20c4baf268c0918cd98751897ecf6937ec705e21461a3e38`.
+The exact zero-byte input `/tmp/fs-poly-empty` has SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+With the final enhanced harness, the mutated normal binary SHA-256 was
+`7575c2d9832c71873ce444f26903da937094a390035897b3c1849dceb1214f36` and
+the failure log SHA-256 was
+`41a660b8971ec912744b537f6a40d5ab4c4494d6d4d34e8dc67353345fef6777`.
+It exited 1 at
+`src/test/fuzz/crypto_chacha20poly1305.cpp:198`,
+`assert(cipher == model_cipher)`. The mutated ASan/UBSan binary SHA-256 was
+`8843ec2857000d99c99072095da001d82fdfe740d36a00d204c1f531640d6400` and
+the failure log SHA-256 was
+`b27cc24b645e4dedecb2527da7fcc31828f4d5bc25d0ffac73625a4d8cc1f63d`.
+It exited 134 at the same assertion and produced no sanitizer diagnostic.
+
+For a direct oracle-sensitivity control, the same semantic mutation was
+applied to the pre-enhancement harness at source commit
+`61b9fb2d3020c58a7fd6a65ec98e8ccb7b803cf5`. That control production source
+SHA-256 was
+`51a49cce75616892fc19e4aa1624ab1226257cbba5b17bafc56f5985f321b1f1`.
+The old normal and ASan/UBSan control binary SHA-256 values were
+`e38491d6470378d7a7583482d6decd737b6b9aa3b5ec3f11037ffaffafe9b14e` and
+`aa62adfa8d7793b56cae78544ae6c680cae3e89b5882e08591c97d338b0366b`.
+Both exact empty-seed controls exited 0. Their log SHA-256 values were
+`110af7da12a7910ab8432c69f876defe495277d4af21f2bce9fd755cc7691f94` and
+`48bb33327a6090605923530d98758a53cc5e9c321b0198115036317d472a1e04`.
+The old target did not enter its random-operation loop for an empty input,
+so it never exercised the mutated tag construction. This establishes that
+the new deterministic prefix, rather than a generic mutated-build failure,
+is what makes the oracle sensitive.
+
+The mutation was restored before final verification. This is a modeled
+regression proof, not a clean-master vulnerability claim.
+
+### Corpus and final verification
+
+The source corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/crypto_aeadchacha20poly1305`; the
+pristine frozen copy was `/tmp/codex-aead-poly-audit-20260722/frozen-corpus`.
+It contained 424 files and 228372 bytes, with minimum/maximum input sizes 1
+and 3552. The sorted filename/size manifest SHA-256 was
+`bfc7bf56d5df40a8cf8f55a17f4c5fdca71cd4a53694619479acbe0019629cf4`.
+
+Final normal fuzz binary SHA-256:
+`2154f2bc8ae3b672cab104a0b77a400fa6a7a9fd3d45ba8203e5e5ccbf7ffc44`.
+Final ASan/UBSan/libFuzzer binary SHA-256:
+`dd41aca1f776ae5628ba5dd5ba7df195a3edaee5da8602e28f574a5aead92f7b`.
+
+The final normal full-corpus replay succeeded against all 424 files in four
+seconds. Its log SHA-256 was
+`2b87cfcb9e5c027339495115acd799ff3128e37a6805a7c365eccd7cededcb75`.
+The bounded ASan/UBSan replay executed 425 units, reached coverage 626 and
+features 2984, added zero units, peaked at 655 MiB, and exited 0 without
+diagnostics. Its log SHA-256 was
+`ef0a5f561fb297def7fd03da3f29388a655d2777bf1929b7d45b450215636f18`.
+
+Four independent normal workers each replayed all 424 inputs in four
+seconds and exited 0; each log SHA-256 was
+`2b87cfcb9e5c027339495115acd799ff3128e37a6805a7c365eccd7cededcb75`.
+The bounded four-worker ASan/UBSan run completed 1358 units in 91 seconds,
+reached coverage 626/features 3012, added 11 units, peaked at 685 MiB, and
+produced no diagnostics. Its aggregate log SHA-256 was
+`5c0d5da3dfb321522247b19e3c7091e4222233af74468dafd0dece367ccd9675`.
+
+Restored exact empty-seed normal and ASan/UBSan controls exited 0. Their log
+SHA-256 values were
+`110af7da12a7910ab8432c69f876defe495277d4af21f2bce9fd755cc7691f94` and
+`14693d1760912c7ef883c6cd34cb3238e7a6d00aad88c84528b6921c970db9e1`.
+
+The focused command was:
+
+    test_bitcoin --run_test=crypto_tests,bip324_tests,net_tests \
+                 --log_level=test_suite
+
+All 37 selected cases passed with `*** No errors detected`. The test log
+SHA-256 was
+`00bf73cdf2123262d6adcd61ea551b510b2482adfa78933e60d756121d9a0213` and the
+test binary SHA-256 was
+`451d982414adb3b574854b6066d326e8c458124dada5dd95d57b4dc371ac6456`.
+`git diff --check` and clang-format dry-run passed. Generated fuzz logs and
+the temporary old-harness worktree were removed; no fuzz, sanitizer,
+mutation, build, or test process remained running.
+
+### Reiterated findings and masking policy
+
+All ratings remain against unmodified master and actual Bitcoin Core
+callers, not synthetic malformed fuzzer state:
+
+* Private-broadcast failed-send retention is Medium, feature-gated and
+  fixed on master; it is reachable through local `sendrawtransaction` and
+  wallet paths, not invalid blocks or signatures.
+* The empty HEADERS initial-sync handoff is a Medium availability/IBD stall.
+* Peer transaction activity refresh and process-message block-storage
+  failure are Low.
+* Oversized transport message types are Low with current fixed-width and
+  RPC-validated Core callers.
+* `ecmult_multi` scratch wrapping is Medium internal/resource correctness
+  with low Core reachability.
+* Forced secp256k1 10x26 magnitude-32 normalization and SHA/HMAC/RFC6979
+  retention are Medium latent/internal findings with limited reachability.
+* Banman invalid-subnet/unban integrity is Low/nice-to-have because Core RPC
+  validation rejects invalid entries before affected state is used.
+* The txdownloadman, txrequest, connman, eviction, handshake, compact-block,
+  headers-sync, UTXO snapshot, mempool-persistence, cache/index/API, and
+  other audited campaigns found no additional confirmed clean-master
+  production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle
+green, rerun the clean-master baseline or the exact minimal production
+mutation. Amend the affected commit and this note with the pre/post
+behavior, actual Core caller and input reachability, assertion/status/stack,
+corpus or mutation, failure mode, master-relative severity, and whether the
+change preserves, changes, or masks the trigger. A minor or non-serious patch
+that accidentally hides a severe master inconsistency does not lower that
+inconsistency's severity on master. Every confirmed production bug requires
+the strongest reproducible proof, a deterministic regression test, and an
+explanation of why existing builds/tests did not catch it.
