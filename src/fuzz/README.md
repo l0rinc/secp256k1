@@ -28018,6 +28018,172 @@ inconsistency's severity on master. Every confirmed production bug requires
 the strongest reproducible proof, a deterministic regression test, and an
 explanation of why existing builds/tests did not catch it.
 
+## 2026-07-22: deterministic ChaCha20 differential boundaries
+
+Source commit: `9a7498783a` (`fuzz: add deterministic ChaCha20 differential boundaries`).
+
+### Scope and oracle
+
+`crypto_diff_fuzz_chacha20` already contained the independent DJB ChaCha20
+reference. Its weakness was scheduling: all comparisons lived inside a
+random operation loop, so the exact empty input consumed a key and then
+performed no production or reference operation. The target now runs a fixed
+matrix before consuming random operations. It compares production one-shot
+and split `Crypt` and `Keystream` results with the reference for empty,
+partial, exact-block, multi-block, and 4096-byte lengths; zero, ordinary,
+and wrap-adjacent counters; nonce low/high-word extremes; and zero, all-FF,
+incrementing, and patterned keys. Each sequence also performs a 64-byte
+follow-up against a continuous reference stream and checks the reference
+counter plus both 32-bit nonce words. The random path now checks all four
+reference state words after every operation.
+
+### Core reachability and severity
+
+ChaCha20 underlies `AEADChaCha20Poly1305`, `FSChaCha20Poly1305`, and
+`BIP324Cipher` through `src/crypto/chacha20poly1305.cpp` and
+`src/bip324.cpp`; valid v2 peer traffic reaches these paths through
+`src/net.cpp`. `ChaCha20Aligned` is also used internally by MuHash. A
+clean-master ChaCha20 transition mismatch on the transport path would be
+**Medium (availability/interoperability)** for valid peers. It is not High or
+Critical from this evidence: malformed blocks, transactions, witnesses, and
+signatures cannot reach this transport state; no invalid block acceptance,
+memory-safety issue, key compromise, or keystream forgery was demonstrated.
+Invalid fuzzer state alone is not Critical. A nonce or counter without
+standalone cryptographic meaning is not Critical merely because it is not
+cleared. Clean master matched the independent reference, so this audit found
+no production bug, added no production fix, and claims no deterministic
+production regression test.
+
+### Exact mutation proof
+
+The production-only mutation changed `src/crypto/chacha20.cpp:130` from
+
+    ++j12;
+
+to
+
+    j12 += 2;
+
+The mutated production source SHA-256 was
+`dc447bb5e6845ab418a8387ed74b426ebe9b87ce56401927dfaf995725a9debd`.
+The exact zero-byte seed `/tmp/fs-poly-empty` SHA-256 was
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The mutated normal fuzz binary and log SHA-256 values were
+`bb9b70146acdefaa600b789037ac8940b0d9679eb349f513960ad276a505162a` and
+`8ce0e1c81d8c6973de8e6dd93a5eede4f3277cf28029fdb4aef596fb18060f5e`;
+it exited 1 at `crypto_diff_fuzz_chacha20.cpp:353`,
+`assert(actual_followup == expected_followup)`. The mutated ASan/UBSan
+binary and log SHA-256 values were
+`915cf42404400388d43b5e63fcc147797dafd9e60986dbaf7adc67788f492754` and
+`2de4f9506045630bdee63c708dbb572e4e3ca8b40f7fcef421dc59e3550a4046`;
+it exited 77 under `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0` at the same
+assertion and emitted no sanitizer diagnostic. This is executable proof that
+the new deterministic differential oracle detects the modeled state
+transition regression, not evidence of a clean-master vulnerability.
+
+### Existing tests and old-harness boundary
+
+The exact mutation was also run against the existing deterministic
+`crypto_tests` suite. The mutated test binary SHA-256 was
+`07271b1cd664ed896bd2d44694f6e4f69a28b5c97715faa58c0f732defd6b70a` and the
+log SHA-256 was
+`c0e15be137237d878d0d11d30ae840c52a5ff068c21105fd908c775fd0d9de33`.
+That run exited 201 with 389 failures, primarily in
+`crypto_tests/chacha20_testvector` and downstream AEAD vectors. Thus this
+specific non-empty mutation is already covered by deterministic tests. The
+new oracle still matters because the old fuzzer's empty-input path did no
+work and did not exercise the new split/follow-up state contract or the
+systematic counter and nonce boundary matrix. The mutation was restored
+before final verification; no production regression test is claimed because
+master has no defect.
+
+An isolated executable old-harness control was attempted from the pre-change
+source, but fresh normal and sanitizer build trees exhausted `/tmp` before
+linking. No old-binary runtime pass is claimed. The source-level empty-loop
+condition is the only old-harness control recorded here.
+
+### Corpus and final verification
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/crypto_diff_fuzz_chacha20` to
+`/tmp/codex-diff-chacha-audit-20260722/frozen-corpus`. It contained 484 files
+and 156329870 bytes, with minimum/maximum sizes 1/1040072. The sorted
+filename/size manifest SHA-256 was
+`a76fdf01529a9ae963f27ccefc42b2af7f28fc2d6c44a1f0d10e4f844a0e02f3`.
+
+Final restored source hashes:
+
+* `src/crypto/chacha20.cpp`: `475365527b2efe7a99fc404e7b13414f3288722249726fc0b8636040e3ddddcc`.
+* `src/test/fuzz/crypto_diff_fuzz_chacha20.cpp`: `c78a06af800574bba087442debc6b6fa24e6d76138fedc7af72f774ef0c20720`.
+
+Final binary hashes:
+
+* Normal fuzz: `be50e0e7dff6214d74e75c0fb2bd92a4463e74bc34d12d34238ea5d3b306b778`.
+* ASan/UBSan fuzz: `2d7f97c799180de354ad3bf36fa5000903335ede9e7b640eaca5a4b828d47242`.
+* Restored test binary: `6c483fda2350450f883e9818fcb98762a11edd6566290fcab89816e1283e5d8e`.
+
+The final normal replay passed all 484 inputs in 2 seconds; log SHA-256:
+`8f6c42c9190afaa5d2669b912c09663d68481fce6b4f223b4cf193c5499eb67b`.
+The bounded ASan/UBSan replay executed 485 units, reached coverage 863 and
+features 5027, added 0 units, peaked at 667 MiB, exited 0, and emitted no
+diagnostics; log SHA-256:
+`eb5345bf9049e122296450564868bdaa76c51cb79bfd39632515b1c6e3466ec2`.
+Four independent normal workers each replayed all 484 inputs and exited 0;
+each log SHA-256 was
+`0c9700d8b21ed5cb9bd01272cf7916f640be308723e8377c50714f7f8030afdf`.
+The bounded four-worker ASan/UBSan run completed 13058 units, coverage
+864/features 5279, added 170 units, peaked at 673 MiB, and produced no
+diagnostics; log SHA-256:
+`6dc0553e86b7a6d64ec3af5800c019ff9f5ce61e62e516e7d75e6fa3f6dcadb4`.
+Restored normal and ASan empty-seed controls exited 0; log SHA-256 values:
+`612ab563364d133a3b089be22f3f2a50eb4828021790ec290843d76c9d33b5a9` and
+`6a39bc7cda9b2fd6176e0c29a6277c616fb78485f564d2f7d5adfddcd2ddf570`.
+The restored focused command
+
+    test_bitcoin --run_test=crypto_tests,bip324_tests,net_tests --log_level=test_suite
+
+passed 37 selected cases with `*** No errors detected`; log SHA-256:
+`ad4f6aff3e5a8092062319cf0decd323a64661109ad333d84631f7c3d359fcf5`.
+`git diff --check` and clang-format dry-run passed. Temporary old-control
+builds were removed after the disk-space failure; no fuzz, sanitizer, build,
+or test process remains running.
+
+### Rebase, fork review, findings, and masking policy
+
+The source branch was based on Core `origin/master`
+`efa1800a885c1ae605e18605ef73957ea13e575c`. Core `l0rinc/master` was
+`32eb52100296718f7c0469e3210ce1db73694793`. The target-scoped query over
+the differential and direct ChaCha20 fuzzers, ChaCha20 implementation and
+wrapper, BIP324, and crypto tests returned no commits in
+`origin/master..l0rinc/master`, so no relevant l0rinc commit was cherry-picked
+or silently folded into this proof.
+
+Ratings remain based on unmodified master and actual Bitcoin Core callers:
+private-broadcast failed-send retention is Medium, feature-gated and fixed
+on master, reachable through local `sendrawtransaction`/wallet paths rather
+than invalid blocks or signatures; empty HEADERS initial-sync handoff is a
+Medium availability/IBD stall; peer transaction activity refresh and
+process-message block-storage failure are Low; oversized transport message
+types are Low with fixed-width/RPC-validated callers; `ecmult_multi` scratch
+wrapping is Medium internal/resource correctness with low Core reachability;
+forced secp256k1 10x26 magnitude-32 normalization and SHA/HMAC/RFC6979
+retention are Medium latent/internal findings with limited reachability; and
+Banman invalid-subnet/unban integrity is Low or nice-to-have because Core RPC
+validation rejects invalid entries before affected state is used. The
+txdownloadman, txrequest, connman, eviction, handshake, compact-block,
+headers-sync, UTXO snapshot, mempool-persistence, cache/index/API, and other
+audited campaigns found no additional confirmed clean-master production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle
+green, rerun the clean-master baseline or the exact minimal mutation. Amend
+the affected commit and this note with pre/post behavior, actual caller and
+input reachability, assertion/status/stack, corpus or mutation, failure
+mode, master-relative severity, and whether the change preserves, changes,
+or masks the trigger. A minor or non-serious patch that accidentally hides a
+severe master inconsistency does not lower its severity on master. Every
+confirmed production bug requires the strongest proof, a deterministic
+regression test, and why existing builds/tests did not catch it.
+
 ## 2026-07-22: crypto_poly1305 arithmetic and streaming oracle
 
 Source commit: `9d27dcb45a` (`fuzz: model Poly1305 arithmetic and streaming contracts`).
