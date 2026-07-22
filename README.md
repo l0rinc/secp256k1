@@ -3658,6 +3658,174 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `signet` BIP325 construction and consensus oracle audit (2026-07-22)
+
+Source commit: `dcb5a472be4a837f18dc0d8c6b1536d8da904187` (`fuzz: turn
+Signet construction into a consensus oracle`), on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+parent is `0a95efc62e687a6ef7b7b0f8472e3ea48dee8299`; the source audit used
+fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of master. The exact
+target-scoped query
+
+    git log origin/master..l0rinc/master -- src/test/fuzz/signet.cpp src/signet.cpp src/signet.h src/node/blockstorage.cpp src/test/validation_tests.cpp
+
+returned no output. No relevant l0rinc/fork commit was silently cherry-picked
+or folded into this result.
+
+### Core boundary and severity
+
+The Signet target is consensus-relevant through Bitcoin Core's actual callers:
+
+* `src/validation.cpp:3947-3949` calls `CheckSignetBlockSolution` from
+  `CheckBlock` and rejects failure as `BLOCK_CONSENSUS` with
+  `bad-signet-blksig`.
+* `src/node/blockstorage.cpp:1084-1087` rechecks the solution while reading
+  persisted Signet blocks. `src/node/miner.cpp` and `src/rpc/mining.cpp`
+  construct the corresponding commitment and solution for Signet mining.
+
+A clean-master mismatch that accepts an invalid Signet block is a consensus
+vulnerability, High/Critical according to whether the invalid state can
+affect chain or funds. An invalid block that can reach this checker is not
+treated as harmless merely because the fuzzer supplied it. Conversely,
+malformed fuzzer bytes that never reach a real Core transition are not
+Critical. A nonce with no cryptographic meaning is not Critical merely
+because it is not cleared.
+
+No clean-master production mismatch was found. This commit therefore claims
+no production bug and adds no production fix or deterministic regression test;
+the existing Signet validation tests remain part of the proof.
+
+The existing findings ledger is reiterated: feature-conditional
+private-broadcast failed-send retention and the empty-HEADERS initial-sync
+handoff remain Medium; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention remain Medium but
+reachability-limited; peer transaction activity refresh, local block-storage
+failure handling, oversized transport types, compact-block diagnostics, and
+cache/index/storage/serialization/container issues remain Low or hardening.
+The txrequest, txdownloadman, connman, eviction, handshake, headers-sync,
+UTXO snapshot, mempool-persistence, package-evaluation, RPC,
+descriptor-cache, and other audited targets produced no additional confirmed
+clean-master production bug. Severity is based on clean master and Bitcoin
+Core's callers, not on the fuzzer's ability to manufacture state.
+
+### Oracle changes
+
+The old target called `CheckSignetBlockSolution` and `SignetTxs::Create` and
+discarded both results. The strengthened target independently models the last
+matching witness commitment index, BIP325 header extraction and clearing,
+modified coinbase merkle-root construction, the two synthetic transactions,
+and the final script check. It asserts:
+
+* optional success/failure agrees between production, a repeated call, and
+  the independent reference;
+* repeated construction and checking are deterministic;
+* the returned transactions match the reference and have the exact BIP325
+  one-input/one-output, version/locktime, sequence, outpoint, value, and
+  script shape;
+* serialized block bytes and all three mutable validation-cache flags remain
+  unchanged after every operation.
+
+Production `SignetTxs::Create` now has narrow postconditions for the same
+synthetic transaction shape and the spend outpoint. These assertions belong at
+the construction boundary, while the independent reference remains in the
+harness so a production mutation cannot silently define its own oracle.
+
+### Corpus and clean verification
+
+The corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/signet` to
+`/tmp/bitcoin-signet-audit-20260722/frozen`: 1836 files, 20495511 bytes,
+minimum/maximum size 1/920170. Manifests are:
+
+* entries: `7cf976d16143f157d7f45f31e94eaae1ecd326fd205e1151b7592f4a02b1ad1f`;
+* per-input SHA-256: `0f82b06c362402f52a2f8a6f120955cfba921a3fb801d72b518503b20f5f0761`;
+* sorted names: `7f42dc6e5bc37cbf2ddd3da8d14aaa4890af51c67468fa7becea6ecc63f4520a`.
+
+Final source hashes are `src/signet.cpp`
+`c1393d974a31b4ac6f4b92b7732e9fbdb5362199f912c1b7388a88cf145ed6a5` and
+`src/test/fuzz/signet.cpp`
+`12fe9624530f7d890e131c7cfd0482df9163e174f4d8b94aaadaff7490077f8f`.
+Final binary SHA-256 values are normal fuzz
+`ab157a1c750e045ea78dbb72ffb9732a0d0f62f81ced007bfa1899cbb1886e45`,
+ASan/UBSan fuzz
+`ed2e174c84a5eed08142d27257cd87c6ff5cf96f267370efe7b6bc4613ec7b4a`, and
+`test_bitcoin`
+`b95025f7ba847df4da4a6de8136a243c6734ce0fb5fdbbdd90f2abadb494f89f`.
+
+The final normal replay ran `FUZZ=signet fuzz -runs=1 frozen`, completed
+1837 runs with coverage 1838/features 7570 and peak RSS 214 MiB, and exited
+0. Its log SHA-256 is
+`aeda99d0d43ef5e2de09966f2a3d56dc8a17d232dcd989cc9349f984415a2bbe`.
+The ASan/UBSan replay completed 1838 runs with coverage 6049/features 17255
+and peak RSS 651 MiB, with no sanitizer diagnostics; its log SHA-256 is
+`e1e911b90da88d278cc984d4e21e8f221093c1205855eacabd91544fee3acb9f`.
+
+Four concurrent ASan/UBSan workers each completed 1838 runs with no
+diagnostics. Worker log SHA-256 values are, in order,
+`654607bd9aa51b85730f554868dc3ea24d7b6c07206ee8da2892d82e663486e0`,
+`ca6120faf447e12f09a2bdf4b1ebbf0f482d3e70efaf2bd30dd08e0d8029be55`,
+`3df323545f0df113c1fa5bc21c69f24abef3f7bb133e9916e2918f7065a6d608`, and
+`051cccad64a9f862010e4e1a2ea0b72d1e8b2ce7a9472c59d5a3bc1d9f4aaddb`.
+
+The focused command
+
+    test_bitcoin --run_test=validation_tests,validation_block_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`. Its log SHA-256 is
+`e1f43728218d74e282df3de40d8e6c946bd8aed12bd0dff672a5d65bbb2dd776`.
+
+### Differential mutation proof
+
+This is intentionally a modeled regression proof, not a clean-master
+vulnerability. The temporary production-only mutation changed the serialized
+BIP325 block-data field in `src/signet.cpp` from `block.hashPrevBlock` to
+`block.hashMerkleRoot`. It changes the signed message while leaving the
+production shape assertions satisfied. The mutated production source hash was
+`833da567e590f66133c270cdc41d1d3047728b6482620445827b9ac3a1a89222`; the
+enhanced harness hash was
+`12fe9624530f7d890e131c7cfd0482df9163e174f4d8b94aaadaff7490077f8f`; and the
+mutated normal/ASan fuzz binaries were
+`4c0a07ced94c301e03c9bf22f01be13903b4a6e96fc9840fc68d06361f44c49b` and
+`0bfbe322e526819a8e2af560f6d3a9686e19d4093b745e4d2731777d252a48a1`.
+
+The full mutated normal replay reached the independent assertion; its log
+SHA-256 is
+`0ca2a794e927683d0e0bbd7ffa05169b7918c61c114611b459b3b61d87a75c00`.
+The first sorted triggering input was
+`0040e44803df382106666fae4ee5c29aa8f6dc1b`. Exact normal replay reached
+`AssertTransactionShape` at `signet.cpp:163`, on
+`actual.m_to_spend == expected.to_spend`; its log SHA-256 is
+`575a3293829dc8ecc3ddccb3a688b5c0557b3ec0815dc8956e71244b6eb665a5`.
+The exact ASan/UBSan replay reached the same assertion with no sanitizer
+diagnostic; its log SHA-256 is
+`dcb5d1a95222775f1ee451b069ff242bc27985f256b6af3f2fd9e5527d76efbc`.
+
+For the matched old-harness controls, only the enhanced harness was replaced
+with the original master version; the same production mutation and exact
+witness were retained. Both normal and ASan/UBSan controls exited 0 while
+discarding the production return values. Control log SHA-256 values are
+`7c7f886f8782ede6a642e9d238103ed59efdf69575949eab7f1c5ebed8cefd5d` and
+`7c9477c93397ec2776f9706f216393334937e80267f717b5c783f4d340f62393`.
+
+If this exact mutation existed on master, Core's Signet callers would reject
+otherwise correctly signed blocks, making it a High Signet consensus/
+availability defect, but not a Critical invalid-block-acceptance or funds
+theft finding. It is not present on clean master. No nonce-secrecy severity
+is implicated. All temporary mutations and the original control harness were
+restored before the source commit.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+Signet commitment extraction, BIP325 transaction construction, validation, or
+callers must be classified as preserving, masking, or changing this result.
+A minor patch that masks a severe master bug does not lower the master-relative
+severity. If a potential fix changes a follow-up reproducer, amend the source
+commit and this note with the new caller, corpus or mutation, assertion,
+failure mode, severity, and before/after proof. Every confirmed production fix
+requires the strongest deterministic regression evidence. No fuzz, sanitizer,
+mutation, build, or test process remains running.
+
 ## `scriptnum_ops` CScriptNum state and representation oracle audit (2026-07-22)
 
 Source commit: `0a95efc62e` (`fuzz: model CScriptNum state and representation
