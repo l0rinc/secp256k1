@@ -3508,6 +3508,137 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `script_flags` fresh-checker replay oracle audit (2026-07-22)
+
+Source commit: `fad946a20252fb2f28270ba0234f260d38f9c669` (`fuzz: replay
+script flag checks with fresh checkers`), parent
+`d0d7cb6c97fd3266acc62a22b792265bf737486e`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+source branch remains based on latest Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; that commit is an ancestor of
+the source checkpoint. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The target-scoped query over `src/test/fuzz/script_flags.cpp`,
+`src/script/interpreter.cpp`, and `src/script/interpreter.h` was empty, so no
+unique l0rinc commit applies or was cherry-picked for this target. The
+enhanced source SHA-256 is
+`320647133eb1a4b34804244c3db29a55bbf93b11ff1d64bb767dd1c0d32d81cb`.
+Production `src/script/interpreter.cpp` was restored unchanged at SHA-256
+`57a6f328c7e6202f499e48366a86eb26e09c8ebb78e92eef7e839207230be333`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=script_flags` target reused one mutable
+`TransactionSignatureChecker` after changing verification flags and only
+compared boolean results. The new oracle snapshots the original flags,
+initializes both `ScriptError` values, and replays both the original and
+mutated flag sets with fresh identical checkers. It requires both the result
+and the exact `ScriptError` to match. This exposes checker state, including
+`SigHashCache`, that might leak from one `VerifyScript` call into the next.
+
+Bitcoin Core reaches this boundary from `src/validation.cpp:2030` through
+`CScriptCheck` during transaction and block validation. `VerifyScript`
+reuses the checker across `scriptSig`, `scriptPubKey`, P2SH redeem-script,
+and witness paths at `src/script/interpreter.cpp:2029`, `:2034`, `:2080`, and
+around `:1874`. The current-master rating is **Informational/Low** oracle
+hardening: clean master produced no mismatch, production failure,
+invalid-block acceptance, consensus divergence, sanitizer report, or
+concurrency failure. A real production divergence that accepted an invalid
+block would be **Critical**; a demonstrated valid-block rejection or
+consensus DoS would require High/Critical treatment according to its actual
+Core reachability and impact. Stale diagnostics or malformed fuzzer input
+alone are not Critical. No nonce-clearing or cryptographic-nonce claim is
+made; a nonce without cryptographic meaning is not Critical merely because it
+is not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention is **Medium**, and the empty-HEADERS initial-sync
+handoff is **Medium** for availability/IBD impact. Peer transaction-activity
+refresh, local `ProcessMessage` block-storage failure, oversized transport
+types, compact-block diagnostics, cache/index, storage, serialization, and
+container findings remain **Low** or hardening under current Bitcoin Core
+callers. Ecmult scratch wrapping, forced 10x26 magnitude-32 normalization,
+and SHA/HMAC/RFC6979 retention remain **Medium but latent/reachability-
+limited** correctness or hygiene findings; Banman invalid-subnet/unban
+integrity remains Low/nice-to-have. The txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote here. Later fork commits,
+minor fixes, and master changes must be checked against clean master and
+identified as masking, preserving, or changing stronger behavior.
+
+### Corpus and replay evidence
+
+The frozen corpus came from
+`/mnt/my_storage/qa-assets/fuzz_corpora/script_flags` and was copied to
+`/tmp/bitcoin-script-flags-audit-20260722/frozen`. It contains 2,171 files
+and 39,654,526 bytes, sizes 7..100,001. The per-file manifest SHA-256 is
+`9c1c6cf5cb38f358a60c300a24bd54ffad64380de6087c553c7bee6eee861013`; the
+sorted filename manifest SHA-256 is
+`006e92261683af3032681c65e63ee6b76fa788902c9870e9cfb1971e6ede7ba4`.
+2,170 files are within the existing 100,000-byte guard; one 100,001-byte
+file is loaded by libFuzzer but intentionally returns at that guard.
+
+The final normal fuzz binary SHA-256 was
+`2a2747053e84a112adf128c6d36083d609611788d8e41051ebef3e3513ea780a`.
+The replay exited 0 after 2,172 executions, reached coverage/features
+1,878/11,581, peaked at 84 MiB, and produced no new units or artifacts; log
+SHA-256: `71b224c4dc83b58af3083397ddb6f1704ebd7f28fc439967be35d02a3836e7e0`.
+The final ASan/UBSan binary SHA-256 was
+`bb37f03a80012132bf0c1f114241dcb690e932f998c3a8e8a5cf40370c5e7fc6`.
+It exited 0 after 2,173 executions, reached coverage/features 6,654/44,844,
+peaked at 675 MiB, and produced no new units, artifacts, or sanitizer
+diagnostics; log SHA-256:
+`8db5d28de894cfea126a3322abeaf7b45557fb7e7c4726a26732326d48544393`.
+
+Four isolated ASan workers replayed shards of 543/543/543/542 files and
+executed 545/545/545/544 units. Coverage/features and peak RSS were
+6,630/37,695 at 630 MiB, 6,621/40,273 at 608 MiB, 6,625/40,409 at 600 MiB,
+and 6,615/40,269 at 631 MiB. Each exited 0 without artifacts or diagnostics.
+Worker log SHA-256 values were
+`3560c566b2afd38b364348e73eca65151edcf0c503fa1e46fc92912ff2cb8e47`,
+`1af7febf2a7cdeb1934d3c0796d923c7bf08e9ef9dd933917548d2cfa1137c8a`,
+`8ef884f205588b0d5e012d477b12cae1e7816f1de99247986551b418a68e9d2a`, and
+`24eb24204638601d2445af94dd64b0ec9ed604601648f007423c8dba8b0c569e`.
+The worker filename union matched the frozen filename manifest exactly.
+
+### Mutation result and test gap
+
+The stateful production condition under test was a cache hit after a prior
+`VerifyScript` call. A temporary mutation at
+`src/script/interpreter.cpp:1595` inverted
+`if (script_code == entry->first)` to `if (script_code != entry->first)`,
+modeling reuse of a cached sighash for the wrong script code. It was removed
+before commit and is not a claim about current master. Enhanced normal and
+ASan/UBSan corpus replays both exited 0 with no artifact; their log SHA-256
+values were `85a2b53371d4b291c59387bc0264e7a4fbb2304f19cad88fc4d8e35050443a17`
+and `ef5b401a96d090ff66a69c2ae66b37a22b0913d00873c43b38d965b2cb8153df`.
+A 90-second normal generation search executed 52,681 units, reached
+coverage/features 1,878/11,774, peaked at 115 MiB, exited 0, and produced no
+artifact; log SHA-256:
+`43ea129f918239619a7de1cb49f3b3866f7f4405eab33d685fe1b7f495bec1c2`.
+
+This is a deliberate negative result: the exact distinct-script cache-hit
+condition was not reached, so no differential finding or severity escalation
+is claimed. The unhit mutation is a follow-up coverage target, not evidence
+of a master bug. The earlier `sighash_cache` oracle already covers the direct
+wrong-script cache mutation, so it must not be rediscovered as a new finding
+here. No production fix or deterministic regression test is added.
+
+The focused command
+`/tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_tests,sighash_tests,txvalidationcache_tests,sigopcount_tests,validation_tests --log_level=test_suite`
+exited 0 with `*** No errors detected`; log SHA-256 is
+`de0a1fb2b75e8b249a3a0f90d769142b46871f885a95f55379e8459cb4cca174`.
+`git diff --check` passed, production was restored and rebuilt after every
+temporary mutation, and no fuzz, sanitizer, mutation, build, or test process
+remains. Any later l0rinc cherry-pick, fork/minor fix, or master change
+affecting script flags, `VerifyScript`, checker state, or Core validation
+callers must be amended into the source commit and this note with its target,
+caller, corpus or mutation, assertion, failure mode, master-relative
+severity, and whether it masks, preserves, or changes the result.
+
 ## `signature_checker` deterministic callback and result oracle audit (2026-07-22)
 
 Source commit: `d0d7cb6c97` (`fuzz: assert signature checker contracts`),
