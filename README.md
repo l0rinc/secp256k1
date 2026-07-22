@@ -3658,6 +3658,176 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## PoW target and difficulty-transition oracle audit (2026-07-22)
+
+Source commit: `951ea66483` (`fuzz: turn PoW targets into consensus oracles`),
+full hash `951ea664837b4875fd1e5742729dcf760b871fc4`
+on source branch `codex/fuzz-oracles-current` in
+`/tmp/bitcoin-secp256k1-audit-current`. The source commit is based on
+`9c162c5f81895aa5b180520805855d0e4a69aded` and was audited against fetched
+Bitcoin Core `origin/master` `32eb52100296718f7c0469e3210ce1db73694793`.
+`l0rinc/master` is `d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of
+current master. The target-scoped pull-request query exposed no additional
+relevant l0rinc commit to cherry-pick, so no fork patch was silently folded
+into this result.
+
+This target is consensus-adjacent and must be judged through Bitcoin Core's
+actual callers. `src/validation.cpp:3847,4040,4078,4104` uses proof-of-work
+and contextual difficulty while validating headers and blocks;
+`src/node/blockstorage.cpp:156,255,492,1079` uses chain work and stored
+headers; `src/headerssync.cpp:198,217,246,253` and
+`src/net_processing.cpp:1993,2689,4647,4970` process headers and blocks from
+peers; `src/node/miner.cpp:82,228` and `src/rpc/mining.cpp:173` construct or
+expose mining difficulty; and `src/rpc/server_util.cpp:142` and
+`src/rpc/util.cpp:1415` expose related work calculations. A clean-master
+mismatch that lets an invalid block pass the validation boundary, permits
+invalid chain work, or changes a funds-relevant state transition is
+High/Critical according to the exact consequence. A malformed fuzzer input
+that is rejected before a real Core transition is not Critical. A nonce with
+no cryptographic meaning is not Critical merely because it is not cleared.
+This audit found no clean-master production mismatch and therefore claims no
+production fix or deterministic regression test for this target.
+
+The old `FUZZ=pow` target mostly called difficulty, chain-work, equivalent-time,
+and PoW functions and discarded their results. The strengthened target adds:
+
+* an independent compact-target decoder and `DeriveTarget` presence/value
+  comparison for negative, zero, overflow, and pow-limit cases;
+* a mathematical `hash <= target` oracle for `CheckProofOfWorkImpl`, called
+  twice to check determinism;
+* a mathematical comparison for `GetBlockProof`,
+  `(~target / (target + 1)) + 1`;
+* same-object equivalent-time equals zero and forward/reverse antisymmetry,
+  including the documented `int64_t` saturation cases;
+* snapshots proving the helpers do not mutate generated `CBlockIndex` fields
+  `pprev`, height, time, `nBits`, or chain work;
+* repeatability checks for the difficulty helpers and a guarded construction
+  of the required adjustment-period ancestor, so the harness does not create
+  an invalid precondition and mislabel it as a production failure;
+* a domain correction that chooses `previous_block` before emplacing the
+  current block, preventing a block from selecting itself as its predecessor.
+
+The `pow_transition` target now rejects invalid compact targets before header
+construction, clamps only valid targets above `pow_limit`, and checks repeated
+`GetNextWorkRequired` results. Production `src/pow.cpp` adds debug-only
+postconditions to `DeriveTarget`: every returned target is positive and no
+larger than `pow_limit`; release behavior is unchanged. Final source hashes
+are `src/pow.cpp`
+`c0246b7cd571ecccf9a1622a1fb10dbc9874a1af73c223f824ee6667f3a8d2c8` and
+`src/test/fuzz/pow.cpp`
+`90ac47d24b14e9d7b91fc8267bd91d9aa1fe0bf66646aa8028616d3e23137cd0`.
+
+Existing findings remain part of the audit ledger: feature-conditional
+private-broadcast failed-send retention and the empty-HEADERS initial-sync
+handoff are Medium; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention are Medium but
+reachability-limited; peer transaction activity refresh, local block-storage
+failure handling, oversized transport types, compact-block diagnostics, and
+cache/index/storage/serialization/container issues are Low or hardening
+items. The txrequest, txdownloadman, connman, eviction, handshake,
+headers-sync, UTXO snapshot, mempool-persistence, package-evaluation, RPC,
+descriptor-cache, and other audited targets produced no additional confirmed
+clean-master production bug. Later l0rinc, fork, minor, or master changes
+must be classified as preserving, masking, or changing each behavior before
+severity is assigned. A non-serious patch that masks a severe master bug does
+not make that underlying master bug non-severe; if a potential cherry-pick
+changes a follow-up reproducer, amend the source commit and this note or merge
+the context. Every confirmed fix needs the strongest deterministic proof.
+
+Frozen corpora and manifests:
+
+* `pow` was copied from `/mnt/my_storage/qa-assets/fuzz_corpora/pow` to
+  `/tmp/bitcoin-pow-audit-20260722/frozen`: 298 files, 22,204,524 bytes,
+  minimum/maximum size 1/1,038,232. The SHA-256 of the sorted content
+  manifest is `97b78ee4a085992d1746d1adbed3eca52ef593a02d9298aecf8bd02ac8a340ce`;
+  the sorted-name manifest is
+  `9736a70f222d70e490cafa9e02d6b14e03f3fe59fb003fbbe716d64b78b18542`.
+* `pow_transition` was copied from
+  `/mnt/my_storage/qa-assets/fuzz_corpora/pow_transition` to
+  `/tmp/bitcoin-pow-audit-20260722/transition-frozen`: 173 files, 2,590
+  bytes, minimum/maximum size 1/41. The SHA-256 of the sorted content
+  manifest is `7fcf9871dff10a8cb734531ba395aa5d6ce42e61480917a7f0b189d75259ff69`;
+  the sorted-name manifest is
+  `7bc60048088d8ac60af9e5262eb873097eb077ef26de0920d3842fe4152f6793`.
+* Four deterministic round-robin shards were created for each corpus. The
+  `pow` shards contain 75/75/74/74 files; the `pow_transition` shards contain
+  44/43/43/43 files.
+
+Final binaries and replays:
+
+* Normal fuzz binary SHA-256:
+  `30e7ea5da97267c201d07c3f1151f714e90670cb3d7093c17ee13ddcd03c269b`.
+  ASan/UBSan fuzz binary SHA-256:
+  `3fba49b9340ec02bbc72f91ebd84c6d03a7692e6464c6f68191e0a55e1fe8bf7`.
+  `test_bitcoin` SHA-256:
+  `115556614e9b402838e295e1a31ec286c4a0b5cc77080113457d0080eb27349e`.
+* Full replays all exited 0 without diagnostics. `pow` completed 299 runs,
+  coverage/features 437/2675 in normal mode and 583/3619 under ASan/UBSan;
+  log hashes are
+  `fc02f8c463e3aba653cab6cd8a33f87bbcaf16e9fa52e74ba4e94b85d0c8fc4e` and
+  `d6420bb4a13b793e1cd0c6ebf9c4df5d58ce831360e26227d00a86e7aaadfe9b`.
+  `pow_transition` completed 174 runs, coverage/features 243/563 in normal
+  mode and 287/500 under ASan/UBSan; log hashes are
+  `7e46e6fa36842098ada3d9c214e8475efbbeb890ccc6b1359a32be552438e4fe` and
+  `902e4e29b378a7fdc9206dc4b341b7300d4d4d737e8001499593b7857c6a95c8`.
+* Four ASan/UBSan `-workers=4` shards ran for each target. `pow` worker log
+  hashes 00/01/02/03 are
+  `b5fed06317f44047e9135d7c1c78870661f46dcdec6ee328ae3445750773d2da`,
+  `9eaad6b728a28705659b28d3e21c7cc858ec8fc1ee6e449cbcb3db3a6ac92c4c`,
+  `8df01654ef005b2f1f56b7e320859ad914fddd6494b25ca177844963bf83dfc7`, and
+  `ed97b559099baa031e972f821012eb5c2a031b3ccc13bc698c150f71920ae6c4`.
+  They processed 76/76/75/75 executions and reached coverage
+  579/560/556/557 and features 3391/3341/3357/3351. `pow_transition` worker
+  hashes 00/01/02/03 are
+  `1ac002a971364af5e543b1dbb4faad0d1c52ef9a402826e799d16996def5bb73`,
+  `b5bf314a5f9ebea2ea19dd77d1460d0cf51c06c78ab43c00b22e0dbf46c29225`,
+  `5e594867832cc555c6231b7380cbba0ecfd3da1e1c61365b59a85540742e3afe`, and
+  `827acca2292b0c7fd2109cd9f768f3b4f791a63fd0a6814c003d88504556cb64`.
+  They processed 45/44/44/44 executions and reached coverage
+  277/281/273/270 and features 427/439/427/424. No worker emitted a
+  sanitizer diagnostic.
+* The restored first sorted `pow` witness is
+  `002a45c58ac8a3d74d84a33b9be2b84ffa88636b`, 9,333 bytes, SHA-256
+  `8c4e8752b18344ddb707d0bdd67a29d2f4dc7f5737885d4b8c6d5f0dbee28f9d`.
+  Exact normal and ASan/UBSan replays exited 0; log hashes are
+  `2f81a2c595f24bf773e92a02c8a4abe63a996f2dc679227397c7bd9d5b9cc631` and
+  `c2b963b1eb48f3df48775b422119e48093103c96af660e9e2ec52ce4cad31d64`.
+  Focused `pow_tests`, `chain_tests`, and `validation_tests` passed with
+  `*** No errors detected`; the log SHA-256 is
+  `d452c4647bac168d3e7ca71f26bf6e6e8546d628145571989928b5c7a5d95330`.
+
+Differential mutation proof, deliberately not a clean-master finding:
+
+* A temporary production-only mutation removed `fNegative ||` from
+  `src/pow.cpp:157`, allowing negative compact targets to reach the return
+  path. Mutated production SHA-256 was
+  `c9bd2f6ad2d7a092577e8db9565b3b48f45cc957a467ef601cfaff16ffc0ab0d`.
+  The mutated harness before the final include-order-only cleanup was
+  `dcc178972d1256a7b4715455d3f090e72dd6d5879f4b6a8c3452002146dff38e`;
+  mutated normal and ASan binaries were
+  `89ffe404607b339add1f2577054691a0c8e2b4ca6fd3dacfd9f547afcb638b3b` and
+  `cdad60e28f7dbcc1d858ba96edf71e024c243bfb95573a6dd6045997a2129e42`.
+* The full corpus and exact witness failed in both normal and ASan/UBSan
+  modes at `src/test/fuzz/pow.cpp:91`, the independent target-presence
+  assertion. Full-corpus failure-log hashes were
+  `33cc5d6c227482d6dd2ea8e915ee4179a898b518d782dca5509b630094a289f4` and
+  `589c836d3ef3e7bea253f8474caee2f9445ca586d1fb45639084a77d68544afd`;
+  exact-witness failure-log hashes were
+  `bde72056679b27d4361fa9dc5cd50e99d856119572bff29c2d68235f50521cd6` and
+  `e0953e7d3082c98145e077ffd8d9c57b4ab010a777c446ed3e1fb0b65abcf4e7`.
+  The fixed-input normal mutation replay log SHA-256 is
+  `615157c1940472b6905322ca4c1164be307e8c3188b183fd66accbb8f80932ac`.
+* Matched old-harness controls disabled only the new proof-oracle call while
+  retaining every other harness change. The same witness passed in normal and
+  ASan/UBSan modes; control log hashes were
+  `264033d305e90083cb0b0e8320ea3da253655210168d22025b45133a1ba880f4` and
+  `84a87e1c633c0a0155c800425af5983c44a2ffe530c132fc38fdcf3b212c17ff`.
+  Restoring the production mutation and control edit was verified before the
+  final builds. The result proves the new oracle detects the modeled invalid
+  PoW acceptance regression that the old target discarded; it does not claim
+  a current-master vulnerability or a production fix. No fuzz, sanitizer,
+  mutation, build, or test process remains running.
+
 ## `parse_univalue` parser and writer value oracle audit (2026-07-22)
 
 Source commit: `9c162c5f81` (`fuzz: assert UniValue parser and writer value
