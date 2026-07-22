@@ -6304,6 +6304,165 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `wallet_bdb_parser` dump and status contract audit (2026-07-22)
+
+Source commit: `53d490a6a5` (`fuzz: add wallet BDB dump and status oracles`).
+The source branch was rebased from current Bitcoin Core `origin/master`
+`efa1800a885c1ae605e18605ef73957ea13e575c`. The l0rinc fork review used
+`l0rinc/master` `32eb52100296718f7c0469e3210ce1db73694793`. The exact query
+was:
+
+    git log --oneline origin/master..l0rinc/master -- src/wallet/test/fuzz/wallet_bdb_parser.cpp src/wallet/migrate.cpp src/wallet/dump.cpp src/wallet/db.cpp src/wallet/test/db_tests.cpp
+
+It returned no commits. No l0rinc commit was cherry-picked for this target.
+
+### Core boundary and severity
+
+The old harness accepted any allowlisted BDB parse failure and only required
+`DumpWallet` to return `true`. The new harness initializes
+`DatabaseStatus::FAILED_LOAD`, asserts the status/error/file contracts on
+both branches, and independently compares the number of records emitted by
+the dump with the number returned by a database cursor. It also checks the
+dump magic header, `format,bdb`, a 64-hex-character checksum at EOF, and no
+trailing data. `MakeBerkeleyRODatabase` gets matching production-side
+postconditions for non-null success and `FAILED_LOAD` on the exception path.
+
+The production caller is local wallet handling: `bitcoin-wallet` invokes
+`DumpWallet` at `src/wallet/wallettool.cpp:156`, and `walletdb.cpp` uses
+`MakeBerkeleyRODatabase` for legacy BDB handling. These inputs are local
+wallet files or explicit local wallet-tool operations. They are not peer
+blocks, transactions, witnesses, signatures, or consensus messages.
+
+Clean master reproduced no production bug. This is therefore oracle
+hardening, not a confirmed production fix. The modeled defect below would be
+High for wallet export integrity and a possible incomplete backup if shipped,
+but it is not Critical on master because local file/tool reachability is
+required and an invalid block cannot trigger it. A nonce or counter with no
+standalone cryptographic meaning is likewise not Critical merely because it
+is not cleared.
+
+### Corpus identity and the successful-path fixture
+
+The original frozen corpus had 86 files, 62,867 bytes, sizes 1..5120, and
+manifest SHA-256
+`5ff087ff84c54df094a23d8ae796a403f8aca1860464c4adb19d7b13115667af`.
+A debug replay classified all 86 as `FAILED_LOAD`; it did not exercise a
+successful dump. To close that coverage gap without treating generated data
+as a production finding, a standalone Berkeley DB v9 little-endian fixture
+was generated with the installed Berkeley DB C++ library using
+`g++ -std=c++17` and `-ldb_cxx -ldb`. It contains one `key`/`value` record,
+is 16,384 bytes, and has SHA-256
+`12054351062910a5b05bc6ffbf40dbb1107b40918cbeff0d2cbe509a3421fa64`.
+
+The combined replay corpus had 87 files and 79,251 bytes, with manifest
+SHA-256
+`7e0cc0cbbf5bbbfb10c605ff3a83c10b3c4a83016fbc5905f955ac814e7a6570`.
+The added fixture was `valid-wallet.dat`. It is a deterministic proof input,
+not a committed corpus file.
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The temporary mutation changed the record write in `src/wallet/dump.cpp`
+from `dump_file.write(line.data(), line.size())` to
+`if (false) dump_file.write(line.data(), line.size())`. The mutated
+`dump.cpp` SHA-256 was
+`ad31eccd82613d47e4ba8870aedbfbea6f5a6b25fe8362815a6b68b78b10a7e4`.
+
+Enhanced source SHA-256 was
+`b77ba17e341d80e50919bea447efabe34d9c89f69e1c5f743e6ae983998db2b3` and
+enhanced `src/wallet/migrate.cpp` SHA-256 was
+`fbec211efb8a75e25dec338e334586856472efaac87d9cca5f38615059d68e3`.
+The enhanced mutated normal binary SHA-256 was
+`79c50b86bf26f2a092de59edfe3a02e3c650a120866692289b91a84eb1a103d2`,
+with log SHA-256
+`0622317d152efcb3f0ff806db4f2fb9c9d8ddca1ca6b3e96b83445e763e38fe3`.
+It exited 1 at `wallet_bdb_parser.cpp:71` on
+`replay-corpus/valid-wallet.dat`. The enhanced mutated ASan/UBSan binary
+SHA-256 was
+`117236918ddb7dac98fbe3973fc8d199de1e9ffa7a59a6311409df2aa6c913f6`,
+with log SHA-256
+`7f4d9410b1df3f656b2db717434d1c2ff77afd97fb5a09e6d4c4575c33073e4d`.
+It exited 77 at the same assertion after 88 units and emitted no sanitizer
+diagnostic.
+
+The original harness source SHA-256 was
+`4ec2d9794c7eac643c85dc575b8d35f7455a2ae44d6e59a5d1e3600e544d6922`.
+Under the identical mutation its normal binary SHA-256 was
+`defb4ea4c9c755d62f03b77e939b11fed0cca13b869b8d7349434b0994228d2c` and
+its ASan binary SHA-256 was
+`cc822454f7b37ea9a5aa6397f2b5792b53873c10a3ec4cc40d6f85459bb60534`.
+Both accepted all 87 inputs. Their normal and ASan log SHA-256 values were
+`23a0d642039162f5280ffdfa255bd93ba4d73a6cdac7c6a47ca0793166bdda0a` and
+`01979d595f3340a09568e08897907f8a08cd35bc2ffdf3a90fdd5c1d514f4359`.
+
+The result proves that a boolean-only harness accepts a silent incomplete
+dump while the strengthened oracle fails immediately on the record-count
+contract. The mutation was removed before the source commit. If a later
+l0rinc, minor, or follow-up patch makes this assertion green, replay clean
+master and the exact mutation again. Record whether that patch fixes the
+master behavior, changes the caller reachability, or merely masks the oracle;
+an accidental minor patch must not downgrade a severe master-relative
+condition.
+
+### Clean replay and worker proof
+
+Restored `dump.cpp` SHA-256 was
+`611d880d64019f27dc6930cf7043816dc8cbce2ee74679ca4edde2f5c3083244`.
+The normal fuzz binary SHA-256 was
+`8c2ebf2f0a7a7643c5a548a2ff7875a9db0f826870d271c37ead0aedc373dede`.
+It passed the combined 87-file replay; the log SHA-256 was
+`23a0d642039162f5280ffdfa255bd93ba4d73a6cdac7c6a47ca0793166bdda0a`.
+The ASan/UBSan binary SHA-256 was
+`41f4852f326a0e889561408c27fe23a364dd852534d42773e5f5298e1fa5fe33`.
+It passed 88 units with coverage 970, features 1139, peak RSS 169 MiB,
+and no diagnostics; its log SHA-256 was
+`94db203a7afecb4f1d466356595784fafb847cf3f149be529b1d0b9dfd418a58`.
+
+Four isolated normal workers each passed all 87 files; each log SHA-256 was
+`23a0d642039162f5280ffdfa255bd93ba4d73a6cdac7c6a47ca0793166bdda0a`.
+Four isolated ASan/UBSan workers each passed 88 units, reached coverage 970
+and features 1139 at about 169 MiB, and produced no artifacts. Their log
+SHA-256 values were:
+
+    b2f20c53fcffcbc28a871c7f0e1b3bd66336739b49a85167c2b129ccb1e342c4
+    79f65a342e97757285f3cf0c8b812162b3498dbdcdd332158afe40028cc6b4b5
+    6ca6d7df1a605e0b521b2e7dd4e39392d85345843c3409c9d5da98dad3012c22
+    cfef0c0a57ce4e0ff376c28f324896009efe29bd863b8cbdb4696fd8910cc0c6
+
+Builds used:
+
+    cmake --build /tmp/bitcoin-fs-poly-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-fs-poly-asan-build --target fuzz -j2
+
+`git diff --check` passed. These fuzz-only builds have no `test_bitcoin`
+target, so the dedicated unit suite was unavailable. No production bug was
+reproduced, no deterministic regression test is claimed, and no fuzz,
+sanitizer, or mutation process remains running.
+
+### Reiterated findings and proof policy
+
+The existing ledger is unchanged: private-broadcast failed-send retention is
+Medium and feature-gated/fixed on master; empty HEADERS initial-sync handoff
+is Medium availability; peer transaction activity refresh and block-storage
+failure are Low; oversized transport types are Low with fixed-width or
+RPC-validated callers; `ecmult_multi` scratch wrapping and 10x26 magnitude-32
+normalization are Medium latent/internal issues with limited Core
+reachability; Banman invalid-subnet and unban integrity are Low or
+nice-to-have because Core RPC validation rejects invalid entries. No
+additional confirmed clean-master production bug was found in the audited
+transaction-download, connection, eviction, handshake, compact-block,
+headers-sync, UTXO snapshot, mempool-persistence, cache/index/API,
+serialization, or crypto campaigns.
+
+Every confirmed production bug still needs the strongest proof: a clean-master
+reproduction or a clearly documented minimal production mutation, the exact
+caller and input reachability in Bitcoin Core, master-relative severity, a
+deterministic regression test, and an explanation of why existing tests did
+or did not catch it. Notes must record whether later fixes preserve, change,
+or mask the trigger. A mutation-only result remains an oracle finding and is
+never described as a clean-master production vulnerability.
+
 ---
 ## wallet_fees fee-contract oracle audit
 
