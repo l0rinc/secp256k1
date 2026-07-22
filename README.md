@@ -3658,6 +3658,180 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `parse_univalue` parser and writer value oracle audit (2026-07-22)
+
+Source commit: `9c162c5f81` (`fuzz: assert UniValue parser and writer value
+round trips`), parent `75781112aaddc49c488c7c92ebc12b7e5852b3a5`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+full source commit is `9c162c5f81895aa5b180520805855d0e4a69aded`.
+The source branch is based on latest fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The exact target-scoped query
+
+    git log origin/master..l0rinc/master -- src/test/fuzz/parse_univalue.cpp src/rpc/util.cpp src/rpc/util.h src/univalue/lib/univalue.cpp src/univalue/lib/univalue_read.cpp src/univalue/lib/univalue_write.cpp
+
+returned no output. No unique l0rinc commit applies to this target and no
+cherry-pick was needed. Production `src/univalue/lib/univalue_write.cpp` is
+unchanged by this source commit; clean SHA-256 is
+`e6a51735bedb3db050e576353301da1efcb28a9896374b331ed3216733722830`.
+The final enhanced harness SHA-256 is
+`632285f400ed61d021a1d141862742498c7094ac560853caa91cae6476bcfe70`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=parse_univalue` target parsed arbitrary bytes and discarded the
+`UniValue` parser result while using broad exception catches only to reach RPC
+utility code. The new oracle serializes every accepted value with
+`UniValue::write()`, reparses that canonical JSON, requires the same type,
+recursively compares object keys, array shape, and primitive payloads through
+the public UniValue API, and requires a stable second write. The recursive
+comparison is independent of the writer implementation, so a writer that
+emits a self-consistent but semantically wrong value fails. The existing
+ParseHash/ParseHex/sighash/amount/descriptor/range calls remain coverage probes
+because malformed values are expected to raise RPC errors; the new assertion
+is limited to the parser/writer contract.
+
+Bitcoin Core callers include `src/rpc/util.cpp:98,117-141,357-376,1320-1375`,
+`src/rpc/rawtransaction.cpp:478,1835,2115`,
+`src/rpc/rawtransaction_util.cpp:39,114,120,210,218,233,255-269,314`,
+`src/rpc/mempool.cpp:95,255,751,812,863,899,988,1402`,
+`src/rpc/mining.cpp:555,839`, `src/rpc/fees.cpp:71,163`,
+`src/rpc/output_script.cpp:310`, `src/wallet/rpc/backup.cpp:62,116,178`,
+`src/wallet/rpc/coins.cpp:297,572-578`,
+`src/wallet/rpc/spend.cpp:228,238,506-507,574,645,929,1047,1064,1644`,
+`src/wallet/rpc/transactions.cpp:609,744,821`, and
+`bitcoin-tx.cpp:555,649`. These are RPC, wallet, local tool, and policy-input
+paths; the target has no direct peer block parser or consensus invalid-block
+acceptance path.
+
+Clean master reproduced no production failure, so the current-tree rating is
+**Low/informational oracle hardening**, not a confirmed production bug,
+deterministic regression fix, funds bug, or Critical finding. A real wrong
+value accepted by a demonstrated Core caller would be rated from that caller's
+concrete impact; a reachable invalid-block consensus or funds impact would be
+High/Critical. Malformed fuzzer input alone is not Critical. A nonce with no
+cryptographic meaning is not Critical merely because it is not cleared. No
+production fix is included because clean master is correct and no deterministic
+production regression was confirmed.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention and empty-`HEADERS` initial-sync handoff are **Medium**;
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention are **Medium but latent/reachability-limited**;
+peer transaction-activity refresh, local `ProcessMessage` block-storage
+failure, oversized transport types, compact-block diagnostics, cache/index,
+storage, serialization, and container findings remain **Low** or hardening
+under current Bitcoin Core callers. Txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote. Later fork, minor-fix, or
+master changes must be classified as masking, preserving, or changing these
+ratings and amended into the relevant commit and this durable note.
+Cherry-picking a potential fix before a follow-up oracle is not neutral: if it
+changes the behavior under test, the commit and note must say whether it masks
+the master bug, preserves it, or changes the finding; severe master behavior
+must remain independently tested. Every production claim requires clean-master
+reproduction or a minimal production mutation plus the strongest deterministic
+proof available.
+
+### Corpus and replay evidence
+
+The frozen corpus came from
+`/mnt/my_storage/qa-assets/fuzz_corpora/parse_univalue` and was copied to
+`/tmp/bitcoin-parse-univalue-audit-20260722/frozen`: 3415 files, 11,980,870
+bytes, sizes 1..1,724,241. The per-file manifest SHA-256 is
+`c335c1c4e3628d8a558ab569a02b9e09c4aa8ee2f84ae0f4f5e626306f557453`; the
+sorted filename manifest SHA-256 is
+`201e637467bb442b8f97df116eca01f228ae1b90d115405308a17a4787b34ca2`.
+
+The final normal fuzz binary SHA-256 is
+`df9026f3d392861531ca93c7fb0df8b7289f8a7cefa9550908ced0b7b113011b`.
+The frozen replay exited 0 after 3416 executions, reached coverage/features
+`5537/28741`, peaked at 111 MiB, produced no artifact, and has log SHA-256
+`78d05d29526acff49a3b624e01fbcf08b5d1aea7262d74b8767cbd97cd15372e`.
+The final ASan/UBSan fuzz binary SHA-256 is
+`d61499c794cf42b7f58705212a1c02c5e7b52286d8b76866136a8537888b926f`.
+It exited 0 after 3417 executions, reached coverage/features `12261/72919`,
+peaked at 1014 MiB, produced no artifact or sanitizer diagnostic, and has log
+SHA-256 `ea97a3248b0241b1b82f8f8939b2fbf2754bc274715eaeccc5416eaf68a26b2e`.
+
+Four independent final ASan directory shards covered 854/854/854/853 files
+and executed 856/856/856/855 units. Coverage/features and peak RSS were
+`12061/67839` at 759 MiB, `11945/68026` at 655 MiB, `11923/67067` at 637 MiB,
+and `12030/67231` at 964 MiB. Worker log SHA-256 values were
+`59fba41cdb331612ca9965d3fee30cf39dd9a7195e926aecf6657806921cabe7`,
+`d1cf77858971c5389845098739aa9d4cef0c30f4fa23774da46fd7786caa617f`,
+`8e77b40a5584d28a967dcd529d57fd01a34788e8e06c9a7c55d678488a92533f`, and
+`f503ac6b6394f3a84928f425091a9bbbb93e9f536855263a30bed1efaf66af838`.
+The worker filename union exactly matched the frozen filename manifest.
+
+### Differential proof and controls
+
+A temporary minimal production mutation at
+`src/univalue/lib/univalue_write.cpp:57` changed
+
+    s += (val == "1" ? "true" : "false");
+
+to
+
+    s += (val == "1" ? "false" : "true");
+
+This is a regression model, not a clean-master finding. The mutated
+production SHA-256 was
+`f491759b92d0cd5f979748f70651aae4f493150129bec4337c4695ba40591a49`;
+mutated normal and ASan fuzz binary SHA-256 values were
+`8483eab445d93f354ce38d0369570c0a3d1766f2fe8a700b73d99b4c8276032a` and
+`25a8e77ef50fbd9ffb5c8a3a35ff3656ac658ea88e80997c64814e44060a7dad`.
+The full corpus exited 134 in both modes at `parse_univalue.cpp:43`; mutation
+log SHA-256 values were
+`10c298dbe4743f615afd2764ea2e6ba4edb3b2b9d883fc420fd3cda4d621e677` and
+`28d96a009afc79c33cc6f9b7657448a378240bb5502fe5ecc5715e2fb65742d7`.
+
+The first deterministic witness was corpus file
+`843880452a65ad52e673e96a9a2d9629dd6447e2`, 686 bytes, SHA-256
+`f05c35c47415f5f10df5a72beb91ceeb5994299512673433563c165d051ec0a8`.
+It is an array of `true` values. Mutated normal and ASan replays of that exact
+file exited 134 at the primitive-payload assertion; log SHA-256 values were
+`d5fb9cf00f6df94fc9723ddcb1751d0e4a89774832bd2fed205582c282566613` and
+`ccebd425242d25126ecaf617af15099c8d25b478eaedec9b2536b70edf12f32d`.
+Matched old-harness controls removed only the new round-trip and recursive
+comparison block, retained the same production mutation and exact witness,
+and exited 0 after one execution in normal and ASan. Control log SHA-256
+values were
+`fe93b93c7038638f75213cbb75a5eb808f066aff9d606314c943bcc80199dd3a` and
+`d133ede2ba816cdeddd294f8856a53caec617716fa8c25facd0668b0e8d55125`.
+After restoring production and the enhanced harness, the exact witness exited
+0 in final normal and ASan binaries; log SHA-256 values were
+`5f546774bf0a8c12db050a3d1acaa7ed30da2b922a54a6eda364e668628f9a51` and
+`5444a7437b71d3f5fb39993ddb897dcf0adf0a193928a5b1b0ad1cc9cd4506b0`.
+This proves the new oracle catches a modeled semantic serialization regression
+the old target accepts; it is not evidence that clean master is broken.
+
+### Verification and follow-up
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=rpc_tests,util_tests,descriptor_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; test binary SHA-256 is
+`34ea5ace87a642e7e07f217048348351d91d7604463a6ef1e6b3178baeb7d9b3` and
+focused log SHA-256 is
+`a3b00ad8a87da95449751c172390acf272980b306a7377bdfa847c13b1493000`.
+`git diff --check` passed; all temporary production mutations were restored
+byte-for-byte; no production behavior changed; no production bug or
+deterministic regression test is claimed; and no fuzz, sanitizer, mutation,
+build, or test process remains.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+UniValue read/write, RPC utility parsing, or the documented Core callers must
+be amended into the source commit and this note with the exact target, caller,
+corpus or mutation, assertion, failure mode, master-relative severity, and
+whether it masks, preserves, or changes the result. Every fix must retain the
+strongest available proof.
+
 ## `decode_tx` state and serialization oracle audit (2026-07-22)
 
 Source commit: `75781112aa` (`fuzz: assert DecodeHexTx state and round-trip
