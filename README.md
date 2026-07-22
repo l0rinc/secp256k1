@@ -3658,6 +3658,161 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `script_ops` opcode and script-classification oracle audit (2026-07-22)
+
+Source commit: `5ff6d1004c444e1ecb9afe14bb38088af06bc966` (`fuzz: assert script opcode contracts`), parent
+`0413a4bedbce7aa4bc19aef47aba54c174597f1f`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+source branch is based on latest fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The exact target-scoped query
+
+    git log origin/master..l0rinc/master -- src/script/script.cpp src/script/script.h src/test/fuzz/script_ops.cpp
+
+returned no output. No unique l0rinc commit applied and no cherry-pick was
+needed. The enhanced harness SHA-256 is
+`4c4d76edd5370644aace1322eddb5a043cf32e22f9ae80174b9d692946e77281`; clean
+production `src/script/script.cpp` is
+`210b1720acce295de54c6a08c76b97fa4cfe835f64e0ff7e0730c57ebebb8c55`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=script_ops` target mutated a `CScript`, called
+`GetSigOpCount`, `HasValidOps`, `IsPushOnly`, `GetOp`, and
+`IsWitnessProgram`, and discarded every result. The new postconditions
+independently walk the opcode stream to classify valid operations and
+push-only scripts, require the two `GetOp` overloads to agree on success,
+opcode, and cursor advancement, require accurate sigop counts not to exceed
+the conservative count, and reconstruct each recognized witness program
+before checking the P2A, P2WSH, and Taproot recognizers. Malformed and truncated
+scripts remain in the fuzzer domain.
+
+Bitcoin Core uses these methods at `interpreter.cpp:2022`, `:2065`, and
+`:2162` for script verification and the P2SH path; witness classification is
+also used at `interpreter.cpp:2046`, `:2090`, `:2158`, and `:2170`.
+Consensus sigop limits call `GetSigOpCount` at `consensus/tx_verify.cpp:117`,
+`:121`, and `:138`. Policy uses these contracts at `policy/policy.cpp:55`,
+`:131`, `:185-186`, `:254`, `:305`, and `:366-381`; transaction decoding uses
+`HasValidOps` at `core_io.cpp:139` and `:146`.
+
+Clean current master produced no mismatch or production failure. The
+current-tree rating is **Low/informational oracle hardening**, not a
+production vulnerability, fix, or deterministic regression test. If the
+modeled `IsPushOnly` regression existed on master, a malformed non-push P2SH
+scriptSig could bypass a consensus gate and potentially make an invalid block
+pass; that hypothetical impact is **High/Critical** according to demonstrated
+invalid-block reachability. A wrong sigop count or witness classification with
+the same consensus reachability receives the same stronger rating. Malformed
+fuzzer input alone is not Critical. No nonce-clearing or cryptographic-nonce
+claim is involved; a nonce without cryptographic meaning is not Critical
+merely because it is not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention and empty-`HEADERS` initial-sync handoff are **Medium**;
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention are **Medium but latent/reachability-limited**;
+peer transaction-activity refresh, local `ProcessMessage` block-storage
+failure, oversized transport types, compact-block diagnostics, cache/index,
+storage, serialization, and container findings remain **Low** or hardening
+under current Bitcoin Core callers. Txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote. Later fork/minor/master
+changes must be checked for masking, preserving, or changing these ratings.
+
+### Corpus and replay evidence
+
+The frozen corpus came from `/mnt/my_storage/qa-assets/fuzz_corpora/script_ops`
+and was copied to `/tmp/bitcoin-script-ops-audit-20260722/frozen`: 267 files,
+18,940,701 bytes, sizes 3..1,048,576. The per-file manifest SHA-256 is
+`2c50070de1eed7b86de0ed4559abeb6b3f937860d967ac2cba351ec4ec351239`; the
+sorted filename manifest SHA-256 is
+`aebfb4474b3acd857bd8f52be4d986983a33a3782a6c4965c47defc9546f762c`.
+
+The final normal fuzz binary SHA-256 is
+`5f0d96cf676dab0d522c966b01e203ba67f0511060454f733e9f4203b8dfe27b`.
+The full replay exited 0 after 268 executions, reached coverage/features
+`537/2,757`, peaked at 112 MiB, added no units, produced no artifacts, and
+has log SHA-256
+`92ef1f05014ac2f4f6a1cd63ee1391e78e489063af773da7b5693d474d8615d4`.
+The final ASan/UBSan binary SHA-256 is
+`04f637084b9cecbad8da0af1e2437de7a7be5fab376eb291af9fcd2e75e1451d`.
+Its replay exited 0 after 268 executions, reached coverage/features
+`708/3,818`, peaked at 441 MiB, added no units, produced no artifacts or
+sanitizer diagnostics, and has log SHA-256
+`c61b73c85f7734c3fa3735d61ab42d6ef0a40cdd853dd6fba06c5eb0c568d7ec`.
+
+Four independent ASan workers replayed 67/67/67/66-file shards and executed
+68/68/68/67 units. Coverage/features and peak RSS were `637/3,435` at 227 MiB,
+`693/3,546` at 311 MiB, `698/3,501` at 269 MiB, and `687/3,483` at 406 MiB.
+Every worker exited 0 without artifacts or diagnostics; log SHA-256 values
+were `fdb5a0b5ce1c33a5e7df221cf4bcb47cf1075b8df19cecbf87e37e3b89bd9235`,
+`1dd83b09e4b6e78ea3b49eee7850ac87217c42153708cf6e27bb1c08dbd1f1bd`,
+`fef1e0bd3ddba5b22ae64073e2307dbed2ece3692a2eeb1084ef269fd8040c03`, and
+`19235822350fd80a677449c8d109e8af1d1c441e200293793fdd191d5c5f6acc`.
+The worker filename union matched the frozen filename manifest exactly.
+
+### Differential proof and verification
+
+This is an oracle differential proof, not a clean-master production finding.
+A temporary mutation at `src/script/script.cpp:285` changed
+`return this->IsPushOnly(begin());` to `return true`. Enhanced normal and
+ASan/UBSan corpus replays failed at `src/test/fuzz/script_ops.cpp:40` with
+internal libFuzzer exit 77; mutation log SHA-256 values were
+`c3a8961bdb6918d949ebe933f3e2157e5e9dddfb3d82ebe78f947cf7984e795d` and
+`15420362f76737165561f2102513b24b58ac2e833bcd75fb729934fdccfe6802`.
+The normal run generated a 3-byte artifact
+`crash-254de46727a596805cdc9afd1e4e3982a8eda152`, bytes `4e 3d 81`,
+SHA-256
+`cdd7a37c0366a2a546ec0f00f736a26fbe0fdce24a52a88a19067e1317ddcec4`.
+The sanitizer run independently generated `4e 36 47`, SHA-256
+`86d4016018efabcab5463655b12b83af3c8fd9cf3726d57f94e5ad9cc98d582d`;
+the differing minimized bytes are a libFuzzer seed effect, not a behavioral
+discrepancy.
+
+Replaying the normal artifact under both mutated binaries failed after one
+fixed execution; normal and ASan log SHA-256 values were
+`66a45b5b78cf4a77d657f29d33026da3942d62e8ddf78221b37b1e5adb815e65` and
+`05f58e25dbaaf75e5fff60d2b5989c720911db645380130e1d9eb14d2fbd051d`.
+Matched old-harness controls removed only the new contract, used the same
+mutation and normal artifact, and exited 0 after one fixed execution;
+control log SHA-256 values were
+`c440e62046a0855d69f5c80e49e2a53fbc13378f71dd6e254c67bd1934fe06a8` and
+`52dc101640ca2053e09f19ebb5a7a8fcb5349ee79863c898c9aa95c09d8f8b82`.
+This proves the new oracle catches a production `IsPushOnly` regression the
+old `script_ops` harness accepts. The direct fixed witness can spend time in
+the existing one-million-iteration `LIMITED_WHILE` cap because short inputs
+can leave the provider unchanged; that is harness performance behavior, not a
+production finding.
+
+After restoring production and rebuilding, the exact normal artifact exited 0
+in normal and ASan/UBSan final binaries; final replay log SHA-256 values were
+`810a7db722bea5a64976205cd873b6bce96891558d03f8b26f6760b608d652d5` and
+`8da81d1610b24d67006da3e74dfb8bd53ea53ae16abc74b91453ad136c6a7641`.
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_tests,sigopcount_tests,sighash_tests,txvalidationcache_tests,validation_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; test binary SHA-256 is
+`ef685146e64d2e76812ac3f75a9a66b68fa1b2c47db1273e0f61ad50c917f11b` and log
+SHA-256 is
+`567320b5cfb1a36e3eae904862a5448b01d85ea9e3d1cc730326ce0f15ff52e5`.
+`git diff --check` and clang-format validation passed. All temporary
+production mutations were restored; no production behavior changed, no
+production bug or deterministic regression test is claimed, and no fuzz,
+sanitizer, mutation, build, or test process remains.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+`CScript` parsing, `IsPushOnly`, `IsWitnessProgram`, or sigop counting must be
+amended into the source commit and this note with target, caller, corpus or
+mutation, assertion, failure mode, master-relative severity, and whether it
+masks, preserves, or changes the result. Every production claim still
+requires clean-master reproduction or a minimal production mutation plus the
+strongest deterministic proof available.
+
 ## `script_interpreter` same-transaction precomputation oracle audit (2026-07-22)
 
 Source commit: `0413a4bedb` (`fuzz: assert precomputed sighash equivalence`),
