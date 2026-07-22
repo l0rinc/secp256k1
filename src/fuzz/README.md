@@ -26922,14 +26922,178 @@ clean-master or minimal-mutation proof, deterministic regression test when a
 production bug is confirmed, and whether a later minor fix changed or masked
 the behavior.
 
+## 2026-07-22 BIP324 rekey-boundary oracle
+
+This entry records source commit `afef813a00` (`fuzz: force BIP324 rekey
+boundary contracts`) for the `bip324_cipher_roundtrip` target. The source
+branch was rebased onto the current synchronized boundaries immediately before
+the final proof:
+
+* Core `origin/master`: `fc4ceda8b610e0e32afd2f50b3dce5c754a3ad66`
+* Core `l0rinc/master`: `32eb52100296718f7c0469e3210ce1db73694793`
+* Notes repo `origin/master`: `9e4ec507e984d589549c99010f5de25ba9de059b`
+* Notes repo `l0rinc/master`: `8c3e6e6d992456d3b9228305ae84a6703273cf70`
+* Target-scoped overlap in both repositories: empty.
+
+No l0rinc commit was cherry-picked. The Core query covered `src/bip324.cpp`,
+`src/bip324.h`, `src/net.cpp`, `src/net.h`, the BIP324 and V2 transport tests,
+and the fuzzer. The secp256k1 query covered `src/test/fuzz` and implementation
+files. Neither query returned a relevant fork commit. Existing BIP324 history
+already present in current Core was treated as baseline, not as a new finding.
+
+### Caller and severity
+
+`BIP324Cipher` is called by Bitcoin Core's `V2Transport` in `src/net.cpp` after
+the remote peer key exchange. A valid remote P2P peer can reach the packet
+rekey boundary. An asymmetric schedule would cause authenticated decryption
+to fail and disconnect or otherwise break interoperability after enough
+traffic. This is **Medium** availability/interoperability impact on the
+master caller model. It is not Critical: invalid blocks, invalid witnesses,
+malformed signatures, and consensus inputs cannot reach this cipher state, and
+the oracle found no consensus, invalid-block-acceptance, memory-safety, or
+cryptographic compromise on clean master. Invalid fuzzer state alone is not a
+Critical finding.
+
+No cryptographic nonce is introduced or retained by this change. A public
+counter or non-cryptographic correlation value does not create a Critical
+secret-clearing finding.
+
+### Contracts and oracle
+
+Production `BIP324Cipher::Initialize()` now asserts the single-use
+precondition, that all four cipher optionals exist after derivation, and that
+the private key is invalid after cleansing. `Encrypt()`, `DecryptLength()`,
+and `Decrypt()` assert full initialization. The harness independently checks
+initialized endpoints, exact encrypted lengths, authenticated decryption,
+ignore-bit equality, plaintext equality, session ID size, and both garbage
+terminator sizes.
+
+The new deterministic model sends packets numbered 0 through
+`REKEY_INTERVAL` (224) in both directions, with changing contents, AAD, and
+ignore values. The old random loop could stop before the boundary and had no
+independent two-endpoint schedule check. Existing packet vectors and
+`v2transport_test` passed, but neither was a substitute for this exact
+cross-endpoint boundary oracle.
+
+### Frozen corpus and exact mutation proof
+
+The frozen dedicated corpus is
+`/mnt/my_storage/qa-assets/fuzz_corpora/bip324_cipher_roundtrip`: 1,482 files,
+729,567 bytes, minimum size 1, maximum size 65,716. The sorted
+names-and-sizes manifest SHA-256 is
+`ffee45cabafaa553a9389533c25aa738bf4cac9781574a7f48433e17f11dc997`.
+
+The exact production mutation changed only the initiator-side packet cipher
+construction from `REKEY_INTERVAL` to
+`initiator ? REKEY_INTERVAL - 1 : REKEY_INTERVAL`. The mutated
+`src/bip324.cpp` SHA-256 is
+`882fea2e3e79f67b68c6432c027519166ee880e2c535496b6e07d60342aa8c0b`.
+The exact 128-byte seed is
+`0dfe2df44cee810dcf7e0805e630a8709dc9a69f`, SHA-256
+`af0db5dd0c40c64370b8fc36cf304e723e521801e69c83e2c4adef46d625a708`.
+
+The mutation was replayed on the rebased tree with `-handle_abrt=0` so the
+assertion result was not obscured by the environment's hanging external
+symbolizer:
+
+* Normal replay exited 134 at `src/test/fuzz/bip324.cpp:36`, where receiver
+  authenticated decryption failed. Log SHA-256:
+  `06835a892b22310e54fcf1a52f9047f83e26c8f04eb1291bb134fba9a1a4f281`.
+* ASan/UBSan replay exited 134 at the same assertion, with no sanitizer
+  diagnostic. Log SHA-256:
+  `80c325604c540e69e71c36ca04e2c2458ee46233b4c514cac7b2e6519ec91a62`.
+* The restored source SHA-256 is
+  `50148cf183144e74ea17329ce03e2a5a7997463bb4460bf6a1f3b5384be46791`.
+  The identical input exited 0 in normal and ASan/UBSan controls. Control log
+  SHA-256 values are `30a88257b18d6463a2193bb71e3e82903ba7f8300747bfbb40d6066afb5c7428`
+  and `262e7ad4c42c65bb4936ae380ac37f49a661a594593d43c7385c18e885a1af69`.
+
+A symmetric `REKEY_INTERVAL - 1` mutation was also tried. Both synthetic
+endpoints then changed in agreement and the oracle passed. This negative
+result is retained because it proves the model distinguishes a shared
+protocol change from an asymmetric implementation mismatch; it must not be
+reported as evidence that the boundary assertion is redundant.
+
+This is a clean proof of oracle sensitivity, not a claim that unmodified
+master currently contains the mutated defect. No deterministic production
+regression test was added because no clean-master BIP324 bug was confirmed;
+the existing deterministic Core packet-vector and V2 transport tests remain
+the relevant regression coverage.
+
+### Final replay and focused verification
+
+The final restored normal replay used the dedicated corpus and ran 1,483
+executions, coverage 526, features 1,528, peak RSS 54 MiB, exit 0. Log
+SHA-256: `e92a2b3a9b4355d3bdc36e01ac2f06c0fe18951420f0fb5a9de1737f31ecf025`.
+The final restored ASan/UBSan replay ran 1,483 executions, coverage 5,882,
+features 12,548, peak RSS 852 MiB, exit 0, with no diagnostics or artifacts.
+Log SHA-256:
+`dd71267597e981bb3bdc41ad5c0d05ed5769de6e88d1072756b0ede09a48bd91`.
+
+Four independent ASan/UBSan workers each ran all 1,483 inputs, reached
+coverage 5,882/features 12,548, exited 0, and produced no artifacts. Worker
+log SHA-256 values are:
+
+* Worker 0: `1f95accd6d7cb51a83c0fc124ba1e7952cecceced8c94696a552ef026f18bb9f`
+* Worker 1: `46e6cebad4123e27a5d5deeff0955ee7fc3d0b83b486f416e9cfa3263d565d07`
+* Worker 2: `7116a684f0529f74160150ed54646a6d3e1b3964018988ad5a6e47e2913a942f`
+* Worker 3: `a24053c780483814069e050a9f724a96fc1ead48d914a94891e525de6432f254`
+
+Final tracked source hashes are `src/bip324.cpp`:
+`50148cf183144e74ea17329ce03e2a5a7997463bb4460bf6a1f3b5384be46791` and
+`src/test/fuzz/bip324.cpp`:
+`50b5ed7378bba7178fe6ed73e289e401bb31ab0ee07dd613a89b43eac8fa5fd0`.
+The normal and ASan/UBSan fuzz binary SHA-256 values are
+`51038b69142a15fba04be4afd3795b250a7ee56850e45b64bffbfad66d68ea1a` and
+`c52af69fe48999de22dfae51443fed4e0b815ba8df51a65e19281b55b10b9bde`.
+
+Focused verification rebuilt `test_bitcoin` and ran:
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin \
+      --run_test=bip324_tests,net_tests --log_level=test_suite
+
+All 20 selected test cases passed, including `packet_test_vectors` and
+`v2transport_test`, with `*** No errors detected`. The log SHA-256 is
+`e52909bfb56bcea8fd34f60c3caef2e5e08582aafe316cec14043296cd57a711`; the
+test binary SHA-256 is
+`ca5d5404601f97ef82567a0ded68c9d78ebc2d86a13667d12f64044b0ce8b6e4`.
+`git diff --check` passed, and no fuzz jobs remained.
+
+### Existing findings, reiterated
+
+Ratings remain against unmodified master and actual Bitcoin Core callers:
+
+* Private-broadcast failed-send retention: **Medium**, feature-gated and
+  fixed on master; reachable through local Core broadcast paths, not invalid
+  blocks or signatures.
+* Empty `HEADERS` initial-sync handoff: **Medium** availability/IBD stall.
+* Peer transaction activity refresh and process-message block-storage
+  failure: **Low**.
+* Oversized transport message types: **Low** in current fixed-width and
+  RPC-validated Core callers.
+* `ecmult_multi` scratch wrapping and forced secp256k1 10x26 magnitude-32,
+  SHA/HMAC/RFC6979 retention: **Medium** or latent Medium with limited Core
+  reachability.
+* Banman invalid-subnet/unban integrity: **Low/nice-to-have** because Core
+  RPC validation rejects invalid entries before affected state is used.
+* Tx download, tx request, connman, eviction, handshake, compact-block,
+  headers-sync, UTXO snapshot, and mempool-persistence campaigns: no
+  additional confirmed clean-master production bug.
+
+No later minor fix or cherry-pick masked this BIP324 proof. If a related
+change alters a follow-up result, amend that commit and this note with the
+pre/post behavior, master severity, exact mutation and control evidence, and
+whether the change hides a more severe master inconsistency. A nonce or
+counter without cryptographic meaning is not a Critical clearing finding.
+
 ## 2026-07-22 Integrated `p2p_private_broadcast` caller oracle
 
 This is a follow-up to the earlier private-broadcast retry-state audit. It
 records the integrated caller proof in rebased source commit
-`3b340edb76` (`fuzz: model private broadcast caller transitions`) on the
+`0f72ed7a2f` (`fuzz: model private broadcast caller transitions`) on the
 latest synchronized Bitcoin Core master boundary:
 
-* Core `origin/master`: `8f2ed31f70231506083f31d9b4839a93ad803029`
+* Core `origin/master`: `fc4ceda8b610e0e32afd2f50b3dce5c754a3ad66`
 * Core `l0rinc/master`: `32eb52100296718f7c0469e3210ce1db73694793`
 * Notes repo `origin/master`: `9e4ec507e984d589549c99010f5de25ba9de059b`
 * Notes repo `l0rinc/master`: `8c3e6e6d992456d3b9228305ae84a6703273cf70`
