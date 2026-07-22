@@ -28811,3 +28811,170 @@ or masks the trigger. A minor or non-serious patch that accidentally hides a
 severe master inconsistency does not lower its severity on master. Every
 confirmed production bug requires the strongest proof, a deterministic
 regression test, and why existing builds/tests did not catch it.
+
+## AES-256-CBC vectors and padding oracles
+
+Source commit: `c93ac9e86b` (`fuzz: add AES-256-CBC vectors and padding
+oracles`). This is a fuzzer-only change. `crypto_aes256cbc` now checks NIST
+SP 800-38A CBC vectors with padding disabled and enabled, repeated encryption,
+output-boundary sentinels, return sizes at 0, 1, 15, 16, 17, 31, 32, 33, and
+64 bytes, and guaranteed-invalid padding/truncated-ciphertext rejection. The
+existing random round-trip loop remains after the deterministic prefix.
+
+### Master-relative caller assessment
+
+Bitcoin Core reaches `AES256CBCEncrypt` and `AES256CBCDecrypt` from
+`src/wallet/crypter.cpp:85` and `:102` for valid local wallet master keys and
+fixed-size encrypted secrets. A clean-master CBC mismatch on that actual
+caller would be **Medium** wallet correctness, integrity, interoperability,
+or availability risk. It is not Critical on this evidence: malformed blocks,
+transactions, witnesses, and signatures cannot invoke this local wallet path,
+and no consensus divergence, invalid-block acceptance, memory-safety issue,
+or key compromise was demonstrated.
+
+`AES256CBCEncrypt` currently returns 0 for zero-length input even when padding
+is enabled. The boundary oracle records that existing API behavior rather
+than changing production semantics. Core's wallet caller encrypts fixed-size
+master keys and secrets, so empty plaintext is **Low/nice-to-have** on this
+audit, not a Critical or invalid-block finding. A nonce or counter without
+standalone cryptographic meaning is not Critical merely because it is not
+cleared. Clean master passed all fixed vectors and boundary contracts; no
+clean-master production bug or production fix is claimed.
+
+### Exact mutation proof
+
+The production-only paired CBC identity mutation changed both
+`AES256_encrypt` calls in `src/crypto/aes.cpp` to
+`memcpy(out + written, mixed, AES_BLOCKSIZE)`, and the
+`AES256_decrypt` call to `memcpy(out, data + written, AES_BLOCKSIZE)`.
+Mutated production source SHA-256:
+`e29802dfb94734c2754059993c0ef5768e3569497fe682aea3caee8a8c6595d9`.
+
+The enhanced normal fuzz binary SHA-256 was
+`82c64048472ad8f9373300d595c373fed411196bcfe1826658ad0fe4a5635650`.
+The exact zero-byte seed SHA-256 was
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The enhanced target exited 1 at `crypto_aes256cbc.cpp:35` in the NIST
+ciphertext assertion; log SHA-256:
+`8f5a882622149a03339df77deb0e3a116c5cac990b84e8cc665b1f5deb8c572e`.
+
+The enhanced ASan/UBSan binary SHA-256 was
+`f481c1c8e94b91bb1e6bf7ea7f00cce9f6206dfb442e29be244bae19097bba81`.
+With `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=0` and
+`UBSAN_OPTIONS=halt_on_error=1`, it exited 77 at the same assertion with no
+sanitizer diagnostic; log SHA-256:
+`82305b8b59ddc445ea7c41452c998d067a70be48dfbaf238515488612ab75dac`.
+
+For the strongest comparison, the original round-trip-only fuzzer was
+restored in a temporary control build with the same production mutation. Its
+old fuzzer source SHA-256 was
+`0622262d300f0773151c27dc4b99b08bcdc38f13d4a390d5544d424124ad9c45`; its
+normal binary SHA-256 was
+`498295fd10d938e8b871493ac735c662769c3ecf48fbcca4cb8ff2c5be2b06e9`.
+The combined empty-seed plus 124-file replay exited 0 after 125 inputs; log
+SHA-256:
+`458aa78bea7e7171ac0ff578d01eb98cb8f86f26f449481032c0561eea4181ed`.
+The old ASan/UBSan binary SHA-256 was
+`2e305e91741ed534321f4e449fb360d33f65f131e87cf30afe262e549771de45`.
+Its empty control exited 0, log SHA-256
+`8d6adfca74142b6893d3919d4c65c32fe9deb410e6c5f628ba83c9058781446e`, and
+its 124-file corpus replay exited 0 after 125 runs with coverage 573,
+features 1363, and no diagnostics; log SHA-256
+`366b7a37d050d04c89585d87a46fa7f3ea91fa1c0bff1fbcb07fc1ace982e719`.
+The paired copy mutation therefore passes the old production round trip for
+all valid modes and lengths while the NIST oracle rejects it.
+
+Existing `crypto_tests/aes_cbc_testvectors` also rejects this exact mutation.
+The mutated test binary SHA-256 was
+`79888e9db17cda2a26c1d2a0f51115df79449bda20a596138bf15bdd87f87de4` and the
+focused log SHA-256 was
+`cd54bee97cbc0808118d023f364f6c4ba63785c1fcef08aa9e37cccf3b46821a`.
+It exited 201 with NIST encryption/decryption vector failures. This audit
+does not claim existing deterministic tests missed the mutation. It proves
+that the old fuzzer was only a coverage/round-trip oracle and that the new
+fuzzer adds an independent oracle plus padding and return-size contracts.
+
+### Corpus and clean verification
+
+The source corpus was copied to
+`/tmp/codex-aes256cbc-audit-20260722/frozen-corpus`. It contained 124 files,
+1756536 bytes, sizes 1..470916. The sorted filename/size manifest SHA-256
+was `893646f4222ace570348844a8b3dbbfc5ab29a0e45214ecc3ab4ccc92c7a49e8`.
+
+Final restored source hashes:
+
+* `src/test/fuzz/crypto_aes256cbc.cpp`:
+  `5ba373d500db2b023da52ee2ce3b176bc7d990eea6387dd244a193bdd72c35e0`.
+* `src/crypto/aes.cpp`:
+  `e061cdd8ec3da8df97eba780c635c234f9d6f5f05bcacdb1d86729ee1b570e2f`.
+
+Final normal fuzz binary SHA-256:
+`ebfa3342e0b478e8234a3d16394b22d6f02c506fe0d6fd95988fd08c34417ee3`.
+The empty-seed replay exited 0, log SHA-256
+`64842b6c4843242fa62aabf64d5e99314d43ed3308c4163fb4556fcc8e5c5420`.
+The 124-file replay exited 0, log SHA-256
+`ed0f399e81c3eba7e1bbefd3ca8e0f9730999352de81a793405178b5dbe3bbba`.
+Four independent normal workers each passed all 124 files with that same
+full replay log hash.
+
+Final ASan/UBSan fuzz binary SHA-256:
+`39615eaf9bbb1f78762aebcefafd942bae6cba3cfce1f41067e890412eb504ba`.
+The bounded empty-seed replay exited 0, log SHA-256
+`ba259ef985d1325187fe876be567191d9811b553da149184f80e09566d233a2c`.
+The bounded corpus replay completed 125 runs, coverage 903, features 2594,
+and about 476 MiB peak RSS with no sanitizer diagnostics; log SHA-256
+`28042ce2aaa19689c7d11cb63a5341ed2cda6575f5ca49ed4ee558eff503d3b6`.
+
+Separate clean focused tests all exited 0 with `*** No errors detected`:
+
+    test_bitcoin --run_test=crypto_tests/aes_testvectors --log_level=test_suite
+    test_bitcoin --run_test=crypto_tests/aes_cbc_testvectors --log_level=test_suite
+    test_bitcoin --run_test=wallet_crypto_tests --log_level=test_suite
+
+Their log SHA-256 values were respectively
+`e41cc40c2ebee0e5a5bd02a77fb270e6dc39b0b31285efbab82e89be4f08252f`,
+`840f895fd922115cfe85277bd53a5c760a0ee87b40dd73b647c888a1fdfad032`, and
+`86269689143fc9804c02352a971d56bffc74a9b45310e4df537293fe3c7455d5`.
+The clean test binary SHA-256 was
+`31a01e9e2a5163c81434b78e8e608918e8fb9583f9455db81302d5bc2b65f48e`.
+`git diff --check` and `clang-format --dry-run --Werror` passed. No fuzz,
+sanitizer, build, or test process remains running.
+
+### Review provenance and reiterated findings
+
+The source branch was rebased onto Core `origin/master`
+`efa1800a885c1ae605e18605ef73957ea13e575c` before this audit. The l0rinc
+source branch was reviewed at `l0rinc/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. The exact target-scoped query
+was:
+
+    git log --oneline origin/master..l0rinc/master -- src/test/fuzz/crypto_aes256cbc.cpp src/crypto/aes.cpp src/crypto/aes.h src/wallet/crypter.cpp src/test/crypto_tests.cpp
+
+It returned no commits, so no l0rinc change was cherry-picked for this
+target.
+
+Existing findings remain reiterated with severity based on unmodified master
+and actual Bitcoin Core callers: private-broadcast failed-send retention is
+Medium and feature-gated/fixed on master; empty HEADERS initial-sync handoff
+is Medium availability/IBD stall; peer transaction activity refresh,
+process-message block-storage failure, and oversized transport message types
+are Low; `ecmult_multi` scratch wrapping is Medium internal/resource
+correctness with low Core reachability; forced secp256k1 10x26 magnitude-32
+normalization and SHA/HMAC/RFC6979 retention are Medium latent/internal
+findings with limited reachability; Banman invalid-subnet/unban integrity is
+Low or nice-to-have because Core RPC validation rejects invalid entries before
+affected state is used. The txdownloadman, txrequest, connman, eviction,
+handshake, compact-block, headers-sync, UTXO snapshot, mempool-persistence,
+cache/index/API, serialization, and other audited campaigns found no
+additional confirmed clean-master production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle
+green, rerun the clean-master baseline or exact minimal mutation. Amend the
+affected commit and this note with before/after behavior, actual Core caller
+and input reachability, assertion/status/stack, corpus or mutation, failure
+mode, master-relative severity, and whether the trigger is preserved,
+changed, or masked. A minor or non-serious patch that accidentally hides a
+severe master condition does not lower its severity on master. Every
+confirmed production bug requires the strongest proof, a deterministic
+regression test, and an explanation of why existing builds and tests did or
+did not catch it.
