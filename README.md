@@ -3658,6 +3658,156 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `scriptnum_ops` CScriptNum state and representation oracle audit (2026-07-22)
+
+Source commit: `0a95efc62e` (`fuzz: model CScriptNum state and representation
+contracts`), full hash
+`0a95efc62e687a6ef7b7b0f8472e3ea48dee8299` on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+parent is `951ea664837b4875fd1e5742729dcf760b871fc4`, and the audit was based
+on fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of master. The exact
+target-scoped query
+
+    git log origin/master..l0rinc/master -- src/test/fuzz/scriptnum_ops.cpp src/script/script.h src/script/interpreter.cpp src/script/interpreter.h src/test/scriptnum_tests.cpp
+
+returned no output. No relevant l0rinc change was available to cherry-pick and
+no fork patch was silently folded into this result.
+
+### Core boundary and severity
+
+`CScriptNum` is consensus-relevant through Bitcoin Core's script interpreter:
+
+* numeric opcodes use it in `src/script/interpreter.cpp:929-1024`;
+* `OP_CHECKLOCKTIMEVERIFY` and `OP_CHECKSEQUENCEVERIFY` parse and compare
+  five-byte operands at `:532-600`;
+* `OP_CHECKSIGADD` uses numeric addition at `:1094-1112`, multisig count
+  handling uses `getint()` at `:1120-1142`, and the transaction signature
+  checker's lock-time paths use it at `:1755-1830`;
+* `CheckInputScripts` in `src/validation.cpp:149,438-439,1151,2073,
+  2594-2597` reaches these paths while validating transactions and blocks.
+
+A clean-master arithmetic, comparison, serialization, or `getint()` mismatch
+that lets an invalid script or transaction pass in a block can violate
+consensus and is High/Critical according to whether it permits invalid block
+acceptance or a funds-relevant state transition. Malformed fuzzer state that
+never reaches a real Core transition is not Critical. A nonce with no
+cryptographic meaning is not Critical merely because it is not cleared. This
+audit found no clean-master production mismatch, so it adds no production fix
+or deterministic regression test claim.
+
+The old `scriptnum_ops` target checked a few inverse/comparison properties but
+discarded most operation results. The new target maintains an independent
+`int64_t` state and checks every comparison, valid addition/subtraction result,
+mutating arithmetic transition, bitwise transition, unary negation, and
+assignment. Overflow guards are evaluated against the model rather than
+production comparison operators. Each step also checks `getint()` saturation,
+canonical `getvch()` bytes, and minimal parse/serialize round trips for values
+within the four-byte script-number domain. This keeps the oracle's domain
+valid while still reaching out-of-range `int64_t` result representations.
+
+The existing findings ledger is reiterated here: feature-conditional
+private-broadcast failed-send retention and the empty-HEADERS initial-sync
+handoff remain Medium; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention remain Medium but
+reachability-limited; peer transaction activity refresh, local block-storage
+failure handling, oversized transport types, compact-block diagnostics, and
+cache/index/storage/serialization/container issues remain Low or hardening
+items. The txrequest, txdownloadman, connman, eviction, handshake,
+headers-sync, UTXO snapshot, mempool-persistence, package-evaluation, RPC,
+descriptor-cache, and other audited targets produced no additional confirmed
+clean-master production bug. Later l0rinc, fork, minor, or master changes must
+be classified as preserving, masking, or changing each behavior before
+severity is assigned. A minor or non-serious patch that masks a severe master
+bug does not reduce the underlying severity; if a potential cherry-pick changes
+a follow-up reproducer, amend the source commit and this note or merge the
+context. Every confirmed fix needs the strongest deterministic proof.
+
+### Corpus and verification
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/scriptnum_ops` to
+`/tmp/bitcoin-scriptnum-ops-audit-20260722/frozen`: 113 files, 3,668,914
+bytes, minimum/maximum size 1/1,000,370. Manifest hashes are:
+
+* entries: `3d2835cb73173a9bbb1259bdfc33e41d36c17d76bab420e7211eba8d508d0079`;
+* per-input SHA-256 sums:
+  `18f2fb87ea461d738b61ade1f1fb650fd93654632ddd61c6c84351d64a4c7882`;
+* sorted names:
+  `d2eb54314330810f94d9315aab0e9ca9ec298511d83b955c570b55c881251594`.
+
+Final binary hashes are normal fuzz
+`cc4cfcbc8ab851d45cb119897ba304c4e911c5e49525f014f1abfa35ddf00fd0`,
+ASan/UBSan fuzz
+`6b26580c0ddf7730d82bf7886469dd0a5ff6aabe9478961a3de3a45d13cb356a`, and
+`test_bitcoin`
+`115556614e9b402838e295e1a31ec286c4a0b5cc77080113457d0080eb27349e`.
+
+The final full corpus replays both exited 0. Normal mode completed 114
+executions with coverage 152, features 939, and peak RSS 59 MiB; its log
+SHA-256 is
+`19b0afe5ab78eac2d450089098f060a862bd9a33cbe56b25e011cc42545f6eae`.
+ASan/UBSan completed 114 executions with coverage 244, features 1536, peak
+RSS 574 MiB, and no sanitizer diagnostics; its log SHA-256 is
+`7838b4e08a748499821f90ec2bfd4cd4ad2364d4a73d6dcf92a812df9fda21d4`.
+Four concurrent ASan/UBSan jobs replayed all 113 inputs, each reaching
+coverage 244/features 1536 without diagnostics; the combined worker log
+SHA-256 is
+`0a940374a4c176036d92b1393e4f7b538ea3744d80f364a96207c6cf1ad95c31`.
+
+The first sorted witness,
+`01e9944114597579764cfacf42673093c1a250f3`, is 9,417 bytes with SHA-256
+`8b2360b0994822c7641fd54ae175c99ca50e0b3e766e6c817692898712f9dfe4`.
+Final exact normal and ASan/UBSan replays both exited 0; log SHA-256 values
+are `d76f8d2fcd2b6362550ce3639ccc35e7827d8270b2ea2c71b6addaca605d3a37` and
+`49c6df2897bb1982bc8695ddf7939ef2403999608bc493f4ae8c0fa1bed48d18`.
+Focused `script_tests`, `scriptnum_tests`, `validation_tests`, and
+`txvalidationcache_tests` passed with `*** No errors detected`; the final log
+SHA-256 is
+`a57123366fca96be3b8c598024cc329d5b5a806dfadff131a73f604b22a732da`.
+
+### Differential mutation proof
+
+This is intentionally not a clean-master production finding. The temporary
+production-only mutation at `src/script/script.h:370` changed the negative
+sign-bit operation from `result.back() |= 0x80` to `result.back() |= 0x00`.
+The mutated production source SHA-256 was
+`f7a250c4057d60d7ef847434f48887ec61b4aa309626b6631e302b27904fb3fb`;
+the enhanced harness was
+`87b808a0078fb212ac1469bc246bc86131095e00fe1070012a28d07a9284bd39`; and
+the mutated normal/ASan binaries were
+`f9d19c162851cfcfaea8ecb3a8acd9b6ba77d823815382c97468ce65e213b5c3` and
+`609468fec7d8e3ea5f0467b31c2905242b163a171eaab9818208ed24356d402a`.
+
+The full corpus reached the new independent assertion at
+`src/test/fuzz/scriptnum_ops.cpp:59`,
+`actual.getvch() == expected_bytes`, in both normal and ASan/UBSan modes.
+Full mutated replay log hashes are
+`06a10bdc6b5e7ab2cc7c4bc7745e7de9c1e6d72b052b44979016e26bbc048301` and
+`4d101f451269950f1dff6d5dbd932efca1fb02c6ed94bff8a7b1dcb3b4e836ba`.
+Sorted replay isolated the witness above; exact mutated witness logs reached
+the same assertion, with hashes
+`77ea7ecc118475b0276a1d80be0033b9eaa4ff92cdf9b54bd4f87f42a4c0b46f` and
+`ff43ca7347426faada239e970cdb57a7dd28d21efccb9c7346bf62ce75c26537`.
+The libFuzzer deadly-signal handler did not return in the wrapper, so the
+known mutation PIDs were terminated and bounded exact replays reported
+timeout exit 125; the assertion output is present in each failure log.
+
+For the matched old-harness controls, only the enhanced harness was replaced
+with the original master version; the same production mutation and exact
+witness were retained. Both normal and ASan/UBSan controls passed with no
+diagnostics. Control log SHA-256 values are
+`1896cc9b1efac66983ff37f0ae814d1c90a3d4c352aa3d961e524e9d479ed673` and
+`44c6ae7601fa4da60c690f9abc94827a03c3ca96c6d3498943bf0fdebf748193`.
+
+The production mutation and control harness were restored before the final
+builds and replays; the source commit contains only the fuzzer oracle. This
+proves that the new target catches a modeled negative-script-number
+serialization regression the old target accepts. It does not prove a
+current-master vulnerability, so no production fix is claimed. No fuzz,
+sanitizer, mutation, build, or test process remains running.
+
 ## PoW target and difficulty-transition oracle audit (2026-07-22)
 
 Source commit: `951ea66483` (`fuzz: turn PoW targets into consensus oracles`),
