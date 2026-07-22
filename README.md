@@ -3658,6 +3658,178 @@ be amended into the source commit and this note with target, caller, corpus
 or mutation, assertion, failure mode, master-relative severity, and whether it
 masks, preserves, or changes the result.
 
+## `parse_script` token-contract oracle audit (2026-07-22)
+
+Source commit: `662b978b39` (`fuzz: assert ParseScript token contracts`),
+parent `e15cfd7f9b36a6d53cc545586722c7243020c632`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+full source commit is
+`662b978b39dc28bf017c4f3a93086f97e6c8ef57`. The source branch is based on
+latest fetched Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The exact target-scoped query
+
+    git log origin/master..l0rinc/master -- src/core_io.cpp src/core_io.h src/test/fuzz/parse_script.cpp src/script/script.cpp src/script/script.h
+
+returned no output. No unique l0rinc commit applied and no cherry-pick was
+needed. The final enhanced harness SHA-256 is
+`2ca73b110b02b9e27c2def24b8db3d96e938c94d091a5d862f07e369da9545a8`; clean
+production `src/core_io.cpp` is
+`7590fcc75cef044feeb417e6e69de03a69a0804f5a81eef60a092add34844d4a`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=parse_script` target called `ParseScript` and swallowed
+`runtime_error` without checking the returned `CScript`. The new harness
+independently tokenizes the exact space/tab/newline grammar, models decimal
+range handling with `from_chars`, raw `0x` hex insertion, quoted pushes, and
+opcode aliases from the opcode-name table, then compares the complete expected
+script with `ParseScript`'s result. It also checks whitespace normalization,
+empty-input/non-empty-token behavior, and token-by-token decomposition.
+
+Production `ParseScript` now asserts the real invariant that a successfully
+recognized non-empty token emits at least one script byte. The assertion first
+checks whether any split word is non-empty, because `SplitString` retains empty
+fields for repeated separators. It is a debug assertion and does not alter
+valid release behavior.
+
+Bitcoin Core uses this parser at `bitcoin-tx.cpp:477` to construct scripts
+from command-line text, in script test-vector parsing at
+`script_tests.cpp:934`, `:962`, and `:970`, and in transaction fixture parsing
+at `transaction_tests.cpp:196` and `:284`. This target has no direct
+invalid-block consensus path in current Core. Clean master has no parser
+mismatch or production failure, so the current-tree rating is
+**Low/informational oracle hardening**, not a production vulnerability, fix,
+or deterministic regression test. A malformed user script being rejected is
+not Critical. A demonstrated wrong script accepted by `bitcoin-tx`, wallet
+signing, or a caller that misattributes spendable funds would be rated from
+that concrete impact, potentially High; a real invalid-block path would be
+High/Critical. Malformed fuzzer input alone is not Critical. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention and empty-`HEADERS` initial-sync handoff are **Medium**;
+ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention are **Medium but latent/reachability-limited**;
+peer transaction-activity refresh, local `ProcessMessage` block-storage
+failure, oversized transport types, compact-block diagnostics, cache/index,
+storage, serialization, and container findings remain **Low** or hardening
+under current Bitcoin Core callers. Txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote. Later fork/minor/master
+changes must be classified as masking, preserving, or changing these ratings.
+
+### Corpus and replay evidence
+
+The frozen corpus came from
+`/mnt/my_storage/qa-assets/fuzz_corpora/parse_script` and was copied to
+`/tmp/bitcoin-parse-script-audit-20260722/frozen`: 254 files, 9,132,811 bytes,
+sizes 1..723,013. The per-file manifest SHA-256 is
+`1c0c1968ba599c09dd362541b9838788037aeb02b503953968dca4630999da17`; the
+sorted filename manifest SHA-256 is
+`49455641e8d4519031508cc6d3be1b69039a3e6ec1110c829117031e4d371283`.
+
+The final normal fuzz binary SHA-256 was
+`c2bd3ac08a7c5a47f45b2b710ade5094124599314392c2f5a6bcba68928362cc`.
+The replay exited 0 after 255 executions, reached coverage/features
+`682/3,527`, peaked at 64 MiB, produced no failure artifact, and has log
+SHA-256 `b74d98741b6b1cdb02bc9310cb7a3e44a4718ff2b6e9503055bbfbab58a1f140`.
+The final ASan/UBSan binary SHA-256 was
+`52739414c3be57c5e9c17b9cfb577413a36187afb69ba0b2b58c634d9c5f924d`.
+It exited 0 after 256 executions, reached coverage/features `950/5,458`,
+peaked at 303 MiB, produced no units or artifacts, and reported no sanitizer
+diagnostics; log SHA-256:
+`69aa83035cc2a6e2ebb3519ec0544ed97e87b9c42ccca93d93424d2082339a7f`.
+
+Four final independent ASan workers replayed 64/64/64/62-file shards and
+executed 66/66/66/64 units. Coverage/features and peak RSS were
+`925/4,362` at 165 MiB, `937/4,654` at 166 MiB, `927/4,334` at 158 MiB, and
+`939/4,554` at 130 MiB. Worker log SHA-256 values were
+`212b0051152a63cbd7b346e01b2d0c25626f8c3df4121c3f43628d0c5775525d`,
+`82b7651985ee82d239014d2afeed1e4ded4bfc705540bd8a34ea25dff1ac76e7`,
+`84e9b1f6bde137999b349ddd01bc3d701b5e05d27310546b53bcd9a017356a42`, and
+`43f3b8411e084e18323964629f90d7d3e71a361dbd6612b1a2031ef310e184d7`.
+The worker filename union exactly matched the frozen filename manifest.
+
+### Triage and differential proof
+
+The first production assertion compared `result.empty()` with
+`words.empty()`. The whitespace-only corpus file
+`73fd1ff10b10768519b92bffdd548e352122d22a` is 16,384 bytes with SHA-256
+`dab412c6f0b1ca79f2f0ea8ca26f3983dc496565e4d10c9a0096f6729050aade`; it
+contains only tabs and newlines. It correctly exposed that repeated separators
+leave empty split fields. Both normal and ASan diagnostics reached
+`core_io.cpp:131`; log SHA-256 values were
+`978fe1843ebe236fc89e84a9f09c590e5e0121923adfcf836fd5137bec12dcc7` and
+`6180ae5358f6a44af248d8e1e981fead6490daffa628b144e0eeae6c3788cda6`.
+This was an overbroad oracle, not a production finding; the assertion was
+narrowed to the presence of a non-empty token and the full corpus then passed.
+
+The differential mutation at `src/core_io.cpp:81` changed
+
+    return it->second;
+
+to
+
+    return OP_0;
+
+for every recognized opcode. This preserves non-empty output, so the
+production-side assertion cannot mask the harness result. Enhanced normal and
+ASan corpus replays exited 134 at
+`src/test/fuzz/parse_script.cpp:126`, assertion `expected == parsed`; full
+mutation log SHA-256 values were
+`84a265113f9eaae4b4998125644a5cd7604df6f035753cc49a213fee3d467902` and
+`50d0ed9ca4b2c637bb7e24eacf472d68f50de8f3423c35729415c69795e22cdf`.
+
+The first deterministic witness was frozen corpus file
+`0cc8c6019ee3537b587cb39ddf629129097e1f61`, 72 bytes, SHA-256
+`1070f9b35e377e758e5aaf2fe83802bd1d123ff442c0d7975d761012aead8eac`; it
+contains the `OR` opcode. Replaying that exact file under mutated normal and
+ASan binaries exited 134 and logged the same assertion; log SHA-256 values
+were
+`88d59322313fab52d967727768291b265ce2f0ddcee14aaaf0a3ef3243f22694` and
+`8135ae54154555847dcf6277c4d9d13d5423b65bc93882bcb2031e66ee9d8405`.
+
+Matched old-harness controls removed only the new oracle, retained the same
+production mutation and exact witness, and exited 0 after one execution in
+normal and ASan. Control log SHA-256 values were
+`4a4c9034e44451ec4b261f9f31501fa5a344937a9958238f557582fe04154612` and
+`d544991b4fdbfdb575d7c92bec9277fb48aed5d8a084e2ee3e6b81496059523d`.
+After restoring production and the enhanced harness, the exact witness exited
+0 in final normal and ASan binaries; log SHA-256 values were
+`c0b4e9288b486def625d9dc0a59a3a05d66f5e27c1599005e11a4fc521b16f66` and
+`9aacf2a8cb03870d6b46d86103b70dd68f082039657a706fc0997367e6e417ec`.
+This proves the new oracle catches a modeled production opcode-selection
+regression the old target accepted; it is not a clean-master production bug
+or security finding.
+
+### Verification and follow-up
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_parse_tests,script_tests,transaction_tests,descriptor_tests,miniscript_tests --log_level=test_suite
+
+exited 0 after 43 cases with `*** No errors detected`; test binary SHA-256 was
+`34ea5ace87a642e7e07f217048348351d91d7604463a6ef1e6b3178baeb7d9b3`, and log
+SHA-256 was `90617417e2060796d14edd971fb54e1e8af6a43c70dbd6ba270dc1f6ef4063a4`.
+`git diff --check` and clang-format validation for the changed fuzz source
+passed. All temporary production mutations were restored; no production
+behavior changed beyond the checked-in assertion, no production bug or
+deterministic regression test is claimed, and no fuzz, sanitizer, mutation,
+build, or test process remains.
+
+Any later l0rinc cherry-pick, fork/minor fix, or master change affecting
+`ParseScript`, `ParseOpCode`, script text grammar, or Core callers must be
+amended into the source commit and this note with target, caller, corpus or
+mutation, assertion, failure mode, master-relative severity, and whether it
+masks, preserves, or changes the result. Every production claim still
+requires clean-master reproduction or a minimal production mutation plus the
+strongest deterministic proof available.
+
 ## `script_parsing` span-contract oracle audit (2026-07-22)
 
 Source commit: `e15cfd7f9b` (`fuzz: assert script parsing span contracts`),
