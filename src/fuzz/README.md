@@ -28017,3 +28017,148 @@ that accidentally hides a severe master inconsistency does not lower that
 inconsistency's severity on master. Every confirmed production bug requires
 the strongest reproducible proof, a deterministic regression test, and an
 explanation of why existing builds/tests did not catch it.
+
+## 2026-07-22: crypto_poly1305 arithmetic and streaming oracle
+
+Source commit: `9d27dcb45a` (`fuzz: model Poly1305 arithmetic and streaming contracts`).
+
+### Scope and oracle
+
+The `crypto_poly1305` and `crypto_poly1305_split` targets were upgraded from
+production self-consistency checks to independent RFC 8439 arithmetic and
+streaming oracles. The harness uses Boost arbitrary-precision arithmetic to
+clamp `r`, add the per-block hibit, reduce the accumulator modulo `2^130 - 5`,
+add `s`, and serialize the low 128 bits. Production one-shot and split-update
+tags are compared with model one-shot and split-update tags. A deterministic
+prefix covers zero, all-FF, incrementing, and patterned keys; lengths 0, 1,
+15, 16, 17, 31, 32, 33, 63, 64, 127, 128, and 256; and split boundaries at
+block edges and interior positions. Existing random input and corpus
+construction remain in place. Existing production key/tag size assertions
+remain the API contracts; this change adds no claim that a nonce or counter
+without standalone cryptographic meaning must be cleared.
+
+### Core reachability and severity
+
+`AEADChaCha20Poly1305::ComputeTag` calls Poly1305 in
+`src/crypto/chacha20poly1305.cpp`; `FSChaCha20Poly1305` and `BIP324Cipher`
+wrap it through `src/bip324.cpp`, and valid v2 peer traffic reaches that path
+through `src/net.cpp`. A clean-master arithmetic mismatch could reject valid
+peer packets or create transport interoperability failures, so the
+master-relative severity of such a confirmed issue would be **Medium
+(availability/interoperability)**. It is not High or Critical based on this
+evidence: malformed blocks, transactions, witnesses, and signatures cannot
+reach this transport state; no invalid block acceptance, memory-safety bug,
+key compromise, or tag forgery was shown. Invalid fuzzer state alone is not a
+Critical finding. Clean master matched the independent model, so this audit
+found no production bug, added no production fix, and claims no deterministic
+production regression test.
+
+### Exact mutation proof
+
+The production-only mutation changed `src/crypto/poly1305.cpp:69` from
+
+    h4 += (ReadLE32(m+12) >> 8) | hibit;
+
+to
+
+    h4 += (ReadLE32(m+12) >> 7) | hibit;
+
+The mutated production source SHA-256 was
+`5355b6819ee278ee2ef6728da5501cd79140c8b316fb732a28c6e6f77c493db0`.
+The exact empty seed `/tmp/fs-poly-empty` SHA-256 was
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The mutated normal binary and log SHA-256 values were
+`e63e3569c435827fa0ea55b7855dfb54a1938874a0636507f67bc24811e95bda` and
+`269fbb76c9b14d8405e29be7f8b607d4dde93ec15388ecdd4a51e84e2979c79b`;
+the process exited 1 at `crypto_poly1305.cpp:113`,
+`assert(full_tag == full_model_tag)`. The mutated ASan/UBSan binary and log
+SHA-256 values were
+`f730eda27e6357750ef210dde9ef9e91144f4f064e423b16d0f08c08c5af451f` and
+`4c6a45bfcfee5b5a2e814f07b1eb8b90e5b4c0166bff3694bf9e4d3a5fffd132`;
+the process exited 134 at the same assertion and emitted no sanitizer
+diagnostic. This is causal proof that the new oracle detects the modeled
+arithmetic regression, not evidence of a clean-master vulnerability.
+
+The old deterministic vectors and the old split target compared known
+outputs or two production executions, rather than an independent model on
+the new empty-input prefix. That is why the existing build/tests did not
+force this production-only mutation to fail. The mutation was restored before
+the final clean replay; no deterministic regression test is claimed because
+master has no corresponding production defect.
+
+### Corpus and final verification
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/crypto_poly1305` to
+`/tmp/codex-poly1305-audit-20260722/frozen-corpus`. It contained 45 files and
+408777 bytes, with minimum/maximum sizes 1/269889. The sorted filename/size
+manifest SHA-256 was
+`903c26a568f56c167bab5064d92cb7eb878467479f8f097a067fe049219a98b0`.
+
+Final restored source hashes:
+
+* `src/crypto/poly1305.cpp`: `57753fcb9c3516883aa0e239129da9bd297d4c1e111f6f0861d27aa734754f0c`.
+* `src/test/fuzz/crypto_poly1305.cpp`: `f731d4311eca42575873e69549f4216604d09a603647f9e342c644c53a70181d`.
+
+Final binary hashes:
+
+* Normal fuzz: `119e4d3f34bf6dc99c1ff92c8216e6661c9ecf26daab017beebad51119915d88`.
+* ASan/UBSan fuzz: `e94a609e33b725861986f8d1e5bcb8eecd06a40bbcf0c83eb70983aec2f5f616`.
+* Focused test binary: `451d982414adb3b574854b6066d326e8c458124dada5dd95d57b4dc371ac6456`.
+
+The final normal `crypto_poly1305` replay passed all 45 inputs in 0 seconds;
+log SHA-256: `b81656ea28569587adf9643ee5e1cebbe932cdb5f4ec476fb2e820acd7101d36`.
+The bounded ASan/UBSan replay executed 46 units, reached coverage 1103 and
+features 2170, added 0 units, peaked at 148 MiB, and exited 0 without
+diagnostics; log SHA-256:
+`f068f2d05ee1e763af675ba53be123fe776bac3fa6b9b3dcff9f75221570a85d`.
+Four independent normal workers each passed all 45 inputs with the same log
+SHA-256. The bounded four-worker ASan/UBSan run completed 2734 units,
+coverage 1106/features 3285, added 181 units, peaked at 540 MiB, and
+produced no diagnostics; log SHA-256:
+`8f9b5bd5423e5fa082354d3da1d907ee27adc335a95d901872eb532e54bddea7`.
+
+The final `crypto_poly1305_split` replay passed all 45 inputs; normal log
+SHA-256: `b59aaf57d4f5dfed2de677346f7fbb6601e6a0b80859d7f2211f300f4e4d4ebb`.
+Its ASan/UBSan replay executed 46 units, coverage 1123/features 2213,
+peaked at 148 MiB, exited 0 without diagnostics; log SHA-256:
+`897f3920f2d0735d4f459d979c9e5963c8fa2f9c3f6beb27eebe1f2b66d8325b`.
+Restored normal and ASan empty-seed controls exited 0; log SHA-256 values:
+`57fc029480ec4691ead50f473e8114b45ce25cbe7eadbcca69826869d7d5b8fb` and
+`e1ec3f6d806022080a3014725834f1dc96c62e8c42b7d91e277f1e8188007f8a`.
+The focused command
+
+    test_bitcoin --run_test=crypto_tests,bip324_tests,net_tests --log_level=test_suite
+
+passed 37 selected cases with `*** No errors detected`; log SHA-256:
+`2328573fa88d4135017130f1a5076bd8ced3e3ff00a068623254bd97cafe31f7`.
+`git diff --check` and clang-format dry-run passed, and no fuzz, sanitizer,
+build, or test process remains running.
+
+### Reiterated findings and masking policy
+
+Ratings remain based on unmodified master and actual Bitcoin Core callers:
+private-broadcast failed-send retention is Medium, feature-gated and fixed
+on master, reachable through local `sendrawtransaction`/wallet paths rather
+than invalid blocks or signatures; empty HEADERS initial-sync handoff is a
+Medium availability/IBD stall; peer transaction activity refresh and
+process-message block-storage failure are Low; oversized transport message
+types are Low with fixed-width/RPC-validated callers; `ecmult_multi` scratch
+wrapping is Medium internal/resource correctness with low Core reachability;
+forced secp256k1 10x26 magnitude-32 normalization and SHA/HMAC/RFC6979
+retention are Medium latent/internal findings with limited reachability; and
+Banman invalid-subnet/unban integrity is Low or nice-to-have because Core RPC
+validation rejects invalid entries before affected state is used. The
+txdownloadman, txrequest, connman, eviction, handshake, compact-block,
+headers-sync, UTXO snapshot, mempool-persistence, cache/index/API, and other
+audited campaigns found no additional confirmed clean-master production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle
+green, rerun the clean-master baseline or the exact minimal mutation. Amend
+the affected commit and this note with pre/post behavior, actual caller and
+input reachability, assertion/status/stack, corpus or mutation, failure
+mode, master-relative severity, and whether the change preserves, changes,
+or masks the trigger. A minor or non-serious patch that accidentally hides a
+severe master inconsistency does not lower its severity on master. Every
+confirmed production bug requires the strongest proof, a deterministic
+regression test, and why existing builds/tests did not catch it.
