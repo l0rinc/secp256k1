@@ -28978,3 +28978,158 @@ severe master condition does not lower its severity on master. Every
 confirmed production bug requires the strongest proof, a deterministic
 regression test, and an explanation of why existing builds and tests did or
 did not catch it.
+
+## Wallet crypter state and ciphertext oracles
+
+Source commit: 5477ecdb6b (fuzz: add wallet crypter state and ciphertext
+oracles). This fuzzer-only change adds a deterministic prefix before the
+random crypter state machine. It checks an externally-derived AES-256-CBC
+ciphertext for fixed 32-byte master/plaintext values, EncryptSecret /
+DecryptSecret round trips, guaranteed padding-tamper rejection, CCrypter
+key-state preconditions and cleanup, invalid short-salt rejection, and
+DecryptKey recovery of a matching compressed public key. The existing random
+operation loop remains unchanged. SeedRandomStateForTest runs before the
+prefix because wallet key generation consumes the test PRNG state.
+
+### Master-relative caller assessment
+
+Bitcoin Core reaches CCrypter from wallet/crypter.cpp and wallet.cpp while
+encrypting and decrypting valid local wallet master keys and fixed-size
+private key material. A clean-master ciphertext or state-transition mismatch
+on those callers would be Medium wallet integrity, correctness, or
+availability risk on this evidence. It is not Critical: malformed blocks,
+transactions, witnesses, and signatures cannot invoke this local wallet path,
+and no consensus divergence, invalid-block acceptance, memory-safety issue,
+key compromise, or forgery was demonstrated.
+
+The fixed vector uses 32-byte master/plaintext values and a zero IV. Its
+expected ciphertext was independently generated with standard AES-256-CBC
+PKCS#7 behavior, not by production code:
+f3bd0549faac94a41a5e14396d29b64ae44710ebd1725d705c140feaf1269c98156c9c65adf90de74cb5ba58c73c51df.
+No clean-master production bug or production fix is claimed. A nonce or
+counter without standalone cryptographic meaning is not Critical merely
+because it is not cleared.
+
+### Exact mutation proof
+
+The production-only mutation changed src/wallet/crypter.cpp:85 from
+AES256CBCEncrypt enc(vchKey.data(), vchIV.data(), true) to the same call with
+false. This removes PKCS#7 padding from valid wallet encryption while
+decryption still requires padding. Mutated production source SHA-256:
+f86de2a949d370ff88874fe7fe1a430ebccea8c1f618d2195179892ed36f8767.
+
+The enhanced normal fuzz binary SHA-256 was
+d0876d6ccaea94675db706155d3237e018c760dd3fbf8731f75564f0be3c32a5. The
+exact zero-byte seed SHA-256 was
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855. It
+exited 1 at crypter.cpp:35 in the external ciphertext assertion; log SHA-256:
+9ca7d1626e0fb3cfb6316997463d70db826cad5f66b4f2900275b06827fa2978.
+
+The enhanced ASan/UBSan binary SHA-256 was
+d1150237d8b92b3cb749073d1c9bf980dcd214041eb159e472f6d333355fb77c. With
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:symbolize=0 and
+UBSAN_OPTIONS=halt_on_error=1 it exited 77 at the same assertion with no
+sanitizer diagnostic; log SHA-256:
+f5c9f58f398387fd2963232ca48b18a8a328c230e7643c86106c63b9c10a3757.
+
+Existing wallet_crypto_tests also rejects this mutation. The mutated test
+binary SHA-256 was
+b925ea817b191eb46dc3edcfb2a1745b4bc2cb1b347d87fde330fb0de9e1e071 and the
+log SHA-256 was
+9b950e91771b4ec96600f7275048ed074331f074af3b3a06f8bcfeb526f3b120. The
+focused test exited 201 with wallet_crypto_tests/encrypt decryption and
+collection-size failures. This audit does not claim deterministic tests
+missed the mutation; it proves the fuzzer's old state machine discarded the
+result that exposed it.
+
+For the direct old-oracle control, the original crypter fuzzer source SHA-256
+was ef17209c40befdd488661615af2279b83623246794ff16a289680b427724edb3. Under
+the same production mutation its normal binary SHA-256 was
+c53a4ae3b307f120b7da5f2c8d0d5c471a445879349883603d1b521c7bbdc039. The
+empty-seed plus 998-file replay exited 0 after 999 inputs; log SHA-256:
+f9608d05edf70dcaeac380bf6811ab1b49809004e236f92c41567cfd71b7d613. The old
+ASan/UBSan binary SHA-256 was
+a77f930b0ad61acd13e077da98128f37f6c85315f298f11fafa6ad307cfa0585. Its empty
+control exited 0, log SHA-256
+ebcb43575e48eff3fbc52ec49ba1a5c0af2b034667c73bdf013c7a1999fc3f0, and its
+998-file replay exited 0 after 999 runs with coverage 3178, features 9910,
+and no diagnostics; log SHA-256
+c12b51e244276fd4fa802e5c9921f4f96c185bda5e8407a3cc810fcf242c3231. This is
+the strongest direct proof that ignored return values made the old wallet
+fuzzer accept a broken valid-wallet encryption transition.
+
+### Corpus and clean verification
+
+The source corpus was copied to
+/tmp/codex-crypter-audit-20260722/frozen-corpus. It contained 998 files,
+875681 bytes, sizes 1..250372. The sorted filename/size manifest SHA-256 was
+35665222df75644f9fba18c793c6284e2d9774f2b5c3386d94b96733ce3e02e9.
+
+Final restored source hashes:
+
+* src/wallet/test/fuzz/crypter.cpp:
+  f062a29aa5e2f0795d1efec7d4636df09c5958c92f272f28c62e91ad721b511c.
+* src/wallet/crypter.cpp:
+  336b6e9486e7a65ec22594de45de96c2781a4b6b2176d15897a35c9225c40921.
+
+Final normal fuzz binary SHA-256:
+750832d54a999944024e7f15e1413112c8727555494ebe662f1c03da15f165f6.
+The empty-seed replay exited 0, log SHA-256
+0709bb2ea04a0754106f3ba1b050d6205c20069285ebdc9b51c6716aab0a5250. The
+998-file replay exited 0, log SHA-256
+2407486007ff3154dbb50f1ca2e9a89505b75673117a219958ac78a9e2e15f73. Four
+independent normal workers each passed all 998 files with the same worker log
+SHA-256:
+133eb3623c68adfdb663319baee323caea3666507851bd2d689442fe2d6565a3.
+
+Final ASan/UBSan fuzz binary SHA-256:
+6a4b4b98b4d95c17ada70216772dfd6b1ad89d0324e7ad6b892e4a40f40a7c5e. The
+bounded empty-seed replay exited 0, log SHA-256
+5beb5e7cea54065ec47788103998100ada8ac323a432beb6afde7ee17a36d109. The
+bounded corpus replay completed 999 runs, coverage 6651, features 42287, and
+about 282 MiB peak RSS with no sanitizer diagnostics; log SHA-256
+9158d2068f8ed07ca5a9d63b2fc5767711a8f353ce1e19b8688908a6cfc67bcb.
+
+Clean wallet_crypto_tests exited 0 with *** No errors detected. The test
+binary SHA-256 was
+97285945c76adf46121388ca7467761a816e8b991c351e508143026e9622a4a1 and the
+log SHA-256 was
+453c7ac37f68d91dc83f79e88de7c96253ad68c92a875d5ec66c07d303c5b6f4.
+git diff --check and clang-format --dry-run --Werror passed. No fuzz,
+sanitizer, build, or test process remains running.
+
+### Review provenance and reiterated findings
+
+The source branch was rebased onto Core origin/master
+efa1800a885c1ae605e18605ef73957ea13e575c before this audit. The l0rinc
+source branch was reviewed at l0rinc/master
+32eb52100296718f7c0469e3210ce1db73694793. The exact target-scoped query was:
+
+    git log --oneline origin/master..l0rinc/master -- src/wallet/test/fuzz/crypter.cpp src/wallet/crypter.cpp src/wallet/crypter.h src/wallet/test/wallet_crypto_tests.cpp src/wallet/wallet.cpp
+
+It returned no commits, so no l0rinc commit was cherry-picked for this target.
+
+Existing findings remain reiterated with severity based on unmodified master and
+actual Bitcoin Core callers: private-broadcast failed-send retention is
+Medium and feature-gated/fixed on master; empty HEADERS initial-sync handoff
+is Medium availability/IBD stall; peer transaction activity refresh,
+process-message block-storage failure, and oversized transport message types
+are Low; ecmult_multi scratch wrapping is Medium internal/resource correctness
+with low Core reachability; forced secp256k1 10x26 magnitude-32 normalization
+and SHA/HMAC/RFC6979 retention are Medium latent/internal findings with limited
+reachability; Banman invalid-subnet/unban integrity is Low or nice-to-have
+because Core RPC validation rejects invalid entries before affected state is
+used. The txdownloadman, txrequest, connman, eviction, handshake,
+compact-block, headers-sync, UTXO snapshot, mempool-persistence, cache/index/API,
+serialization, and other audited campaigns found no additional confirmed
+clean-master production bug.
+
+If a later l0rinc cherry-pick, minor fix, or follow-up makes this oracle green,
+rerun the clean-master baseline or exact minimal mutation. Amend the affected
+commit and this note with before/after behavior, actual Core caller and input
+reachability, assertion/status/stack, corpus or mutation, failure mode,
+master-relative severity, and whether the trigger is preserved, changed, or
+masked. A minor or non-serious patch that accidentally hides a severe master
+condition does not lower its severity on master. Every confirmed production
+bug requires the strongest proof, a deterministic regression test, and why
+existing builds/tests did or did not catch it.
