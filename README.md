@@ -3508,6 +3508,156 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `script_sign` MuSig2 secret-nonce lifecycle oracle audit (2026-07-22)
+
+Source commit: `e91e0f9a61f5b9432d5d4b805a7764672eec737f`
+(`fuzz: exercise MuSig2 signing and secret-nonce lifecycle`), parent
+`fad946a20252fb2f28270ba0234f260d38f9c669`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`. The
+source branch remains based on latest Bitcoin Core `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`; that commit is an ancestor of
+the source checkpoint. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master.
+The target-scoped query over `src/test/fuzz/script_sign.cpp`,
+`src/script/sign.cpp`, `src/script/sign.h`, `src/script/signingprovider.cpp`,
+`src/script/signingprovider.h`, `src/musig.cpp`, and `src/musig.h` was empty,
+so no unique l0rinc commit applies or was cherry-picked. The enhanced source
+SHA-256 is
+`872e6f1904bfa6c047de9e91ecaa331615075221d13944b6c609bcb51e25584b`.
+Production `src/script/sign.cpp` and `src/musig.cpp` were restored unchanged
+at SHA-256 values
+`f47faa2ecc0e5bd43d49c83f491dbd2fa3d9404c3149d65412c2bcdd1faade48` and
+`bed3eb17a1c14553bd14d0de9cd7dfb98130a5d49839361970f364581aaac883`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=script_sign` target discarded signing results and never built a
+valid MuSig2 session. The new test-only path constructs two fixed-valid
+participants and a valid synthetic transaction, creates both public and
+provider-held secret nonces, consumes one session per partial signature,
+requires provider session storage to shrink to zero, rejects a retry with a
+consumed nonce, aggregates the partial signatures, computes the same BIP341
+Taproot sighash, and verifies the final 64-byte Schnorr signature under the
+aggregate x-only key. Fixed fallback keys ensure every corpus input reaches
+the contract even when random `SignatureData` cannot describe an aggregate.
+
+This is the real MuSig2 secret lifecycle: `src/musig.cpp:237-239`
+invalidates `MuSig2SecNonce` after partial signing, while
+`src/script/sign.cpp:186` removes the provider session. The wallet/local
+signing boundary is reached through `src/script/sign.cpp:282-373` and
+`:745`, `src/wallet/scriptpubkeyman.cpp:1328-1339`,
+`src/wallet/rpc/spend.cpp:937`, and `src/wallet/wallet.cpp:2196`. An invalid
+network block cannot trigger this synthetic signing sequence. Clean master
+produced no production failure, invalid-block behavior, sanitizer report, or
+concurrency failure. The current-tree rating is **Informational/Low to
+Medium** oracle and lifecycle hardening, not a production vulnerability,
+fix, or deterministic regression test.
+
+The modeled mutation below removes provider-session deletion but leaves
+libsecp256k1's secret-nonce invalidation intact. It therefore demonstrates
+stale invalid-session retention, not nonce reuse or private-key leakage. It is
+not Critical on the actual caller path. A production defect that retained a
+valid MuSig2 secret nonce for reuse, exposed it, or caused nonce/key
+compromise would be **Critical** for wallet funds. A nonce without
+cryptographic meaning is not Critical merely because it is not cleared; these
+MuSig2 secret nonces do carry cryptographic meaning, so valid-secret reuse
+would receive the stronger rating.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: feature-conditional private-broadcast
+failed-send retention is **Medium**, and the empty-HEADERS initial-sync
+handoff is **Medium** for availability/IBD impact. Peer transaction-activity
+refresh, local `ProcessMessage` block-storage failure, oversized transport
+types, compact-block diagnostics, cache/index, storage, serialization, and
+container findings remain **Low** or hardening under current Bitcoin Core
+callers. Ecmult scratch wrapping, forced 10x26 magnitude-32 normalization,
+and SHA/HMAC/RFC6979 retention remain **Medium but latent/reachability-
+limited** correctness or hygiene findings; Banman invalid-subnet/unban
+integrity remains Low/nice-to-have. Txrequest, txdownloadman, connman,
+eviction, handshake, headers-sync, UTXO snapshot, mempool-persistence,
+package-evaluation, RPC, descriptor-cache, and other prior audits have no
+additional clean-master production bug to promote here. Later fork commits,
+minor fixes, and master changes must be checked against clean master and
+identified as masking, preserving, or changing stronger behavior.
+
+### Corpus and replay evidence
+
+The frozen corpus came from
+`/mnt/my_storage/qa-assets/fuzz_corpora/script_sign` and was copied to
+`/tmp/bitcoin-script-sign-audit-20260722/frozen`. It contains 5,310 files and
+61,039,868 bytes, sizes 17..938,133. The per-file manifest SHA-256 is
+`ece68043491ff67e92c69399ab5b34098769b78afc962cbc409edce93e1cbf48`; the
+sorted filename manifest SHA-256 is
+`ac1f5d9b94d73a2883677a4f7ebb4eed8136c9695437eced00ebb5a519c29504`.
+
+The final normal fuzz binary SHA-256 was
+`248db38643782f3a505f3b4a85f5b7c7fa6076a1701963971eafb714da00c6a9`.
+The corpus replay exited 0 after 5,311 executions, reached coverage/features
+4,634/26,303, peaked at 127 MiB, and produced no new units or artifacts; log
+SHA-256: `b491a6be9986b603cef177f0a4204f3cf70942179892f3d1dc98ea44929cfef0`.
+The final ASan/UBSan binary SHA-256 was
+`2cf38531c6312688ad447048133e65d6175a567fcb80f346f5d8f11eb764439f`.
+It exited 0 after 5,312 executions, reached coverage/features 13,173/76,730,
+peaked at 860 MiB, and produced no new units, artifacts, or sanitizer
+diagnostics; log SHA-256:
+`f88701af759b4307103d45885c5e57eed0b1033e1c82c011b4cd6c18974cc15f`.
+
+Four isolated ASan workers replayed shards of 1,328/1,328/1,327/1,327 files
+and executed 1,330/1,330/1,329/1,329 units. Coverage/features and peak RSS
+were 13,105/66,716 at 817 MiB, 13,033/66,612 at 668 MiB,
+13,107/67,070 at 642 MiB, and 13,069/67,767 at 714 MiB. Each exited 0
+without artifacts or diagnostics. Worker log SHA-256 values were
+`d5a87bcdf9b9113d7d7a69a8ffc6162b658b649243a273cb2455aff18a0f1155`,
+`12f254ec9313fbfe16cd2359523c000a1c6e21a697e0cdaca3cb35ce49bc3710`,
+`92ebff638e44816c35cc5f61cfe5944698219106f50d34513d4a38c81d9e6b0d`, and
+`7b89aeff3d02da793646810d9c187c1f1ad7244afa7cc9a6ff6059f77a032fa4`.
+The worker filename union matched the frozen filename manifest exactly.
+
+### Mutation proof and test gap
+
+The exact 17-byte proof witness is
+`/mnt/my_storage/qa-assets/fuzz_corpora/script_sign/2957816cc9a07a94a14c469295ab655ce08396a8`,
+with SHA-256
+`90654b2c37437c6a273c83d3f19c1094736c915a81c6a33157464fb6fce26868`.
+A temporary mutation at `src/script/sign.cpp:186` commented out
+`provider.DeleteMuSig2Session(session_id)` while leaving the underlying
+secnonce invalidation in place. Enhanced normal and ASan/UBSan runs reached
+`src/test/fuzz/script_sign.cpp:204` and failed the assertion that one session
+remained after the first of two partial signatures. Their logs reported the
+assertion and libFuzzer deadly signal; SHA-256 values were
+`c29f789afbd5d1a2a6f16a470474cabce3aa148874403ac940faba35c51d9680` and
+`e1e7cef09870df118d9b967f6a855f7b6bd4229dfa3ca5b0833e271767bc54b3`.
+The wrappers were interrupted after libFuzzer's signal handler did not
+return; no artifact was produced.
+
+Matched old-harness controls removed only the new MuSig2 block and its
+includes, used the same production mutation and exact witness, and exited 0
+after one execution with no artifacts. Control log SHA-256 values were
+`83d3198193bec112e0e39e73b13e3e4231c5965a3052c566035acb6f5f767f7b` and
+`c8222c327727c19cdb58c2c86e9a7f1e9a138877190809825a68a74849ac1b0d`.
+This proves the new oracle detects a secret-session lifecycle regression the
+old target accepted; it does not upgrade the modeled mutation to a
+clean-master vulnerability or Critical wallet finding.
+
+After restoring production and rebuilding, the exact witness exited 0 in
+normal and ASan/UBSan final replays; log SHA-256 values were
+`10df0ee9b5bdb18e6f306e60ca8305a16c196a6d1dee7147465a78f1dffec9ad` and
+`2a93367f0d53421d580d02cad6e7f8ab1cd491f3bfaf90e0cb858f833dc598a7`.
+The focused command
+`/tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=script_tests,txvalidationcache_tests,validation_tests,bip328_tests,key_tests --log_level=test_suite`
+exited 0 with `*** No errors detected`; log SHA-256 is
+`6f09c2ceb1b4f080e93707e8759c3e9e8f6927478b2b7b3e411e77f8186a5503` and
+the test binary SHA-256 is
+`f744420ce0ce9bc48f20bede52e6bc6358f327ce957e6735745619b17f1ae5f0`.
+`git diff --check` passed, all temporary production mutations were restored,
+and no fuzz, sanitizer, mutation, build, or test process remains. Any later
+l0rinc cherry-pick, fork/minor fix, or master change affecting MuSig2,
+signing providers, secret-nonce invalidation/deletion, or wallet callers must
+be amended into the source commit and this note with target, caller, corpus
+or mutation, assertion, failure mode, master-relative severity, and whether it
+masks, preserves, or changes the result.
+
 ## `script_flags` fresh-checker replay oracle audit (2026-07-22)
 
 Source commit: `fad946a20252fb2f28270ba0234f260d38f9c669` (`fuzz: replay
