@@ -2966,6 +2966,231 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## `fee_rate` CFeeRate arithmetic oracle audit (2026-07-22)
+
+Source commit: `72ff941501437f189c27a18812f036c309edb615` (`fuzz: strengthen
+CFeeRate arithmetic oracle`).
+Its parent is `f678da787025ec40c0d7a176b58ba5447ee22c2e`; the source audit
+branch was rebased on the fetched Bitcoin Core `origin/master` at
+`a2e074d66ac17ca7907909bbbb563e77185a45e5`, and that commit is an ancestor
+of the source `HEAD`. This note is the committed continuation of the
+master-relative fuzz-oracle audit and reiterates the existing findings ledger
+rather than converting an oracle failure into a production finding.
+
+### l0rinc review and source scope
+
+The fetched `l0rinc/master` was
+`32eb52100296718f7c0469e3210ce1db73694793`. The exact target query was:
+
+    git log --oneline origin/master..l0rinc/master -- \
+      src/test/fuzz/fee_rate.cpp src/policy/feerate.cpp \
+      src/policy/feerate.h src/util/feefrac.cpp src/util/feefrac.h
+
+It returned no commits. No l0rinc commit was cherry-picked for this target.
+There was no later minor or follow-up change affecting this target during the
+proof, so there is no before/after masking change to merge or amend here.
+
+### Contract and Bitcoin Core boundary
+
+`CFeeRate` stores a fee/virtual-size ratio. The enhanced target now checks the
+following independent contracts:
+
+* integral construction preserves the exact `fee/1000` representation and
+  `GetFeePerK()` value;
+* rational construction preserves a positive virtual size and normalizes a
+  non-positive size to the empty zero rate;
+* `GetFee()` rounds toward positive infinity for non-negative ratios and
+  applies the existing one-satoshi result for a negative non-zero rate whose
+  mathematical ceiling is zero;
+* `GetFeePerK()` uses signed floor arithmetic for rational rates;
+* exact ratio ordering, equality, all relational operators, and the deliberate
+  per-kvB quantization in `operator+=` agree with an independent model;
+* BTC/kvB and sat/vB formatting remains exact; and
+* zero, fractional, signed, `MAX_MONEY`, `INT32_MAX`, and high-magnitude
+  multiplication paths remain representable and stable.
+
+Production `Assert()` postconditions were added where the representation
+invariant belongs: the rational constructor checks its stored size or empty
+state, and `operator+=` checks its 1000-vB result representation. The harness
+uses `boost::multiprecision::cpp_int` for independent signed floor/ceiling
+arithmetic. Fixed witnesses include `1 sat / 1001 vB`, `2 sat / 1001 vB`,
+`-1 sat / 1001 vB`, an empty zero-size constructor, and the maximum vsize.
+
+The fixed witness `AssertOrdering(0, 0, 1, 1000)` initially exposed a stale
+model assumption: the first model treated an empty rate as an ordinary zero
+rate ordered below a non-empty rate. Clean master correctly failed that
+overbroad oracle at `fee_rate.cpp:136`; the diagnostic log SHA-256 was
+`6ca22c3760fd1716e8f90dc4200b0d1e5befc39a0e898598da0b216c5f79108f`.
+Historical `FeeRateCompare` documentation and current `ByRatio` intentionally
+define an empty `FeeFrac` as neither lower nor higher in rate than a non-empty
+one, making the rate-only comparison equivalent. `ByRatioNegSize` is the
+separate wrapper that orders empty values last. The corrected independent
+model encodes that contract; exact clean replays then exited 0 in normal mode
+(log SHA-256
+`5920c25ec52eb4b9ae0239513e6cac41eb90d993081b42a5ec9c6c377bb6808d`) and
+ASan/UBSan mode (log SHA-256
+`f1c791b5588000993501697ecb766fd35e402af4d5a77f407a760c6baebf07ad`). This
+was classified as a stale/overbroad oracle, not a production finding or
+severity upgrade.
+
+The relevant Bitcoin Core callers are policy, RPC, and wallet paths:
+
+* `src/validation.cpp:712,717,1375,1465` uses fee rates for mempool package
+  minimums and client max-feerate checks;
+* `src/txmempool.cpp:863-874,889` tracks rolling and removed-package rates;
+* `src/rpc/mempool.cpp:110,391,1394` calculates max-fee limits and reports
+  effective rates;
+* `src/wallet/fees.cpp:16,24`, `src/wallet/spend.cpp:1182-1195,1336`, and
+  `src/wallet/feebumper.cpp:90,95,127-139` use the result for wallet fee
+  selection, change, and replacement transactions; and
+* related `GetFeePerK()` calls expose relay and mempool policy to RPC and
+  peer fee-filter logic.
+
+Invalid blocks do not directly invoke this `CFeeRate` arithmetic. A clean
+master run reproduced no production failure, so the current master-relative
+rating is **Informational/Low oracle hardening**, not a confirmed bug and not
+Critical. The modeled `+1 satoshi` mutation below would be **Medium policy
+correctness if shipped**, because it could alter wallet fee selection and
+mempool/RPC thresholds, but it is not present on master and has no consensus,
+memory-safety, or cryptographic impact. No nonce or counter is involved; a
+value without standalone cryptographic meaning is not Critical merely because
+it is retained.
+
+### Corpus and baseline identity
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/fee_rate` to
+`/tmp/codex-feerate-audit-20260722/frozen-corpus`: 22 files, 195 bytes,
+minimum 1 byte, maximum 18 bytes. The manifest SHA-256 is
+`cca1734a861b841385460785a03a1498a75b6572373f9d319de15303c8ece5bd`.
+
+The original harness source SHA-256 was
+`01346220692d1ecb2e4e8be792b2a387699090ef5ff5dd97f53d87a4a465a8f7`; the
+enhanced `src/test/fuzz/fee_rate.cpp` SHA-256 is
+`c83eb98c8320da7220593f713bb2bf28783a88f8102e490be528379449f875c0`.
+Clean master production `src/policy/feerate.cpp` is
+`bc2b979fe7c66380f6c21bb294a6fc8e5911b55f7b2f0e66c18956fe0fd1cd89`, and
+the final `src/policy/feerate.h` SHA-256 is
+`5f82348d911c039e4b98adfab063e0b21652f94ed1771544f75c4e192e076b23`.
+
+The original normal baseline exited 0 on all 22 files with log SHA-256
+`cd8252f9242cbc9671871bfa717bc4d1e41c6a7d76ae56d5ae6544aae3fa5561`.
+The original ASan/UBSan baseline exited 0 after 23 executions with log
+SHA-256 `cbc33479945733fb13813837c9cc273ec80567d9d91f7ca257c5e2e47c7a6de4`;
+it recorded 188 coverage points, 216 features, and 98 MiB peak RSS.
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The exact temporary production mutation was:
+
+    CAmount nFee = CAmount(m_feerate.EvaluateFeeUp(virtual_bytes)) + 1;
+
+in `src/policy/feerate.cpp`. The mutated source SHA-256 was
+`2b1865f37c5b0e93b95dd751b8f4ad71d415642fda7fb5d830b83963f42e6031`.
+It was removed before the source commit.
+
+The exact frozen witness was
+`/tmp/codex-feerate-audit-20260722/frozen-corpus/0707bcaafbf87437b39786e4adaead915ffa2ac0`,
+SHA-256
+`013d3c213143c4f0dbff3df914cb4e1b6e54433d170a1eb085594ebcc1bcfe03`.
+After correcting the empty-rate sentinel model described above, the enhanced
+mutated normal binary exited 1 at
+`src/test/fuzz/fee_rate.cpp:99` on `rate.GetFee(0) == 0`; the authoritative
+log SHA-256 is
+`8590be303caffde784dc5147fe6bf3507614a9a18159bf94b8ef8d772a6536b5`.
+The enhanced mutated ASan/UBSan binary exited 77 at the same assertion, with
+no ASan or UBSan diagnostic; the authoritative log SHA-256 is
+`2f83dc198b038ec02ee30036d2b8dbdae69d6fa58edfc43f09bcda67a492c7d4`.
+These v2 results supersede the earlier pre-sentinel-correction mutation logs
+recorded in the amended source commit.
+
+The old harness was run against the identical production mutation using a
+temporary `fee_rate_old` control target, which was removed before commit. It
+passed all 22 files in normal mode, log SHA-256
+`ff9ef3515ac052413d1e198ce8d2b596da00920a6eecbf31c27a842a6ec0ec94`, and in
+ASan/UBSan mode, log SHA-256
+`0f1ed875d4bafea31e76e7a0a07934d31e9b696e78d8caeeea9b481314b44f13`.
+The old ASan run completed 23 executions, recorded 187 coverage points, 215
+features, and 98 MiB peak RSS. The old target called `GetFee()` but discarded
+the result and never constructed a rational `CFeeRate`; the new production
+and fuzzer assertions therefore prove the exact weakness without claiming a
+master bug.
+
+### Final replay and multi-worker evidence
+
+The final corrected normal fuzz binary SHA-256 is
+`28e8579c244960ff1dc446386b30422d167897496553e533f202c2dbe2e0e614`.
+It passed all 22 frozen files; the log SHA-256 is
+`cd8252f9242cbc9671871bfa717bc4d1e41c6a7d76ae56d5ae6544aae3fa5561`.
+The final corrected ASan/UBSan binary SHA-256 is
+`43605822161aca4386d6b6a4cc7e633b7160acadc845e8f36122e559f1da5b54`.
+It completed 23 executions with 577 coverage points, 608 features, and 102
+MiB peak RSS; its log SHA-256 is
+`933defc643c06152339ca0b6de367b4f4d9988d68866922b574509be3a20c692`.
+No artifacts or sanitizer diagnostics were produced.
+
+Four independent normal workers each passed all 22 files and produced the
+same log SHA-256:
+
+    worker 1  cd8252f9242cbc9671871bfa717bc4d1e41c6a7d76ae56d5ae6544aae3fa5561
+    worker 2  cd8252f9242cbc9671871bfa717bc4d1e41c6a7d76ae56d5ae6544aae3fa5561
+    worker 3  cd8252f9242cbc9671871bfa717bc4d1e41c6a7d76ae56d5ae6544aae3fa5561
+    worker 4  cd8252f9242cbc9671871bfa717bc4d1e41c6a7d76ae56d5ae6544aae3fa5561
+
+Four independent ASan/UBSan workers each completed 23 executions with exit
+0 and no artifacts. Their log SHA-256 values were:
+
+    worker 1  86b83ff51d9c1f48dff6051e63acd291812bd35ccae0d325bcbfcbdbbeae75fe
+    worker 2  8f687f0a39c63928b956933e446632a4285e3686894a83164765e43033176576
+    worker 3  b5a9208bb88dde19037a321891abfa7b7072a6ec2bf89545eeb957772e0f50e3
+    worker 4  eb81dcf74fe2d6eee3771d3a478a62108cdeb0af3edb1fe0c965fab30986ac5a
+
+Authoritative build and replay commands were:
+
+    cmake --build /tmp/bitcoin-fs-poly-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-fs-poly-asan-build --target fuzz -j2
+    env FUZZ=fee_rate /tmp/bitcoin-fs-poly-build/bin/fuzz \
+      /tmp/codex-feerate-audit-20260722/frozen-corpus
+    env FUZZ=fee_rate ASAN_OPTIONS=symbolize=0 \
+      UBSAN_OPTIONS=print_stacktrace=0 \
+      /tmp/bitcoin-fs-poly-asan-build/bin/fuzz -runs=22 \
+      -print_final_stats=1 /tmp/codex-feerate-audit-20260722/frozen-corpus
+
+### Existing tests, reiterated findings, and follow-up discipline
+
+`src/test/amount_tests.cpp` already covers representative `GetFee()` rounding,
+the `1/1001` rational constructor, comparisons, multiplication, and formats;
+`src/test/feefrac_tests.cpp` covers signed and high-magnitude floor/ceiling
+paths. The modeled mutation would be caught by those deterministic tests, so
+the proof does not claim that existing tests missed a production regression.
+The fuzzer improvement matters because the old fuzzer accepted the mutation
+while invoking the affected method and did not reach rational construction.
+The configured fuzz-only builds have no `test_bitcoin` target, so the
+dedicated unit suite was unavailable in this run. No deterministic regression
+test was added because no clean-master production bug was confirmed.
+
+The reiterated master-relative ledger is unchanged: feature-gated
+private-broadcast failed-send retention is Medium and fixed on master; empty
+HEADERS initial-sync handoff is Medium availability/IBD; peer activity refresh
+and process-message block-storage failures are Low; oversized transport types
+are Low with fixed-width/RPC-validated callers; ecmult scratch wrapping and
+forced secp 10x26 magnitude-32 normalization are Medium latent/internal
+issues with limited Core reachability; SHA/HMAC/RFC6979 retention is Medium
+latent/internal; Banman invalid-subnet/unban integrity is Low/nice-to-have
+under Core RPC validation; and no additional confirmed clean-master production
+bug was found in the audited campaigns.
+
+If a later l0rinc cherry-pick, minor fix, follow-up fix, or master change makes
+this oracle green, replay clean master and the exact mutation and amend the
+source commit and this note with before/after behavior, caller reachability,
+assertion/failure/stack, corpus or mutation identity, severity, and whether
+the change preserves, changes, or masks the trigger. A minor patch that
+accidentally masks a severe condition on master must not lower its
+master-relative severity. This commit claims no production bug, no production
+fix, and no critical invalid-block path. No fuzz, sanitizer, or mutation
+process remains running.
+
 ## `threadpool` lifecycle and shutdown oracle audit (2026-07-21)
 
 Source commit: `d490ea2da497d73bcfb9dc89e5c0e92a3dacb434` (`fuzz: exercise
@@ -5588,12 +5813,14 @@ strongest deterministic proof available.
 
 ## `eval_script` result/error/state oracle audit (2026-07-22)
 
-Source commit: `2027789f72` (`fuzz: assert EvalScript result and state
-contracts`), parent `fc42f885bee7f0f4ca4afaccbce8e3b1e26835e6`, on source
-branch `codex/fuzz-oracles-current` in
-`/tmp/bitcoin-secp256k1-audit-current`. The source branch is based on latest
-Bitcoin Core `origin/master` `32eb52100296718f7c0469e3210ce1db73694793`.
-`l0rinc/master` is `d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of
+Source commit: `d7cd12e86841ab1d882836bdb92324fabb7096d9` (`fuzz: assert
+EvalScript result and state contracts`), parent
+`d4869d97b0e7940000df4125e6ad29e0970ec6e4`, on source branch
+`codex/fuzz-oracles-current` in
+`/tmp/bitcoin-secp256k1-audit-current`. The source branch was subsequently
+rebased onto latest Bitcoin Core `origin/master`
+`a2e074d66ac17ca7907909bbbb563e77185a45e5`.
+`l0rinc/master` is `32eb52100296718f7c0469e3210ce1db73694793`, an ancestor of
 current master. The target-scoped query
 `git log origin/master..l0rinc/master -- src/script/interpreter.cpp
 src/script/interpreter.h src/test/fuzz/eval_script.cpp` was empty, so no
@@ -5727,6 +5954,122 @@ failure mode, master-relative severity, and whether it masks, preserves, or
 changes the finding. Every future production claim requires clean-master
 reproduction or a minimal production mutation plus the strongest deterministic
 proof available.
+
+### Tapscript continuation and state oracle (source commit `f1aa4c342b`)
+
+Source commit `f1aa4c342b741fbf6158df9d99a3af4008441cfc` (`fuzz: cover
+Tapscript EvalScript state contracts`) has parent
+`72ff941501437f189c27a18812f036c309edb615`. It was made after rebasing the
+source branch onto Bitcoin Core `origin/master`
+`a2e074d66ac17ca7907909bbbb563e77185a45e5`; the source merge-base is that
+commit. The fetched `l0rinc/master` is
+`32eb52100296718f7c0469e3210ce1db73694793`. The exact query was:
+
+    git log --oneline origin/master..l0rinc/master -- \
+      src/script/interpreter.cpp src/script/interpreter.h \
+      src/test/fuzz/eval_script.cpp src/test/fuzz/signature_checker.cpp
+
+It returned no commits. The related
+`68ba1dbec785b4452593b77acb8b0faa4a0b686b` signature-checker oracle is
+already an ancestor and covers a different target, so no l0rinc commit was
+cherry-picked or allowed to mask this target.
+
+The prior `eval_script` oracle covered only BASE and WITNESS_V0 and already
+checked result/error/stack replay. This continuation executes TAPSCRIPT,
+initializes its validation-weight precondition, compares initialized
+`ScriptExecutionData` fields across a fresh replay, and adds fixed anchors for
+MINIMALIF, empty public keys, and OP_CHECKSIGADD with a false Schnorr
+signature. The latter must leave an initial counter of 7 unchanged. These
+contracts are fuzzer-side; existing production assertions remain unchanged.
+
+Bitcoin Core reaches this boundary through `ExecuteWitnessScript` at
+`src/script/interpreter.cpp:1874`, Tapscript setup at `:1988-1993`, and
+`VerifyScript` at `:2029`, `:2034`, `:2052`, and `:2097`. `CScriptCheck` calls
+it from `src/validation.cpp:2030` during transaction and block validation,
+with block checks scheduled at `:2594-2599`. A real Tapscript semantic
+divergence can therefore affect consensus validation. Clean master produced
+no failure, so the master-relative result is **Informational/Low oracle
+hardening**, with no production bug, fix, or deterministic regression test
+claimed. A real bug that accepted an invalid block would be High/Critical
+according to demonstrated impact. A retained counter without standalone
+cryptographic meaning is not Critical merely because it is retained.
+
+The frozen corpus is the existing
+`/mnt/my_storage/qa-assets/fuzz_corpora/eval_script` copy at
+`/tmp/bitcoin-eval-script-audit-20260722/frozen`: 1,675 files, 897,350 bytes,
+sizes 1..10,010. Per-file manifest SHA-256 is
+`ef0f0642e604180b210bfb6d6156f034f8a7b494d33d5b3ecf2f60ace539b6d6`; sorted
+filename manifest SHA-256 is
+`f5aabd2466ecd30b810f1bb323f0294abe83d27720f59b0572ea8fcf8271a6ff`.
+The original fuzzer source SHA-256 was
+`740d93754b5d0c86be564e0a8697eea1b3dbad67976b6dcf2fd0e37565e394e1`; final
+source is `ba1b33ff318237160a3882dae319a12c68aa211b0ef788b98243b6c5cde29b6e`;
+restored `src/script/interpreter.cpp` is
+`57a6f328c7e6202f499e48366a86eb26e09c8ebb78e92eef7e839207230be333`.
+
+The normal binary SHA-256 is
+`88b499d3e31c1d68f5e25b41c2eb407418c379f3be750977dac085c93c8a63d3`; it
+passed all files with log SHA-256
+`ba029f9777990285148600295aa4c05d7f35332cab44e3645ebee9ee759e8d00`.
+The ASan/UBSan binary SHA-256 is
+`5d9e3d11aa9d9018197085bfbdd68c1dbb568497e16caae54a750bebefbd1684`; it
+exited 0 after 1,676 executions with coverage/features 1,524/7,602 and
+429 MiB peak RSS. Its log SHA-256 is
+`deec59732b2a4f1a5b1a3efb27922d4fc90c94a5e6994cebe2ac9ef293fefaa3`.
+Four normal workers all passed with log SHA-256
+`ba029f9777990285148600295aa4c05d7f35332cab44e3645ebee9ee759e8d00`.
+Four ASan/UBSan workers all exited 0 with no diagnostics or artifacts; their
+log SHA-256 values are
+`b0fb76aec4ee41800bb5d97b1dd8dc008e5c9ea703be613e697f535ffad11f6c`,
+`c9e4e9095536a1d960e00d67728a512421dfd155f90d29af3dbe8aa134a06971`,
+`4512668a8c2e3618fd2d0f6f25ed2eea19792a0572f10cfa8b1698264d29dd54`, and
+`185d63ae71a4237c817aec68adc970f789a0aa24897583130ae8ae7caa2a953c`.
+
+### Differential proof and severity control
+
+The temporary production mutation at `src/script/interpreter.cpp:1111`
+changed `(num + (success ? 1 : 0)).getvch()` to `(num + 1).getvch()`.
+Mutated production SHA-256 was
+`87597b6f2318a3f390ff7e5b1d338c015da6430a12969d6195cf650d1ed3eb6a`.
+The exact witness was the empty input, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+The enhanced normal binary
+`29746b95fe253f90ba78cf48dba3b3aea9eb3b5f8a306b7c8f4e059563f9e420`
+exited 1 at `eval_script.cpp:53`; log SHA-256 was
+`ebd315afa62a14bad9bdc95bf5ca2a1a494cd6d24cd9106370498ea3d17632f8`.
+The enhanced ASan/UBSan binary
+`e64f800acf3dd64ab17bc084bc48d3a72a76e7e56b7326ca6b0e8f5ac8f8671b`
+exited 77 at the same assertion, without a sanitizer diagnostic; log
+SHA-256 was `eb5eb2710da814e93df6f27e6c22a3491cb8a789c7ff1c4cd4dca670e1f9a123`.
+Temporary old-harness controls passed the same witness and mutation in both
+modes: normal log `00c30e081dfb7c0a5368235536caa9618a1c69ba427fb35ff7af1cfd0575d606`
+and ASan/UBSan log
+`70188739d50c77a9ddfb800146311d1517995ceb8c74e26ad0875ac812b3dd3d`.
+The mutated `test_bitcoin --run_test=script_tests --log_level=test_suite`
+also passed with `*** No errors detected` (log
+`0faee89009b74846080afa946ddd1abc1d1fdd7e0d420634be1d78db2beca598`), while
+the restored clean rerun passed with log
+`abec3020727087aeca0bf847c56d2639c37712e0b5a436894df04920278aec8e` and
+test binary SHA-256
+`34abd56fbf1f0a21f636e16f5cad78297328623df5f848a2a1f9398b369e8eeb`.
+This proves the new fuzzer anchor catches a consensus-relevant semantic
+mutation that the existing deterministic script suite did not. It is not a
+clean-master production finding. A weaker mutation and an initial
+overbroad stack assertion were discarded as non-discriminating/stale oracle
+experiments before the authoritative proof.
+
+The existing master-relative findings remain unchanged: private-broadcast
+failed-send retention and the empty-HEADERS handoff are Medium under their
+actual callers; peer activity refresh, process-message block-storage
+failure, and oversized transport types are Low; latent internal crypto/state
+issues are Medium only when the caller can reach them; and Banman integrity
+paths are Low/nice-to-have where Core validation prevents triggering them.
+Any later l0rinc, minor, follow-up, or master change that makes this oracle
+green must be replayed against clean master and recorded as preserving,
+changing, or masking the trigger. Accidental masking must not downgrade a
+severe master-relative result. Every production claim requires clean-master
+reproduction or a minimal production mutation plus the strongest
+deterministic proof. All mutation sources were restored and no jobs remain.
 
 ## `sighash_cache` cross-script oracle audit (2026-07-22)
 
@@ -6303,6 +6646,159 @@ The configured fuzz-only build has no `test_bitcoin` target, so the dedicated
 unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
+
+## `script` solver, destination, and witness-sigop oracle audit (2026-07-23)
+
+Source commit: `a6f061db35` (`fuzz: strengthen script solver and witness-sigop
+oracles`), full hash
+`a6f061db350f499dc13b97eecaa20aee3ee1d503`.
+The source branch is `codex/fuzz-oracles-current` in
+`/tmp/bitcoin-secp256k1-audit-current`; its parent is
+`4fc9e15636f5b251577e6d4497f3c3f7c2a2d502`. It was rebased onto fetched
+Bitcoin Core `origin/master`
+`5311b15727f2f282274472184185423e441abd85`. `l0rinc/master` is
+`32eb52100296718f7c0469e3210ce1db73694793`.
+
+The exact target-scoped fork query was:
+
+    git log origin/master..l0rinc/master -- \
+      src/script/solver.cpp src/script/solver.h \
+      src/addresstype.cpp src/addresstype.h \
+      src/script/interpreter.cpp src/script/interpreter.h \
+      src/test/fuzz/script.cpp
+
+It returned no output. No l0rinc commit was cherry-picked for this target, so
+no fork change was allowed to mask, weaken, or alter the result.
+
+### Oracle and Core boundary
+
+The old `FUZZ=script` target discarded the `Solver` solution vector and
+`CountWitnessSigOps` result. It only checked one-way implications around
+`IsStandard` and `ExtractDestination`. The new harness checks every
+`TxoutType` solution cardinality and byte-width contract, the multisig
+threshold/key-count relation, policy standardness, destination validity, and
+`GetScriptForDestination` round trips. It also checks that an empty signing
+provider reports only native witness outputs as SegWit and models
+`CountWitnessSigOps` independently across direct witness and P2SH-wrapped
+witness paths.
+
+`src/script/solver.h` documents Solver as policy/wallet code rather than
+consensus code. Current Core callers include `policy/policy.cpp:83,230`,
+`wallet/scriptpubkeyman.cpp:91`, `wallet/spend.cpp:455,465`,
+`script/descriptor.cpp:2812,2933`, `rpc/output_script.cpp:237`,
+`rpc/rawtransaction.cpp:486`, `core_io.cpp:423-425`, and
+`common/bloom.cpp:128`. A clean-master Solver/address mismatch would be a
+wallet, address, descriptor, or policy correctness/availability issue under
+these callers: Low/Medium, not Critical and not invalid-block acceptance.
+
+`CountWitnessSigOps` feeds `GetTransactionSigOpCost` at
+`consensus/tx_verify.cpp:143-159`, which validation uses at
+`validation.cpp:913,2575-2579`. A clean-master undercount that allowed a
+block to exceed the consensus sigop limit would be High/Critical according to
+demonstrated invalid-block acceptance or fork/DoS impact. Clean master
+produced no production mismatch, so this commit claims no production bug,
+production fix, or deterministic regression test.
+
+The existing findings ledger is reiterated: feature-conditional
+private-broadcast failed-send retention and empty-`HEADERS` initial-sync
+handoff remain Medium; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention remain Medium but
+reachability-limited; peer transaction refresh, local block-storage failure,
+oversized transport types, compact-block diagnostics, cache/index,
+storage/serialization/container issues remain Low or hardening under current
+Bitcoin Core callers. Other audited targets found no additional clean-master
+production bug. Later fork, minor, follow-up, or master changes must be
+classified as masking, preserving, or changing each result. A minor change
+that masks a severe master defect does not lower master-relative severity; a
+changed reproducer requires an amended source commit and ledger. A nonce or
+counter without standalone cryptographic meaning is not Critical merely
+because it is retained or not cleared.
+
+### Corpus and replay evidence
+
+The source corpus `/mnt/my_storage/qa-assets/fuzz_corpora/script` was frozen
+at `/tmp/bitcoin-script-audit-20260723/frozen-final`: 2,379 files,
+12,929,698 bytes, sizes 3..956,028. The per-file manifest SHA-256 is
+`30fb9c5628b3df2e3ff0d7ee93ae30e6c30dee6cba4d401108920782549bc2bb` and the
+sorted-name manifest SHA-256 is
+`d41847fedd18121baafb6cf00245ebd57d7ee27303e45419e35572a27a2f558b`.
+
+The normal binary SHA-256 is
+`aff4a8bdfb185afe07e2adf509546d342c044d846e3ddca66a8c4e03def82453`; it
+passed all 2,379 files and exited 0. Its log SHA-256 is
+`9d186c156ae2552443427becbd636538174c41bdd967fbdc1db9c8e57c85b10d`.
+The ASan/UBSan binary SHA-256 is
+`3fedd6e5962908ce0e8dfe5516f5a9ec5f41444ce97cbfe3f5ee440161afba4d`; the
+bounded replay exited 0 after 2,380 units, reached coverage/features
+4,759/12,698, peaked at 634 MiB, added no units, and emitted no diagnostics.
+Its log SHA-256 is
+`46736d722fd52e2ac4c8a12bc6efa5040560e483b464e3f917fa3c52d3f49744`.
+
+Four isolated ASan workers each exited 0 after 600 units, with peak RSS
+590/600/548/602 MiB and no sanitizer artifacts. Worker log SHA-256 values are
+`7f7b7a2c30360f5283cdb680ad7bc46f49287b1d75a2627f7e012304567f2a14`,
+`1d26737fc1c429fe8096ee4c8e88abf9e4d0ceb45cb0a5804802c5d95f4a50e8`,
+`448c5724297eb2eac0197f806f5679b70a8b2eed215f835100be3ec6fb5d7e18`, and
+`956a20420a6b89ab6bd0d5148ba2beea6868346a5df6668ee246519caa031a0d`.
+The initial disjoint worker shards covered the full 2,379-file manifest;
+workers were allowed to write only to their isolated copies.
+
+### Differential proof
+
+These are oracle differential proofs, not clean-master production findings.
+For the Solver proof, `src/script/solver.cpp:151` was temporarily changed
+from `TxoutType::SCRIPTHASH` to `TxoutType::PUBKEYHASH`. Normal replay failed
+at `script.cpp:192` on
+`/tmp/bitcoin-script-audit-20260723/frozen-final/007df47571945f1cd60c7d69264ed2ca00787dad`:
+216 bytes, input SHA-256
+`b7a227c7007eb25b41aa19e10d41883cef220ae00a104cdcd3c3cd34515d815d`.
+The exact failure was `GetScriptForDestination(address) == script`; the
+normal log SHA-256 is
+`027d8ff202450e4024ff5ba36bfca2e17fd852e4ab371ba8b5a2ccabedd480c7`.
+ASan reached the same assertion with log SHA-256
+`a941781f353237d85e9bef171b9f0c4125111d6e6b1ed481cd623b450941b8cc` and no
+sanitizer diagnostic.
+
+For the consensus-resource proof, `src/script/interpreter.cpp:2137` was
+temporarily changed so native P2WPKH `WitnessSigOps` returned 0 instead of 1.
+Normal replay failed at `script.cpp:240` on
+`/tmp/bitcoin-script-audit-20260723/frozen-final/8dff94dcfc25aaaf0c2a78bab3df0c234f5461a5`:
+31 bytes, input SHA-256
+`f72866d70181e0e1c973af5a72c361cb061610aa57535452cbd03a2bbcbf7ee3`.
+The normal log SHA-256 is
+`11ff5d82f1aec5b8482f8ec0f665a2f8b91849ce205072cf4d7202e3ae137dee`.
+ASan reached the same assertion with log SHA-256
+`a016c8b2bb766e57c9464b5e9bd4c9e347cb03d0190f6f653d64d585bc23aecf` and no
+sanitizer diagnostic. Both production mutations were restored before the
+source commit.
+
+After restoration, both exact witnesses passed in normal and ASan modes;
+clean witness log SHA-256 values are
+`6c6e19129527beff3b02f3a6e4aa067a5810e075c58ee51a02ec1cdf92b4264c` and
+`3e53447b0773a17faaf08fb7beb3e4ad371fe7fe2d8b3c816060497fd86728ef`.
+A preliminary `WITNESS_UNKNOWN` check incorrectly required version >=2; the
+corpus exposed valid version-1 unknown programs, so the bound was corrected
+to >=1 before the final replay. This was a stale oracle assumption, not a
+production finding.
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin \
+      --run_test=script_tests,script_p2sh_tests,script_segwit_tests,\
+      script_standard_tests,sigopcount_tests,descriptor_tests \
+      --log_level=test_suite
+
+ran 54 cases and exited 0 with `*** No errors detected`. The test binary
+SHA-256 is `404e07d44887031c6f612bd3718b6f666500b3aa8d7655dcff6963b93395d87f`
+and the log SHA-256 is
+`bbc7de505931a3ad51da5f97834bd59b69bd0a2a8be00fcd9e9f57e849180d0c`.
+The final fuzzer source SHA-256 is
+`b2e07a5f5c10cb871af00a852adbe3d1c23eabc2a13787f02dee1bdb46b34922`;
+clean production `src/script/solver.cpp` and `src/script/interpreter.cpp`
+are `d795354fafbbcef7c6d28ff8b9912e896575276b4ca85aeed2fc57f18c41174a`
+and `57a6f328c7e6202f499e48366a86eb26e09c8ebb78e92eef7e839207230be333`.
+`git diff --check` and formatting validation passed. No fuzz, sanitizer,
+mutation, build, or test process remains running.
 
 ## `wallet_bdb_parser` dump and status contract audit (2026-07-22)
 
