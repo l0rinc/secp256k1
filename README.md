@@ -3508,6 +3508,150 @@ only the pre-existing include ordering at
 changed. No production behavior changed, no production bug is asserted, and
 no fuzz, sanitizer, or mutation process remains running.
 
+## `key` Schnorr/Taproot oracle audit (2026-07-22)
+
+Source commit: `6bcb8be04416f248ef94ff09a32c4057f25db651` (`fuzz: assert
+Schnorr and Taproot key contracts`), parent
+`9a2f9cedf76cd6f4c16b4e692fd65be3be17ef9d`, on source branch
+`codex/fuzz-oracles-current` in `/tmp/bitcoin-secp256k1-audit-current`.
+The source branch is based on latest fetched `origin/master`
+`32eb52100296718f7c0469e3210ce1db73694793`. `l0rinc/master` is
+`d1d85263f8ebb47ad4d6126ff992d4915dda026b`, an ancestor of current master;
+no unique l0rinc commit applies to `key.cpp`, so no fork commit was
+cherry-picked for this target. Production source is unchanged by this
+commit; it adds test-only assertions to `FUZZ=key`.
+
+### Oracle and contract
+
+The existing key fuzzer covered ECDSA, BIP32, EllSwift, and ECDH, but did not
+make the BIP340/BIP341 transitions observable. The new oracle exercises
+`CKey::SignSchnorr` and `CKey::ComputeKeyPair` for all three merkle-root modes:
+`nullptr` (no tweak), a null `uint256` (the BIP341 no-script form), and a
+nonzero script-tree root.
+
+For each mode, the harness independently computes the expected x-only output
+through `XOnlyPubKey::CreateTapTweak`, requires the wrapper and `KeyPair`
+validity results to agree, and requires the wrapper and direct `KeyPair`
+signatures to be byte-identical. It verifies the signature with the output
+key, checks fully-valid and even-parity output keys, checks both full-key to
+x-only conversions, and checks `CheckTapTweak` for nonzero roots. It also
+constructs arbitrary x-only keys from fuzzer bytes and requires invalid keys
+to reject Schnorr verification and tap tweaks. These are narrow production
+contracts; the harness does not treat arbitrary acceptance as validity.
+
+### Bitcoin Core boundary and severity
+
+Bitcoin Core signing reaches `key.SignSchnorr` through
+`src/script/sign.cpp:112`. Consensus verification reaches
+`XOnlyPubKey::VerifySchnorr` through `src/script/interpreter.cpp:1696-1698`,
+and Taproot control-block validation reaches `CheckTapTweak` at
+`src/script/interpreter.cpp:1920-1924`. The null-root distinction is also
+used by tap-tweak construction at `src/script/sign.cpp:334-338`.
+
+Clean current master produced no production failure. The current-tree rating
+is therefore **Low/informational oracle hardening**, not a confirmed
+vulnerability and not a production fix. The signing path is local, but a
+real verifier or tweak mismatch reachable from an invalid block could change
+Taproot consensus validation or invalid-block acceptance; that finding would
+be rated High/Critical according to the demonstrated impact. Fuzzer bytes
+being malformed is not, by itself, Critical. No nonce-clearing assertion was
+added: the auxiliary signing input here has no independent cryptographic
+secret-lifecycle contract, and a nonce without cryptographic meaning is not
+Critical.
+
+This reiterates the existing master-relative ledger rather than upgrading it:
+the private-broadcast failed-send retention and empty-`HEADERS` initial-sync
+findings remain Medium and feature/caller dependent; package-evaluation,
+addrman, cache/index, compact-block diagnostic accounting, storage,
+serialization, and container-transition findings remain Low or hardening
+unless a Bitcoin Core caller demonstrates stronger impact. The current
+compact-block section below records the historical `extra_count` condition
+and current-master fix separately. No clean-current-master Critical finding
+is claimed by this key audit.
+
+### Corpus and clean replay
+
+The frozen corpus is `/mnt/my_storage/qa-assets/fuzz_corpora/key`, with 1,085
+files, 34,658 bytes total, and file sizes 1..32. The per-file SHA-256
+manifest is
+`0037489243e76f4fc0653e0e5fd69705019c861dd730d96b387761a18bd8b25a`.
+The sorted filename manifest is
+`d61e480c6b097cc876feabdd81b99363767147596b1e9e5fe7b1ba7a3f6fa442`, and
+the four-worker union matched it exactly. The exact witness was
+`00235b297abea064ae2e346e492ba338f52a048b`, 32 bytes, SHA-256
+`92d12a2e5eeada32fa85804fc9e77a89b50625341cca39498d100fa0d67df638`.
+
+The final normal fuzz binary SHA-256 was
+`21df6e94ff7feffcdfa7a1cbfb4910abb2c2f9b43b199ccae5f5e8485d81fb9c`.
+The corpus replay exited 0 after 1,086 executions, reached
+coverage/features `1,308/11,807`, peaked at 54 MiB, emitted no diagnostics
+or new units, and produced log SHA-256
+`5978e894f330b7978f51d5b076a9cc7e7ca4370474ab7b9852ac0616157c5de5`.
+
+The final ASan/UBSan fuzz binary SHA-256 was
+`8f512d7327c70ffdf12cac7fafb697492397cdd62e23f6dd181eef7f2c09dcf3`.
+Its corpus replay exited 0 after 2,088 executions, reached
+coverage/features `7,501/28,108`, peaked at 163 MiB, emitted no sanitizer
+diagnostics or new units, and produced log SHA-256
+`a38a7fc3cc4b44c9fbfeefac96b43c975eca4317802632d1cc225135a7b0a8d9`.
+
+Four strict sanitizer workers replayed shards of 272/271/271/271 inputs.
+Each exited 0 with no diagnostics or new units and peaked at 123 MiB. Their
+log SHA-256 values were:
+
+    worker0: b7989067495c5e265878b31a91c305a998252c9055f4015a26ecd46b0c4cad4b
+    worker1: e878497fb73c4e88baa53b770d357230cfa070419a7a2a89b94ac9761805e192
+    worker2: f2363bf481feb992cf3fa6f42bc4525816de15775ae8c1d30b9fec9a0ac9ce80e
+    worker3: c96b4389949f608b55b609b2f85d864fd4e35795109ec9b0ee70b0ebc872d37e
+
+The focused command
+
+    /tmp/bitcoin-descriptor-test-build/bin/test_bitcoin --run_test=key_tests,script_tests,descriptor_tests,bip324_tests --log_level=test_suite
+
+exited 0 with `*** No errors detected`; log SHA-256 is
+`ab7729954696a2eb0c5d8cd5afd57c8d648c0d037b19f89b2d3da3c897ae49df` and
+the test binary SHA-256 is
+`3082013e63c0b7fe6b6d3484147b5e1396767ea907e25b3789e84c9d93d5723f`.
+No production, fuzzer, sanitizer, mutation, or test process remains
+running.
+
+### Differential proof and follow-up policy
+
+The strongest proof available here is a matched production mutation, not a
+claim that clean master is broken. A temporary mutation at `src/key.cpp:433`
+changed
+`ComputeTapTweakHash(merkle_root->IsNull() ? nullptr : merkle_root)` to
+`ComputeTapTweakHash(merkle_root)`. It models treating the null root as an
+all-zero script tree instead of the BIP341 no-script form. The mutation was
+removed before the source commit, and current master was rebuilt and
+replayed.
+
+With the enhanced oracle and exact witness, the normal mutation replay
+aborted at `src/test/fuzz/key.cpp:157` in the output-key Schnorr verification
+assertion with exit 134; log SHA-256
+`da800fc6e3bb27d013330778e799e9afbab4bcd3386c99c903cbe7d31fe88eb5`.
+ASan/UBSan aborted at the same assertion with exit 134; log SHA-256
+`3a8bad60388d7ce7478fd07b2bedec24edb62333e289eb4cc49cd4de691f6be5`.
+Matched old-harness controls removed only this new 64-line oracle block,
+used the same witness and production mutation, and exited 0 in normal and
+ASan/UBSan builds; log SHA-256 values were
+`abacbe4da5f75b0382fd4d76fe485f04a3fd87b667b281bc36326393d4d97663` and
+`813420acbd9fc3bfd73a1d1665403f3f57f0af38cf20e4c7a882b5937b43187f`.
+This proves that the added oracle catches the modeled regression missed by
+the prior harness. It does not claim a current-master production bug, so no
+deterministic production regression test is asserted by this commit.
+
+If a later l0rinc cherry-pick, fork commit, minor fix, or current-master
+change alters this null-root or Taproot behavior, amend the same commit and
+this note or merge the changes with a complete record of target, caller,
+corpus or mutation, assertion, failure mode, master-relative severity, and
+whether the change masks, preserves, or changes the finding. Every future
+production claim requires clean-master reproduction or a minimal production
+mutation plus the strongest deterministic proof available. `clang-format --dry-run --Werror`
+still fails on the file's pre-existing include grouping;
+the parent fails similarly, so unrelated whole-file formatting was not
+changed.
+
 ## `cmpctblock` collision-counter oracle audit (2026-07-22)
 
 Source commit: `9a2f9cedf76cd6f4c16b4e692fd65be3be17ef9d` (`fuzz: guard
