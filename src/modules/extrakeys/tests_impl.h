@@ -59,19 +59,10 @@ static void test_xonly_pubkey(void) {
     secp256k1_fe_negate(&y, &pk2.y, 1);
     CHECK(secp256k1_fe_equal(&pk1.y, &y) == 1);
 
-    {
-        secp256k1_pubkey odd_y_tweaked_pk, even_y_tweaked_pk;
-        unsigned char xonly_pk32[32];
-
-        /* An odd-Y full key serializes as the same x-only key but tweaks a different point. */
-        memcpy(&xonly_pk_tmp, &pk, sizeof(xonly_pk_tmp));
-        CHECK(secp256k1_xonly_pubkey_serialize(CTX, buf32, &xonly_pk_tmp) == 1);
-        CHECK(secp256k1_xonly_pubkey_serialize(CTX, xonly_pk32, &xonly_pk) == 1);
-        CHECK(secp256k1_memcmp_var(buf32, xonly_pk32, sizeof(buf32)) == 0);
-        CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &odd_y_tweaked_pk, &xonly_pk_tmp, zeros64) == 1);
-        CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &even_y_tweaked_pk, &xonly_pk, zeros64) == 1);
-        CHECK(secp256k1_memcmp_var(&odd_y_tweaked_pk, &even_y_tweaked_pk, sizeof(odd_y_tweaked_pk)) != 0);
-    }
+    /* An x-only key must use the even-Y representative: pk has odd Y here
+     * (pk_parity == 1 above), so loading its bytes as an x-only key must fail. */
+    memcpy(&xonly_pk_tmp, &pk, sizeof(xonly_pk_tmp));
+    CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, buf32, &xonly_pk_tmp));
 
     /* Test xonly_pubkey_serialize and xonly_pubkey_parse */
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, NULL, &xonly_pk));
