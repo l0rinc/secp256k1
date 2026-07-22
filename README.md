@@ -6463,6 +6463,159 @@ or did not catch it. Notes must record whether later fixes preserve, change,
 or mask the trigger. A mutation-only result remains an oracle finding and is
 never described as a clean-master production vulnerability.
 
+## `fees` FeeFilterRounder and FeeReason oracle audit (2026-07-22)
+
+Source commit: `353369a81f` (`fuzz: strengthen fee filter and reason oracles`).
+The source branch remains based on current Bitcoin Core `origin/master`
+`efa1800a885c1ae605e18605ef73957ea13e575c`. The l0rinc fork review used
+`l0rinc/master` `32eb52100296718f7c0469e3210ce1db73694793`. The exact query
+was:
+
+    git log --oneline origin/master..l0rinc/master -- src/test/fuzz/fees.cpp src/policy/fees/block_policy_estimator.cpp src/policy/fees/block_policy_estimator.h src/test/feerounder_tests.cpp src/net_processing.cpp
+
+It returned no commits. No l0rinc commit was cherry-picked for this target.
+
+### Core boundary and severity
+
+The original `FUZZ=fees` harness only checked `MoneyRange` after
+`FeeFilterRounder::round` and discarded `StringForFeeReason`. The enhanced
+harness reconstructs the intended quantized fee set from the public spacing,
+lower-bound, and maximum-filter contract. Each output must be a quantized
+value and one of the two values surrounding the current minimum, including
+zero, exact-boundary random choice, and above-maximum behavior. All eight
+`FeeReason` values are checked against their exact common-message strings.
+`FeeFilterRounder::round` also has a production-side `MoneyRange`
+postcondition.
+
+The actual `FeeFilterRounder` callers are
+`PeerManagerImpl::MaybeSendFeefilter` at `src/net_processing.cpp:5673` and
+`:5681`; it sends the local mempool minimum-fee policy to peers as
+`FEEFILTER`. `StringForFeeReason` is consumed by `src/wallet/spend.cpp:1440`
+and `src/wallet/rpc/spend.cpp:198`. This is a peer-facing relay/privacy
+boundary, but invalid block bytes do not directly invoke it.
+
+Clean master reproduced no production defect. This is oracle hardening, not a
+confirmed vulnerability. The modeled mutation below would be a **Low**
+privacy/policy regression because it exposes the raw local fee instead of the
+intended quantized filter. It does not imply fund loss, consensus failure,
+invalid-block acceptance, memory safety, or forgery, and is not Critical.
+A nonce or counter with no standalone cryptographic meaning is not Critical
+merely because it is not cleared.
+
+### Corpus identity
+
+The frozen source corpus was
+`/mnt/my_storage/qa-assets/fuzz_corpora/fees`, isolated at
+`/tmp/codex-fees-rounder-audit-20260722/frozen-corpus`: 120 files,
+2,719,978 bytes, minimum 1 byte, maximum 81,507 bytes. The sorted
+filename/size manifest SHA-256 is
+`850d1c21784869a2a9e9edecdbc4a28b43d87d5f5bb14e400ac39b9a21ccfb70`.
+The frozen corpus and all worker copies stayed unchanged.
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The temporary mutation changed
+`src/policy/fees/block_policy_estimator.cpp` from
+`return rounded_fee` to `return currentMinFee` after the production range
+assertion. Mutated production SHA-256:
+`af69ee0b1551df0863505478ba31e043dacd59b28cfccc00ef81a190644fcc61`.
+
+Enhanced fuzzer SHA-256:
+`4e4d2a0a013e977fd0036f0bb250829b3d147d5bbbdc7b15487de5c1b37d3205`.
+The enhanced mutated normal binary SHA-256 was
+`718e16ae44dee93956d6f3a9911a24c9bbfcc6023aef292ce50dfe1e4e1be786`.
+It exited 1 at `src/test/fuzz/fees.cpp:35` on
+`/tmp/codex-fees-rounder-audit-20260722/frozen-corpus/4efa9421aac2203d5006cac9701497192ef354e9`,
+which is 1,058 bytes with SHA-256
+`5f0c83bf9f47cc47ef0bc5f40819acb140fe7150a03e6431bcca973c89d8db2d`.
+The normal failure log SHA-256 is
+`b16d917677dc2ebe10f4a01b9c6a18da39e1298f398753bc1bc9bd8f1726c9b2`.
+
+The enhanced mutated ASan/UBSan binary SHA-256 was
+`e1168a42c1f15bcb8cb06ccf467b0cd207c7e04fb4ffc52755438c68f4a6e8fb`.
+With `ASAN_OPTIONS=symbolize=0 UBSAN_OPTIONS=print_stacktrace=0`, the exact
+one-input replay exited 77 at the same membership assertion, with no
+sanitizer diagnostic. Its log SHA-256 is
+`afae9210e83e60e2f36377f3420e4e91fe68ad8868598f4db30a5ba4089abd03`.
+
+The original harness source SHA-256 was
+`e946340ed4ddb521facb3fb900f456cf1b8d41e9aa7c4b4da922ecec2e574578`.
+Under the identical mutation, the original normal binary SHA-256 was
+`65d50ab67f71c51e29f96b7d46c0f31b3430847f07bede2842dfafbadc2dc152` and
+the ASan binary SHA-256 was
+`04bcc4a1b92660a346613e068edfc1976706b7ea3021b27d144c576c89cc4c17`.
+Both accepted all 120 files; the normal log SHA-256 was
+`c2ba67c6e62e2fd56cee6d98b285706a7a5ae4c9a4380ff7ff6b67c6db347651` and
+the ASan log SHA-256 was
+`fc6bbbb5250e95632c3dbee3c3420a63c3742fc5be9ec95f4a7749438b23fd44`.
+
+This proves that an in-range raw-fee privacy regression passes the old
+`MoneyRange` oracle and fails immediately under the quantization contract.
+No production mutation remains. If a later l0rinc, minor, or follow-up patch
+makes this assertion green, replay clean master and this exact mutation, then
+record whether the patch fixes, changes, or merely masks the master behavior.
+An unrelated minor patch must not downgrade master-relative severity because
+it happens to hide the trigger.
+
+### Clean replay and worker evidence
+
+Restored production `src/policy/fees/block_policy_estimator.cpp` SHA-256 is
+`29107f5285ce66b832d18e69007f37301498b12a70669b44e6a4f982a83eb129`.
+The final normal fuzz binary SHA-256 is
+`2edb12ecd84a8ccb5879df9f5192ca1b55850cdbcf679c2b22013000a0623386`.
+It passed all 120 files; the final normal log SHA-256 is
+`c2ba67c6e62e2fd56cee6d98b285706a7a5ae4c9a4380ff7ff6b67c6db347651`.
+The final ASan/UBSan binary SHA-256 is
+`8cd5d86c9bc0a0ae0d3c83c4cd44d4f1d2cd889296971f4224cabaea1fc3cbcd`.
+It passed 121 units with coverage 340, features 1718, peak RSS 110 MiB,
+and no artifacts; the final ASan log SHA-256 is
+`a294c20b8ffe1f14ed7739ca1ca8eaabb54d7241033b624b576872ec7ffb7a78`.
+
+Four isolated normal workers each passed all 120 files; every normal worker
+log SHA-256 was
+`c2ba67c6e62e2fd56cee6d98b285706a7a5ae4c9a4380ff7ff6b67c6db347651`.
+Four isolated ASan/UBSan workers each passed 121 units with coverage 340 and
+features 1718; their peak RSS values were 110, 110, 111, and 110 MiB, with no
+artifacts. Their log SHA-256 values were:
+
+    ce6f0c10aa6f66ecc15cd7c21a141d8f3dfde524fe89eba913789daae16b27c6
+    b14c19482d7f05220f5a1d383ad7fe26fa5b01ecfc4f3e1eeb04cf70376c3203
+    460936c641447846112a116d6223d9a966809c42f129e8c335805de5785c917d
+    df225a73216fe46fce4ca1fcc8d141d7df1c20c9a74ef4e76c78ba334070369e
+
+Builds used:
+
+    cmake --build /tmp/bitcoin-fs-poly-build --target fuzz -j2
+    cmake --build /tmp/bitcoin-fs-poly-asan-build --target fuzz -j2
+
+`git diff --check` passed. The configured fuzz-only builds have no
+`test_bitcoin` target, so the dedicated unit suite was unavailable. No
+clean-master bug or deterministic production regression test is claimed, and
+no fuzz, sanitizer, mutation, or replay process remains running.
+
+### Reiterated findings and proof policy
+
+The existing ledger is unchanged: private-broadcast failed-send retention is
+Medium and feature-gated/fixed on master; empty `HEADERS` initial-sync handoff
+is Medium availability; peer transaction activity refresh and block-storage
+failure are Low; oversized transport types are Low with fixed-width or
+RPC-validated callers; `ecmult_multi` scratch wrapping and 10x26 magnitude-32
+normalization are Medium latent/internal issues with limited Core reachability;
+Banman invalid-subnet and unban integrity are Low or nice-to-have because Core
+RPC validation rejects invalid entries. No additional confirmed clean-master
+production bug was found in the audited transaction-download, connection,
+eviction, handshake, compact-block, headers-sync, UTXO snapshot,
+mempool-persistence, cache/index/API, serialization, or crypto campaigns.
+
+Every confirmed production bug still needs the strongest proof: a clean-master
+reproduction or explicit minimal mutation, actual Bitcoin Core caller and
+input reachability, master-relative severity, exact failure evidence,
+deterministic regression coverage, and why prior tests did or did not catch
+it. Notes must state whether later fixes preserve, change, or mask the trigger.
+A mutation-only result remains an oracle finding and is never described as a
+clean-master production vulnerability.
+
 ---
 ## wallet_fees fee-contract oracle audit
 
