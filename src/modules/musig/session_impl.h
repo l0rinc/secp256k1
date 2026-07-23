@@ -180,8 +180,8 @@ static int secp256k1_musig_partial_sig_load(const secp256k1_context* ctx, secp25
 
     ARG_CHECK(secp256k1_memcmp_var(&sig->data[0], secp256k1_musig_partial_sig_magic, 4) == 0);
     secp256k1_scalar_set_b32(s, &sig->data[4], &overflow);
-    /* Parsed signatures can not overflow */
-    VERIFY_CHECK(!overflow);
+    /* Parse and sign only produce non-overflowing partial signatures. */
+    ARG_CHECK(!overflow);
     return 1;
 }
 
@@ -279,12 +279,16 @@ int secp256k1_musig_partial_sig_parse(const secp256k1_context* ctx, secp256k1_mu
 }
 
 int secp256k1_musig_partial_sig_serialize(const secp256k1_context* ctx, unsigned char *out32, const secp256k1_musig_partial_sig* sig) {
+    secp256k1_scalar s;
+
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(out32 != NULL);
     ARG_CHECK(sig != NULL);
-    ARG_CHECK(secp256k1_memcmp_var(&sig->data[0], secp256k1_musig_partial_sig_magic, 4) == 0);
 
-    memcpy(out32, &sig->data[4], 32);
+    if (!secp256k1_musig_partial_sig_load(ctx, &s, sig)) {
+        return 0;
+    }
+    secp256k1_scalar_get_b32(out32, &s);
     return 1;
 }
 

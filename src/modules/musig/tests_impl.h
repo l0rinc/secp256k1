@@ -451,17 +451,14 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, NULL, &partial_sig[0]));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, buf, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, buf, &invalid_partial_sig));
-#ifndef VERIFY
     {
         secp256k1_musig_partial_sig overflowed_partial_sig = partial_sig[0];
         unsigned char overflowed_sig32[32];
 
-        /* An overflowed opaque scalar is currently serialized unchanged. */
+        /* Check that a partial signature with an overflowing scalar is not allowed. */
         memcpy(&overflowed_partial_sig.data[4], max64, 32);
-        CHECK(secp256k1_musig_partial_sig_serialize(CTX, overflowed_sig32, &overflowed_partial_sig) == 1);
-        CHECK(secp256k1_memcmp_var(overflowed_sig32, max64, sizeof(overflowed_sig32)) == 0);
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_serialize(CTX, overflowed_sig32, &overflowed_partial_sig));
     }
-#endif
     CHECK(secp256k1_musig_partial_sig_parse(CTX, &partial_sig[0], buf) == 1);
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_parse(CTX, NULL, buf));
     {
@@ -511,18 +508,16 @@ static void musig_api_tests(void) {
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &invalid_session, partial_sig_ptr, 2));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, NULL, 2));
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, invalid_partial_sig_ptr, 2));
-#ifndef VERIFY
     {
         secp256k1_musig_partial_sig overflowed_partial_sig = partial_sig[0];
         const secp256k1_musig_partial_sig *overflowed_partial_sig_ptr[2];
 
-        /* An overflowed opaque scalar is currently accepted as its reduced value. */
+        /* Check that a partial signature with an overflowing scalar is not allowed. */
         memcpy(&overflowed_partial_sig.data[4], max64, 32);
         overflowed_partial_sig_ptr[0] = &overflowed_partial_sig;
         overflowed_partial_sig_ptr[1] = partial_sig_ptr[1];
-        CHECK(secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, overflowed_partial_sig_ptr, 2) == 1);
+        CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, overflowed_partial_sig_ptr, 2));
     }
-#endif
     CHECK_ILLEGAL(CTX, secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 0));
     CHECK(secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 1) == 1);
     CHECK(secp256k1_musig_partial_sig_agg(CTX, pre_sig, &session, partial_sig_ptr, 2) == 1);
