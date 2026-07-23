@@ -283,7 +283,6 @@ void ellswift_create_tests(void) {
     }
 }
 
-#ifndef VERIFY
 static size_t sha256_ellswift_zero_u_blocks;
 static int sha256_ellswift_zero_u_forced;
 static void sha256_ellswift_zero_u(uint32_t *s, const unsigned char *msg, size_t rounds) {
@@ -311,10 +310,9 @@ void ellswift_zero_u_tests(void) {
     CHECK(secp256k1_ellswift_create(ctx, ell64, seckey, NULL) == 1);
     CHECK(sha256_ellswift_zero_u_forced == 1);
     CHECK(secp256k1_ellswift_decode(ctx, &decoded, ell64) == 1);
-    CHECK(secp256k1_ec_pubkey_cmp(ctx, &decoded, &expected) != 0);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &decoded, &expected) == 0);
     secp256k1_context_destroy(ctx);
 }
-#endif
 
 /* Verify that secp256k1_ellswift_xdh computes the right shared X coordinate */
 void ellswift_compute_shared_secret_tests(void) {
@@ -567,9 +565,7 @@ static const struct tf_test_entry tests_ellswift[] = {
     CASE1(ellswift_xdh_test_vectors_tests),
     CASE1(ellswift_encode_decode_roundtrip_tests),
     CASE1(ellswift_create_tests),
-#ifndef VERIFY
     CASE1(ellswift_zero_u_tests),
-#endif
     CASE1(ellswift_compute_shared_secret_tests),
     CASE1(ellswift_xdh_correctness_tests),
     CASE1(ellswift_hash_init_tests),
