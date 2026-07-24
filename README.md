@@ -7397,6 +7397,145 @@ four-worker sanitizer run, exact mutation rejection, matched-control
 acceptance, and restored-witness replay all completed. No fuzz, sanitizer,
 mutation, or build process remains running.
 
+## SOCKS5 handshake transcript oracle audit (2026-07-24)
+
+Source commit `46660f8dde` (`fuzz: add SOCKS5 transcript oracle`) follows
+HTTP commit `583ad12069`. The audit base is Bitcoin Core `origin/master`
+`3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`, which remains the exact merge
+base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`; the scoped query
+
+    git log origin/master..remotes/l0rinc/master -- src/netbase.cpp src/netbase.h src/test/fuzz/socks5.cpp src/test/fuzz/util/net.h
+
+returned no commits. No l0rinc change or later fix was cherry-picked to mask
+or alter this master-relative result.
+
+### Core boundary and severity
+
+`ConnectThroughProxy` calls `Socks5` for outbound peer connections through
+`-proxy`, name proxies, and Tor stream-isolated proxies. This is a network
+proxy boundary, not block validation, transaction consensus, or cryptographic
+verification. Clean master reproduced no production bug. The result is
+**Informational/Low oracle hardening**: a modeled wrong wire byte could
+prevent outbound connections or misdirect a proxy handshake, but no clean
+master security impact was shown. It is not High/Critical without proof of
+invalid-block acceptance, fund loss, consensus failure, or cryptographic
+compromise.
+
+Existing findings are reiterated for severity consistency. The witness-sigop
+undercount is High/Critical only if an end-to-end Bitcoin Core reproduction
+proves invalid-block acceptance or another consensus violation. The two
+`script_sign` production mutations previously recorded are intentional local
+signing/RPC regression models, not master vulnerabilities: removing the
+`UpdateInput` scriptWitness copy and removing missing/spent-input
+`input_errors` assignment. They are Medium at most under the demonstrated
+Bitcoin Core callers and do not prove consensus impact. A nonce without
+cryptographic meaning is not Critical merely because it is retained or not
+cleared.
+
+### Oracle changes
+
+`src/netbase.cpp` now asserts the constructed SOCKS5 greeting, RFC1929
+username/password vector, and CONNECT request sizes and fixed fields. The
+fuzzer preserves the existing random `FuzzedSock` interruption/error path,
+resets the global interrupt for each input, and adds a partial-read
+`TranscriptSock`. For valid generated destinations and credentials, the
+harness now requires success, complete response consumption, exact method
+selection, exact authentication bytes, and exact CONNECT destination and port
+bytes. The reset prevents one interrupted input from suppressing later cases
+in the same libFuzzer process.
+
+### Corpus and clean replay
+
+The frozen corpus is
+`/tmp/bitcoin-socks5-20260724/frozen`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/socks5`: 69 files and 16,913 bytes,
+minimum 1 byte and maximum 3,608 bytes. Its sorted filename/size manifest
+SHA-256 is
+`8694eb76956deb119b6175be34c5b7fdbb4b281c4d4f06ceaeab029072ff4985`.
+Final source SHA-256 values are
+`4491214f6ff9a1ea5f7b56cbb7efccda2fe77ed770c4e80e4ac13dc470cf6ef1`
+(`src/netbase.cpp`) and
+`81b0ae510936a21e95f1f30dfbc2e1f52d30652abce0855a356cedfba15be42b`
+(`src/test/fuzz/socks5.cpp`). Final ASan/UBSan and normal binary SHA-256
+values are
+`478f6b80e0026baa764253ddbfbb1c965716f2dc256455f54cf93c4209e1357a` and
+`9c59cc7fe8651c1ad5514a5f2676636ddf9337bc61caa5bc924bce456da43a1b`.
+
+The unchanged harness baseline passed 70 executions under ASan/UBSan with
+coverage 459, 788 features, peak RSS 110 MiB, and log SHA-256
+`3e141e8546b35195d2f9b926139ba43ce284e948e3a32577fc494a2c4f6e5f1c`.
+Normal passed 70 executions with coverage 291, 451 features, peak RSS 56
+MiB, and log SHA-256
+`43cea5c536904e54a4d1aac3f1324ee80a83c9315321e68a3a20f95107b6da81`.
+
+The final ASan/UBSan replay exited 0 after 70 executions with coverage 648,
+1,116 features, peak RSS 109 MiB, no diagnostics or artifacts, and log
+SHA-256
+`be9e47cab570695f9c80847260129767ec93a564bdeed07b08b512e94c893f40`.
+The final normal replay exited 0 after 70 executions with coverage 443, 684
+features, peak RSS 56 MiB, no artifacts, and log SHA-256
+`8b348c7cef38c01f02a3744efb10a42af262de6263d0c363bf8c38046d388c6d`.
+
+Four ASan workers used `-jobs=4 -workers=4 -max_total_time=20` from a
+disposable corpus copy. All exited 0 without assertion, sanitizer, timeout,
+or artifact diagnostics. Worker 0 completed 6,008 runs at coverage 683,
+1,408 features, peak RSS 149 MiB; worker log SHA-256
+`61e496e011b23118694a8582583464a67bf321d989a26864f47935c7d2f3beab`.
+Worker 1 completed 3,140 runs at coverage 683, 1,403 features, peak RSS 134
+MiB; log SHA-256
+`ca039b6107564deeafc60370645484505d59ca4539ca330a6c4817d3b3a66a48`.
+Worker 2 completed 277 runs at coverage 683, 1,403 features, peak RSS 118
+MiB; log SHA-256
+`0832885af9b222d5e088fa45464380b057f8d70e1624dff10cf1c2230fee805b`.
+Worker 3 completed 1,176 runs at coverage 683, 1,403 features, peak RSS 124
+MiB; log SHA-256
+`7db33a68b66e0e03fc1c8b6f6a755a8a0c5f921a334253a76583ea255a08c3d8`.
+The aggregate worker log SHA-256 is
+`5878bbea207d3fb08a1ef09783ea98b72df27c18c3ae881cbc4fe218ec2d52d6`.
+
+### Differential proof, not a master finding
+
+A temporary production mutation changed
+`vSocks5.push_back((port >> 0) & 0xFF)` to
+`vSocks5.push_back(0xFF)`, corrupting the low CONNECT-port byte. The mutated
+production source SHA-256 was
+`1dea9a905ae4657253269b6f8c097bb14de61e8a7cb9e5dbb199775cb730a3f4`; the
+final enhanced harness SHA-256 was
+`81b0ae510936a21e95f1f30dfbc2e1f52d30652abce0855a356cedfba15be42b`; and
+the mutated ASan binary SHA-256 was
+`85c561c0b1b1f3eba72964d94377779aef421015d99e451f22b19d812e2b047b`.
+
+The exact two-byte witness
+`/tmp/bitcoin-socks5-20260724/transcript-witness` contains `X` followed by a
+newline and has SHA-256
+`7058299627365fc7a3dd7840fd3d56f29306cd30c0f2c13cb500fe79617290ff`.
+The enhanced replay rejected it with libFuzzer exit 77 at
+`src/test/fuzz/socks5.cpp:130`, the `sock.Sent() == expected` assertion;
+diagnostic log SHA-256 is
+`f680beebe109d9938773af5abb0d7aa28f62befe28a79ab83b6da5ccf84d8d5f`, with
+no artifact.
+
+The exact pre-change harness SHA-256 was
+`33997ed5168ca4570259223044f4046eb7ad2cfc71961efa8150e024c2fac347`. The
+matched control binary retained the same production mutation and accepted the
+same witness with exit 0; its SHA-256 was
+`43d48b1c19c4d1315f96267eefa77bfcab93cbcefafefb51ca02350569edf4f4` and
+its control log SHA-256 was
+`1d58e8f9f795a9dcb88a0ac9881782fdc9a00658d28c7a9796c5decd83500248`.
+This is a counterfactual proof that the new transcript oracle detects a wire
+state-transition regression that the old target accepted. The old target
+discarded `Socks5` results and had no deterministic proxy transcript or
+sent-byte history, which explains why ordinary build and corpus tests did not
+catch this modeled defect.
+
+The mutation was restored before the final rebuild. No production fix or
+deterministic production regression test is claimed because clean master
+passed. `git diff --check`, both fuzz builds, focused harness formatting, the
+frozen replays, four sanitizer workers, exact mutation rejection,
+matched-control acceptance, and restored final replay all completed. No fuzz,
+sanitizer, mutation, or build process remains running.
+
 ## `asmap` netgroup contract oracle audit (2026-07-24)
 
 ### Scope and source state
