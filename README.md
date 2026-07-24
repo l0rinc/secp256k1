@@ -2968,6 +2968,136 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## Wallet crypter failed-rekey state oracle audit (2026-07-24)
+
+Source commit: `93ffdf4ed742cbc7682b78e72923f50123e73312` (`wallet: invalidate
+crypter after failed rekey`). The source branch was rebased onto latest
+Bitcoin Core master `11ebbd907217a037d2c0c9be0395091e1d6395e1`; that commit is
+the merge base and the branch contains 152 commits ahead of it after this
+audit. The scoped l0rinc-master query for
+`src/wallet/crypter.cpp`, `src/wallet/crypter.h`,
+`src/wallet/test/fuzz/crypter.cpp`, `src/wallet/test/wallet_crypto_tests.cpp`,
+and `src/wallet/wallet.cpp` was empty at
+`3a2c52f9d70db6076ce64b8f7ef0eb301d7935a`.
+
+### Finding and contract
+
+`CCrypter::SetKeyFromPassphrase()` accepted a valid salt and round count, but
+when given an unsupported derivation method it cleansed `vchKey` and `vchIV`
+and returned false without clearing `fKeySet`. A crypter that had previously
+been keyed could therefore pass the `Encrypt()` gate and report successful
+encryption with zeroized key material. The fix sets `fKeySet = false` and
+asserts that postcondition immediately after the cleanse.
+
+The exact deterministic witness is:
+
+    SetKey(32 bytes of 0x42, zero IV)
+    SetKeyFromPassphrase("test", eight zero salt bytes, 1, derivation_method=1)
+    Encrypt(32 bytes of 0x24)
+
+The enhanced fuzzer asserts that the second call is false and the third call
+is also false. `wallet_crypto_tests/failed_rekey_clears_key_state` checks the
+same sequence. This is a confirmed production API/state bug on the
+master-equivalent pre-fix path, but not a consensus finding.
+
+### Bitcoin Core reachability and severity
+
+Severity: **Low / nice-to-have API correctness**. `EncryptMasterKey()` creates
+a fresh crypter, reuses it during derivation calibration, and checks the final
+`SetKeyFromPassphrase()` result before calling `Encrypt()`. `DecryptMasterKey()`
+also creates a fresh crypter and checks the result. `DecryptSecret()` creates a
+fresh crypter for its `SetKey()` path, and `DecryptKey()` reaches it through
+that helper. Current Bitcoin Core code therefore cannot use this stale flag to
+accept an invalid block, violate consensus, expose a key through a reachable
+wallet path, or trigger memory unsafety. A downstream API caller must reuse a
+crypter and ignore the false return. No High/Critical severity is claimed.
+
+The temporary mutated production source, removing only `fKeySet = false` and
+`assert(!fKeySet)`, was
+`e155d8d41936929c61c649586430697c2f6bcbdc26f339807d85371e31754ba0`.
+With the enhanced harness, normal binary
+`14786e5d245a5306c02fae2903bffbd1b684529601cedb5fb758dfaa39c141dc` reported
+at `crypter.cpp:67`:
+
+    Assertion '!failed_rekey.Encrypt(plaintext, ciphertext)' failed.
+
+It reached the assertion after one execution using seed `20260724`. The
+libFuzzer fatal-signal handler was externally interrupted after the diagnostic
+was preserved; the assertion itself is the proof. With the same production
+mutation but the pre-oracle harness, binary
+`c057615a3168d9699a8dabb41337e42ac30f4c78269f8917d7fa1026f3a8c719` passed the
+same empty input with status 0. The control log SHA-256 is
+`e08d5fff0760abe75a3b1f97d3adc7c280dd278c2fff855bbc26f1689ae1e030`.
+
+The restored source hashes are:
+
+    src/wallet/crypter.cpp                  d198b9b8187ba3cca66b210c07a0eb37cd361794184288ee85b045d2b4eb5ea9
+    src/wallet/test/fuzz/crypter.cpp        99fd4e67b92473e8644351932d8ea0d5aa268aac52d36b34d8b0be06b7222862
+    src/wallet/test/wallet_crypto_tests.cpp 645809b32d70178b707d2e91ea27796f195e60105fdf4809bf1bf30ee0cc68f0
+
+### Replay evidence
+
+The frozen corpus copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/crypter` is
+`/tmp/bitcoin-crypter-20260724/frozen`: 998 files and 875,681 bytes. Its
+sorted content manifest SHA-256 is
+`1c1c9303e566c1f705e6649b5fcb220ed3697ea8b13e2d623e76e24a4c5c07a1`; its
+sorted size manifest SHA-256 is
+`35665222df75644f9fba18c793c6284e2d9774f2b5c3386d94b96733ce3e02e9`.
+
+The final normal fuzz binary is
+`5a5852e28932f173d86da385dd9adc677e22b633da09e39bbf20a02214187ccc`. The
+frozen replay used `-merge=0 -runs=1 -timeout=120 -rss_limit_mb=4096
+-print_final_stats=1`, completed 999 executions with status 0, no new units,
+and 97 MiB peak RSS. Replay log SHA-256:
+`7581652389b90126dcfcc08fd371ec4480459a44a3e3c4c45efeeb09be498066`.
+
+The final ASan/UBSan fuzz binary is
+`1c03eabc3b05d5eb673ab4aef720fd98277612da4db7c236d7860e7f69cd3967`. The
+same replay completed 999 executions with status 0, no sanitizer report, no
+new units, and 284 MiB peak RSS. Replay log SHA-256:
+`ccba0a1ff5c59599a327fcb838e2eeac8857393e69c6ae63c3a75bb0600db7ec`.
+
+Four ASan jobs used `-jobs=4 -workers=4 -merge=0 -runs=1 -timeout=120
+-rss_limit_mb=4096 -print_final_stats=1` and four isolated corpus copies.
+Every job loaded 3,992 files, executed 3,993 units, exited 0, added no units,
+produced no artifacts, and peaked at 597 MiB. The parent log SHA-256 is
+`201648ec63b9f4c5db90453c53499cb2f345429c772a3ef04d33d0ac4fdd8170`; the
+worker summary SHA-256 is
+`ec8c91d0d3cede1bb491fa2f68002d0036fe2283b06fb2a12d228e77925e0dd8`.
+All four copies retained the 998-file count, 875,681-byte size, and content
+manifest above.
+
+The standalone `test_bitcoin` binary SHA-256 is
+`7eb1f169d00a80fc1503ebd10430c624d1059f9bae3234cf0d4a8edd92f90421`.
+`--run_test=wallet_crypto_tests/failed_rekey_clears_key_state` passed with
+status 0; final unit log SHA-256 is
+`0fbb45cb58e1010e34708991582b8895862b1e7e8838ff2c013a097ae482bbe0`.
+The final one-byte empty witness also passed after the last normal and ASan
+rebuilds; final log SHA-256 values are
+`c65fced1fcf112a0869636c06066807be2c8fda49aba271c8c59ace3f5814977` and
+`d258753a697198049ea74f59e5f1d2050807e19a55bd0097a4ecc642fd6938c8`.
+
+The old fuzzer did not perform a known successful `SetKey()` followed by a
+failed rekey and `Encrypt()`, and the existing unit suite had no reused-
+crypter regression case. The new production postcondition, fuzz assertion,
+and deterministic unit test close that exact gap.
+
+### Severity rules carried forward
+
+The witness sigop undercount remains High/Critical only if an end-to-end
+Bitcoin Core proof shows that it enables invalid-block acceptance or another
+consensus/security failure. The two prior `script_sign` production mutations
+were deterministic counterfactual oracle checks, not claims of bugs on master;
+an incidental patch from another commit does not upgrade their severity.
+A nonce or counter with no cryptographic meaning is not Critical merely
+because it is not cleared. The existing ledger continues to rate private
+broadcast failed-send retention, empty-HEADERS IBD handoff, ecmult_multi
+scratch-size wrapping, forced 10x26 normalization, SHA/HMAC/RFC6979 retention,
+and the other wallet/network/cache/index findings by demonstrated Bitcoin
+Core reachability. No invalid-block acceptance finding was produced by this
+crypter audit.
+
 ## Fuzz-oracle audit: MiniMiner state and fee contracts
 
 This audit covers FUZZ=mini_miner and the production MiniMiner helper. The
