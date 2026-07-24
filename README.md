@@ -6647,6 +6647,120 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `message` signing and verification oracle audit (2026-07-24)
+
+Source commit: `7df92be31a` (`fuzz: strengthen message signing oracle`). Its
+parent is `46fe9e4d0571dda5175e4d1a1cae4ce681b81304`; the source branch is
+based on current Bitcoin Core `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`. The scoped fork comparison was:
+
+    git log origin/master..l0rinc/master -- \
+      src/common/signmessage.cpp src/common/signmessage.h \
+      src/test/fuzz/message.cpp src/key_io.cpp src/key_io.h \
+      src/key.cpp src/pubkey.cpp
+
+It returned no output. `l0rinc/master` was an ancestor of current master, no
+message/signature commit was applicable, and no cherry-pick or fork masking
+behavior exists for this target.
+
+### Core boundary and master-relative severity
+
+`MessageVerify` is called by Bitcoin Core's `verifymessage` RPC and the Qt
+sign/verify dialog. `MessageSign` is used by the sign-message RPC and wallet
+script-pubkey manager utilities. These are user/API authentication helpers;
+they are not called by block validation, script interpreter consensus checks,
+peer message acceptance, or invalid-block handling.
+
+The production assertions require successful compact signing to produce the
+fixed 65-byte representation and successful recovery to return a valid public
+key. The fuzzer independently hashes `MESSAGE_MAGIC || message` through
+`VectorWriter` and `Hash`, then checks key recovery, exact address binding,
+message tamper rejection, invalid-address and witness-address error classes,
+malformed signatures, and failed-signing output preservation. A fixed second
+valid key makes the address-binding check deterministic; random inputs still
+exercise the invalid-key and arbitrary verification paths.
+
+No clean-master production bug was found. Removing the address comparison is
+Low/Medium API-integrity risk on the master-relative Core boundary: an
+external caller that treats `verifymessage` as authentication could receive a
+false positive for the wrong address. It is not High/Critical because it
+cannot enable Bitcoin Core to accept an invalid block or invalid transaction.
+The production assertions are debug contracts and do not change release
+behavior. No production fix or deterministic regression test is claimed;
+the new fuzzer assertion is the regression oracle for a hypothetical
+regression.
+
+### Differential proof
+
+The exact temporary production mutation replaced the address comparison in
+`src/common/signmessage.cpp` with `if (false)`. The enhanced harness failed
+with status 1 on frozen input
+`c4bfbad5573e255502c028b565b4f6309680f006`, which is 131 bytes with
+SHA-256 `6dc46e634d655c54185e2fb7e1c45f6a54f7bfa88e0877a3f41d7ece93f218b`.
+The failure was the alternate-address assertion; mutation log SHA-256 is
+`0559f5767f4692e9abbfa0a6d137b29ee34861b6239f8311fb29c56bb8f0c08a`.
+
+The original master harness, with the identical production mutation and the
+clean Clang ASan/UBSan binary, accepted all 2,504 frozen inputs: 2,505
+executions, status 0, no artifact. Its control log SHA-256 is
+`b7e386c3ba99f6e781124b8606f3d0dee95133e40c02b53a5b7bd2f22ed4df58`.
+The mutation was removed before the source commit. This proves that the
+new oracle catches a real address-binding regression the previous oracle
+would not observe; it does not prove a master vulnerability.
+
+### Corpus and replay evidence
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/message` to
+`/tmp/bitcoin-message-audit-20260724/frozen` before testing. It contains
+2,504 files and 1,678,450 bytes, with sizes from 2 through 568,492 bytes.
+The sorted filename-list SHA-256 is
+`160e42226a8462ccfdcb9307590820636a5f5e34427c2d8d6b65e3144c7cce01`.
+The sorted relative-path/size/content SHA-256 manifest is
+`4b7cd522e15e20296b294dbfb1dd89288e88fed9a170d1c4f577f97ef9bfe403`.
+
+The final normal binary SHA-256 is
+`b1dc9f3419b1e8d9512df438aba0f23e78f905f726be30fb527462f4ed8184fe`; it
+passed all 2,504 inputs with status 0, and its log SHA-256 is
+`a29ad528d081c4fd0ed9bb1e66694444db4abeb9f30107aa9b7a08d6757b5d4c`.
+The final Clang ASan/UBSan binary SHA-256 is
+`4269613346adf916fc55f1741fca3ef1d7fe409b8192636dc02dbcff640b5eb9`; it
+passed 2,505 executions with status 0, added no units, produced no
+artifact, and peaked at 157 MiB. Its log SHA-256 is
+`f3d1a693f6e8cce7c976c379e87d3e7dca64c52d53de43cef9357ff2ff805344`.
+The clean-master Clang ASan/UBSan binary SHA-256 is
+`a560e11a3ba3ab15f0ba62da7b2f1486518d01f43bd0a74f677a2ef8cd5dcd74`; the
+restored replay passed 2,505 executions with no new units or artifacts and
+peaked at 147 MiB. Its log SHA-256 is
+`c6ac3a953f52d2d3c7410643423790a89f081702e4c932301254f27ad024366d`.
+
+Four final ASan workers ran for 60 seconds each with isolated corpus and
+artifact directories. They completed 21,296, 21,203, 21,095, and 21,138
+executions respectively, added 8, 11, 8, and 10 units, and peaked at 316,
+313, 313, and 314 MiB. All exited 0 with no diagnostics or artifacts; the
+aggregate log SHA-256 is
+`10471246898052cb5a0ea2ec61a845b2fa9bb95e6d456dcc6f57462a8488fe0f`.
+
+### Carried findings and severity cross-check
+
+The witness-sigop result remains an intentional mutation proof: forcing the
+P2WPKH branch of `CountWitnessSigOps` to return zero was detected by the new
+`script` oracle, but no clean-master undercount was found. It is High/Critical
+only if a concrete Bitcoin Core validation path proves that the undercount
+accepts an invalid block; this audit did not produce that proof.
+
+The two `script_sign` production mutations remain deterministic state-oracle
+proofs: removing `UpdateInput`'s witness copy and removing missing/spent
+`input_errors` assignment were caught, but neither is a confirmed master
+vulnerability or a consensus invalid-block path. The net, bloom, rolling
+bloom, and related parser/cache/index/serialization results likewise remain
+Low or hardening unless a real Bitcoin Core caller demonstrates stronger
+impact. Existing Medium findings remain reachability- or feature-conditional.
+An item without cryptographic nonce meaning is not Critical merely because a
+nonce-like value is retained or not cleared. No finding in this message pass
+changes those classifications. No fuzz, sanitizer, build, or mutation
+process remains running.
+
 ## `bloom_filter` state and serialization oracle audit (2026-07-24)
 
 Source commit: `a861eec3bd92ce0c71dadbfff573feff398fca50` (`fuzz: strengthen
