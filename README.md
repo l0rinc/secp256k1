@@ -6857,6 +6857,139 @@ The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
 focused unit suite is claimed. `git diff --check` passed. No production
 behavior changed and no deterministic production regression test is claimed.
 
+## `i2p` session state contract oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`e151c8ba83` (`fuzz: strengthen I2P session state oracle`) on parent
+`6dd729b9daee2fd0bf3642e446e8369468032fa9`. The fetched Bitcoin Core
+`origin/master` base is `3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`; that is
+the audit base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped
+`origin/master..remotes/l0rinc/master` query over `src/test/fuzz/i2p.cpp`,
+`src/i2p.cpp`, `src/i2p.h`, and the `CConnman` callers returned no commits.
+No l0rinc change was cherry-picked for this target, and no later fix was used
+to mask clean-master behavior.
+
+### Oracle and Core boundary
+
+The old `FUZZ=i2p` target called `Listen`, `Accept`, and `Connect`, but
+discarded their state and result contracts. It also used `CService{}` for the
+Connect call. `I2P_SAM31_PORT` is intentionally zero, so that call enters the
+SAM protocol path; it is not the non-SAM-port rejection branch.
+
+The production contract now asserts that successful `Listen` and `Connect`
+outputs carry a non-null socket and a valid I2P local service at
+`I2P_SAM31_PORT`; successful `Accept` carries a valid I2P peer at that port;
+and `Accept` receives its documented non-null socket precondition. The harness
+checks the same postconditions, checks that an explicit loopback port 1 is
+rejected with `proxy_error=false` and no output-connection mutation, and
+constructs a valid I2P destination to exercise the real Connect protocol
+path. A failed Connect is required not to publish a socket.
+
+Bitcoin Core reaches `Session::Connect` from `CConnman::ConnectNode` only for
+valid I2P destinations when a SAM proxy is configured. It uses `conn.me` as
+the local bind and network-entropy address. `ThreadI2PAcceptIncoming` reaches
+`Listen` and `Accept` only when I2P inbound is enabled, then uses `conn.me`
+for local advertisement and the accepted-node bind address. This is a local
+proxy/network boundary, not block validation, script validation, consensus,
+UTXO, or cryptographic code. No clean-master production bug was confirmed.
+Severity is therefore **Low-to-Medium** routing, availability, and oracle
+hardening under current Core callers, not High/Critical. High/Critical would
+require proof that a defect reaches invalid-block acceptance or another
+security boundary. A nonce without cryptographic meaning is not Critical
+merely because it is retained or not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger remains: private-broadcast failed-send retention is
+Medium and feature-conditional; the empty-HEADERS initial-sync handoff is
+Medium availability/IBD risk; peer transaction-activity refresh,
+`ProcessMessage` local block-storage failure, and oversized transport types
+are Low under current Core callers; ecmult scratch wrapping, forced 10x26
+magnitude-32 normalization, and SHA/HMAC/RFC6979 retention are Medium but
+latent or reachability-limited; and banman invalid-subnet/unban integrity is
+Low/nice-to-have. Witness sigop undercount is High/Critical only if separately
+proven to enable invalid-block acceptance. No additional clean-master I2P
+production bug is claimed here.
+
+### Corpus and clean replay
+
+The frozen corpus is
+`/mnt/my_storage/qa-assets/fuzz_corpora/i2p`: 395 files and 4,742,939 bytes.
+The filename/size manifest SHA-256 is
+`3fad8d795ee8738289391d7dfcd1208223ded3f641209de9d5a09694652a5b89`; the
+content manifest SHA-256 is
+`603e0fc38a2fc7e6a136d6ee533f84b39a5f4d1c9782b11590f0333c7e12c83b`.
+Final source SHA-256 values are
+`14f254a102d745c69e093c44d177636e9b3da3b4894fe5432d854af6c3519ec5`
+(`src/i2p.cpp`) and
+`11c60831204efd76342cc0e11a0f2429f7b892517959f5dc895a1fa7050d269f`
+(`src/test/fuzz/i2p.cpp`). Final ASan/UBSan and normal fuzzer binary SHA-256
+values are `3e4da4430d3635172560d0ea2a4c1c4143b89fc460e0f728efd2941741d20115`
+and `eaba884c94bd6cfe09df89602839e2e97bf81e693354028ae92745f14e5ae6a3`.
+
+The final ASan/UBSan replay exited 0 after 396 executions, with coverage 2063,
+feature count 6544, peak RSS 185 MiB, and no artifact or diagnostic; log
+SHA-256 is `2be8f0d1aed277abf01bd9fca8ed7f22e3480359354100562463ea43286138bb`.
+The final normal replay exited 0 after 396 executions, with coverage 1265,
+feature count 3445, peak RSS 61 MiB, and no artifact; log SHA-256 is
+`07e981c2764f798e4178d192928bf307f6d071a55cd92d2f1852302e36fe151a`.
+
+The first stale oracle replay asserted `!proxy_error` after `Connect(CService{})`
+and failed immediately because port zero is the valid SAM port. Its ASan and
+normal log SHA-256 values are
+`317a4e6a23f78bda29d79dab9c2d8fba2fabeb7d2e57f118e1f6cdfe2af0387d` and
+`97644da9a7d8a3dffba47392b13b4f6979980d669c4bc7aeea9751389f40b6ab`. The
+branch was corrected to use port 1 for rejection and rerun in both modes.
+
+Four isolated ASan workers each executed 10,000 inputs and exited 0 with no
+artifact or sanitizer diagnostic. Their log SHA-256 values are
+`8a3eca1090ceed0f7eb0fb1866ccbc251be6e659ae59d3a4f403d166cde24854`,
+`9096226ce6d65244bfd640ecc2621bf9b9133e69d73b0b8f59cdd0b89fd29671`,
+`dc4eeaf30bb05815ea1ad38e9a05abd9ea0370efc36c087a92e4d03a113d966a`, and
+`fac226b3f58cd8a0dcd7f1b2b3caf7e1b83e818dfee07957aed692c17c60f8ea`.
+
+### Differential proof, not a master finding
+
+A temporary minimal production mutation changed `Listen` from
+`conn.me = m_my_addr` to `conn.me = CService{}`. Mutated production source
+SHA-256 was
+`8bae5cef365d19042fe4c2a8af717d0828e4e77024d340b27d71859f4b8011f4`; the
+mutated ASan/UBSan binary SHA-256 was
+`07be7326fb2d20d45c055390be74860bc404e4d79adb7dd372c9201b618c8892`.
+
+The enhanced mutation replay found the existing 644-byte witness
+`/tmp/bitcoin-i2p-20260724/mutation-listen-artifacts/crash-308bc6073ac974f2baf609960193c48ac88d9275`,
+SHA-256
+`de94289734e155257a9297316d65ec05938145189dcec283258d3c55caa3fbd7`.
+It exited 77 after 170 executed units at `src/i2p.cpp:152` on
+`conn.me.IsValid()`; mutation log SHA-256 is
+`9a2faf320e984b3d568d49e82dfdf039b058b7a4d47d7284b82b17b79954a3ca`.
+
+The parent target with the same production mutation, and without the new
+production or harness assertions, accepted the exact witness with exit 0;
+the control log SHA-256 is
+`affbf772ca761e6a12421c1e7af22463eaf6964e702af9e6ddc58ee0ba9bd96b`.
+Restored final ASan and normal binaries accepted it with exit 0; exact replay
+log SHA-256 values are
+`c478f58d38fbfc2234686ce17c96c0162c3c0e837125ea598aa0c509c77de75c` and
+`4226cd5fafb6b7dd68e219882f1e43c7dd5aeaabbf84d9511bc462305b7a8ca8`.
+This proves oracle sensitivity to a modeled state-transition regression. It
+does not prove that clean master contains that regression, so no production
+fix or deterministic regression test is claimed.
+
+### Verification gap
+
+The configured fuzz-only builds had no `test_bitcoin` target. Verification
+used `cmake --build ... --target fuzz -j2`, `git diff --check`, the frozen
+replays, four isolated ASan workers, and the enhanced/control/restored exact
+witness replays. `clang-format-22 --dry-run --Werror` reported pre-existing
+file-wide legacy diagnostics in the touched files; no unrelated formatting
+was changed. All temporary mutations, control build artifacts, fuzz jobs,
+and sanitizer jobs were removed or completed.
+
 ## `asmap` netgroup contract oracle audit (2026-07-24)
 
 ### Scope and source state
