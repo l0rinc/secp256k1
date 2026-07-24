@@ -6859,6 +6859,133 @@ The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
 focused unit suite is claimed. `git diff --check` passed. No production
 behavior changed and no deterministic production regression test is claimed.
 
+## `netbase_dns_lookup` contract oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`30d0339586bd596212602fd7668e151bc7db2554` (`fuzz: strengthen netbase
+lookup contract oracle`) on parent
+`424ae28d34e7ab7771776ea0cb4afa5ee0e4f174`. Before continuing, the source
+branch was rebased onto fetched Bitcoin Core `origin/master`
+`3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`; that exact commit is the merge
+base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped
+`origin/master..remotes/l0rinc/master` query over `netbase_dns_lookup.cpp`,
+`netbase.cpp`, `netbase.h`, `netaddress`, `netbase_tests.cpp`, and fuzz net
+helpers returned no commits. No l0rinc change was cherry-picked for this
+target.
+
+### Oracle and Core boundary
+
+The old `FUZZ=netbase_dns_lookup` target checked only that returned addresses
+were not internal and that result counts respected `max_results`. It ignored
+the resolver callback's host and permission arguments, did not compare the
+returned sequence with the resolver's candidates, did not check service-port
+propagation, and discarded the `LookupSubNet` result. The new oracle adds
+narrow contracts for each production path:
+
+* Resolver-backed `LookupHost` and `Lookup` results must preserve the
+  non-internal callback candidates in order and truncate only after filtering;
+  the callback must receive the host after the same bracket/port parsing used
+  by production and the original lookup-permission bit.
+* `Lookup` and `LookupNumeric` services must preserve each resolved address,
+  attach the parsed port or the default port, and pass `false` to the numeric
+  resolver path. The oracle accepts invalid-but-propagated candidate objects
+  because the injected callback is intentionally arbitrary; it checks the
+  production transformation rather than assuming acceptance means validity.
+* Special-address and no-result paths are checked independently, including
+  onion/I2P handling, NUL rejection, empty results, and the documented invalid
+  `CService{}` fallback. Valid `CSubNet` values must round-trip through their
+  canonical `ToString()` representation without changing the network or mask.
+
+Bitcoin Core uses these functions for local bind/proxy/whitebind setup in
+`init.cpp`, connection destinations and `addnode`/manual peer paths in
+`net.cpp`, subnet parsing in RPC and ban-management code, and address-manager
+or peer-connection metadata. These are networking, routing, privacy, and
+operator-configuration paths, not block or script validation gates. No clean
+master production failure was reproduced. Master-relative severity is
+Low-to-Medium for a confirmed regression, depending on whether it affects
+local configuration, DNS/routing, or availability; an ordinary invalid block
+cannot reach these APIs and there is no path here to invalid-block acceptance,
+consensus, UTXO, or cryptographic compromise. Therefore this pass has no
+High/Critical finding. A nonce with no cryptographic meaning is likewise not
+Critical merely because it is not cleared.
+
+### Corpus and clean replay
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/netbase_dns_lookup` and contains 588
+files and 17,628,384 bytes. The filename/size manifest SHA-256 is
+`ccc3ec4b251aa737559aa0ed0f3b9b8a01ccded3f43a4ff95833accf21c8079c`; the
+content manifest SHA-256 is
+`c0d5a34dc1e0c129e963edea5151e5e5f22f541c697078c884bf63dd844e013a`.
+The final formatted harness SHA-256 is
+`cd21f1f6cf009b0e71e800e65da44b2a1e7e1cd00df71626d0f216b4bd10014b` and
+the clean production `src/netbase.cpp` SHA-256 is
+`2b718c1801dbbea96841aabb992a7f95855690f05e87b4030d8ee2fc7c50a9df`.
+
+The final ASan/UBSan and normal fuzz-driver SHA-256 values are
+`8ae09aae03738ee280574fade9c458f436e1e30c3355a595f548b7f175fbf5e9` and
+`43113fb5bf9063dcc39189c3d72596f2636b7b33380673ff916594603b13e58d`.
+The complete frozen replay exited 0 after 589 executions under both builds.
+The ASan and normal replay log SHA-256 values are
+`d17e352e9514e7a658bb453dbbf478ad26b767ff1f4bc47749cf4c1eb5a664bb` and
+`e7cc0bee0a58bb27df73b07785fc57aff34bcdf59b4825dc6716182fcd927dc3`.
+There were no sanitizer, assertion, or crash diagnostics.
+
+The first additional normal worker completed 10,000 runs; its log SHA-256 is
+`1ac80127a4c84c2c7b7184158dc31142a8b9af7c4f1c59079715141103040618`.
+Three additional isolated ASan/UBSan workers each completed 10,000 runs with
+exit 0 and no artifact; their log SHA-256 values are
+`ca0dbe4d1c28e19fbf1b5c8d2be478661beefc5b3ecf785eeb4881c869f60599`,
+`f1a7298d1cca5b190004787e132d5713fa95e4d66777966909ef1d978ad18760`, and
+`c19fcc258fbaac03925f248989732167d404c48ed35ac3d05cb9ff99eb07655c`.
+Each run used an isolated writable corpus copy; the frozen manifest remained
+unchanged and no fuzz process remained running.
+
+### Differential proof, not a master finding
+
+The exact witness is the frozen input
+`004306f6004130889db6cf2098fdaa0b17e72dbe`, 16,353 bytes, content SHA-256
+`4bd3fbb4a0623682f469b36034837d0b98d7b6f02db5091f51a9bba1ac6bffc9`.
+It deterministically exercises an ordinary resolver-backed path.
+
+* **Callback-host mutation:** temporarily changed
+  `LookupIntern` to call `dns_lookup_function("", fAllowLookup)` instead of
+  passing the parsed host. Mutated production SHA-256 was
+  `91c24f5f52c2b2630f41a98c1b4ca08cbd4cc13df9d2413202133d69c332d209` and
+  the enhanced mutated ASan binary SHA-256 was
+  `74f73baa44df83af1bb2554605067e76e86c49ab4aa327f5f7665a39e03e2b73`.
+  The witness failed at `netbase_dns_lookup.cpp:125`,
+  `dns_lookup_name == HostNameForLookupHost(name)`, with the expected
+  libFuzzer deadly-signal path. The bounded replay status was 124 because a
+  timeout stopped that assertion path; the failure log SHA-256 is
+  `f47273987b81b77e16b4abd57e4f28e6a2dab269f0d9df502f784bafdf725b11`.
+  The pre-change target had no callback-argument assertion and would silently
+  accept this modeled regression.
+* **Port-propagation mutation:** temporarily changed
+  `services.emplace_back(addr, port)` to use port zero. Mutated production
+  SHA-256 was
+  `7d2a0c40089649a7ce3de7ee73d69881820a46816e59a2182af4841b18abaf25` and
+  the enhanced mutated ASan binary SHA-256 was
+  `1a9ba5215cc9221ee271b72a2a5220617a6e7bd9cc0264b75245fe946599d5a4`.
+  The same witness failed at `netbase_dns_lookup.cpp:182`,
+  `resolved_service->GetPort() == expected_port`, with the expected fatal
+  path. The bounded replay status was 124; the failure log SHA-256 is
+  `1cc98ee7368f9b80d1724cfacd8a6fe91b47a2bf3b8101a0a0cf4777f69d3a1a`.
+  The pre-change target checked neither service port nor address-to-callback
+  correspondence and would silently accept this modeled regression.
+
+Both production mutations were restored before the final clean rebuild. These
+controls prove that the new oracle detects two modeled production regressions;
+they do not prove that either regression exists on clean master. No production
+bug, deterministic production regression test, or security vulnerability is
+claimed. The configured fuzz-only builds have no `test_bitcoin` target, so no
+focused unit suite is claimed. `clang-format --dry-run --Werror`,
+`git diff --check`, clean corpus replay, exact witness replay, and the
+multi-worker commands all passed.
+
 ## `net_permissions` contract oracle audit (2026-07-24)
 
 ### Scope and source state
