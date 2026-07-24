@@ -7261,6 +7261,144 @@ reports pre-existing file-wide legacy diagnostics in the touched files; the
 new compact loops were expanded and no unrelated formatting was rewritten.
 No fuzz, sanitizer, mutation, or build process remains running.
 
+## HTTP request body and cursor oracle audit (2026-07-24)
+
+Source commit `583ad12069087c2994e305461c80995af8b260f0` (`fuzz: strengthen
+HTTP request body oracle`) follows MuHash commit
+`113d83a0546474052578927dd1ef6a66b594594e`. The audit base is Bitcoin Core
+`origin/master` `3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`, which remains the
+exact merge base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`; the scoped query
+
+    git log origin/master..remotes/l0rinc/master -- src/httpserver.cpp src/httpserver.h src/test/fuzz/http_request.cpp
+
+returned no commits. No l0rinc change was cherry-picked, and no later fix was
+used to mask or alter this master-relative result.
+
+### Core boundary and severity
+
+`HTTPRemoteClient::ReadRequest` parses the receive buffer using a fresh
+`HTTPRequest`, and after success erases exactly `LineReader::Consumed()` bytes
+before `HTTPServer::MaybeDispatchRequestsFromClient` queues the request. This
+is the RPC/REST HTTP boundary, not block validation, transaction consensus, or
+cryptographic verification. A bodyless request must not consume the first byte
+of a pipelined request; a Content-Length request must consume exactly its
+declared body; and a chunked body must remain within `MAX_BODY_SIZE`.
+
+Clean master reproduced no production bug. This pass is **Informational/Low
+oracle hardening**. The modeled cursor defect could desynchronize pipelined
+HTTP/RPC/REST framing, but no clean-master reproduction or security impact was
+shown. It is not High/Critical: malformed HTTP causing a disconnect is not
+invalid-block acceptance, and no consensus, fund-loss, or cryptographic path
+was demonstrated. A nonce without cryptographic meaning is not Critical merely
+because it is retained or not cleared.
+
+### Existing findings reiterated
+
+The master-relative ledger is unchanged: private-broadcast failed-send
+retention and the empty-HEADERS initial-sync handoff remain feature-conditional
+Medium availability findings; peer transaction refresh, local block-storage
+failure, oversized transport types, and parser/cache/index/serialization
+inconsistencies remain Low or hardening under current Bitcoin Core callers; and
+the ecmult scratch-wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention concerns remain reachability-limited. Banman
+invalid-subnet/unban integrity remains Low/nice-to-have.
+
+The witness-sigop undercount is High/Critical only if an end-to-end Bitcoin
+Core reproduction proves invalid-block acceptance or another consensus
+violation. The two production mutations previously recorded for `script_sign`
+are intentional regression models, not master vulnerabilities: removing the
+`UpdateInput` scriptWitness copy and removing missing/spent-input
+`input_errors` assignment. Both are local signing/RPC state issues, not
+consensus validity. No additional clean-master production finding is claimed
+by this HTTP audit.
+
+### Oracle changes
+
+The old target ended every successful parse with `assert(body.empty())`, which
+was an overbroad oracle and excluded real POST/RPC bodies. The production
+parser now asserts its body-size, no-body, and Content-Length state contracts.
+The harness checks exact Content-Length size and cursor movement, preserves the
+chunked size bound, and verifies `ReadBody()` against the parsed body. For every
+accepted request, selected prefixes are reparsed with fresh `HTTPRequest`
+objects. Any prefix that completes must converge to the same method, version,
+target, headers, body, and consumed length as the complete request, matching
+the real HTTP caller's retry-on-more-data behavior.
+
+### Corpus and clean replay
+
+The frozen corpus is
+`/tmp/bitcoin-http-request-20260724/frozen`, copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/http_request`: 70 files and 18,630
+bytes, minimum 1 byte and maximum 4,128 bytes. Its sorted filename/size
+manifest SHA-256 is
+`ca68a0fd2d4ac2220598766cb5c235a7377cff16a6c3be31e1feced82f9e777e`.
+The source SHA-256 values are
+`c83a17a4cda252d8d8ba1c08b0de37aedd0c6a0ee501f270d576f8c6d0027476`
+(`src/httpserver.cpp`) and
+`631e725066e2bfbd91c235a49b47daf662f444f88e7bdf323c4b3dce411edfb4`
+(`src/test/fuzz/http_request.cpp`).
+
+The clean baseline replay used the unchanged harness. ASan/UBSan exited 0
+after 71 executions with coverage 346, 571 features, peak RSS 102 MiB, and
+log SHA-256
+`178425eeea27231d74865dc652e50b06d25cd7a175e4378a46e6b244844269db`.
+Normal exited 0 after 71 executions with coverage 193, 284 features, peak RSS
+54 MiB, and log SHA-256
+`f071bc271e1ecb22983ddae4333ace89ffafb036dcd285b3c0f6ed187168f021`.
+
+The final ASan/UBSan binary SHA-256 is
+`813448f09e03f3498464306957833d596c65801e8953bff097b5479d92e5d4f3`; the
+replay exited 0 after 71 executions with coverage 381, 687 features, peak RSS
+102 MiB, and no artifact or diagnostic. Its log SHA-256 is
+`e6c49987e87097ca97d162263310c33686aa106ef0cb4320347df48a1fa1dfdcb9`.
+The final normal binary SHA-256 is
+`9a5f33225847ebd326df1b560382f9d90ded9c452a215c34832744da30c0ee01`; it
+exited 0 after 71 executions with coverage 218, 344 features, peak RSS 54
+MiB, and no artifact. Its log SHA-256 is
+`4c4de071ec79512110e240cdbea39110a503abcb357acd214ec1993ac01dc978`.
+
+Four sanitizer workers exited 0 without sanitizer, assertion, timeout, or
+artifact diagnostics. They completed 2,936, 907, 3,460, and 3,097 executions,
+with coverage 427, 425, 427, and 427 and peak RSS 114, 110, 115, and 115 MiB.
+Worker log SHA-256 values are
+`b8b9a5947283eae41bcf49f8d48462b562a8721462b5abe00006a167729d3994`,
+`ec05d09194cff16ac73beaadce6d92bd91aec66663c53cebb58289bf53640f87`,
+`d96aaa36d349ca788e089b3e7ee2481a15bd5438bfc47501a26bcae5544b72d9`, and
+`92008aa6e7e89b759fef8ed660903f08b02ecb8b6aae63f35b8b825c074ac1bd`.
+
+### Differential proof, not a master finding
+
+A temporary production mutation inserted
+`if (reader.Remaining() > 0) (void)reader.ReadLength(1)` in the no-body
+branch. Mutated `src/httpserver.cpp` SHA-256 was
+`a8d263ab5b93fd5a756928c65ab6254ad6912e4140592d2135ba75f0b1cd2be3`; the
+mutated ASan binary SHA-256 was
+`1e259a11000685a43844d4483cbdb977dc57c2ae1363d7ee4060733398fc4c3b`.
+
+The exact 10-byte witness `no-body-next-request` has SHA-256
+`93832da541852f1321327d09408699e874641f439c5276f8398e00b50207df63`.
+The enhanced harness rejected it with exit 134 at
+`AssertBodyContract`'s `reader.Consumed() == body_start` assertion; the log
+SHA-256 is
+`cf23b5139f243f134cd90f5623f6f480b76e4f2c0c75093f57ce8e2d2d89f4ad`.
+The matched pre-change harness SHA-256 was
+`b1b9126e99f616df31169f46373bf7de1ceb089668323589eca26586af9c1dee`; it
+accepted the same mutated production and witness with exit 0. Its control log
+SHA-256 is
+`6bc2b60e0bd0498a4538a987a1ae3b56715070d2a002c1dea6272ced581d98a9`.
+This is the needed counterfactual proof that the new cursor oracle matters;
+the old harness only checked an empty body and never checked cursor movement.
+
+The mutation was restored before the final build. The restored final ASan
+binary accepted the exact witness with exit 0; the replay log SHA-256 is
+`ef93104551cb61675d364c914ee42f521cc9e20ad27e9dca9427a3a86809d134`.
+No production fix or deterministic regression test is claimed because clean
+master passed. `git diff --check`, both fuzz builds, the frozen replays, the
+four-worker sanitizer run, exact mutation rejection, matched-control
+acceptance, and restored-witness replay all completed. No fuzz, sanitizer,
+mutation, or build process remains running.
+
 ## `asmap` netgroup contract oracle audit (2026-07-24)
 
 ### Scope and source state
