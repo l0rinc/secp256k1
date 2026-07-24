@@ -6771,6 +6771,92 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `key_io` valid-secret oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`4b3736ceadcd2b7ab10ea4b90e4b8dc32c695b04` (`fuzz: strengthen key io
+valid-secret oracle`) on parent `3c01f7155fcaaa70bcd76140cd815e86ab9fcf91`.
+The source branch is a descendant of fetched `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; that exact commit is the merge
+base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped query over
+`src/test/fuzz/key_io.cpp`, `src/key_io.cpp`, `src/key_io.h`, `src/key.cpp`,
+`src/key.h`, and `src/test/fuzz/key.cpp` returned no commits. No l0rinc
+change was cherry-picked. Any later cherry-pick, minor fix, or master change
+must say whether it masks, preserves, or changes this result.
+
+### Oracle and Core boundary
+
+The old target only round-tripped `DecodeSecret(random_string)` when the
+fuzz input already happened to be a valid WIF. The new oracle copies the first
+32 fuzz bytes into an independent secret, uses the next byte for compressed
+versus uncompressed encoding, replaces invalid scalar bytes with the fixed
+valid scalar 1, and asserts that `EncodeSecret` followed by `DecodeSecret`
+preserves the complete `CKey`. This gives malformed and empty inputs a
+positive parser oracle without treating rejected WIF strings as failures.
+
+`DecodeSecret` and `EncodeSecret` serve local wallet/RPC key import and
+export. They are not peer block-validation or consensus-acceptance gates.
+Clean master reproduced no production failure, consensus divergence,
+memory-safety issue, or production fix. Master-relative severity is therefore
+Low/informational oracle hardening. A local key-import regression is not
+High/Critical without separate Core caller evidence crossing a security or
+consensus boundary. A nonce without cryptographic meaning is not Critical
+merely because it is retained or not cleared.
+
+### Corpus and clean replay
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/key_io` and contains 318 files,
+310890 bytes, with sizes 1..227585. Its content manifest SHA-256 is
+`4886b9135c63c280b78649d7287c28f1e4ba69edb3ee98d7faccc607ca97322`.
+Clean ASan/UBSan replay exited 0 after 319 executions with no artifact or
+diagnostic; log SHA-256 is
+`bf5bdd5f36945ce139764b01ee64fbe46d7a5e2879ea1d06a9d220a942fb4e1d`.
+Clean normal replay also exited 0 after 319 executions; log SHA-256 is
+`3d23aec51daf37990106b44b556544c173fda428762d026517bdfef5faa415ad`.
+The final ASan and normal binary SHA-256 values are
+`c4bc20c8e29f0d1e5cce7f73bdec981e304216cef84e45827a59dc93cbb3008c` and
+`3e0c6dbbc7e47f73979ba41a5e7bdfb98e88e9e3ba663fcf614acf6676d96cf2`.
+Four isolated ASan workers each completed 20000 runs with exit 0 and no
+artifact. Their log SHA-256 values are
+`b6d94b04e9fcf943212892c2dfb959bea39f9f03ad36416ef56d0371499c10be`,
+`e733181ea5af0295380d31dbd61591b025a19ab542c61ecbf4013e983b268410`,
+`0946f4196d5bdf317834b8eef05b848ffc0bd6bd5180205f9c328e5ab2a7843b`, and
+`21b6885fee69e89367d51dc1ba3fc481e713e987d932d23fd8aadb3488a9dd03`.
+The frozen copy was restored after an initial worker attempt wrote generated
+units; the authoritative replays used isolated writable copies and the
+verified 318-file manifest.
+
+### Differential proof, not a master finding
+
+A temporary production mutation replaced `DecodeSecret` with `return CKey{}`.
+The mutated `src/key_io.cpp` SHA-256 was
+`a278e38b122db60bff297617b518bf28eb5eefdcef6940f4e6f19caf56f1321c`; the
+enhanced ASan binary SHA-256 was
+`b4df5c07d87a15c4468c98f02bed1136fd9490e0e9229b849c2de8549a4fdabd`.
+On the exact empty input, SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, the
+enhanced harness exited 134 at
+`src/test/fuzz/key_io.cpp:44` on
+`generated_key == DecodeSecret(EncodeSecret(generated_key))`; mutation log
+SHA-256 is
+`3cce9aac7ecb700d43fda57c115ee7656c8fdd2e89d0087585640efebaf2daba`.
+The original harness with the identical mutation exited 0 on the empty input
+and across all 318 frozen corpus files. Exact parent log SHA-256 is
+`ea1de0f70ee221aea831c61903428230add35337a11f88273c45135427fcd9cc`; the
+full-corpus parent log SHA-256 is
+`9bad4db2eab53bffd95bc837715af45a2f8385a84db9dced30174bf602c5db49`.
+This proves the new positive oracle catches a modeled decoder regression that
+the old target silently misses; it does not prove clean master contains that
+regression. The mutation was restored before the final build.
+
+The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
+focused unit suite is claimed. `git diff --check` passed. No production
+behavior changed and no deterministic production regression test is claimed.
+
 ## `psbt_base64_decode` wrapper oracle audit (2026-07-24)
 
 ### Scope and source state
