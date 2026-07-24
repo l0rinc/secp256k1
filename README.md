@@ -7123,6 +7123,144 @@ Full-file clang-format diagnostics in `src/torcontrol.cpp` are pre-existing
 legacy style violations; unrelated formatting was not rewritten. No fuzz,
 sanitizer, mutation, or build process remains running.
 
+## MuHash accumulator state and serialization oracle audit (2026-07-24)
+
+Source commit `113d83a0546474052578927dd1ef6a66b594594e` (`fuzz: strengthen
+MuHash state oracle`) follows parent `b2a06c8ad37f74654d1b6ebc1a9ac41ca6a1d8c0`.
+The audit base is Bitcoin Core `origin/master`
+`3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`; the scoped query
+
+    git log origin/master..remotes/l0rinc/master -- src/test/fuzz/muhash.cpp src/crypto/muhash.cpp src/crypto/muhash.h src/validation.cpp src/kernel/chainstatemanager.cpp
+
+returned no commits. No relevant l0rinc change was cherry-picked and no later
+fix was used to mask this clean-master result.
+
+### Core boundary and severity
+
+MuHash is used by `kernel::ComputeUTXOStats` and the persistent Bitcoin Core
+`CoinStatsIndex`. The one-shot kernel statistics path finalizes a temporary
+accumulator, but `CoinStatsIndex::CustomAppend`, `CustomInit`, and rollback
+also finalize the member `m_muhash` and then continue inserting/removing coin
+hashes or commit the state. `Finalize` must therefore leave the fraction in a
+canonical numerator/denominator form for the next block transition.
+
+Clean master reproduced no production bug. The modeled stale-fraction
+regression is **Medium** local UTXO-statistics/index-integrity impact: a
+reused `CoinStatsIndex` accumulator could produce wrong per-block coinstats
+hashes or fail restart/rollback consistency checks. It is not consensus
+validation, does not accept invalid blocks or invalid UTXO snapshots in the
+evidence here, and is not High/Critical without that reachability proof.
+Invalid fuzzer state or an invalid block alone does not raise severity. A
+nonce without cryptographic meaning is not Critical merely because it is
+retained or not cleared.
+
+### Existing findings reiterated
+
+The standing master-relative ledger is unchanged: private-broadcast
+failed-send retention and the empty-HEADERS initial-sync handoff remain
+feature-conditional Medium availability findings; peer transaction refresh,
+local block-storage failure, oversized transport types, and parser/cache/
+index/serialization inconsistencies remain Low or hardening under current
+Core callers; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention remain Medium but
+reachability-limited; and banman invalid-subnet/unban integrity remains
+Low/nice-to-have.
+
+The witness-sigop undercount is High/Critical only if an end-to-end Bitcoin
+Core reproduction proves invalid-block acceptance or another consensus
+violation. The two `script_sign` mutations are intentional regression models,
+not master vulnerabilities: removing `UpdateInput`'s scriptWitness copy and
+removing missing/spent-input `input_errors` assignment. Both are Medium at
+most because they affect local signing/RPC state, not consensus validity. No
+additional clean-master MuHash production bug is claimed here.
+
+### Oracle changes
+
+The production `Finalize` path now asserts that the denominator is reset to
+the multiplicative identity after the numerator is divided by it. The harness
+tracks a separate primitive insert/remove model and checks it after a bounded
+sequence containing direct updates, accumulator multiplication/division,
+self-composition, self-cancellation, and explicit finalization. It also
+serializes the raw numerator/denominator state before finalization, deserializes
+it, compares the resulting hash with the rebuilt model, and calls `Finalize`
+again to prove value preservation and idempotence.
+
+### Corpus and clean replay
+
+The frozen corpus is
+`/mnt/my_storage/qa-assets/fuzz_corpora/muhash`: 737 files and 72,016,432
+bytes. The sorted filename/content manifest SHA-256 is
+`ccb260690b68057d002e3f76b6d4db00045b5dc2d5e86295e4bb925627e8aa4f`.
+Final source SHA-256 values are
+`43cc15ccfdfdab785dd3cd4796f6e4e175f38789deafca8ba3f21b93a237bec2`
+(`src/crypto/muhash.cpp`) and
+`fc03b352a0e85cd7380aa0895e1b693689c71cf48f3c33961a9608e584b7b016`
+(`src/test/fuzz/muhash.cpp`). Final ASan/UBSan and normal fuzzer binary
+SHA-256 values are
+`542ae2e192f1db9b6e6607c1a11dd277036061e4100dff5ded09d6eba0f52e2f` and
+`1ece520f20fd7d5587b59b4ad229454f57faaf04a63d62ca8f7eeddbe5a7e1c6`.
+
+The original clean baseline passed 738 executions under ASan/UBSan with
+coverage 411, 1,194 features, peak RSS 411 MiB, and log SHA-256
+`fed28d96b501dce0dc6c07cc5188cbf93f3b9b57087661420f054cba43252134`.
+The original normal baseline passed 738 executions with coverage 176, 338
+features, peak RSS 58 MiB, and log SHA-256
+`69c1cf9aca11aec86cd0ec550e0d3c7a367a197a8602701c9cb290e6a0b8a05a`.
+
+The final ASan/UBSan replay exited 0 after 738 executions, with coverage 628,
+2,146 features, peak RSS 440 MiB, and no artifact or diagnostic; log SHA-256
+is `29b3ad03ae3aa0f5ec947d52aec9d9c4bded6cfeada81931929f03ec67ac1b2e`.
+The final normal replay exited 0 after 738 executions, with coverage 332,
+912 features, peak RSS 65 MiB, and no artifact; log SHA-256 is
+`f3ebcad02071208e7b96a28d20edb3029ada53b85fee37fc1e7ba5f59ef5c112`.
+
+Four isolated ASan workers each ran 2,500 executions from separate corpus
+copies and exited 0 without artifacts or sanitizer diagnostics. Peak RSS was
+483, 490, 488, and 491 MiB. Worker log SHA-256 values are
+`4524417d9ba05092132a29c396bbf05ecd2d63506064fd8b1c4ef2a05d228778`,
+`65c35bcdc70c4ee965f9b7a95db691f6edcf7bd6abb235d4ad55eddb3b31c6cb`,
+`8fa5a130cdd6927774be2dfe441badee27dfe05531d3ae867bfc503c1aadaa0a`, and
+`48dae67df9d2c39481171cc09bd2d26f7b134f416c8962bd907542dd342bbffa`.
+
+### Differential proof, not a master finding
+
+A temporary production mutation removed
+`m_denominator.SetToOne()` from `MuHash3072::Finalize`. The mutated
+production source SHA-256 was
+`cc2ddf4b4a5788a652d74d16a037b686bb9a5e1cb9aee17c7f756acce86f9eed`; the
+enhanced mutation harness SHA-256 was
+`e3d708bd8a7d5c0b7c06f79008f7db4da5d350eda05e9b9d2a6d0a6022b6bd3f`; and
+the ASan binary SHA-256 was
+`42d4a8702a5cb10d813acbb4356347acbe09a29b375a25995c27e69650f0c1a7`.
+
+The mutation was detected at executed unit 51 by the production denominator
+postcondition. The minimized witness is
+`/tmp/bitcoin-muhash-20260724/mutation-artifacts/crash-437cfa982d18a62c3a4f9a04585c3c3625c46128`, 12 bytes, SHA-256
+`071615176b72f3df7fa17eff2fdf941c39cfc2e9bc6ccadd0be5895eba70a9fd`, and
+Base64 `TFwAClzx4Vx/+Vz3`. Mutation log SHA-256 is
+`84434f615725a004dec8c9f6c204d24c9fb594128cddcb0bbf88fbf4381f0fb4`.
+
+The exact witness passed with exit 0 in a temporary parent-equivalent
+production and harness build retaining the mutation but without the new
+assertions or state model; control log SHA-256 is
+`10f28f064f8a2de2ff921f8b9d3285607fa6cfe72bfa192866bf8da1cd60d438`.
+The restored final ASan binary accepted the same witness with exit 0; the
+restored log SHA-256 is
+`9b3b8a0e54e7f94d8a3265507fad390e426e3e6111e82ef956b031e9dc083d22`.
+This proves oracle sensitivity to a modeled state-transition regression, not
+a defect present on master. No production fix or deterministic regression
+test is claimed because clean master passed.
+
+### Verification gap
+
+Verification used both fuzz builds, the clean baselines, the final frozen
+replays, four isolated ASan workers, the mutation/control/restored witness
+replays, and `git diff --check`. `clang-format --dry-run --Werror` still
+reports pre-existing file-wide legacy diagnostics in the touched files; the
+new compact loops were expanded and no unrelated formatting was rewritten.
+No fuzz, sanitizer, mutation, or build process remains running.
+
 ## `asmap` netgroup contract oracle audit (2026-07-24)
 
 ### Scope and source state
