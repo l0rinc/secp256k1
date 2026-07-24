@@ -369,18 +369,27 @@ int secp256k1_ec_pubkey_sort(const secp256k1_context* ctx, const secp256k1_pubke
     return 1;
 }
 
-static void secp256k1_ecdsa_signature_load(const secp256k1_context* ctx, secp256k1_scalar* r, secp256k1_scalar* s, const secp256k1_ecdsa_signature* sig) {
-    (void)ctx;
+static int secp256k1_ecdsa_signature_load(const secp256k1_context* ctx, secp256k1_scalar* r, secp256k1_scalar* s, const secp256k1_ecdsa_signature* sig) {
+    int overflow;
+
     if (sizeof(secp256k1_scalar) == 32) {
         /* When the secp256k1_scalar type is exactly 32 byte, use its
          * representation inside secp256k1_ecdsa_signature, as conversion is very fast.
          * Note that secp256k1_ecdsa_signature_save must use the same representation. */
         memcpy(r, &sig->data[0], 32);
+        overflow = secp256k1_scalar_check_overflow(r);
         memcpy(s, &sig->data[32], 32);
     } else {
-        secp256k1_scalar_set_b32(r, &sig->data[0], NULL);
-        secp256k1_scalar_set_b32(s, &sig->data[32], NULL);
+        secp256k1_scalar_set_b32(r, &sig->data[0], &overflow);
     }
+    ARG_CHECK(!overflow);
+    if (sizeof(secp256k1_scalar) == 32) {
+        overflow = secp256k1_scalar_check_overflow(s);
+    } else {
+        secp256k1_scalar_set_b32(s, &sig->data[32], &overflow);
+    }
+    ARG_CHECK(!overflow);
+    return 1;
 }
 
 static void secp256k1_ecdsa_signature_save(secp256k1_ecdsa_signature* sig, const secp256k1_scalar* r, const secp256k1_scalar* s) {
@@ -438,7 +447,9 @@ int secp256k1_ecdsa_signature_serialize_der(const secp256k1_context* ctx, unsign
     ARG_CHECK(outputlen != NULL);
     ARG_CHECK(sig != NULL);
 
-    secp256k1_ecdsa_signature_load(ctx, &r, &s, sig);
+    if (!secp256k1_ecdsa_signature_load(ctx, &r, &s, sig)) {
+        return 0;
+    }
     return secp256k1_ecdsa_sig_serialize(output, outputlen, &r, &s);
 }
 
@@ -449,7 +460,9 @@ int secp256k1_ecdsa_signature_serialize_compact(const secp256k1_context* ctx, un
     ARG_CHECK(output64 != NULL);
     ARG_CHECK(sig != NULL);
 
-    secp256k1_ecdsa_signature_load(ctx, &r, &s, sig);
+    if (!secp256k1_ecdsa_signature_load(ctx, &r, &s, sig)) {
+        return 0;
+    }
     secp256k1_scalar_get_b32(&output64[0], &r);
     secp256k1_scalar_get_b32(&output64[32], &s);
     return 1;
@@ -462,7 +475,9 @@ int secp256k1_ecdsa_signature_normalize(const secp256k1_context* ctx, secp256k1_
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sigin != NULL);
 
-    secp256k1_ecdsa_signature_load(ctx, &r, &s, sigin);
+    if (!secp256k1_ecdsa_signature_load(ctx, &r, &s, sigin)) {
+        return 0;
+    }
     ret = secp256k1_scalar_is_high(&s);
     if (sigout != NULL) {
         if (ret) {
@@ -484,7 +499,9 @@ int secp256k1_ecdsa_verify(const secp256k1_context* ctx, const secp256k1_ecdsa_s
     ARG_CHECK(pubkey != NULL);
 
     secp256k1_scalar_set_b32(&m, msghash32, NULL);
-    secp256k1_ecdsa_signature_load(ctx, &r, &s, sig);
+    if (!secp256k1_ecdsa_signature_load(ctx, &r, &s, sig)) {
+        return 0;
+    }
     return (!secp256k1_scalar_is_high(&s) &&
             secp256k1_pubkey_load(ctx, &q, pubkey) &&
             secp256k1_ecdsa_sig_verify(&r, &s, &q, &m));
