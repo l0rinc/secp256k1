@@ -6859,6 +6859,118 @@ The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
 focused unit suite is claimed. `git diff --check` passed. No production
 behavior changed and no deterministic production regression test is claimed.
 
+## `netaddress` contract oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`83a84bda2fc4e8914f11c386e55eb464db3965ee` (`fuzz: strengthen netaddress
+contract oracle`) on parent `9572aedb8c62350c82bc801c4dfaae659c07a82a`.
+The source branch is a descendant of fetched `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; that exact commit remains the
+merge base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped
+`origin/master..remotes/l0rinc/master` query over `netaddress.cpp`,
+`netaddress.h`, `netaddress` fuzzing, `addrman`, `netgroup`,
+`net_processing`, and related tests returned no commits. No l0rinc change was
+cherry-picked.
+
+### Oracle and Core boundary
+
+The old `FUZZ=netaddress` target mostly discarded results from address
+classification, serialization, subnet matching, service keys, and ordering.
+The new target adds narrow checks for the contracts that belong to these
+objects:
+
+* BIP155 V2 serializes and deserializes exact `CNetAddr` values, including the
+  internal-address encoding. IPv4-in-IPv6 and TorV2-in-IPv6 legacy aliases are
+  explicitly expected to deserialize as invalid under V2.
+* V1-compatible IPv4, IPv6, and internal addresses round trip exactly. V1
+  IPv4-in-IPv6 aliases decode as IPv4, TorV2 aliases decode as invalid, and
+  V1-incompatible Tor, I2P, and CJDNS addresses retain their documented lossy
+  invalid result instead of being subjected to a false universal round-trip
+  assertion. Both streams must be exhausted after deserialization.
+* A valid IPv4/IPv6 `CSubNet` constructed from an address must match that
+  address after network-mask normalization.
+* `CService::GetKey()` must be the address key followed by the two-byte
+  big-endian port, and `CService::operator<` must match its address-then-port
+  ordering model and remain irreflexive.
+
+Bitcoin Core receives these values from peer-controlled ADDR/ADDRV2 messages
+and processes them in `net_processing.cpp:5822-5883`, where rate limiting,
+relay decisions, reachability, and AddrMan insertion occur. AddrMan indexes
+`CService` and `CNetAddr` values, and NetGroupManager uses addresses for peer
+grouping. These are network-metadata paths, not block validation or script
+execution paths. On master, a mismatch here is Low/informational hardening:
+it cannot by itself accept an invalid block, alter consensus or the UTXO set,
+move funds, or reach a cryptographic boundary. No clean-master production
+failure, production fix, or High/Critical finding was established. A
+non-cryptographic address field is not Critical merely because it is retained.
+
+### Corpus and clean replay
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/netaddress` and contains 461 files,
+15108 bytes, with sizes 1..674. The filename/size manifest SHA-256 is
+`d2f0cdb85a419ec20e43d93c779d73f45c40bec93bbc316b2e6021a381b4d2d5`; the
+content manifest SHA-256 is
+`52d736428618aed0f8531375e5d6ad5e17efbb6c77183db3a48601a07b1d31a1`.
+The final formatted harness SHA-256 is
+`6268db410ec0986c79d06d73d1dc00b0a109f0f4eb70c147f834c65d5405ceda`.
+
+The final ASan/UBSan and normal fuzz-driver SHA-256 values are
+`915081f851bade57421e36526f63ae1cee1da153678c8549e91c88abeb00848e` and
+`85da8b638e0950f08cad2caccb841aea087ef99d5f2c6582a88bf128557da22c`.
+The exact four-byte empty witness is `00 00 00 00`, SHA-256
+`67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450`.
+Its final ASan and normal replay logs are
+`e7a10e3167e3e012d6225f93b598648e6961b046404da133cb3516352041755b` and
+`51256671e995d0e52efb8ce5050e780d48acee950258ac5668585cd27308df43`.
+The complete 461-input frozen replay exited 0 under both builds; its ASan and
+normal log SHA-256 values are
+`a12b61397ce2a89f6b5bdb1c7ea6273c46ab4dd64f4fd554bde39295bb95986` and
+`98565c2ef58988dd8269c4cdbcf0681c4edcef1bd33b607d832f10078d7b6844`.
+No sanitizer, assertion, or crash diagnostic was present.
+
+Four isolated final ASan workers each completed 20000 runs with exit 0 and no
+artifact. Their log SHA-256 values are
+`29cd560cf9c8785d5e56ef2f772a685140307301b908e38fb33bee1a6b4b2c5b`,
+`47348e27a187cd413702591c0c552f803e5f4e13163e080a3810a03dac244c4b`,
+`1eb61b1c5f44cb514571160a543291b7609110ba2571ced59d543287b495ceef`, and
+`cfb0b0c8384c460b8c82479eeb90c31fc62512bd8d7633c59acf1b6c4d4d8dc2`.
+Each worker used a writable corpus copy and artifact prefix; the frozen
+461-file manifest remained unchanged.
+
+### Differential proof, not a master finding
+
+A temporary minimal production mutation changed
+`CNetAddr::GetBIP155Network()` for `NET_IPV4` to return the IPv6 BIP155 tag.
+The mutated `src/netaddress.cpp` SHA-256 was
+`513cfa3c87e285a0c57863fb8306c1946254dcfbaa5f01453b902b4b396b6658`; the
+enhanced mutated ASan binary SHA-256 was
+`5fa880748329d8ddb9f08e5f717d621a8758d7c181f57a00a29047a145e51ea7`.
+On the exact witness, the enhanced harness deterministically reached
+`BIP155 IPv6 address with length 4 (should be 16)` and libFuzzer's
+deadly-signal path. The bounded replay status was 124 because the temporary
+timeout stopped that expected fatal path; the mutation log SHA-256 is
+`7e680a84df7352cae44b331c2a948f3c7b8dcdae8d0702e0b7927d495c80459e`.
+
+The parent harness with the identical production mutation exited 0 on the
+same witness. Its mutated ASan binary SHA-256 is
+`3b6821e499216977fea0a34cac50fb1b772e6482d9748d98c54f535d10a2eed8`; the
+control log SHA-256 is
+`e7d0ee5356fdc0f37b4897aa1921291c861d19117ad2a7aaacf2636cd9eea939`.
+This proves that the added oracle detects a modeled BIP155 serialization
+regression that the old target silently accepts; it does not prove clean
+master contains that regression. The production mutation was restored before
+the final build.
+
+`clang-format --dry-run --Werror` and `git diff --check` passed. The configured
+fuzz-only builds have no `test_bitcoin` target, so no focused unit suite is
+claimed. No production behavior changed and no deterministic production
+regression test is claimed. No fuzz, sanitizer, mutation, or test process
+remains running.
+
 ## `protocol` inventory semantic oracle audit (2026-07-24)
 
 ### Scope and source state
