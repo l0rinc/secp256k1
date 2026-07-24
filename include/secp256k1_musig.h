@@ -334,7 +334,8 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_pubkey_xonly_twea
  *  Remember that nonce reuse will leak the secret key!
  *  Note that using the same seckey for multiple MuSig sessions is fine.
  *
- *  Returns: 0 if the arguments are invalid and 1 otherwise
+ *  Returns: 0 if the arguments are invalid or nonce derivation produces a
+ *           zero scalar, 1 otherwise
  *  Args:         ctx: pointer to a context object (not secp256k1_context_static)
  *  Out:     secnonce: pointer to a structure to store the secret nonce
  *           pubnonce: pointer to a structure to store the public nonce
@@ -404,7 +405,8 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_musig_nonce_gen(
  *  Remember that nonce reuse will leak the secret key!
  *  Note that using the same keypair for multiple MuSig sessions is fine.
  *
- *  Returns: 0 if the arguments are invalid and 1 otherwise
+ *  Returns: 0 if the arguments are invalid or nonce derivation produces a
+ *           zero scalar, 1 otherwise
  *  Args:         ctx: pointer to a context object (not secp256k1_context_static)
  *  Out:     secnonce: pointer to a structure to store the secret nonce
  *           pubnonce: pointer to a structure to store the public nonce
