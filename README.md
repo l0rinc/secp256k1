@@ -6769,6 +6769,125 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `tx_in` and `tx_out` primitive contract oracle audit (2026-07-24)
+
+Source commit: `1693fbc067` (`fuzz: strengthen transaction input/output
+oracles`). The source branch is based on `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`, with parent `578b4cea4a`.
+The scoped query
+`git log origin/master..l0rinc/master -- src/test/fuzz/tx_in.cpp src/test/fuzz/tx_out.cpp src/primitives/transaction.h src/consensus/validation.h src/policy/policy.cpp`
+returned no commits. No l0rinc change was cherry-picked, so no fork fix can
+mask this result.
+
+### Oracle changes and caller reachability
+
+The old `tx_in` target parsed a `CTxIn`, discarded both weight results, and
+never populated `scriptWitness`. The new target creates bounded witness
+stacks, checks standalone `CTxIn` serialization semantics, checks witness
+round trips through a `CMutableTransaction` envelope, and independently
+recomputes `GetTransactionInputWeight` and default virtual size.
+
+The old `tx_out` target discarded the dust results and only asserted
+`IsNull()` after `SetNull()`. The new target independently recomputes the
+dust threshold, checks `IsDust`, verifies policy helpers are pure, checks a
+serialization round trip, and asserts that `SetNull()` clears both the
+amount state and `scriptPubKey`.
+
+Bitcoin Core reaches the input-weight helpers from wallet fee bumping and
+spend/RPC fee estimation (`src/wallet/feebumper.cpp`,
+`src/wallet/rpc/spend.cpp`). Dust helpers are used by wallet change and coin
+selection, RPC/GUI output checks, relay policy, and ephemeral policy. These
+are policy, wallet, and state-oracle paths, not direct block-validation
+acceptance gates. The master-relative rating is therefore Low/Medium
+hardening; no clean-master production bug, invalid-block acceptance,
+consensus failure, memory-safety issue, production fix, or deterministic
+regression test is claimed.
+
+The standing severity rules are reiterated here: a witness-sigop undercount
+is High/Critical only when proven to enable invalid-block acceptance; a
+mutation detected by a fuzzer is not automatically a production finding; and
+a nonce without cryptographic meaning is not Critical merely because it is
+retained. Potential fixes that alter follow-up behavior must be described as
+oracle/mutation controls rather than reported as master vulnerabilities.
+
+### Corpus snapshot
+
+The existing `tx_in` corpus contained 76 files, 323,332 bytes, with sizes
+1..67,332. Its sorted filename/size manifest SHA-256 is
+`8523eb3037960eb7d2709aec34205d0ec019ef91f721e7c69388482cbc0e685d`; its
+per-file content manifest SHA-256 is
+`514d10eb3b7e19441e7ed1acc4a369fdeece11526cd68685e445f56a1ad31944`.
+
+The existing `tx_out` corpus contained 42 files, 21,522 bytes, with sizes
+1..10,012. Its sorted filename/size manifest SHA-256 is
+`2511717efe51c03f13fe2feea5543fa0de51fb6557d45ea7d23e19513abe31c2`; its
+per-file content manifest SHA-256 is
+`bdae73e54ce86a8711007cfe70d04605ca3dec040c65347282f14bb5a62e72e6`.
+All authoritative runs used isolated copies.
+
+### Differential mutation proof
+
+These are oracle-sensitivity proofs only. Both temporary production
+mutations were restored before the final build.
+
+1. Input weight: removing
+   `+ ::GetSerializeSize(txin.scriptWitness.stack)` from
+   `GetTransactionInputWeight` caused the enhanced harness to abort at
+   `tx_in.cpp:68`, status 134, on
+   `0507043efbd914ee5082e738b1396789bf4a3c8f` (41 bytes, input SHA-256
+   `51baebfae11865df59b9443e31c192e7e7e8753fc7d1c3480359bc3f3950a571`).
+   The full mutation log SHA-256 is
+   `2a290cf29d33bf08b6f471990b211045cf2b0cf552d4b88788e019828cad761a`.
+   The clean-master original harness with the identical mutation and input
+   exited 0; its control log SHA-256 is
+   `0cea0423e0262abd45e75d6177fe1491d9fd8c5a37865439f24d215ea6486bec`.
+
+2. Output reset: removing `scriptPubKey.clear()` from `CTxOut::SetNull()`
+   caused the enhanced harness to abort at `tx_out.cpp:65`, status 134, on
+   `0ead78f209a24a6c7a078527bc313353a17b72ef` (35 bytes, input SHA-256
+   `cca221fb513eb343ab71960f1ad1b1b5fa5691fdc6280454dfa1dc5971ddeb2d`).
+   The full mutation log SHA-256 is
+   `1d0782c8e778cea9e6ba86e1078642f36b3051b99e32f1c4c8a909fd76e2946e`.
+   The clean-master original harness exited 0 over all 42 `tx_out` inputs;
+   its control log SHA-256 is
+   `7ea1d23602a1270dbe2dab23f8e7661804ad462ead8b26315584adf6be7d33ff`.
+   The old `IsNull()` assertion checks only `nValue`, so it does not prove
+   script reset.
+
+Neither mutation proves a clean-master production defect. They prove that
+the added oracles distinguish the modeled broken states from the unchanged
+master behavior.
+
+### Final replay evidence
+
+The restored ASan/UBSan/libFuzzer binary SHA-256 is
+`5594adce9873eb286aa2932b7e3262511ffb193d540bcc1232fed964a18f0cae`.
+The final `tx_in` replay exited 0 after 77 executions, added no units, and
+has log SHA-256
+`45599f1dcd94e55d4fa4b6dee81b6ce71e022f39e8ecb0ef0cc6fd787e936589`.
+The final `tx_out` replay exited 0 after 43 executions, added no units, and
+has log SHA-256
+`742b6c9b12a674a8137834c5b9c42644dcfaa6fbe19a9d5adf7823ff0b2b135e`.
+
+The restored normal Clang/libFuzzer binary SHA-256 is
+`0b287d5415452688e7c48f6de4735b0db4c9ec193893b26c6be0a0ba327bec1a`.
+Its `tx_in` replay exited 0 after 77 executions with log SHA-256
+`10035fc44b99cef053c4c25afa0c2b1340ef2614d0362db8c931c13da59cc986`; its
+`tx_out` replay exited 0 after 43 executions with log SHA-256
+`d84aada8fe0691ca02d55b511bf4be52dfa1047dc5c435bff7e539f5c781bcd6`.
+
+Four final isolated ASan workers per target all exited 0. The four `tx_in`
+jobs executed 45,604..46,163 inputs, added 31..46 units, and peaked at
+390..408 MiB; the aggregate parent log SHA-256 is
+`c2401fbf512fe3883bf14edd06abe18aa042cec8429fd354f70d4fa1260c736e`.
+The four `tx_out` jobs executed 103,193..107,931 inputs, added 2..5 units,
+and peaked at 180..190 MiB; the aggregate parent log SHA-256 is
+`6d51141795d1cc0c75059283d01f5bdc9f33a0c7b59f7c409d00cc2f684af760`.
+
+`git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/tx_in.cpp src/test/fuzz/tx_out.cpp`
+passed. No fuzz, sanitizer, build, or mutation process remains running.
+
 ## `message` signing and verification oracle audit (2026-07-24)
 
 Source commit: `7df92be31a` (`fuzz: strengthen message signing oracle`). Its
