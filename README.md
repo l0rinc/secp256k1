@@ -6645,6 +6645,147 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `script_sign` signing-state and wallet-oracle audit (2026-07-24)
+
+Source commit: `12e6a32104` (`fuzz: strengthen script signing state oracles`).
+The audit branch was rebased from `289a8be575e8665d73e7dd6026bb7a14a7903133`
+onto current Bitcoin Core master `afa5e46bbc6dd750bd71920b659162a945abf0ae`.
+The scoped fork query
+
+    git log origin/master..l0rinc/master -- src/test/fuzz/script_sign.cpp src/script/sign.cpp src/script/sign.h src/script/signingprovider.h src/musig.cpp src/musig.h
+
+returned no commits, so no l0rinc commit was cherry-picked for this target.
+
+### Oracle changes and Core boundary
+
+The target is `FUZZ=script_sign`. The old harness discarded the
+`SignTransaction` return value and only checked a weak HD-keypath size
+relation. Production-side assertions now protect `DataFromTransaction`,
+`UpdateInput`, and `SignTransaction` contracts: scriptSig/scriptWitness
+copying, input identity and sequence, transaction envelope immutability, and
+the indexed input-error/completion relation. They are debug/fuzz assertions;
+release behavior is unchanged.
+
+The harness now checks transaction envelope preservation, input-error indexes,
+missing/spent-input retention, exact HD-keypath round trips for fully valid
+public keys, and complete equals an empty input-error map. A deterministic
+compressed P2WPKH case proves both script fields survive extraction and input
+update, produces a complete two-item witness verified by `VerifyScript`, and
+proves a missing coin leaves pre-existing scripts unchanged while reporting
+the input error. Random valid uncompressed keys are replaced with a fixed
+compressed fallback for this SegWit case; their documented rejection is not a
+production failure. MuSig2 secret-nonce lifecycle coverage remains enabled.
+
+The generic `SignTransaction` path is consumed by
+`rpc/rawtransaction_util.cpp` and `rpc/rawtransaction.cpp`; wallet
+`scriptpubkeyman.cpp` forwards wallet signing to it, `wallet.cpp` propagates
+completion and input errors, and `wallet/rpc/spend.cpp` serializes the result.
+`DataFromTransaction` and `UpdateInput` also support local signing and PSBT
+state assembly.
+
+### Master-relative severity and findings
+
+No clean-master production bug was confirmed in this target. Two intentional
+production mutations were detected deterministically and are regression
+proofs, not claims that master is broken:
+
+1. Removing `UpdateInput`'s scriptWitness copy fails the exact witness at
+   `src/test/fuzz/script_sign.cpp:104`. Severity on master: Medium at most;
+   the affected Core paths could produce incomplete or incorrect local
+   wallet/RPC signing state, but this is not block validation and cannot
+   accept an invalid block.
+2. Removing the missing/spent-input `input_errors` assignment fails at
+   `src/test/fuzz/script_sign.cpp:60`. Severity on master: Medium at most;
+   signrawtransaction-style callers could misreport an incomplete input as
+   complete, but the resulting transaction is not consensus-valid. Normal
+   `CWallet` coin collection rejects unknown wallet inputs earlier.
+
+The exact witness was
+`/tmp/bitcoin-script-sign-audit-20260724/frozen/ffe354da6811fa8dfb5d06c1409fc0a338b8b4e4`,
+SHA-256 `5875ec3b1ba9b0fce4c7dea45d933464cc2bde3d43e6e2a68d83d1ce8b9acd32`.
+Mutation source SHA-256 values were
+`060eb67f5930e4b998fb04edaea5de7fe244d7570b3a10128ddbc0bfd012cf80` and
+`3209ea24a8b382c6f93302a40f0c94bb85217332856f14deb46d639fe2ed942e`.
+Normal mutation runs exited 1; ASan/libFuzzer runs exited 124 after the
+assertion deadly-signal handler, with no AddressSanitizer or UBSan report.
+Mutation binary SHA-256 values were `673e84b72a18d64b1124505e26ed13d15f551974c698015105b72532ff4e7678`
+and `4939d08f6c0cedb92f20ba06e27e54e2186913c50dd9217fc37d2cc54482713b`
+for the witness-copy mutation, and
+`920f91199696111edcee0e154a0a2c2f0bd966397ebb86fa8ff9ea4e6f4284d4` and
+`cac7c153218436747fdc37ce9f5c4699186895461c9cc777294eef03dc5544bf` for
+the input-error mutation. Mutation log SHA-256 values were
+`c0f81b8a3de0c1e63cf66c793a2a6f2e9667c5c9c043ae1ac0fbd2b5dc59d4c5`,
+`ae08bca2428ac99cc47c1588334a7ce2155c1f636c81d9bc5424c439980b5484`,
+`5f855ef2db3cd36f2a8352f1ca929ed7cd97b0fb07e01f5bf153c5d804438372`, and
+`2eb4c8a277b4f385d5f7e917de6d9ec8e4df12e996e6db5c9f1f09a16496463d` in
+the same order. Clean exact-witness replay log SHA-256 values are
+`fcf770b41aa687c78d529db6f93ac823048f9ab7e52c6ca1c4f5c0acfdd3ffc6` and
+`feb2924dccce6f5f36b330f2ae93217f6b060d98e987b78847e1b241f1aff607`.
+
+Severity follows actual Bitcoin Core callers and master behavior. A witness
+sigop undercount is High/Critical only if invalid-block acceptance is proven;
+there is no such proof here. A nonce without standalone cryptographic meaning
+is not Critical merely because it is retained. MuSig2 secret nonces do carry
+cryptographic meaning, so actual reuse or exposure would be Critical, but this
+audit found no such issue. A later fork or minor fix must be classified as
+masking, preserving, or changing a master defect; an accidental minor patch
+does not reduce master-relative severity.
+
+Prior findings reiterated for continuity:
+
+- Feature-conditional private-broadcast failed-send retention: Medium.
+- Empty HEADERS initial-sync handoff: Medium.
+- Ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+  SHA/HMAC/RFC6979 retention: Medium but reachability-limited.
+- Peer transaction refresh, local block-storage failure, oversized transport
+  types, compact-block diagnostics, and cache/index/storage/serialization/
+  container issues: Low or hardening.
+- No additional clean-master production bug was confirmed in those areas in
+  this pass.
+
+### Corpus and replay evidence
+
+The frozen existing `script_sign` corpus contains 5,310 files and 61,039,868
+bytes, with file sizes from 17 through 938,133 bytes. The sorted filename-list
+SHA-256 is
+`ac1f5d9b94d73a2883677a4f7ebb4eed8136c9695437eced00ebb5a519c29504`; the
+per-file manifest SHA-256 is
+`ad54d8b16a2828ab53a08fd6612d35d3af2ab312f460bfc35eba3b870603e557`.
+
+Normal and ASan/UBSan replays completed successfully over all 5,310 inputs,
+with no assertion, sanitizer, or artifact output. Log SHA-256 values are
+`88db6199998d82cc885bdfc8f32567cb4588c044800c820b570b12f90df0ff65` and
+`1a26687e9f44021906aaac4a53f6bf7be1df9fa7441860a9cea88a2ca0fda33`.
+
+Four disjoint ASan workers covered the complete corpus union for 60 seconds;
+all exited 0 with no artifacts or diagnostics:
+
+    worker 0: 1,702 executions, 55 new units, peak 781 MiB, log 4e7dc262446c95c6bc33d85c96bb4f2d4cc4bdb85692d60d73672565e3ca880b
+    worker 1: 1,711 executions, 60 new units, peak 669 MiB, log 2a31079101671e64939d1ce8e32f83b0f5aa6d236c37ee36c13e34e834aa9247
+    worker 2: 1,666 executions, 47 new units, peak 678 MiB, log a990818d5499207dcc0eb345464ddc632e7a87a842ebe2a0d6526dcda2e20f49
+    worker 3: 1,736 executions, 58 new units, peak 680 MiB, log 70470264bb4548cfacc061606cfdbc16c0e674f97dbf49429d8cac88bd46e368
+
+### Verification
+
+Clean normal fuzz binary SHA-256:
+`75dc0b11c87c48fcd5e97c945fb93e551621c963e78f392b09548be9539e046f`.
+Clean ASan fuzz binary SHA-256:
+`0d449e3610b5699720febf470ead0182f4852f55bcea0794cccaf89c34c07f65`.
+The focused Bitcoin Core suites for script, P2SH, SegWit, standard,
+sigopcount, transaction, txvalidationcache, descriptor, key, wallet,
+scriptpubkeyman, and wallet_transaction passed with `*** No errors detected`.
+`test_bitcoin` SHA-256 is
+`cbf093880021c0a3d04600f10185915d28c41aecfbac1e10755c6f01aa463335`; the
+test log SHA-256 is
+`43a379220b83a10350ad058a5927a20298f18da8812286fcd52f74f02799c5ee`.
+
+Final clean source SHA-256 values are
+`7d87c917e9767b24f47865032ac121d8130256b25f6417e6a66b2fdcb9fa08d7` for
+`src/script/sign.cpp` and
+`6347ad697b7439512a5c3d8dbdb27d5368dad5ab35d60789d55c23ac3488396f` for
+`src/test/fuzz/script_sign.cpp`. No fuzz, sanitizer, build, test, or mutation
+process remains running.
+
 ## `script` solver, destination, and witness-sigop oracle audit (2026-07-23)
 
 Source commit: `a6f061db35` (`fuzz: strengthen script solver and witness-sigop
