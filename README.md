@@ -6769,6 +6769,115 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `block` validation-state and witness-commitment oracle audit (2026-07-24)
+
+Source commit: `1b3ac3a906` (`fuzz: strengthen block validation-state
+oracles`), parent `1693fbc067`. The source branch is based on fetched Bitcoin
+Core `origin/master` `610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; the scoped
+`origin/master..l0rinc/master` query over `block.cpp`, `validation.cpp`,
+`consensus/validation.h`, `consensus/merkle.cpp`, and `primitives/block.h`
+returned no commits. No fork change was cherry-picked. This is incremental
+to the earlier `CBlock::SetNull` audit and the existing block serialization,
+hash, merkle, and weight oracle.
+
+### Contracts, callers, and severity
+
+The old target only checked that each `BlockValidationState` had some mode,
+then called `Error("")` on one state, discarded the validation result
+relationship, and invoked `GetWitnessCommitmentIndex` without checking it.
+The new target asserts bool/state coherence, no unexpected error mode, the
+logical relationship among all four PoW/merkle flag combinations, and that
+only a successful full check sets `CBlock::fChecked`. It independently
+recomputes the last matching witness-commitment output index.
+
+`CheckBlock` is reached by `Chainstate::ConnectBlock`, `ProcessNewBlock`,
+`TestBlockValidity`, and the bitcoinkernel validation API. `ContextualCheckBlock`
+uses `GetBlockWeight` for `MAX_BLOCK_WEIGHT`; witness-commitment lookup is
+used by witness-malleation validation, block construction, signet handling,
+and miner bookkeeping. These contracts are consensus-adjacent, but no
+clean-master production bug, invalid-block acceptance, consensus failure, or
+memory-safety issue was found. The audit result is Low/Medium oracle
+hardening, with potentially High/Critical impact only for a separate proof
+that a production regression accepts invalid blocks.
+
+The standing severity rules are reiterated: a witness-sigop undercount is
+High/Critical only with an actual invalid-block acceptance path; detecting a
+production mutation is not itself a master finding; and retaining a nonce
+without cryptographic meaning is not Critical. Any later cherry-pick or
+minor fix that masks a follow-up must be recorded in the same commit or by
+amendment with whether master behavior was preserved, changed, or hidden.
+
+### Corpus and source identity
+
+The existing corpus had 965 files, 145,288,774 bytes, with sizes 1 to
+1,048,258. The path-independent per-file SHA-256 manifest is
+`cbb96936b2cfcdcfb133ffc58ac1952108bbfe38cc9148a7e777da586fb1cb16`.
+Parent `block.cpp` SHA-256 was
+`82fdb5f175dce32f3090ab1ad4c213519aa1f51124569ae088ee22ed13594dea`;
+enhanced SHA-256 is
+`faa9df726c3992c36142df4d588f559052e4546737aa92accf1a94d3e377dedd`.
+
+### Differential proof: new cache oracle
+
+A temporary mutation made `CheckBlock` set `fChecked` unconditionally.
+Mutated `validation.cpp` SHA-256:
+`51df035a912c6d148f71f81d12f19765fbb7c828fe61dc6919e8d0d0e693c886`.
+The enhanced sanitizer binary aborted with status 134 at `block.cpp:93` on
+`06fcde9532ef2e99574bcdd5460113d371168f7d` (38,597 bytes,
+SHA-256 `6e753427f2ee74afd7708e8e106b5ed3241da8165b9e55d59d80ecbc37e61290`).
+The full mutation log SHA-256 is
+`bb59ba83d16f361738c6f59e5a28ba205c6d70ca207eeba8772269505a0296dc`; the
+one-input diagnostic log SHA-256 is
+`2ce2eea6d842b2b12e67330507eb0ab50d107ac228de371d67b482a250c80403`.
+
+The parent harness with the identical mutation and input exited 0; its
+control log SHA-256 is
+`990863cb8b51f962758a32785dd148cfcb3c0b5ecc3de0ca47c297fae03262e9`.
+This proves the new cache postcondition matters. It is mutation sensitivity
+evidence only, not a claim that master contains the unconditional write.
+
+### Reiterated weight proof
+
+Removing the total-size term from `GetBlockWeight` produced the expected
+enhanced abort on
+`002bcf9672a3177140f1cd70a6781bde6044c556` (784,106 bytes,
+SHA-256 `c2e39105f1ffccc71178fe57c3840bfdca7c74b72f8175f0c7aca26490176aa0`).
+The mutated header SHA-256 was
+`b1742c5d6abc4d42536ba9c8f525c595a32915df98ff6f318a9b8f9ab130cfe6`;
+enhanced binary SHA-256 was
+`1710e991a7de9b8c8761516ef30e2738e1480248a6f828981085c74a2bf860ec`;
+mutation log SHA-256 was
+`ea9dba917cabe07677099157f96edce07b0ca06a5ba8d30b8960e885f00bfb7d`.
+The parent harness also caught this at its pre-existing weight assertion,
+so this is explicitly a repeated regression proof, not a new weight oracle
+or production finding.
+
+### Final verification
+
+The restored ASan/UBSan/libFuzzer binary SHA-256 is
+`26e2322d4c8b5fb799455885a52f34ed1498de3b2f8310049746ef19804f1385`.
+The fresh replay exited 0 after 966 executions, with coverage 1652,
+features 9697, peak RSS 788 MiB, and log SHA-256
+`242aa9c2cebc51751139e4a41dbae84e7b4356f39294664b31d01132cefc2627`.
+The normal binary SHA-256 is
+`16ca1b6fbbe6446b2c163d9e334c4e898432e0766e362b45276035622001196a`;
+its replay exited 0 after 966 executions with log SHA-256
+`3998ae211f3cf8af37ac3e2d7ec712f977f1815d503508e362776e22c38290b1`.
+
+Four isolated sanitizer workers all exited 0 after 966 executions, added
+zero units, and produced no artifacts. Peak RSS was 852, 851, 847, and 847
+MiB. Worker log SHA-256 values were:
+
+    08d0ba7fa4364f0616446c018b555bbaa16ec0c13d2c4374e95a193c7cef59c5
+    acbf43981cfccbe15e772ada883af9bc4838b7731e079c65e8cec088cf988d6f
+    062712a988bd756fdd1f0a5c0737bb3aeb6b065051ebf277b6187c66b2160833
+    0082c19be91e75fc124d147e6ce481278872b99fcc3dfb15cf8c72db4907e0f9
+
+`git diff --check` and
+`clang-format --dry-run --Werror src/test/fuzz/block.cpp` passed. No
+production source changed, no deterministic regression test was required,
+and no fuzz, sanitizer, mutation, or build process remains running.
+
 ## `tx_in` and `tx_out` primitive contract oracle audit (2026-07-24)
 
 Source commit: `1693fbc067` (`fuzz: strengthen transaction input/output
