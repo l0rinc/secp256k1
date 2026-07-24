@@ -462,8 +462,10 @@ Scope and source state:
   after every simulated command, so dirty/fresh flags, the circular dirty
   list, dirty-count accounting, and cached dynamic-memory accounting are
   checked before a later reset, flush, or overwrite can repair an intermediate
-  defect. No duplicate best-block model was added because the coins-view and
-  stacked-view targets already cover best-block propagation.
+  defect. At that time, no duplicate best-block model was added to this
+  target because the coins-view and stacked-view targets already covered
+  best-block propagation. The focused `coins_view` campaign below later adds
+  the transition oracle directly to those four targets.
 * Original harness SHA-256 was
   `05a151e9bb8edb8a0b7aea6ab662de578684e0bfddb1efa578506c5dd89330ca`;
   final harness SHA-256 is
@@ -6770,6 +6772,158 @@ The configured fuzz-only build has no `test_bitcoin` target, so the dedicated
 unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
+
+## `coins_view` best-block propagation oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`b8ee91fdc3feee19f06cd6669c93dbaeaca0abae`, on parent
+`1b3ac3a9063831a51c1fc1c9ae88163a2ff6bcaa`. The audit branch is a descendant
+of fetched `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; that exact commit is both the
+merge-base and the current master comparison point. The l0rinc fork is at
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`.
+
+The applicable l0rinc commits are already ancestors of the source branch:
+
+* `2b2dcee521` asserts overlay prefetch consumption and parent immutability.
+* `cdae936212` guards stacked coins-view parent state.
+* `3281824ecf` prevents invalid FRESH entries and surfaces `BatchWrite`
+  errors.
+
+No additional cherry-pick was made. Those proofs remain in the branch and
+were not duplicated by this pass. A later fix, minor fix, or cherry-pick that
+changes a follow-up result must be recorded in the same commit or by amending
+the relevant commit message, including whether it masks, preserves, or
+changes behavior on master.
+
+The production change is one postcondition after
+`CCoinsViewCache::SetBestBlock` assigns the caller-provided hash. The harness
+adds an `expected_best_block` model and checks it after every fuzzed
+transition and at final state. The model is updated for DB initialization,
+`SetBestBlock`, reset guards, backend switching, and direct `BatchWrite`.
+It deliberately models `uint256::ZERO` as the existing lazy sentinel: a null
+input resolves through the active backend. A separate attempted comparison
+against a private layered parent cache was rejected as an overbroad oracle,
+because a child can legitimately resolve a best block while a parent still
+has its lazy zero sentinel. That rejected model is not treated as a finding.
+
+### Bitcoin Core callers and severity
+
+`CCoinsViewCache` and its overlay/stacked variants back UTXO reads and writes
+used by chainstate `ConnectBlock`/`ConnectTip`, disconnect/rollback, flush and
+`BatchWrite` paths, and related index and snapshot operations. The fuzzer
+exercises the internal cache contract with synthetic transitions. The proof
+input is not an invalid serialized block, peer message, or remote Bitcoin
+Core request.
+
+Clean master reproduced no production failure, invalid-block acceptance,
+consensus divergence, memory-safety issue, or production fix. Master-relative
+severity is therefore none for production and Low/informational for the
+oracle hardening. A real best-block cache regression could affect chainstate
+or UTXO state and node availability, but it is not High/Critical on master
+without proof that Bitcoin Core can reach it and accept an invalid block or
+otherwise cross a security boundary. No deterministic regression test is
+claimed because clean master did not fail.
+
+The existing finding ledger remains explicit: private-broadcast failed-send
+retention is Medium and feature-conditional; empty HEADERS initial-sync
+handoff is Medium availability; peer activity refresh, process-message local
+storage failure, and oversized transport types are Low in current callers;
+ecmult scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979
+retention are Medium latent or hygiene findings with limited demonstrated
+reachability; banman invalid-subnet integrity is Low/nice-to-have. Witness
+sigop undercount is High/Critical only if invalid-block acceptance is proven.
+A nonce with no cryptographic meaning is not Critical merely because it is
+retained.
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The temporary production mutation replaced the lazy cache behavior in
+`CCoinsViewCache::GetBestBlock` with:
+
+    return base->GetBestBlock();
+
+The mutated `src/coins.cpp` SHA-256 was
+`2584dbc1c12ebf37f801f702c46d91216a05d716ab01e7febda9d9431d62833c`; the
+enhanced ASan/UBSan binary SHA-256 was
+`f9dc3561d064f2beb00d46c9875b0f0e452fb5e23400172cbde432df2aad81b4`.
+
+The exact proof input was
+`/tmp/bitcoin-coins-view-best-block-20260724/frozen/coins_view/006878e7cef1c6668ea37d2836f4262eb52fcf91`,
+638 bytes, SHA-256
+`16c836f900786cc75060ed6db782790f87e459668e54c0dbb45e97cecf8be00d`.
+With the enhanced harness and `-handle_abrt=0 -runs=1`, it exited 134 at
+`src/test/fuzz/coins_view.cpp:186` on
+`coins_view_cache.GetBestBlock() == expected_best_block`. The exact log SHA-256
+is `2adc186645c3042027d26f41136f5efa245d099823699214bb57e5e829201cfa`.
+
+The parent harness source SHA-256 was
+`06f6db2ac5b9149e0302c60a18ed4d1d13e85c913ba6d0b90fed2a963a95dbb`. With
+that old harness and the identical production mutation and input, the run
+exited 0; control log SHA-256 is
+`a34756eaf6621a8388d09618edb62dfe804c4294e8c7c9f30f9ad67c4e6f5b3b`.
+This proves that the new oracle detects the modeled regression the old
+harness accepted. It does not prove that clean master contains that
+regression, so no production bug or production fix is asserted.
+
+### Corpus and replay evidence
+
+Frozen corpora were copied from `/mnt/my_storage/qa-assets/fuzz_corpora`.
+The path-independent manifest and corpus totals are:
+
+    target              files       bytes       manifest SHA-256
+    coins_view          2766        28489057    d96e49bb7fe29c90471a1149772969a5ef9fc1a4d8d7fee41aba9c2de5569bae
+    coins_view_db       3573        40903011    4fea4d4c2557ae2384ac4e68cce4e09e8b33671b55d06bae8e5da99a90792338
+    coins_view_overlay  1847         4685065    e3e1d553a5d321d7497196a55604086c37445962b8e48e846b164e2de27931fe
+    coins_view_stacked 15659       582852640    78f3f82242f153f2bc7c0c8479f4d08c735cff473f6d4c2387c0d07ffef7c7ac
+
+The final restored sanitizer binary SHA-256 was
+`e8b047d3c03ca72ac6ec90fe3104f75881369ec01b7c4b5193495c86e4105856`.
+Clean ASan/UBSan corpus-first replays exited 0 after 2767, 3576, 2299, and
+17303 executions for `coins_view`, `coins_view_db`, `coins_view_overlay`, and
+`coins_view_stacked`. Their log SHA-256 values were, respectively,
+
+    6361ad2c14b5d3f64d142290d382055c2a362a147ae2ada4aeb2dd56793977ce
+    f01e05cba2570081c5fd74bee983b48ad6c0eecbe5faf8477b94cf7cc5ed5ca5
+    a9cd24105b51ce24e43d347fa5d6171a022552ae953689f9b85da7963b4fb27a
+    8d425879e39b6f9d3aedc8614460f40e810ebd428fdb628a08aed5e83a6b2ab8
+
+Four sequential sanitizer-worker runs loaded the intended corpus paths,
+exited 0, and produced no artifacts. Execution counts were
+`6646/7537/9277/19207` for `coins_view`, `3576/3576/3576/3576` for
+`coins_view_db`, `7189/7716/3256/5381` for `coins_view_overlay`, and
+`16194/16179/16186/16189` for `coins_view_stacked`. The combined worker log
+SHA-256 values were:
+
+    2ae9fe275298b5ead501510ee6c72d7ecd123916934a7f3e2c561a899ae6a2cd
+    3de893f5f6405a69d2a1dda2a1422a8f6beaa50b370523ffd371cf5fb497b29a
+    69d200bb86df9f7f64a817c7a9142115ba33e1522414f8f30a2ede099ac7b7c9
+    0696c0340ee594fba941ca6bc0483b5aa174a5106c2950c4d06d71d1afb87697
+
+The final normal fuzz binary SHA-256 was
+`792c6a27f137b3e9bb967bbc5fbab7fd694a6e1bfdce839b8ed9079f11e84ccf`.
+Fresh read-only snapshots completed 2767, 3574, 1848, and 15660 executions,
+with zero new units and no artifacts. Normal replay log SHA-256 values were:
+
+    1cf2b6611e5fc6b78a09ae54afa89a775444c470287adde77654177587d77421
+    48746c32dc33cdfb489814e237d430221aee36f80d4ea9717ee682d95dd2cdb9
+    75fe9efbb2b01f7d0cbda7b86591d64b33ee373cd5a698aef6c53fb3f6af6edc
+    ee581d850c31c10429f043467072e65683d9541527658162d68bc1b981e6243f
+
+An earlier unbounded normal invocation wrote generated inputs into a
+disposable temporary copy; that copy was discarded. It is not part of the
+reported evidence. The authoritative normal replays above used fresh
+read-only snapshots with the original 23845 files intact.
+
+`git diff --check` passed. Final restored source hashes were
+`src/coins.cpp` `d67e263e627ab63c9484e4805e5867b4e31a9da68fe2f28246799629aaa278e5`
+and `src/test/fuzz/coins_view.cpp`
+`da52138b822422479b843f7038b195ce7d28408241fcbc6112fcac96cf82e8b0`.
+No fuzz, sanitizer, mutation, or build process remains running. The master
+branch remains free of a confirmed production bug from this campaign.
 
 ## `block` validation-state and witness-commitment oracle audit (2026-07-24)
 
