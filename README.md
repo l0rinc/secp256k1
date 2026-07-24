@@ -6859,6 +6859,121 @@ The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
 focused unit suite is claimed. `git diff --check` passed. No production
 behavior changed and no deterministic production regression test is claimed.
 
+## `net_permissions` contract oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`d1d0894c84c5b0f4cbe3ed54e66df887fbb0cf46` (`fuzz: strengthen net permission
+contract oracle`) on parent `83a84bda2fc4e8914f11c386e55eb464db3965ee`.
+The source branch is a descendant of fetched `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; that exact commit remains the
+merge base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped
+`origin/master..remotes/l0rinc/master` query over `net_permissions`,
+`netbase`, `net.cpp`, `net_processing.cpp`, `init.cpp`, and related tests
+returned no commits. No l0rinc change was cherry-picked.
+
+### Oracle and Core boundary
+
+The old `FUZZ=net_permissions` target called `ToStrings`, `AddFlag`, and
+`ClearFlag` but discarded the string and state results, checking only that the
+new flag appeared. The new oracle independently models the underlying bit
+mask and checks every known permission, including the composite
+`forcerelay`, `noban`, `All`, and `Implicit` values. It checks exact
+`ToStrings` order and omission of `Implicit`, verifies that AddFlag is an
+OR-only transition, and verifies that ClearFlag removes only `Implicit`.
+
+For every accepted input it also constructs a canonical form and reparses it:
+
+* whitebind forms must preserve flags, service, nonzero port, and empty
+  success errors;
+* whitelist forms must preserve flags, subnet, and `In`, `Out`, or `Both`
+  direction;
+* implicit forms deliberately omit `@`, while explicit empty permissions
+  retain `@`; direction-only explicit forms remain rejected with a nonempty
+  error.
+
+The first corpus replay found an oracle-only mistake in this canonicalizer:
+an implicit whitelist such as `::/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff`
+was emitted as `@::/128`, changing `Implicit` into explicit `None`. The
+canonicalizer was corrected to preserve the no-`@` implicit form, and the
+isolated witness plus the complete corpus were rerun successfully. This was
+not a production failure.
+
+Bitcoin Core parses these values only from operator-controlled `-whitebind`
+and `-whitelist` configuration in `init.cpp:2183-2257`. `net.cpp:580-592`
+applies subnet permissions to connections, and `net_processing.cpp` uses the
+resulting flags for relay, mempool, address, block-download, anti-DoS, and
+ban behavior. A clean-master mismatch is Low-to-Medium configuration and
+authorization correctness: a local configuration is required, and an
+ordinary remote P2P message cannot alter it. It cannot by itself accept an
+invalid block, change consensus or the UTXO set, or reach a cryptographic
+boundary, so it is not High/Critical. Clean master reproduced no production
+failure, fix, or security finding.
+
+### Corpus and clean replay
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/net_permissions` and contains 398
+files and 41049 bytes. The filename/size manifest SHA-256 is
+`85433b3103a473ea87f4cb306402fbc17dea9449a69b2250ef509fa467fe76ac`; the
+content manifest SHA-256 is
+`ebbe0444c38738041301403b36284c226a0fe84118d38797d05057c854bfd987`.
+The final formatted harness SHA-256 is
+`2714dc5706ec475245c8d6e2bc91d1a64b69a0d0392130d555795e5b3e0da9c5`.
+
+The final ASan/UBSan and normal fuzz-driver SHA-256 values are
+`ccb2dac33dbb4f07a0edcf8e40746d1145ab3af302a96daf4c4e3e69c822ac7e` and
+`f172489f5c7a36e5e2ef1878c558115675acb994294f2f79c24ebbd7b1a7ec9d`.
+The complete 398-input replay exited 0 under both builds. The ASan and
+normal replay log SHA-256 values are
+`889932f8a7b4a9c5558e6bcae73db0ec68a0c75ffc6ffe6d65a3db98f46d40fc` and
+`2ac5924548a330fd81864fa079d7b44b57a4be327bcf7b7a85776f0b393f1f9b`.
+No sanitizer, assertion, or crash diagnostic was present.
+
+The deterministic whitebind witness is the ASCII string
+`addr@127.0.0.1:8333`, SHA-256
+`d666ff41c67c21f592088985038346884051d103ff9c81efc2079d2d289f8ef0`.
+Final ASan and normal smoke replays exited 0. Four isolated final ASan
+workers each completed 20000 runs with exit 0 and no artifact; their log
+SHA-256 values are
+`6641403a2a774469c3f780a61e72603d49e7c12868361965c2277b6a7c9e5f3b`,
+`932aa5b02cdebeda8d440c65b38d6a654cbb8c47ee5892f6adb5fe07ed7634f0`,
+`e49f37daf93a0e165291467c00d181dbf94d0758b0cd64630f92b6be7d9a0a84`, and
+`d17cb1177171d140947432cbcd894835eefb6041e64b6dbace2f21cde7e578c9`.
+Each worker used a writable corpus copy and artifact prefix; the frozen
+398-file manifest remained unchanged.
+
+### Differential proof, not a master finding
+
+A temporary minimal production mutation changed the `Addr` label emitted by
+`NetPermissions::ToStrings` to `mempool`. The mutated
+`src/net_permissions.cpp` SHA-256 was
+`ffe95c204d4c026c830acdcbce370d7afc49c0ac5f6e454cd33c2c2cafb0c9f8`; the
+enhanced mutated ASan binary SHA-256 was
+`c1390d6782db8a47b89e1d27fac3aa541f3f2828aad9f30eed19efb5d069a27b`.
+On the exact whitebind witness, the enhanced harness deterministically failed
+the independent `ToStrings` assertion. The bounded replay status was 124
+because the temporary timeout stopped libFuzzer after its expected fatal
+signal; the mutation log SHA-256 is
+`b04808d425ba2a44b76e23d3ac4052141e1730b017c995b6857e6e2121d84194`.
+
+The parent harness with the identical mutation exited 0. Its mutated ASan
+binary SHA-256 is
+`9b79ae67dffaf068978cd0fa2a3cddb623684a6186edd265aa036e73724e2abc`; the
+control log SHA-256 is
+`e59e36cd74a5b66315ad6541f90cc8a465c82352d90fd9178b2f060b2977a120`.
+This proves that the new oracle catches a modeled permission-label regression
+the old target silently accepts; it does not prove clean master contains that
+regression. The production mutation was restored before the final build.
+
+`clang-format --dry-run --Werror` and `git diff --check` passed. The configured
+fuzz-only builds have no `test_bitcoin` target, so no focused unit suite is
+claimed. No production behavior changed and no deterministic production
+regression test is claimed. No fuzz, sanitizer, mutation, or test process
+remains running.
+
 ## `netaddress` contract oracle audit (2026-07-24)
 
 ### Scope and source state
