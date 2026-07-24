@@ -6859,6 +6859,120 @@ The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
 focused unit suite is claimed. `git diff --check` passed. No production
 behavior changed and no deterministic production regression test is claimed.
 
+## `asmap` netgroup contract oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`6dd729b9daee2fd0bf3642e446e8369468032fa9` (`fuzz: strengthen asmap netgroup
+oracle`) on parent
+`30d0339586bd596212602fd7668e151bc7db2554`. The source branch is based on
+fetched Bitcoin Core `origin/master`
+`3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`; that exact commit is the merge
+base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped
+`origin/master..remotes/l0rinc/master` query over the ASMap and netgroup
+production code, fuzz targets, and related tests returned no commits. No
+l0rinc change was cherry-picked for this target.
+
+### Oracle and Core boundary
+
+The old `FUZZ=asmap` target validated the standard bytecode and then discarded
+`NetGroupManager::GetMappedAS`. The new oracle checks that the embedded map is
+active, that its version matches `AsmapVersion`, and that the wrapper's
+`GetMappedAS` equals a direct `Interpret` model. The model reproduces the
+documented 16-byte lookup input: IPv4 and all linked-IPv4 forms use
+`IPV4_IN_IPV6_PREFIX` plus the extracted address, while other addresses use
+their serialized 16-byte form. It deliberately treats non-clearnet and
+unroutable classes as unmapped. When an ASN is present, its little-endian
+netgroup encoding is checked; when it is zero, the embedded-map group must
+match the no-ASMap fallback group.
+
+Bitcoin Core uses ASMap for AddrMan and connection netgroup bucketing and
+peer diversity. The input address can originate from peer address gossip, but
+the ASMap itself is local configuration and this code is not a block or script
+validation gate. A clean-master regression is Low-to-Medium peer-diversity,
+routing, or availability impact depending on reachability; it is not
+High/Critical without a separate path to invalid-block acceptance, consensus,
+UTXO, or cryptographic compromise. No clean-master production bug is claimed.
+An invalid fuzzer address or a non-cryptographic retained value is not
+Critical, and a nonce without cryptographic meaning is not Critical merely
+because it is not cleared.
+
+### Corpus and clean replay
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/asmap` and contains 265 files and
+9,207 bytes. The filename/size manifest SHA-256 is
+`387dec4a15e61087eb827455d837370e52611f87d5b096ba5f60fd8aa2ef9c1c`; the
+content manifest SHA-256 is
+`0851a371d9e24fc28a69216f902c4fa9ebeec58656e0cccc929c42b1f167bef5`.
+The final formatted harness SHA-256 is
+`9abc5bbf2c9edd7ec310d43d52b259cef7ecc434f0acb620b662367ed225e3fe` and
+clean `src/netgroup.cpp` SHA-256 is
+`c108860fb6baa9156943a6918992d05bd12508e4ccd303d7e6c1f3a6c70826f9`.
+
+The final ASan/UBSan and normal fuzz-driver SHA-256 values are
+`331469a36725df3c04ed8b975e7cf0a452812100643297edce3121a5429fe044` and
+`0e446bc223f0ce625329ddbb4165ecc31eb06050caa9b1be14d3caa1199130d6`.
+Fresh clean replays exited 0; their libFuzzer logs recorded 354 ASan/UBSan
+executions and 266 normal executions from the same 265-file frozen input
+directory. The log SHA-256 values are
+`a162703d824bb45357148742fba53a871911b868a6182c9581e92b627459ba7e` and
+`37213e9e127612e6e713ca9d83ddddedfb98708e1ff723484c8670faa2f0826d`.
+The differing libFuzzer execution totals are recorded rather than normalized;
+the source corpus count and manifests are the authoritative frozen inputs.
+
+Two isolated ASan/UBSan workers each completed 20,000 runs with exit 0 and no
+assertion or sanitizer diagnostic. Their log SHA-256 values are
+`47894cf8c4d6e915aeb7bbde56f2dd862326c96125bfd331d136338ad12d537e` and
+`3c9908c18462fa54346114943b188b521d0a22c1d81853dc35329ca72e4d2587`.
+One normal worker completed 20,000 runs with exit 0; its log SHA-256 is
+`0698d39316b023f834901c444b82011c3f00705b70c3919439dbf82993a0dd6b`.
+All workers used isolated writable corpus copies and no fuzz process remained
+running.
+
+### Rejected oracle and correction
+
+The first model incorrectly fed `GetAddrBytes()` directly to `Interpret` for
+linked IPv4 forms. The frozen input
+`e18d5eba210a3951ee3754851158eb75f9787c62`, 24 bytes, SHA-256
+`79d618cfcfa2a8a9c30b394c7412b3b15f5d69a62c9d7d55b60dc1815f40b5a2`, exposed
+that stale oracle at `asmap.cpp:56`, before any production mutation. The stale
+failure log SHA-256 is
+`9d93fc5a97b0d884c59e9efe99cdf0006e856a934af05f6c3d837604338c0035`.
+The model was corrected to normalize linked IPv4 exactly as the production
+contract specifies. The same witness then passed in ASan/UBSan and normal
+builds (exit 0); corrected log SHA-256 values are
+`eb47bb2f73a68d32dba9ead0f2b42569dbd05da498579fb4c732e587fc0bb966` and
+`0276bb674322bc5f1a5ae0b382c3dabf772e91878344e4180dc54e8473aa5368`.
+This was a stale/overbroad fuzzer oracle, not a production finding.
+
+### Differential proof, not a master finding
+
+A temporary minimal production mutation changed `NetGroupManager::GetMappedAS`
+from `return mapped_as` to `return 0`. Mutated `src/netgroup.cpp` SHA-256 was
+`b47d6e045ff7b883f6a204ca4ed51f63bfd0fa5b82657c772f84c843c42ea74e`; the
+enhanced mutated ASan binary SHA-256 was
+`6508f277c7c44081a3570c151863cb09c3880ce5cb5a6b0a27ea7a691c4dd248`.
+The exact corpus witness was
+`0042f06beccbe81048a4cac2681bf1599d90cdd4`, 20 bytes, SHA-256
+`6e31d0ebf18c5e6f387b567655cbf86ccd6c7d5bc1fd171a2d2ebb79ebe64874`.
+The enhanced oracle failed deterministically at `asmap.cpp:68`,
+`netgroupman.GetMappedAS(net_addr) == expected_asn`, on the expected
+libFuzzer deadly-signal path. The full mutation replay log SHA-256 is
+`d597292cec39712b6fe1aa88409f10135fd0f4b44e1e83669a0087cbc3be7fda`; the
+single-witness log SHA-256 is
+`ddabec88e4abdfb92285776261a53acfc3b5eff07a99e591b47fd47cf8d21fb8`.
+The original target discarded `GetMappedAS` and would accept this modeled
+return-value regression. This proves oracle sensitivity, not a clean-master
+defect. The mutation was restored before the final build; no production fix or
+deterministic production regression test is claimed.
+
+`clang-format --dry-run --Werror`, `git diff --check`, clean replay, exact
+witness replay, and the multi-worker commands passed. The configured fuzz-only
+builds have no `test_bitcoin` target. No production behavior changed.
+
 ## `netbase_dns_lookup` contract oracle audit (2026-07-24)
 
 ### Scope and source state
