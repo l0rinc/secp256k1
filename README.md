@@ -6771,6 +6771,129 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `psbt_base64_decode` wrapper oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`3c01f7155fcaaa70bcd76140cd815e86ab9fcf91` (`fuzz: strengthen PSBT base64
+decode oracle`) on parent `b8ee91fdc3feee19f06cd6669c93dbaeaca0abae`. The audit
+branch is a descendant of fetched `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; that exact commit is the merge
+base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`.
+
+The scoped `origin/master..remotes/l0rinc/master` query over
+`base_encode_decode.cpp`, `psbt.cpp`, `psbt.h`, `rawtransaction.cpp`, and
+`wallet/rpc/spend.cpp` returned no commits. No l0rinc change was cherry-picked
+for this target. Any later cherry-pick, minor fix, or master change must say
+whether it masks, preserves, or changes this result and must retain the exact
+mutation, corpus input, caller, status, and master-relative severity.
+
+The old `psbt_base64_decode` target called `DecodeBase64PSBT` and discarded
+the result. The new oracle independently runs `DecodeBase64` followed by
+`DecodeRawPSBT`, requiring the wrapper and raw decoder to agree on success or
+failure. For successful PSBTs it serializes both values, requires byte
+identity, then base64-encodes and decodes the canonical serialization and
+requires a second byte-preserving round trip. Invalid base64 must not produce
+a result. Arbitrary PSBT contents are not treated as valid signatures,
+complete transactions, or consensus acceptance.
+
+### Bitcoin Core callers and severity
+
+`DecodeBase64PSBT` is used by `ProcessPSBT`, `walletprocesspsbt`, raw
+transaction RPC PSBT paths, and external signing workflows. Its input is a
+local/user or signer-provided PSBT string, not a peer block or consensus
+validation boundary.
+
+Clean master reproduced no production failure, invalid-block acceptance,
+consensus divergence, memory-safety issue, or production fix. Master-relative
+severity is none for production and Low/informational for this oracle
+hardening. A real regression would be a local RPC, wallet, or signer workflow
+failure unless caller-level evidence establishes broader reachability. It is
+not High/Critical on master without such evidence. An invalid transaction or
+malformed PSBT alone is not Critical, and a nonce with no cryptographic
+meaning is not Critical merely because it is retained.
+
+The existing finding ledger remains: private-broadcast failed-send retention
+is Medium and feature-conditional; empty HEADERS initial-sync handoff is
+Medium availability; peer activity refresh, process-message local storage
+failure, and oversized transport types are Low in current callers; ecmult
+scratch wrapping, forced 10x26 normalization, and SHA/HMAC/RFC6979 retention
+are Medium latent or hygiene findings with limited reachability; banman
+invalid-subnet integrity is Low/nice-to-have. Witness sigop undercount is
+High/Critical only if invalid-block acceptance is proven.
+
+### Differential proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The temporary production mutation replaced `DecodeBase64PSBT` with an
+immediate `util::Error`. Mutated `src/psbt.cpp` SHA-256 was
+`af43ca53f9d2f0d66121ab0db84b48e1e110dab1a45f93000e35d39470f2a80d`; enhanced
+ASan/UBSan binary SHA-256 was
+`96ffc60aa29c21b01b529ab5155adc759a296e9c10170d574a4ea6d56c854a97`.
+
+The exact valid input was
+`/tmp/bitcoin-psbt-base64-20260724/frozen/psbt_base64_decode/014a923ab75b9313e9fe553007add2c6207e1685`,
+92 bytes, SHA-256
+`19212b3a903d41cab755abe7ea3fad9237c6615a2b828a793cfdd90a9ac85cdf`.
+The enhanced mutation exits 134 at
+`src/test/fuzz/base_encode_decode.cpp:115` on
+`psbt.has_value() == raw_psbt.has_value()`. The exact one-input log SHA-256
+is `90014b69683bfa70fa297be3939ffdfe7d75f81841fa5ea8b361f84da7b2a1e2`;
+the full 1624-file mutation log SHA-256 is
+`47cdfb7167572898e4d1dc790ef8ba34af114e02040e5a2fe46d8bb3be93daa0`.
+
+The parent harness source SHA-256 was
+`c4721fb63c7db9a10a8195c940146860610dd484d5060befb5c9b30d77f0523e`.
+With the same production mutation, parent ASan/UBSan binary SHA-256 was
+`5925a1329c0af812d0894ff9a602e41c4de937695490761ba63929a3d6991524`, and
+the identical input exited 0. Control log SHA-256 is
+`525f65b7355574ba9237d607a90f03a383309015dc946a93410547356bf45eac`.
+This proves the old target silently discarded a valid-result regression that
+the new wrapper/raw equivalence oracle detects. It does not prove clean
+master contains that regression, so no production bug or fix is claimed.
+
+### Corpus and replay evidence
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/psbt_base64_decode` and contains 1624
+files and 37687886 bytes, with sizes 1..970624. Its path-independent manifest
+SHA-256 is
+`b441c50814afa2d7c392ed8beaf008fa87864aaa0135f3f9c1fc92d280669936`.
+
+The final clean ASan/UBSan binary SHA-256 is
+`57ce9b62aaae4c26106567453fb66a84a54479e028e3ff909c16619d0ce8bf09`.
+The corpus-first replay exited 0 after 1625 executions, added no units,
+peaked at 544 MiB, produced no artifacts, and has log SHA-256
+`3c327167362f85851a25cd157af69733625550b5de8daf5729b58578f6b3b168`.
+
+Four sanitizer workers loaded isolated copies, all exited 0, and produced no
+artifacts. They executed 32008, 26687, 28637, and 33994 units; added 31, 19,
+23, and 28 units; and peaked at 549, 544, 544, and 544 MiB. The combined
+worker log SHA-256 is
+`66d6665ce7939afa3ae5c53fe32e00ada423ab89dce9f45787e8437e87720ad2`.
+
+The final normal fuzz binary SHA-256 is
+`5f21c60277fe18e182241de895879c7dbb8683bbf1f0084b70b003a16183d374`.
+The read-only corpus replay exited 0 after 1625 executions, added no units,
+peaked at 115 MiB, produced no artifacts, and has log SHA-256
+`903bd78ccd37325b6dda96f88c6df108c1e2224fd8f20b459f55cd0aa8f9d8e4`.
+The restored exact proof input exited 0 in the clean sanitizer binary; its
+final exact log SHA-256 is
+`b79b5bc0d39337fa53f78fcd6254b79a256b4f9b022301723ba81d3201890c8c`.
+
+Restored source hashes are `src/psbt.cpp`
+`cd4b97bd82b139b2e572278a6ef73c90485eeca634bd3860f0a1689313c9e197` and
+`src/test/fuzz/base_encode_decode.cpp`
+`81ee0c53e9d0da90a1d5f72448c319a02d429328fd79f2147ef2427fc1bc926a`.
+`git diff --check` passed. clang-format reports a pre-existing include-order
+violation at `base_encode_decode.cpp:5`; no unrelated formatting was changed.
+The configured build has no `test_bitcoin` target, so focused
+`psbt_tests/base64_tests` could not be run. Production was restored before
+the final build, no fuzz or mutation process remains, and clean master has no
+confirmed production bug from this campaign.
+
 ## `coins_view` best-block propagation oracle audit (2026-07-24)
 
 ### Scope and source state
