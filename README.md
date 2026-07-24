@@ -6647,6 +6647,159 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `bloom_filter` state and serialization oracle audit (2026-07-24)
+
+Source commit: `a861eec3bd92ce0c71dadbfff573feff398fca50` (`fuzz: strengthen
+bloom filter state oracles`). Its parent is
+`7857c32e4412a792fb653d069325a26f87b5c474`; the audit base is current Bitcoin
+Core master `afa5e46bbc6dd750bd71920b659162a945abf0ae`, and the source branch
+is based on that commit. The exact scoped query
+
+    git log origin/master..l0rinc/master -- src/common/bloom.cpp src/common/bloom.h src/test/fuzz/bloom_filter.cpp
+
+returned no output. No l0rinc pull-request commit was relevant to this target
+and none was cherry-picked.
+
+### Core boundary and severity
+
+`FUZZ=bloom_filter` exercises `CBloomFilter`, which Bitcoin Core uses in
+`net_processing.cpp` for BIP37 filterload and transaction-relay decisions and
+in `merkleblock.cpp` for `CMerkleBlock` transaction selection. The previous
+harness checked immediate membership for random byte vectors, outpoints, and
+uint256 values, but did not prove that `IsRelevantAndUpdate` performed its
+documented outpoint updates or that serialization preserved the filter.
+
+The production-side debug assertion now checks that every non-empty key
+inserted into `CBloomFilter` is immediately contained. The harness adds a
+valid P2PK transaction and checks `BLOOM_UPDATE_NONE`, `BLOOM_UPDATE_ALL`, and
+`BLOOM_UPDATE_P2PUBKEY_ONLY`; it checks relevance, the expected outpoint
+retention, no trailing bytes after a serialized round trip, canonical re-
+serialization, and size-constraint preservation. Random insertion paths keep
+matching postconditions, and the constructed filter is checked for valid size
+limits.
+
+No clean-master production bug was found. Master-relative severity for the
+two intentional regressions is Low/Medium at most: a missing insert bit write
+could suppress BIP37 relay or merkle-block matches, and a missing
+`BLOOM_UPDATE_ALL` outpoint update could prevent an SPV client from learning
+an output. Neither path is consensus validation and neither can make an
+invalid block acceptable. A witness sigop undercount is High/Critical only if
+invalid-block acceptance is proven; no such proof exists here.
+
+The retained-secrets rule remains explicit: a nonce without standalone
+cryptographic meaning is not Critical merely because it is retained. MuSig2
+secret nonces do carry cryptographic meaning, so actual reuse or exposure
+would be Critical, but prior auditing found no such issue. Any later fork or
+minor fix must be classified as masking, preserving, or changing a master
+defect; an accidental minor patch must not reduce master-relative severity.
+
+Prior findings are reiterated: feature-conditional private-broadcast
+failed-send retention is Medium; empty HEADERS initial-sync handoff is
+Medium; ecmult scratch wrapping, forced 10x26 magnitude-32 normalization, and
+SHA/HMAC/RFC6979 retention are Medium but reachability-limited; peer
+transaction refresh, local block-storage failure, oversized transport types,
+compact-block diagnostics, and cache/index/storage/serialization/container
+issues are Low or hardening. No additional clean-master production bug was
+confirmed in those areas or in this bloom-filter pass.
+
+### Harness-domain corrections
+
+An intermediate deterministic helper constructed `CKey` before the standalone
+fuzz binary initialized ECC. The resulting null-context UBSan/ASan report was
+a harness setup error, not a production finding, and the helper was changed to
+use the valid compressed secp256k1 generator public key directly. A second
+intermediate helper built only a pushed public key without `OP_CHECKSIG`.
+`BLOOM_UPDATE_P2PUBKEY_ONLY` correctly rejected that nonstandard script; this
+was classified as invalid fuzzer-domain construction and corrected. The final
+helper uses a complete P2PK script.
+
+### Differential mutation proof
+
+The exact one-byte witness was
+`/tmp/bitcoin-bloom-filter-audit-20260724/frozen/ac9231da4082430afe8f4d40127814c613648d8e`,
+SHA-256 `2b4c342f5433ebe591a1da77e013d1b72475562d48578dca8b84bac6651c3cb9`.
+
+1. Removing the `vData` bit write from `CBloomFilter::insert` failed at
+   `common/bloom.cpp:60` on the inserted-key postcondition. The mutated
+   production source SHA-256 was
+   `11c327c1164b4579ae4d17f42c0590321f1aeeb2ab3267446146a51b3da62a79`.
+   Normal and ASan binary SHA-256 values were
+   `c2d77d01307e80acaa97ddab0d9bf21318e0e41b429f4c6cce64d81ea254ecbc` and
+   `539c1aa0ae497f26cb3a0103d0d790a0ab60bfd3426c9990b1e58fb81771b111`.
+   The normal run exited 1; its log SHA-256 was
+   `86028858651c2262cc447744f6a7ce0950f1d38062ad2869d8cad638917da8f8`.
+   The ASan/libFuzzer run reported the same assertion and exited through the
+   timeout with status 124; its log SHA-256 was
+   `a2ad972b4eed097107bab50560cf82568d37e32a6ff32d2f4b50f76bdbd70542`.
+2. Removing the `BLOOM_UPDATE_ALL` outpoint insertion failed at
+   `test/fuzz/bloom_filter.cpp:55`. The mutated production source SHA-256 was
+   `f54018bdce37d3dabd005eca119649d3821b12ada6447988d7daf463dda3f9ce`.
+   Normal and ASan binary SHA-256 values were
+   `e95aad128f5b3f3a10f5dda8628748a62f7b5c200cad5ba74acb70eaca6b1d6c` and
+   `d5c4cd9cfe0e4b559e7b193cb9284fb040defcf4d2b73ed48662accdffb2c1fb`.
+   The normal run exited 1; its log SHA-256 was
+   `68fa6429211efcd32589b1a777295bec53153f1bb334f91c5ec65a63801eee60`.
+   The ASan/libFuzzer run reported the same assertion and exited through the
+   timeout with status 124; its log SHA-256 was
+   `197faabdfbce167cabca422e9428191880fbcb8a9d64890f702f26cf672bee8a`.
+
+These are simulated regressions, not claims that master is defective. Neither
+mutation produced an AddressSanitizer or UndefinedBehaviorSanitizer report.
+Both mutations were removed before the source commit.
+
+### Corpus and replay evidence
+
+The existing corpus was frozen from
+`/mnt/my_storage/qa-assets/fuzz_corpora/bloom_filter`: 844 files,
+58,265,081 bytes, minimum 1 byte, maximum 939,301 bytes. The sorted
+filename-list SHA-256 is
+`846542f15178e949e0e874f3b357c0b46255b20a65704c54fa1da686c145ee63`; the
+recorded per-file manifest SHA-256 is
+`3250ecfd16ed12cb5a8cb47e02a1024f85bd95454e068f8e72414c90d28b039e`.
+
+An initial worker invocation mistakenly gave all workers the shared frozen
+directory; libFuzzer appended new corpus inputs. Those logs were invalidated.
+The frozen directory was restored byte-for-byte from the source corpus and
+all authoritative sanitizer replays used isolated copies. The final normal
+replay passed all 844 files; binary SHA-256
+`9ddcc67179cb3f35f844dd5633e6e0fb5e4e8c9e481dce776fafbb616966d332`, log
+SHA-256 `fc5de929c08025d6b0f93c2978a65e3de62f72d034ec170579e33f2afa826a2c`.
+The final ASan/UBSan replay found all 844 seed files, completed 845 runs with
+no diagnostics, and used binary SHA-256
+`006ae72e3a03b52bb2d2774e98e32765ccb9be5fb48b826ad9eb0967416c0b83`; log
+SHA-256 `256edd75cc348adf5ef0a9a6dd73b029fc02c0baf2a3a0bf740d68215b03fd3b`.
+Exact clean-witness log SHA-256 values are
+`4ece4c001b100b5dc1507d9397401767871be38a6251ad8c060e1e538837eb77` and
+`6b75c40598bbe1da13dd1238ad9d75dac75e2ce47cc3d41651231bcc97764242`.
+
+Four isolated ASan workers each started from an exact copy of the 844-file
+corpus and left the frozen source unchanged. All exited 0 and produced no
+artifacts:
+
+    worker 0: 8,225 executions, 82 new units, 134 exec/s, 757 MiB, final corpus 924, log 79b376b3a65389558be1e59451560b3463b1b9c38425f8ada56e0d275c4bd453
+    worker 1: 8,442 executions, 66 new units, 138 exec/s, 757 MiB, final corpus 908, log ac6c72a2dba74d1a546fc715d7de90ed20ae33514dee0a4c8691c1c6e46720a5
+    worker 2: 9,057 executions, 93 new units, 148 exec/s, 756 MiB, final corpus 935, log 8d32150b538f5c068b4fd72a2eaacc6b110c75a71f1701b6e0f6ffe5a2cd392b
+    worker 3: 8,531 executions, 70 new units, 139 exec/s, 834 MiB, final corpus 912, log ddc82fef3d849fbc83dd1b28eca1f60e7008dd6bdc827f460cf18c95920d6366
+
+### Verification
+
+The focused command
+
+    test_bitcoin --run_test=bloom_tests,net_tests,banman_tests,txdownload_tests,txrequest_tests,net_peer_connection_tests,net_peer_eviction_tests,merkleblock_tests --log_level=test_suite
+
+passed with `*** No errors detected`. The `test_bitcoin` binary SHA-256 is
+`b91d78b7f8cbb1ee86fe94daeb2f406fd5dbda842e1008795ac054fe6f9add36`; the
+test log SHA-256 is
+`c7a08e54d11b5a2b9dd21a2fb4c4b11f1db951a7a1a818360f6487301c62c51c`.
+`git diff --check` passed and the changed fuzz harness passed
+`clang-format --dry-run --Werror`; `bloom.cpp` retains unrelated legacy
+formatting violations. Final clean source SHA-256 values are
+`93f935558d8c1f9d8bbfbf9bf03bcacfcb209551a158bf0ba8f1e1ccce26e725` for
+`src/common/bloom.cpp` and
+`5dbd6054f4a7fccfe49ee0077f78eca24f2ae20229803545b617c19e1aeb39bb` for
+`src/test/fuzz/bloom_filter.cpp`. No fuzz, sanitizer, mutation, build, or
+test process remains running.
+
 ## `rolling_bloom_filter` retention and generation oracle audit (2026-07-24)
 
 Source commit: `7857c32e44` (`fuzz: strengthen rolling bloom retention
