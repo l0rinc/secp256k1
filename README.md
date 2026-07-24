@@ -10521,6 +10521,153 @@ unrelated formatting changed. No production fix or deterministic regression
 test is claimed because clean master has no confirmed bug. No fuzz, sanitizer,
 mutation, or replay process remains running.
 
+## `net` transport and message-queue oracle audit (2026-07-24)
+
+Source commit: `46fe9e4d0571dda5175e4d1a1cae4ce681b81304`
+(`fuzz: strengthen net message queue oracles`). Its parent after the final
+rebase is `dacf999602ec3c20bdcef7e76e3ec2ea83e457d8`; the branch is based on
+current Bitcoin Core `origin/master` `610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`.
+The branch was rebased after `origin/master` advanced from
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`; the rebase had no conflicts.
+
+### Fork provenance and carried findings
+
+The exact target-scoped comparison was:
+
+    git log origin/master..l0rinc/master -- src/net.cpp src/net.h src/protocol.cpp src/test/fuzz/net.cpp src/test/net_tests.cpp
+
+It returned no output. At this audit, `l0rinc/master` was
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`, an ancestor of current Core
+master. The earlier matching fork commit `2da1eba444` (`net: reject oversized
+transport message types`) is already in the master ancestry and in this
+branch. No duplicate cherry-pick was made, and no later fork change can mask
+this result. If a later cherry-pick changes transport semantics, its commit
+message must state whether it preserves or masks the empty-type and queue
+transitions below, then the parent control and exact witness must be rerun.
+
+The carried master-relative ledger remains explicit: the witness-sigop
+undercount was an intentional `CountWitnessSigOps` mutation detected by the
+oracle, not a clean-master defect; High/Critical applies only if invalid-block
+acceptance is proven. The two `script_sign` production mutations (removing
+the `scriptWitness` copy in `UpdateInput`, and removing missing/spent
+`input_errors` assignment) were deterministic oracle proofs, not master
+vulnerabilities. Existing Medium findings remain reachability- or
+feature-conditional, including private-broadcast failed-send retention and
+the ecmult/scratch and state-retention models; parser, cache, index,
+serialization, transport-diagnostic, and similar findings remain
+Low/Informational unless a Bitcoin Core caller demonstrates a stronger impact.
+Invalid fuzzer state or invalid block bytes alone do not make a finding
+High/Critical. This audit contains no cryptographic nonce; retaining or
+clearing a nonce without cryptographic meaning is not a Critical issue.
+
+### Core boundary and severity
+
+`FUZZ=net` drives Bitcoin Core's transport and message-queue boundary through
+`CNode::ReceiveMsgBytes()`, `MarkReceivedMsgsForProcessing()`,
+`PollMessage()`, and the V1/V2 transport encoders. A remote peer controls the
+wire bytes, but `PeerManagerImpl::ProcessMessage()` ignores unknown message
+types, the receive flood limit bounds queued work, and the malformed empty
+type does not reach block validation, transaction acceptance, key handling,
+or consensus state.
+
+Clean master accepted two nameless encodings: V1's all-zero 12-byte command
+passed `CMessageHeader::IsMessageTypeValid()`, and V2's long-type encoding
+returned an engaged empty type. The resulting `CNetMessage` could enter the
+processing queue and be ignored as an unknown type. The production change
+rejects empty names at the header/parser, transport-send, and queue boundary,
+while the new oracle checks message-size, raw-size, queue-byte, flood-pause,
+reference-count, and receive/process/poll/disconnect contracts.
+
+Master-relative severity is **Low protocol hardening**, not a confirmed
+consensus vulnerability. The input is peer-controlled malformed protocol data,
+but clean master showed no invalid-block acceptance, witness/sigop bypass,
+funds impact, consensus divergence, memory corruption, or remotely triggerable
+unbounded queue. High/Critical is therefore not claimed. The production change
+is a defensive parser/queue fix, and the deterministic unit test covers the
+observed behavior.
+
+### Corpus identity and clean-master differential
+
+The frozen corpus is `/tmp/bitcoin-net-audit-20260724/frozen`: 1,242 files,
+31,079,345 bytes, sizes 1..917,599. The sorted filename-list SHA-256 is
+`a417e1b70515ed02028273de1c8756b5c95fa3aa39a08063b82ddddc934e61e2`; the
+path-size-content manifest SHA-256 is
+`9a31befe3e0a176392290cc7baa1c60ae614f3ba965a10946f61565d0e021fac`.
+The exact witness is
+`4a077b2a1ee5c3b8424d8c1982901deb4100c757`, 1 byte with input SHA-256
+`2e528e3e2ba26f541aee5c60b2d81ed0c2834059864add6fa0b2043c90a257d9`.
+
+The unmodified clean-master normal binary SHA-256 was
+`15a19fbed9cd9e7885be958b0a42d4f40fbd16477f273db3b070e5cf8399c258`.
+Its exact replay exited 0 with log SHA-256
+`dffbdbfb7d572c74e503a991a765df3c76a2e1c76df7f81f81fc877630728636`, and
+the full 1,242-file replay exited 0 with log SHA-256
+`7ffa155d61bbe4b635cce4c1530222fb5d24f8fd5b7f812900ad9438cb770e5b`.
+The clean-master ASan/UBSan binary SHA-256 was
+`8855b138c85bea7b78b0938d0b7e19382bc8fa3ab0413a8338b6ef164b8c31eb`;
+exact and full replays exited 0, with full-replay log SHA-256
+`e5f456fc6341b6446d01b37220960b97da8d0e9569bf05c399be3d557852dbbb`.
+
+Before the fix, the enhanced oracle exited 1 on the exact witness at the
+nonempty-message-type assertion; its log SHA-256 was
+`a035b0fa45f30ee64ab3a22c09b28f33f0414e0d5910071b255e535a424cdaae`.
+This is a malformed-state discovery, not evidence that clean master crashes.
+
+### Final verification
+
+The final normal fuzz binary SHA-256 is
+`315e8d165f1cf99b2d9851dbb67e973312066b7fd39be8aae7f642a3a4326bcb`; the
+final ASan/UBSan binary SHA-256 is
+`50ea0b2e1f871db8fa26223d0cc1e2ff377f0fd393c194503c20f1bcdcef1cc7`.
+Normal exact and full replays exited 0; ASan/UBSan exact and full replays
+also exited 0. The final ASan full replay ran 1,243 executions; its log
+SHA-256 is `37028751bea9bb27d3be455b3535cd25eb0eec3708e2278267aaeabc6da1bcec`.
+The exact ASan log SHA-256 is
+`107d77cd218d9d10078430c0aa5a6c0601fc778a8808c68933c7e5f3345e9f1e`.
+
+The focused `FUZZ=net` tests were run from `test_bitcoin`; the test binary
+SHA-256 is `d0e69bd8951a86daa66aaaa8718ff2f59fb8d7104211ee14576983fabaf93974`.
+The suite exited 0 with `*** No errors detected`; log SHA-256 is
+`9fba50f5f5055971e9a00a947689baedbb758583f484da6dd599556b6ed4c7df`.
+`git diff --check` passed.
+
+Four ASan/UBSan workers ran for 60 seconds against isolated corpus copies:
+
+    fuzz-0: 13829 executions
+    fuzz-1: 14090 executions
+    fuzz-2: 15066 executions
+    fuzz-3: 13877 executions
+
+All exited 0 with no artifact, assertion, ASan, or UBSan diagnostic. The
+aggregate log SHA-256 is
+`b46e05ae54a3f6d1ee45161816cdbd88f062ddacad3d24a8af82ed58848e3e7b`.
+
+### Differential oracle proof
+
+Two temporary production mutations were independently detected
+deterministically by the new queue oracle. Removing
+`m_msg_process_queue_size -= message_size` from `CNode::PollMessage()` caused
+the exact witness to fail at `expected_size == m_msg_process_queue_size`;
+normal exit was 1 with log SHA-256
+`746dfb350e7a39f3ad84398c2501388e54a70556feb3ac02ecfc45c79bbb32ca`, and
+ASan exit was 134 without a sanitizer diagnostic, log SHA-256
+`c44f91fba9b10ce2ea70901ec5729e59c54010e849dd848e2b7a6cc0b180a134`.
+
+Removing `fPauseRecv = m_msg_process_queue_size > m_recv_flood_size` from the
+same method caused the pause-state equality to fail; normal exit was 1 with
+log SHA-256
+`a6d0a350cbcc3b000f14aed230a5d1986224de3ccf8869d3b0fb13241eccf81a`, and
+ASan exit was 134 without a sanitizer diagnostic, log SHA-256
+`5111aa0b427ea48e8db577677d5cd9f9a8709ef825a19793d44d5af95d8179af`.
+The corresponding mutation binary hashes and full evidence are in the
+source commit message. Both mutations were restored before the final build;
+they prove oracle sensitivity, not bugs present on master.
+
+No production mutation, fuzz, sanitizer, replay, or test process remains
+running. A later fix or cherry-pick must be evaluated against current Core
+callers and this exact clean-master/mutation distinction before severity is
+raised.
+
 ## `key` BIP32 and uncompressed-key oracle audit (2026-07-21)
 
 Source parent is `16e576419f3b70a2465b76d03ea9d1f5b4ff4b85` (`fuzz: enforce
