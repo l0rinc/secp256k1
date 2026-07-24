@@ -6647,6 +6647,140 @@ unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
 
+## `rolling_bloom_filter` retention and generation oracle audit (2026-07-24)
+
+Source commit: `7857c32e44` (`fuzz: strengthen rolling bloom retention
+oracles`). The source parent was
+`12e6a321049d9c376d23f893b7e68721f7ac0a5d`, rebased onto current Bitcoin Core
+master `afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped query
+
+    git log origin/master..l0rinc/master -- src/common/bloom.cpp src/common/bloom.h src/test/fuzz/rolling_bloom_filter.cpp
+
+returned no output; no l0rinc commit was cherry-picked for this target.
+
+### Oracle and Core boundary
+
+The old `FUZZ=rolling_bloom_filter` harness checked only immediate
+self-membership and did not model the documented retention window. Production
+`CRollingBloomFilter` assertions now cover valid generation counters, paired
+bit-array layout, immediate membership after both generation-bit writes, and
+zeroed storage after `reset()`. The harness crosses multiple generation
+rollovers with seven elements, checks the last-N retention window, checks
+post-reset insertion, and tracks every random insertion in a typed history so
+byte-vector and `uint256` operations advance the same window.
+
+An intermediate byte-only history model failed on
+`ffae977dcffac17ed3e726b3729ff6b8ec3a0884` because it omitted `uint256`
+insertions from the generation count. This was invalid oracle construction,
+not a production finding; `std::variant` history corrected it before the
+authoritative replay.
+
+Core uses this filter in `net_processing.cpp` for per-peer transaction
+inventory-known and address-known relay filters, in `BanMan::m_discouraged`,
+and in `txdownloadman_impl.h` for recent rejects, reconsiderable rejects, and
+recently confirmed transactions.
+
+### Severity and mutation proofs
+
+No clean-master production bug was found. Two intentional mutations were
+detected deterministically and are regression proofs, not claims that master
+is defective:
+
+1. Removing the first generation-bit write fails at
+   `common/bloom.cpp:233` on `contains(vKey)`. Severity on master is
+   Low/Medium at most: duplicate transaction/address announcements,
+   repeated discouraged-peer attempts, or download/reconsideration churn,
+   with no invalid-block or consensus path.
+2. Removing the `std::fill` in `reset()` fails at
+   `common/bloom.cpp:258` on the zero-storage postcondition. Severity on
+   master is Low/Medium at most: stale recent-set membership can suppress or
+   repeat network work, but cannot alter consensus validation.
+
+The exact witness is
+`/tmp/bitcoin-rolling-bloom-audit-20260724/frozen/42034c895d06d6f914deac94ca1d87cb39a8cd32`,
+SHA-256
+`075198bfe61765d35f990debe90959d438a943ceeb9d39440e7db5455d449086`.
+Mutation source SHA-256 values are
+`3272568fb231a6d1f60062dc164c4049da6cdde30c1f3f9af2049c842b17182e` and
+`9ede768b742ff2438cd3eb7a473e718f89de221c1319d24da28e51693b224fb8`.
+Mutation binary SHA-256 values, in generation-bit normal/ASan then reset
+normal/ASan order, are:
+
+    ec765217680918bee8faff4a090aed2d5ec2bd3ef501070c0c51f9671ff58896
+    6f6a2886009b84f2565304a342975c6fc996dded511783e9c713f749fd778986
+    a23aae9b16bfd1f24b27dfefd1e401740a411c082ab1fa4ae6600d4fd3d26f4e
+    bdfac41edb4deadfe997718c1f637eaf13bc8eaa63d28ebbebedf7dca28bc2a2
+
+Mutation log SHA-256 values in the same order are:
+
+    3c98695034b5d4bdf82bbfa89e84972e1ceaba914a599bc85ddeda3de6ffd649
+    9b5a343053e7297fce412d4c3f26479f4aebb433dff3e0cfb03007f8a4d371f6
+    389993d46a2f21b69b374de44b27a59a87e33b9788deb5271fb98fc6b568f894
+    b2572905e68e4296d4850a14b65a024ec1247d708cc2378e1e7057ed19aba9e4
+
+Normal mutation runs exited 1; ASan/libFuzzer runs exited 124 after the
+assertion deadly-signal handler, with no ASan or UBSan report. A witness
+sigop undercount is High/Critical only with proof of invalid-block
+acceptance. A nonce with no standalone cryptographic meaning is not Critical
+merely because it is retained; MuSig2 secret nonces do carry cryptographic
+meaning, but no reuse or exposure was found. Later fork/minor fixes must be
+classified as masking, preserving, or changing a master defect, and must not
+lower master-relative severity by accident.
+
+Prior findings reiterated: feature-conditional private-broadcast failed-send
+retention and empty HEADERS initial-sync handoff are Medium; ecmult scratch
+wrapping, forced 10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979
+retention are Medium but reachability-limited; peer transaction refresh,
+local block-storage failure, oversized transport types, compact-block
+diagnostics, and cache/index/storage/serialization/container issues are Low
+or hardening. No additional clean-master production bug was confirmed.
+
+### Corpus and verification
+
+The frozen existing corpus contains 196 files and 7,103,307 bytes, from 1 to
+786,435 bytes. Sorted filename-list SHA-256:
+`af7dd78bd9802646d766c66c18af1e25c2dfd172a81110d80c95334d8b1e4338`.
+Per-file manifest SHA-256:
+`cef3c22ad0cc93558e1e596ba0cd71ddb8a73cb682dbb3fc5d43dad1b643d9678`.
+
+The untouched normal and ASan baselines passed all 196 inputs; log SHA-256
+values were
+`ba7ff2136aaa6c1a068553a34dc8dafd622b0e4f2c7d396cb8b847cbbf2f899a` and
+`902ad15c152c1dcc8e80f07243853f1ad7c799c87070b34162ff455644eca8a3`.
+Final normal and ASan replays passed all 196 inputs with log SHA-256 values
+`6bd898385316a95c5e3a643961ceb7d7fa5073621d34c3553d8a2cc2f8859d9e` and
+`f358181af91bb04d371e5c5dfe69a4fd8f334d2ac10a48798d9b4732799c2db7`.
+Exact clean-witness logs are
+`e8befe4a9816a3ec0747bee71223bbeaafe1163c54f787b5c339b0115766eac3` and
+`05fa1ea734bdfb73b416a1a2928016a6996ff31af92157089ce100de5b4c25ab`.
+
+Four isolated ASan workers covered disjoint shards for 60 seconds. All exited
+0 and produced no artifacts:
+
+    worker 0: 1,313 executions, 160 new units, peak 308 MiB, final corpus 203, log 6f5ce8aac267b20ac8261869c820151074afa9c7f0d1907053943d55ef878fa0
+    worker 1: 1,857 executions, 198 new units, peak 303 MiB, final corpus 238, log e8275bd3ca5ee37ce47a2df5d597ddf4b6c20adf598edea5bded499e95c5557f
+    worker 2: 683 executions, 118 new units, peak 305 MiB, final corpus 165, log 8c2f3b643a974c4a409ed3be7d2b0d181c45d7fd1230573ad586f0eade593b07
+    worker 3: 975 executions, 162 new units, peak 306 MiB, final corpus 202, log 3a9ce378833e3b579be39af568ff416e5ac074ce8f262dae412d2028995c8b2a
+
+Normal fuzz binary SHA-256 is
+`e1a81e9adf7d0641ccce5704185538e34232384365e7000183c356d28b3438bb`;
+ASan fuzz binary SHA-256 is
+`cd62e49e2bbca04d7f7f7841015c067705dc235120481cba522c823a546b9d32`.
+Focused `bloom_tests`, `net_tests`, `banman_tests`, `txdownload_tests`,
+`txrequest_tests`, `net_peer_connection_tests`, `net_peer_eviction_tests`,
+and `merkleblock_tests` passed with `*** No errors detected`.
+`test_bitcoin` SHA-256 is
+`11723bc02c00f097fd5bb0d5f64d6667a6b3ee8523e3ab79f542ae54e638f3fe` and
+the test log SHA-256 is
+`dbd098376fb9d96523ea34bbb3db05cf264d26cf997026cdd0f663b1acdef212`.
+
+Final clean source SHA-256 values are
+`83435d58f844ab034187b99532c518f8f959abc78d3c87672feadeda90a39550` for
+`src/common/bloom.cpp` and
+`6037b4f85c3b976beeb79957776606b147919244df38cc27c55027e0ec0ac91a` for
+`src/test/fuzz/rolling_bloom_filter.cpp`. No fuzz, sanitizer, build, test, or
+mutation process remains running.
+
 ## `script_sign` signing-state and wallet-oracle audit (2026-07-24)
 
 Source commit: `12e6a32104` (`fuzz: strengthen script signing state oracles`).
