@@ -6857,6 +6857,107 @@ The configured fuzz-only builds had no `test_bitcoin` binary or target, so no
 focused unit suite is claimed. `git diff --check` passed. No production
 behavior changed and no deterministic production regression test is claimed.
 
+## `protocol` inventory semantic oracle audit (2026-07-24)
+
+### Scope and source state
+
+This pass is committed as source commit
+`9572aedb8c` (`fuzz: strengthen protocol inventory oracle`) on parent
+`4b3736ceadcd2b7ab10ea4b90e4b8dc32c695b04`. The source branch is a
+descendant of fetched `origin/master`
+`610dd320d1a80838fdf30ed1cb2e6ae1ec717f74`; that exact commit remains the
+merge base. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`. The scoped query over
+`src/test/fuzz/protocol.cpp`, `src/protocol.cpp`, `src/protocol.h`,
+`src/net_processing.cpp`, and related serialization paths returned no commits.
+No l0rinc change was cherry-picked. The earlier `CInv` deserialization audit
+already covers raw wire round trips; this commit covers the separate semantic
+methods and ordering behavior of `CInv`.
+
+### Oracle and Core boundary
+
+The old `FUZZ=protocol` target invoked `GetMessageType`, `ToString`, helper
+predicates, and `operator<`, but discarded all results and swallowed unknown-
+type exceptions. The new target independently models known message names and
+the required exception for unknown masked types, checks the exact string/hash
+format, checks every public type predicate, generates a separate `CInv` from
+fuzz bytes, and verifies strict lexicographic ordering by type then hash.
+Unknown inventory types remain valid protocol values and are tested through
+their documented fallback representation rather than rejected by the oracle.
+
+Bitcoin Core uses these records in `net_processing.cpp` for peer-controlled
+INV/GETDATA filtering, block availability, transaction download, and block or
+transaction response selection. A clean-master mismatch would be
+Low/informational protocol hardening under these callers: it cannot by itself
+accept an invalid block, alter consensus or the UTXO set, move funds, or reach
+a cryptographic boundary. Clean master reproduced no production failure,
+consensus divergence, memory-safety issue, or production fix. No High/Critical
+finding or deterministic production regression test is claimed. A
+non-cryptographic type field is not Critical merely because it is retained.
+
+### Corpus and clean replay
+
+The frozen corpus was copied from
+`/mnt/my_storage/qa-assets/fuzz_corpora/protocol` and contains 38 files,
+8256 bytes, with sizes 2..4367. The filename/size manifest SHA-256 is
+`713d1ad389c152a2930bf257191b1d9b6c32e096e1bac7c0e252b93d1481e49f`; the
+content manifest SHA-256 is
+`8dd05322603cf09a5fd01afb9146e45d6df46e9317e6cd44f2276f77c7f7a478`.
+The final ASan/UBSan binary SHA-256 is
+`39bb67a3b5fd2698517a8b907c52ebd9d72542e9217162c59ad0d9b0fa31ae7a`.
+Its clean corpus replay exited 0 after 39 executions with no artifact or
+diagnostic; log SHA-256 is
+`ad6c53bf6fff59feeeb22901d6e446b7af869638a5804e57e09fedaf6e3f2944`.
+The final normal binary SHA-256 is
+`1d945f932eb0a8e6dd6386f6417e93e4d2b5e277a5097f60a9687643313c3588`.
+Its clean corpus replay exited 0 after 39 executions; log SHA-256 is
+`123e593782dcf883a0ade99f24a89c2c821f77a1d9fc32283fbc1db5f4a1cb0d`.
+The exact clean witness replay logs are
+`2a456852d3a5e83cb1c173a441fbf88c60d11e97eea959620a2d38801d9a5bca` for
+ASan and
+`962ad8c97d755dc7d8b4ecb2cbcf4b8ab68665772034a8df1ac218df80304d14` for
+normal mode. Four isolated ASan workers each completed 20000 runs with exit
+0 and no artifact or diagnostic; their log hashes are
+`b1a23c40a6244574dd88d2046ff5981def8cac78084a9a94f83d91823e711387`,
+`2dc2a5a0c1a2bf821ddb20a3afab741f0055199aabef5f395f73e547382f234c`,
+`1d6d81028edfbd605dc61061516645791c55776fe8a330ffdd28db00af011f8c`, and
+`0a72c8855ce6cfa98d00d13a29d67f34080718f8117a7c443f2ba3c977180315`.
+
+### Differential proof, not a master finding
+
+A temporary production mutation changed the `MSG_TX` branch of
+`CInv::GetMessageType` from `NetMsgType::TX` to `NetMsgType::BLOCK`.
+Mutated `src/protocol.cpp` SHA-256 was
+`abd1eba835312d7ccd10b062ef419317715cb32d8aa10072c872889805ba966b`.
+The exact 36-byte witness is `01 00 00 00` followed by 32 zero hash bytes;
+its SHA-256 is
+`11bc115c0226329c9a35a7fee1d29c1f5248e0f7841d57829b50278263149113`.
+The formatted enhanced harness source SHA-256 is
+`590c729a24bcaeab197101a37d225d787f500e5dc21779c37d07de0706b23eaa` and
+the mutated ASan binary SHA-256 is
+`00f1596657782f1764f594ed013e03b2ddc12b3b95d88e4508c1616f5d43662f`.
+It exited 134 at `src/test/fuzz/protocol.cpp:37` on the expected message
+type assertion; mutation log SHA-256 is
+`695692dbe9bb3353a0c1fec4164aa0b40d3d7a910feb12cb760edbe22f81758a`.
+
+The formatted parent harness source SHA-256 was
+`32d99851ffcf325ca7dc31b849c2831ded0a2b0b8fb4a060c64e4227c4510418` and
+its mutated ASan binary SHA-256 was
+`f4852981981c775dd50c8806cb51ff4c63ab6e63b0fdbdc01e4de995ba9ea748`.
+It exited 0 on the same witness; control log SHA-256 is
+`b99f92fe14ef54691c3e342b1ce9876ced35ebf55acf9c0c7edcff2081253249`.
+The earlier parent replay over all 38 corpus inputs also exited 0; log
+SHA-256 is
+`373d38bb57b136e8488787f16acd5241a0b1ce7e77288722a394e89ed551b989`.
+This proves that the added semantic oracle detects a modeled display-mapping
+regression the old target silently accepts; it does not prove clean master
+contains that regression. Production was restored before the final build.
+
+`clang-format --dry-run --Werror` and `git diff --check` passed. The configured
+fuzz-only builds have no `test_bitcoin` target, so no focused unit suite is
+claimed. No production behavior changed and no fuzz, sanitizer, mutation, or
+test process remains running.
+
 ## `psbt_base64_decode` wrapper oracle audit (2026-07-24)
 
 ### Scope and source state
