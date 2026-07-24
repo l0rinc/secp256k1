@@ -6990,6 +6990,137 @@ file-wide legacy diagnostics in the touched files; no unrelated formatting
 was changed. All temporary mutations, control build artifacts, fuzz jobs,
 and sanitizer jobs were removed or completed.
 
+## Tor SOCKS callback state oracle audit (2026-07-24)
+
+Source commit `b2a06c8ad37f74654d1b6ebc1a9ac41ca6a1d8c0` (`fuzz: strengthen
+Tor SOCKS callback state oracle`) follows parent `e151c8ba83`, the I2P
+session oracle commit. The audit base is Bitcoin Core `origin/master`
+`3a2c52f9d70db6076ce64b8f7ef0eb301d7935a5`. `remotes/l0rinc/master` is
+`afa5e46bbc6dd750bd71920b659162a945abf0ae`; the scoped query
+
+    git log origin/master..remotes/l0rinc/master -- src/test/fuzz/torcontrol.cpp src/torcontrol.cpp src/torcontrol.h src/netbase.cpp src/net.cpp
+
+returned no commits. No relevant l0rinc change was cherry-picked and no
+later fix was used to mask this clean-master result.
+
+### Core boundary and severity
+
+`TorController::get_socks_cb` handles the `GETINFO net/listeners/socks`
+response issued after Tor authentication. Bitcoin Core's `-torcontrol` path
+uses it to configure the `NET_ONION` proxy, mark onion reachability, and route
+onion connections through the Tor SOCKS endpoint. This is a Tor control,
+routing, and privacy boundary; it is not block validation, transaction
+consensus, or cryptographic verification.
+
+Clean master reproduced no production bug. The result is Low-to-Medium oracle
+hardening. A modeled loss of SOCKS stream isolation is **Medium** under the
+current Core caller because it can weaken per-connection circuit separation
+and privacy, but it is not consensus-critical, does not enable invalid-block
+acceptance, and is not High/Critical without a separate security reachability
+proof. Invalid fuzzer state or an invalid block alone is never enough to raise
+this classification. A nonce without cryptographic meaning is not Critical
+merely because it is retained or not cleared.
+
+### Existing findings reiterated
+
+The standing master-relative ledger is unchanged: private-broadcast
+failed-send retention and the empty-HEADERS initial-sync handoff remain
+feature-conditional Medium availability findings; peer transaction refresh,
+local block-storage failure, oversized transport types, and parser/cache/
+index/serialization inconsistencies remain Low or hardening under current
+Bitcoin Core callers; ecmult scratch wrapping, forced 10x26 magnitude-32
+normalization, and SHA/HMAC/RFC6979 retention remain Medium but
+reachability-limited; and banman invalid-subnet/unban integrity remains
+Low/nice-to-have.
+
+The witness-sigop undercount is High/Critical only if an end-to-end Bitcoin
+Core reproduction proves that it enables invalid-block acceptance or another
+consensus violation. The two `script_sign` mutations referred to in prior
+notes are intentional regression models, not master vulnerabilities:
+removing `UpdateInput`'s scriptWitness copy and removing missing/spent-input
+`input_errors` assignment. Both are Medium at most because they affect local
+signing/RPC state, not consensus validity. No additional clean-master Tor
+production bug is claimed here.
+
+### Oracle changes
+
+The production callback now asserts that `SetProxy(NET_ONION, addrOnion)`
+succeeds, that the stored proxy exists and matches the resolved SOCKS
+endpoint, that `m_tor_stream_isolation` remains enabled, and that an allowed
+`-onlynet` configuration makes `NET_ONION` reachable. The harness seeds a
+distinct valid-but-wrong sentinel proxy before `get_socks_cb`, then checks the
+post-state. This makes a no-op, wrong-network update, invalid stored proxy,
+lost isolation flag, or missing reachability update fail at the transition
+where it occurs instead of being hidden by an earlier fuzz action.
+
+### Corpus and clean replay
+
+The frozen corpus is
+`/mnt/my_storage/qa-assets/fuzz_corpora/torcontrol`: 370 files and
+11,295,962 bytes. The sorted filename/content manifest SHA-256 is
+`210b13cda882f9dcf67a4ad8a18a57ae243827a47f131d793adebc742d5bbe68`.
+Final source SHA-256 values are
+`b8473e3939ab035e0bca1e271b323f1dfb4fc1f0fe681923523f202d9803881b`
+(`src/torcontrol.cpp`) and
+`cc3da304b830633ee8ac05663c7e813dabb6770dc744e13484a78ee32fb19285`
+(`src/test/fuzz/torcontrol.cpp`). Final ASan/UBSan and normal fuzzer binary
+SHA-256 values are
+`60b65d0c1c7f80db49558054f6fe1f1cc58ed64d83daf20b905e22d6e54e650a` and
+`0ede6a62cfa657185add7a871d142d69eb6b80075a9a7ea99fe24f3a159487e2`.
+
+The final ASan/UBSan replay exited 0 after 371 executions, with coverage
+1,565, 10,848 features, peak RSS 484 MiB, and no diagnostics or artifacts;
+log SHA-256 is
+`cad14a4b33c7154b0ac7792516a84b1780b257af15da42e4807552b1fde25390`.
+The final normal replay exited 0 after 371 executions, with coverage 987,
+6,833 features, peak RSS 72 MiB, and no artifacts; log SHA-256 is
+`71d1919e8aa811eee7bdd638b82d32d87d2a51d42766dfc9e9d97b398a59ca96`.
+
+Four isolated ASan workers used `-merge=0 -workers=4 -jobs=4 -runs=2500`.
+All four jobs exited 0, for 10,000 total generated executions, with no
+assertion, sanitizer, timeout, or artifact diagnostic. The aggregate log
+SHA-256 is
+`cab74b31756f12fba3f518e4ed7a7e2198e6f4f8f5c58b9cd578c0343f8d3a40`.
+Each worker started from a fresh 370-file copy; libFuzzer's temporary corpus
+growth was confined to those disposable copies and did not alter the source
+corpus.
+
+### Differential proof, not a master finding
+
+A one-token production mutation changed
+`Proxy(resolved, /*tor_stream_isolation=*/ true)` to `false`. The enhanced
+ASan replay detected it on executed unit 6 at the production assertion
+`configured_proxy->m_tor_stream_isolation`; the mutated production source
+SHA-256 was
+`7aee05f3b455ec219630b6d6c728a353ee65f89dc7640415b3aa0fe6cdd945ae`, and
+the diagnostic log SHA-256 was
+`f0e90c23c3ef33ea9f3feffd6f8972e6f1d4c76c14899a094962cf9c9f34f883`.
+
+The minimized witness is
+`/tmp/bitcoin-torcontrol-20260724/mutation-artifacts/crash-90c9d783b858af7c3247cd1d1bd40a3c8402f6f0`, 7 bytes, SHA-256
+`85f9245b3c8a6e32e0c5e9911c1ff087787187e5c0c7ca60367f767b720f1aad`, and
+Base64 `AVzzX+9Cfw==`. The exact witness passed with exit 0 in a temporary
+control build containing the old production and harness code plus only the
+`false` mutation; control log SHA-256 is
+`60c093e45e613abc5aba0550a415f0984537b7e2b272947ceda8a081e2b23418`.
+This counterfactual proves that the new oracle, rather than the old target,
+detects the modeled privacy-contract regression.
+
+The mutation was restored before the final rebuild. The restored ASan binary
+accepted the exact witness with exit 0; final witness log SHA-256 is
+`9b70c2102549cfaa5441ee3a0b2c9a68ad152b95301183a3b2947740bed6a7eb`, with
+no artifact. No deterministic production regression test or production fix
+is claimed because clean master passed.
+
+### Verification gap
+
+Verification used `git diff --check`, `clang-format --dry-run --Werror` on
+the changed harness (clean), both fuzz builds, the frozen corpus replays, the
+four-worker ASan run, and the enhanced/control/restored witness replays.
+Full-file clang-format diagnostics in `src/torcontrol.cpp` are pre-existing
+legacy style violations; unrelated formatting was not rewritten. No fuzz,
+sanitizer, mutation, or build process remains running.
+
 ## `asmap` netgroup contract oracle audit (2026-07-24)
 
 ### Scope and source state
