@@ -2966,6 +2966,130 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+## Fuzz-oracle audit: MiniMiner state and fee contracts
+
+This audit covers FUZZ=mini_miner and the production MiniMiner helper. The
+source oracle commit is 578b4cea4a, based on origin/master
+610dd320d1a80838fdf30ed1cb2e6ae1ec717f74; its parent is
+7df92be31a7cd49261f0d719b993aab1932ac874. The scoped fork query
+
+    git log origin/master..l0rinc/master -- src/node/mini_miner.cpp src/node/mini_miner.h src/test/fuzz/mini_miner.cpp src/test/miniminer_tests.cpp
+
+returned no commits. No l0rinc change was cherry-picked for this target, so
+there is no fork fix that could mask or alter the result.
+
+### Oracle changes and Core boundary
+
+Production MiniMiner::SanityCheck now asserts that the entry vector, txid map,
+and descendant-set map agree on identity; every descendant set is non-empty,
+unique, and contains its own transaction; and the inclusion order agrees with
+the current block. BuildMockTemplate also asserts that processed and remaining
+entries account for every transaction.
+
+The harness now checks unique outpoint coverage, zero bump fees for outpoints
+outside the mempool, stable fees for duplicate outpoints, the combined-fee
+upper bound, and a complete contiguous sequence from Linearize(). The old
+harness never called Linearize() and only checked presence/non-negativity of
+individual fees plus a one-way sum relation.
+
+MiniMiner is reached through node/interfaces.cpp
+(calculateIndividualBumpFees and calculateCombinedBumpFee), wallet/feebumper.cpp,
+wallet/spend.cpp, wallet/rpc/spend.cpp, and coin-selection fee estimation.
+It is not a block-validation or consensus acceptance primitive. Clean master
+reproduced no production failure, so this commit is Low/Medium wallet
+fee-estimation and oracle hardening. It is not a consensus, invalid-block,
+memory-safety, or Critical finding, and no production fix or deterministic
+regression test is claimed.
+
+### Negative combined fee: valid shared-ancestor accounting
+
+The existing input
+f25341d72f3cf13da96967063259782effd7f1ba (2,061 bytes, SHA-256
+6d9cee0b4df55125ef969a9c640f47bda1a4806a00776fd738bfb5a379b17bec)
+returned a combined bump fee of -69,483,932,875 at target feerate
+8,589,869,091. The union package was 62,377 bytes with fee
+605,294,197,165. Shared ancestors are charged once in the union, so the
+combined result can be negative even though each individual outpoint result
+is non-negative. The invalid temporary assertion requiring a non-negative
+combined result was removed; the committed relation is only that the combined
+fee does not exceed the sum of individual fees.
+
+Master commit 8d9e4f8dbd, merged from 3ae3a94f2b, changes the wallet caller to
+apply a negative bump-fee discount only when it is positive. That guard covers
+a negative discount caused by taking two MiniMiner snapshots across a race;
+it does not make this same-snapshot shared-ancestor credit invalid and does
+not mask a consensus defect. This case is therefore recorded as a valid
+contract boundary, not a vulnerability.
+
+### Differential oracle proof
+
+This is an oracle differential proof, not a clean-master production finding.
+The temporary production mutation changed MiniMiner::Linearize() to return
+an empty map after BuildMockTemplate().
+
+The enhanced current harness failed deterministically at
+src/test/fuzz/mini_miner.cpp:134 on the input above. The failure log SHA-256
+is cbe61a4dc88c748291901bf9f78cb9339fa7cc97e52f1f2fc6b35e1128dc31c1.
+The clean-master original harness, with the identical production mutation,
+exited 0 on the same fixed input. Its ASan control binary SHA-256 is
+a002f8053b768c5a43914787392c9a53a4e6f1f1643a40691ec77a56f613f896 and its
+control log SHA-256 is
+5b2440406d69ba9d73b18b749c64f1f4d36c4888db75b82429d94ce81afe4750.
+This proves that the added Linearize oracle exercises a previously unobserved
+contract; it does not prove that master contained a production bug. The
+mutation was restored in both source worktrees before commit.
+
+### Corpus and replay evidence
+
+The existing corpus is /mnt/my_storage/qa-assets/fuzz_corpora/mini_miner:
+1,017 files, 4,298,388 bytes, minimum 1 byte, maximum 1,048,496 bytes.
+The sorted filename-list SHA-256 is
+997c65a904a048db34b5b6d8e1046797ce0ec90b47f4619727a11c92802b9398.
+The per-file name/size/content manifest SHA-256 is
+105272c09a494933424df02f5fd43605097ee927f077fd3d13824ebb46655211.
+
+The normal libFuzzer binary SHA-256 is
+c555837351c93d6dd8e09e2fc7e8834b5b0cc7024387e8e3228ee8d92d677b68. It
+passed 1,018 executions with no artifacts; the log SHA-256 is
+24f13ac090b0c09da41db055a0b37e84303bafbb7e18d6413c762961b3e2e0e3.
+
+The ASan/UBSan/libFuzzer binary SHA-256 is
+1e523fb61d3e7b7484df56ce04e9f213d21f8ba8cd0bf218de7d6ad6676ac15c. It
+passed 1,018 executions, added no units, produced no sanitizer or assertion
+diagnostics or artifacts, and peaked at 619 MiB RSS. The log SHA-256 is
+542509b7c34f7bedb7b444a78da8b18f3f4caa8dcd0f5245785257ca31638f53.
+
+Four isolated ASan workers each exited 0 after 1,018 executions, peaked at
+618 MiB RSS, produced no artifacts, and left the corpus at 1,017 files. The
+aggregate parent log SHA-256 is
+b08f94f34ae5ea92ea9bcef873f25314714f3a823a833cbb576af29ba9d77012.
+The final source replay log SHA-256 values are retained in the source commit.
+git diff --check passed. clang-format --dry-run --Werror remains non-clean
+because these legacy files already contain unrelated formatting violations;
+no formatting-only rewrite was included in this audit commit.
+
+### Reiterated severity ledger
+
+The witness-sigop undercount mutation remains High/Critical only if an
+end-to-end reproduction proves that it enables Bitcoin Core to accept an
+invalid block or otherwise violates consensus. The script solver and
+MiniMiner results here do not establish that condition.
+
+The two script-sign production mutations remain Medium at most: they model
+incorrect local/RPC signing state and cannot make an invalid block consensus
+valid. The feature-conditional private-broadcast failed-send retention and
+empty-HEADERS initial-sync handoff remain Medium. Ecmult scratch wrapping,
+forced 10x26 magnitude-32 normalization, and SHA/HMAC/RFC6979 retention remain
+Medium but reachability-limited. Peer transaction refresh, local block-storage
+failure, oversized transport types, compact-block diagnostics, cache/index/
+storage/serialization/container inconsistencies remain Low or hardening under
+Bitcoin Core callers. A nonce without standalone cryptographic meaning is not
+Critical merely because it is retained or not cleared; secret nonces that do
+carry cryptographic meaning remain a separate Critical-risk boundary, with no
+new issue found in this target.
+
+No fuzz, sanitizer, mutation, or build process remains running.
+
 ## `fee_rate` CFeeRate arithmetic oracle audit (2026-07-22)
 
 Source commit: `72ff941501437f189c27a18812f036c309edb615` (`fuzz: strengthen
