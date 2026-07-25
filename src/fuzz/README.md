@@ -29133,3 +29133,61 @@ masked. A minor or non-serious patch that accidentally hides a severe master
 condition does not lower its severity on master. Every confirmed production
 bug requires the strongest proof, a deterministic regression test, and why
 existing builds/tests did or did not catch it.
+## 2026-07-25 Silent Payments Opaque-State Oracle and Validation
+
+The source finding was proven against clean `origin/master`
+`d2d04864ef9b056151603a3ced7980958b058028`. This commit was ported from the
+pre-rebase audit stack and replayed after landing on parent `23ede1fb`; the
+rebased forced-int64 build passed the four focused seeds and the deterministic
+Silent Payments test suite.
+Silent Payments is enabled in the default build, but this module previously
+had no fuzzer target. The new `fuzz_silentpayments` target exercises sender /
+recipient output agreement, labeled-spend lookup, label parse/serialize
+round trips, and summary scanning with one or two recipients. It also keeps
+the illegal-argument callback observable instead of allowing expected
+malformed-state tests to terminate the process.
+
+The production-side oracle found two magic-preserving opaque-state gaps on the
+master-equivalent code. A valid label begins with `27 9d 44 ba`; replacing
+only its 64-byte point storage with zeroes previously made
+`recipient_label_serialize` return success and emit an invalid point. A valid
+prevouts summary begins with `a7 1c d3 5e`; replacing only its 64-byte point
+storage with zeroes while retaining the valid input hash previously let
+`recipient_scan_outputs` proceed with an invalid shared-secret point. The
+summary also lacked checks for `combined` values other than 0/1, zero input
+hash scalars, and overflowing input-hash encodings. The fix validates curve
+membership and subgroup membership when loading labels and summaries, checks
+the summary flag, and validates the non-combined scalar before converting the
+recipient scan key. Validation occurs before the scan key is converted, so an
+argument failure cannot bypass the existing secret-scalar cleanup path.
+
+The deterministic witnesses are `src/fuzz/corpora/silentpayments/opaque-label-state`
+and `src/fuzz/corpora/silentpayments/opaque-prevouts-state`; the positive
+round-trip witness is `roundtrip`. The unit tests independently cover the
+magic-preserving zero point, flag value 2, zero scalar, and all-`FF` scalar.
+Before-fix proof was obtained by temporarily removing only the new label
+checks: `opaque-label-state` aborted with exit 134. Restoring those checks and
+temporarily removing only the summary validation block made
+`opaque-prevouts-state` abort with exit 134. These are minimal production
+mutations of the current master code, not claims that Bitcoin Core receives
+the malformed bytes from the network. After restoration, the three exact
+seeds passed, and a Clang 22.1.7 ASan/UBSan campaign with two workers and two
+jobs completed 2,304 generated executions with no diagnostic, assertion,
+timeout, OOM, or artifact. The native CTest suite passed all 246 tests in
+both its verify and no-verify Silent Payments coverage.
+
+Severity is **Low / defensive API hardening**, not High or Critical. Bitcoin
+Core uses this module for wallet-side Silent Payments scanning and locally
+constructs labels and prevouts summaries from already parsed key objects; the
+opaque summary is not a consensus-block serialization boundary. The tested
+state requires caller memory corruption or deliberate mutation of an opaque
+object, so it does not provide invalid-block acceptance or a consensus
+vulnerability. On the master branch it can nevertheless turn local state
+corruption into an invalid serialized label, wrong scan behavior, or a
+verification-build failure, which justifies the narrow validation and
+regression tests. This does not alter the existing ledger: malformed opaque
+state and public callback failures remain **Medium** only where the relevant
+caller can actually reach them; the reachable 10x26 magnitude-32 issue is
+**Medium/latent**; documented tweak overlap is **Low**; cleanup/oracle-only
+checks are **Informational**; and a nonce with no cryptographic meaning is
+not a Critical erasure finding. No invalid-block acceptance was found.

@@ -30,6 +30,9 @@
 #ifdef ENABLE_MODULE_SCHNORRSIG
 #include "secp256k1_schnorrsig.h"
 #endif
+#ifdef ENABLE_MODULE_SILENTPAYMENTS
+#include "secp256k1_silentpayments.h"
+#endif
 #ifdef ENABLE_MODULE_MUSIG
 #include "secp256k1_musig.h"
 #endif
