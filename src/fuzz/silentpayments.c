@@ -41,6 +41,24 @@ static const unsigned char *secp256k1_fuzz_silentpayments_label_lookup(const uns
     return NULL;
 }
 
+static void secp256k1_fuzz_silentpayments_check_spend_tweak(
+    const secp256k1_context *ctx,
+    const secp256k1_silentpayments_found_output *found_output,
+    const unsigned char *spend_seckey
+) {
+    unsigned char tweaked_seckey[32];
+    secp256k1_pubkey tweaked_pubkey;
+    secp256k1_xonly_pubkey tweaked_xonly;
+    int parity;
+
+    memcpy(tweaked_seckey, spend_seckey, sizeof(tweaked_seckey));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_add(ctx, tweaked_seckey, found_output->tweak) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &tweaked_pubkey, tweaked_seckey) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &tweaked_xonly, &parity, &tweaked_pubkey) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &tweaked_xonly, &found_output->output) == 0);
+    memset(tweaked_seckey, 0, sizeof(tweaked_seckey));
+}
+
 static void secp256k1_fuzz_silentpayments_check_roundtrip(
     const secp256k1_context *ctx,
     const unsigned char *input,
@@ -176,6 +194,7 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     }
     for (i = 0; i < n_recipients; i++) {
         FUZZ_CHECK(matched[i]);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &found_outputs[i], spend_seckey);
     }
 
     /* Exercise the sender's original-index contract across scan-key groups.
@@ -184,6 +203,7 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
      * caller's original slots. */
     {
         const unsigned char *multi_scan_seckey_ptrs[2];
+        const unsigned char *multi_spend_seckey_ptrs[2];
         const secp256k1_pubkey *multi_spend_pubkey_ptrs[2];
 
         if (scan_cmp > 0) {
@@ -193,6 +213,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
             recipients[1].spend_pubkey = other_spend_pubkey;
             multi_scan_seckey_ptrs[0] = scan_seckey;
             multi_scan_seckey_ptrs[1] = other_scan_seckey;
+            multi_spend_seckey_ptrs[0] = spend_seckey;
+            multi_spend_seckey_ptrs[1] = other_spend_seckey;
             multi_spend_pubkey_ptrs[0] = &spend_pubkey;
             multi_spend_pubkey_ptrs[1] = &other_spend_pubkey;
         } else {
@@ -202,6 +224,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
             recipients[1].spend_pubkey = spend_pubkey;
             multi_scan_seckey_ptrs[0] = other_scan_seckey;
             multi_scan_seckey_ptrs[1] = scan_seckey;
+            multi_spend_seckey_ptrs[0] = other_spend_seckey;
+            multi_spend_seckey_ptrs[1] = spend_seckey;
             multi_spend_pubkey_ptrs[0] = &other_spend_pubkey;
             multi_spend_pubkey_ptrs[1] = &spend_pubkey;
         }
@@ -229,6 +253,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
             FUZZ_CHECK(found_outputs[0].found_with_label == 0);
             FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
                 &found_outputs[0].output, &generated_outputs[i]) == 0);
+            secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &found_outputs[0],
+                multi_spend_seckey_ptrs[i]);
         }
         /* The sender sorts this pointer array in place. Restore the original
          * layout before the single-recipient mixed-input exercise below. */
@@ -273,6 +299,7 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     FUZZ_CHECK(n_found == 1);
     FUZZ_CHECK(mixed_found_output.found_with_label == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &mixed_found_output.output, &mixed_output) == 0);
+    secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &mixed_found_output, spend_seckey);
 
     /* Magic-preserving mutations exercise opaque state that ordinary API
      * round trips cannot produce. Keep the input hash intact in the point

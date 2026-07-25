@@ -29462,3 +29462,49 @@ ordering as a block validity predicate. The mutation was never merged, the
 l0rinc label-batch fix is unrelated, and no later fix was allowed to mask the
 master-relative proof. A nonce without cryptographic meaning is not a
 Critical erasure finding.
+
+## 2026-07-25 Silent Payments Spend-Tweak Oracle
+
+The scanner returned the found x-only output and its secret-key tweak, but the
+fuzzer previously checked only the output and label metadata. It now copies the
+known spend secret key, applies the returned tweak with
+`secp256k1_ec_seckey_tweak_add`, derives the resulting x-only public key, and
+requires that key to equal the found output. This covers unlabeled outputs,
+labeled outputs whose label tweak has already been folded into the returned
+tweak, multi-scan-key output reordering, and mixed taproot/non-taproot inputs.
+The zero tweak used for the documented label-cancellation case is handled by
+the same key-tweak operation.
+
+The original oracle gap was proven against clean parent `24d8c20b` with this
+disposable production mutation in `src/modules/silentpayments/main_impl.h`:
+
+```
+secp256k1_scalar_get_b32(found_outputs[k]->tweak, &t_k_scalar)
+    -> memset(found_outputs[k]->tweak, 0, sizeof(found_outputs[k]->tweak))
+```
+
+On Clang 22.1.7, forced-int64, no-assembly ASan/UBSan builds, all four
+pre-change Silent Payments seeds (`roundtrip`, `opaque-label-state`,
+`opaque-prevouts-state`, and `mixed-inputs`) exited 0 under that mutation.
+The same mutation with the new oracle aborted with exit 134 on each of the
+four seeds. Restoring the production expression made all four fixed seeds pass
+with `-runs=1`; a two-worker, two-job sanitizer campaign completed 63 and 73
+executions with exit 0, and the native GCC replay passed each seed individually.
+No production mutation was merged and no clean-master bug is claimed by this
+commit.
+
+Severity is **Informational/Low oracle hardening**. A real returned-tweak bug
+would affect wallet spend-key reconstruction, but this check has no Bitcoin
+Core consensus or invalid-block acceptance impact. Bitcoin Core's block-facing
+validation does not use Silent Payments wallet output recovery as a validity
+predicate. The result is not a finding against clean master; the exact
+mutation only proves that the fuzzer would now detect a future production
+regression. After porting onto current parent `a983defb`, the fixed four-seed
+replay and deterministic Silent Payments suite passed again. A nonce without
+cryptographic meaning is not a Critical erasure finding.
+
+Post-rebase multi-worker proof: the forced-int64 Clang 22.1.7 ASan/UBSan
+libFuzzer build ran with `-workers=2 -jobs=2 -max_total_time=15` over an
+isolated copy of the four-seed corpus. Both jobs exited 0 after 168 and 170
+generated executions, adding 53 and 51 units respectively; no sanitizer
+diagnostic, assertion, timeout, OOM, or artifact was produced.
