@@ -30333,3 +30333,48 @@ concurrency, assertion, OOM, timeout, invalid-block, or consensus failure.
 The prior 2,203-unit source-directory incident remains documented as a wrapper
 failure, not a fuzzer finding. No production mutation or severity change is
 claimed; `origin/master` and `l0rinc/master` remain `d2d04864`.
+
+## 2026-07-25 ECDSA Verifier Mutation Matrix
+
+The ECDSA verifier was tested in a disposable worktree at branch HEAD
+`29ad81da`, with Clang 22.1.7, ASan/UBSan, assembly disabled, forced-int64
+wide multiplication, recovery enabled, and the `fuzz_api_roundtrip` target.
+The restored target passed all 63 tracked `api_roundtrip` corpus files with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`. Each mutation below was
+rebuilt independently and the source was restored before the next probe.
+
+First, the public low-S policy gate in `src/secp256k1.c` was inverted:
+`!secp256k1_scalar_is_high(&s)` became `secp256k1_scalar_is_high(&s)`. The
+mutant aborted with exit 134 on the first ordinary corpus input,
+`api_roundtrip/ascii-near-der`, because the harness expects an independently
+constructed valid low-S signature to verify. It also aborted on both dedicated
+fixtures `api_roundtrip/ecdsa-reject-high-half-order` and
+`api_roundtrip/ecdsa-verify-half-order`. This proves that the existing
+low-S acceptance and high-half-order rejection checks are live; no additional
+assertion would add useful coverage.
+
+Second, the second `secp256k1_gej_eq_x_var` acceptance branch in
+`src/ecdsa_impl.h` was replaced with `if (0)`. This is the `x(R) = r + n`
+case, needed when the affine x-coordinate is above the group order but below
+the field prime. The mutant aborted with exit 134 on the first corpus input,
+and independently on both `api_roundtrip/ecdsa-r-plus-order` and
+`api_roundtrip/core-ecdsa-r-plus-order-composition`. The existing fixed point,
+signature equation, and Core-shaped serialized verifier fixtures therefore
+reach and require this branch. The byte-level reference verifier in the same
+harness also checks both `r` and `r+n` candidates without deriving its result
+from the production branch.
+
+After both mutations were restored, the target was rebuilt and all 63 corpus
+files passed again. No sanitizer diagnostic or clean-master failure occurred.
+These are oracle-validation results, not production bugs. The low-S path is
+used by Bitcoin Core's ECDSA public-key verification and affects whether a
+signature is accepted, but a policy/verification disagreement alone does not
+prove invalid-block acceptance; the master-relative severity is therefore
+Informational for this audit. The `r+n` path is consensus-sensitive because it
+can distinguish a valid ECDSA equation used by Core from a false rejection,
+but the correct master branch accepts the fixture and the mutation only
+demonstrates regression detection. No High/Critical finding is claimed: there
+was no clean-master invalid-block acceptance, consensus failure, key
+compromise, or demonstrated memory/concurrency impact. The commit records the
+mutation, exact fixtures, why the old oracle was sufficient, and the verifier
+command so a later fork fix cannot conceal a master-relative discrepancy.
