@@ -30228,3 +30228,47 @@ High/Critical only with proof that Bitcoin Core accepts an invalid block, which
 was not shown here. A nonce or counter without cryptographic meaning is not a
 Critical clearing issue. `origin/master` and `l0rinc/master` were both
 `d2d04864`; no fork commit or incidental minor fix masked this result.
+
+## 2026-07-25 Full Current-Target MemorySanitizer Replay
+
+The current HEAD `cea9ec70` was configured in an isolated build with Clang
+22.1.7, assembly disabled, forced-int64 arithmetic, all seven optional
+modules including recovery, libFuzzer, and
+`-fsanitize=memory -fsanitize-memory-track-origins=2`. All 15 fuzz targets
+and the deterministic test binaries built successfully. The exact corpus
+replay loaded 365 executions: 350 tracked inputs plus one explicit empty input
+for each target. The per-target counts were api_roundtrip 64, context 14,
+ecdh 10, ecmult_const 12, ecmult_multi 30, ellswift 20, field 22, group 24,
+hash 11, musig 80, recovery 18, scalar 10, schnorrsig 19, silentpayments 10,
+and xonly_tweak 21. Every target exited 0 with
+`MSAN_OPTIONS=halt_on_error=1:report_umrs=1:exit_code=86`, and no MemorySanitizer,
+UBSan, assertion, timeout, OOM, or crash diagnostic was emitted.
+
+Each target then ran a two-worker/two-job libFuzzer campaign using
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0`. All 15
+managers exited 0; every worker log reported `oom/timeout/crash: 0/0/0` and
+there was no sanitizer or fuzzer assertion. MuSig's two jobs took 84 and 85
+seconds to load and exercise its stateful corpus. The selected deterministic
+`tests -i=1 -t=ec -t=ecdsa -t=musig -t=silentpayments -t=ellswift
+-t=extrakeys -t=schnorrsig -t=ecdh -t=recovery` run exited 0 in 116.965
+seconds with seed `a290096fa69da869b5b01b5aedc78c25`; the same selection in
+`noverify_tests` exited 0 in 46.677 seconds with seed
+`9d5a7a2cb18eea37758f520a3e4b9db6`.
+
+The initial worker wrapper passed the repository corpus directories directly,
+so libFuzzer created 2,203 transient 40-hex corpus units totaling 106,900
+bytes despite the separate artifact prefix. Every untracked path was checked
+to match the libFuzzer naming pattern, `git ls-files` confirmed that none was
+tracked, and only those generated files were deleted. A final status and diff
+check showed no tracked corpus or source change. Future worker campaigns must
+pass a copied corpus directory, not a tracked source directory.
+
+This is negative MemorySanitizer evidence, not a new clean-master production
+finding or fix. No uninitialized-state, memory-safety, concurrency, invalid
+block, or consensus discrepancy was reproduced. The existing severity ledger
+is unchanged: malformed opaque states and direct public callback misuse remain
+Medium API findings only when a caller can construct them; wallet-side Silent
+Payments and oracle-only checks remain Low or Informational; and a nonce or
+counter without cryptographic meaning is not Critical merely because it is
+retained. `origin/master` and `l0rinc/master` were both `d2d04864`, so no fork
+or incidental repair masked this result.
