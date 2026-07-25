@@ -31499,3 +31499,107 @@ d2d04864`. Any future commit that changes this first stop must amend its
 commit message with the clean-master input, first stack, preconditions,
 postconditions, Core reachability, master-relative severity, verifier
 commands, and an explicit preserve/change/mask classification.
+
+## 2026-07-26 Complete clean-master Schnorr/Taproot corpus differential
+
+This pass revalidated all 18 tracked `schnorrsig` inputs against the exact
+clean snapshot `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The disposable worktree overlaid
+only the current fuzz sources, CMake fuzz wiring, shared fuzz headers, and the
+18 Schnorr corpus files. Production sources remained clean master. Because the
+current harness uses `SECP256K1_SHA256_MAX_SIZE` while that older production
+snapshot does not define it, both disposable builds supplied the test-only
+compile definition `-DSECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL`; this
+did not add a production guard or alter library behavior.
+
+Clang 22.1.7 ASan/UBSan builds used native 5x52 and forced-int64/10x26 field
+arithmetic, assembly disabled, with `detect_leaks=0`. The corpus was replayed
+one file at a time with:
+
+    -runs=1 -handle_abrt=0 -timeout=30 -rss_limit_mb=0 -print_funcs=0
+
+### Unmodified-master first stop
+
+All 18 inputs failed identically before reaching the later Schnorr, Tapscript,
+or Taproot checks. Native ASan/UBSan reached
+`src/util.h:438` (`secp256k1_write_be32`) through
+`secp256k1_sha256_finalize` at `src/hash_impl.h:189`,
+`nonce_function_bip340_impl` at `src/modules/schnorrsig/main_impl.h:83`,
+and the direct callback regression at `src/fuzz/schnorrsig.c:390`.
+Forced-int64 reached the corresponding same stack. The helper passes
+`nonce32 == NULL` to the exported BIP340 nonce callback and expects a clean
+failure; clean master hashes before it can return and performs a sanitizer
+visible invalid write. This is the existing `926dd6b4` finding, not 18 new
+Schnorr bugs.
+
+Master-relative severity is **Medium for the direct library API**: a caller
+can crash the process by invoking the public built-in nonce callback with an
+invalid NULL output or other required NULL input. Clearing an available nonce
+buffer is fail-closed hygiene; a nonce with no standalone cryptographic
+meaning is not Critical merely because it was not cleared. Bitcoin Core's
+normal signing paths provide a non-NULL nonce output and validated key/message
+inputs. No invalid block, witness acceptance, consensus divergence, key
+disclosure, signature forgery, or peer-triggered Core path was demonstrated;
+High/Critical severity is therefore not justified.
+
+### Masking order and corrected replay
+
+To avoid letting one known master failure hide later transitions, disposable
+harness-only `if (0)` gates bypassed exactly these already-recorded checks, in
+order:
+
+1. The direct NULL nonce-output callback check (`926dd6b4`).
+2. Invalid Schnorr extraparams magic with a prefilled signature output. Clean
+   master returned failure but preserved stale signature bytes; this is the
+   fixed-output portion of `27cc01dc`, a **Low/Medium direct-API fail-open
+   state** issue. Core checks the return and does not receive an attacker
+   controlled extraparams object from block or witness data.
+3. A keypair whose two opaque halves are individually valid but belong to
+   different secret/public keys. Clean master signed it successfully; this is
+   `18eff0b7`, a **Medium local opaque-state correctness** issue. Bitcoin Core
+   constructs keypairs through the library and does not deserialize this
+   mutable 96-byte representation from a block or peer message.
+4. The impossible SHA-256 message-length helper. Clean master entered
+   `nonce_function_bip340_impl` with a 33-byte corpus pointer and
+   `SECP256K1_SHA256_MAX_SIZE - 128`, producing an ASan heap-buffer-over-read
+   at `secp256k1_sha256_write`/`secp256k1_sha256_transform`. Symbolized
+   execution ended at `src/fuzz/schnorrsig.c:1260`. This is the existing
+   `f247661c` repair: **Medium direct-API memory-safety/availability** at the
+   demonstrated boundary, but it requires an incoherent caller pointer/length
+   pair and is not a practical remote cryptographic attack. Bitcoin Core's
+   Schnorr verification path supplies a fixed 32-byte message hash.
+5. Schnorr signing failure and precondition output cleanup. Clean master left
+   a prefilled 64-byte signature nonzero after a rejected nonce callback or
+   invalid message/keypair precondition. This is the remaining `27cc01dc`
+   fixed-output contract, **Low/Medium fail-open API state**, not a key or
+   consensus failure.
+
+The odd-Y rejection helper was inspected during the isolation because
+optimized disposable layouts sometimes mapped a later assertion to its final
+`found` check. A diagnostic layout found the intended odd candidate at nonce
+scalar 6 (`compressed prefix 0x03`) and completed the independent equation and
+verifier rejection. The layout-sensitive abort was therefore not treated as a
+new odd-Y production bug. No production mutation or source change was needed
+for this pass.
+
+After those five known contracts were isolated, every one of the 18 inputs
+exited 0 on both native 5x52 and forced-int64/10x26 ASan/UBSan builds. The
+corrected projection also ran two-worker/two-job campaigns:
+
+    -fork=2 -jobs=2 -max_total_time=15 -timeout=30
+    -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0
+    -ignore_crashes=0 -handle_abrt=0 -verbosity=0
+
+Both jobs on both backends exited 0 with `oom/timeout/crash: 0/0/0`, no
+sanitizer diagnostic, and no retained artifact. This establishes that the
+complete clean-master corpus has no additional reproducible Schnorr/Tapscript/
+Taproot failure after the documented production stops are accounted for. The
+existing fixed-branch corpus and mutation matrices remain the production
+regression proof; this pass adds documentation only.
+
+No l0rinc commit was cherry-picked: the two remote refs are identical. Any
+future commit touching nonce callbacks, Schnorr output cleanup, keypair
+loading, or SHA-256 length checks must state whether it preserves or masks each
+of these master-relative reproductions, include the exact corpus/helper and
+Core reachability, and rerun the unmodified-master baseline before claiming a
+new severity.
