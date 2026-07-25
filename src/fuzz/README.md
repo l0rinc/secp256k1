@@ -30858,3 +30858,130 @@ checks cover adjacent behavior; this matrix proves the four specific state
 transitions without claiming a deterministic-test gap or justifying a
 production fix. No cryptographic nonce-erasure issue is involved. The
 upstreams remain `origin/master == l0rinc/master == d2d04864`.
+
+## 2026-07-25 Current-master revalidation of 10x26 magnitude-32 normalization
+
+This entry reiterates, rather than creates, the existing unfixed-on-master
+`field_10x26` magnitude-32 normalization finding. It reruns the exact current
+`origin/master` tree after the latest fetch and compares it with the fixed
+audit branch. The result is unchanged: current master still fails the
+independent normalized-byte oracle, while the branch containing the uint64
+carry repair passes. No new production mutation was used in this replay.
+
+### Exact trees, harness provenance, and inputs
+
+The clean production tree is `origin/master` at
+`d2d04864ef9b056151603a3ced7980958b058028`. The fixed audit tree is
+`9875ff35894a59fa7edae36f6370e13951f21752`. `l0rinc/master` is the same
+`d2d04864` after the fetch. The production source hashes are:
+
+| item | current master | fixed audit branch |
+| --- | --- | --- |
+| `src/field_10x26_impl.h` | `4c23a9466b333a49e2a974f3472cec8a5379fcd69fb8ff2ebc76d1aafd444784` | `2c642c6c87d53e358c8254b0e3985c2917f999af362afe6dd8e5d0c1478f8289` |
+
+The current master tree predates the repository's fuzz-target CMake wiring, so
+the proof linked the exact master production source and precomputed tables to
+the audited harness source `src/fuzz/field.c` (SHA-256
+`2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`) and
+`src/fuzz/fuzz.h` (SHA-256
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`). The
+harness was symlinked into the disposable clean-master checkout; no clean
+production file was changed. Both binaries used Clang 22.1.7, `-DVERIFY`,
+`-DUSE_FORCE_WIDEMUL_INT64`, `-fsanitize=address,undefined`,
+`-fno-omit-frame-pointer`, and `-O1 -g`:
+
+```sh
+clang -O1 -g -DVERIFY -DUSE_FORCE_WIDEMUL_INT64 \
+  -I<TREE>/include -I<TREE>/src -I<TREE>/src/fuzz \
+  <TREE>/src/fuzz/field.c <TREE>/src/fuzz/external_callbacks.c \
+  <TREE>/src/precomputed_ecmult.c <TREE>/src/precomputed_ecmult_gen.c \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -o <TREE>/fuzz_field_file
+```
+
+The primary clean-master and fixed file-driver hashes were respectively
+`aa1b6127329c3e8f3f899db2f81ee4519a7c4d44b57cc7d9e8b8ec916f84902e` and
+`1d711b05b8cee5a79423bad9602e13a25a95ed1292ce15889e842663354bcd87`.
+The dedicated seed `field normalize magnitude32 bounds split zero raise seed\n`
+is 57 bytes with SHA-256
+`158829afa5615d0664c06a9230d6b8ae822dd94f7251d8d1e9c6f17d5892d8cf`.
+The `zero-predicate-false-positive` seed is 54 bytes with SHA-256
+`dbf16239f943e537fa6f6d2673bb2cea1920bd0f0206e3f2af7320f385371379`.
+The complete current field corpus contains 21 files and 742 bytes.
+
+### Current-master result and strongest differential proof
+
+With ASan/UBSan enabled and `abort_on_error=1`, each dedicated input was run
+through the same file-driver entry point. The unmodified current master
+exited 134 for both inputs; the fixed branch exited 0 for both. A diagnostic
+rebuild with only a temporary `FUZZ_CHECK` print reports the first failure as
+`src/fuzz/field.c:72`, the independent `memcmp(actual32, expected32)` check.
+The debugger backtrace for the first seed reaches
+`secp256k1_fuzz_fe_check_bounds_sum(16, 16)` from
+`LLVMFuzzerTestOneInput`; it does not require a sanitizer finding or an
+unrelated assertion to expose the wrong residue.
+
+The result is deterministic across the whole corpus:
+
+| tree | passed | exit-134 failures | total |
+| --- | ---: | ---: | ---: |
+| current master `d2d04864` | 0 | 21 | 21 |
+| fixed audit branch `9875ff35` | 21 | 0 | 21 |
+
+The all-file result is expected because this harness intentionally executes
+the fixed `get_bounds(16) + get_bounds(16)` magnitude-32 oracle before
+input-dependent checks. Therefore the second seed's exit is not counted as a
+new independent zero-predicate proof: it is another reproduction of the
+normalization failure. The independent zero-predicate finding remains the
+separate `f34ff1ba` proof, and the normalization failure occurs before that
+predicate can run.
+
+The fixed libFuzzer binary replayed all 21 seed files with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`: exit 0, 22 total runs,
+17 retained corpus units, coverage 2723, and 3701 features. A copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0` campaign
+also exited 0. Both workers reported `oom/timeout/crash: 0/0/0`, and the
+artifact directory contained zero files. The fixed forced-int64 sanitizer
+build passed both:
+
+```sh
+tests -t=fe_normalize_max_magnitude
+noverify_tests -t=fe_normalize_max_magnitude
+```
+
+Each exited 0. These tests and the corpus replay were run after restoring all
+source files; no fuzz process or disposable production mutation remains.
+
+### Master severity, Core boundary, and masking status
+
+The clean-master implementation still uses the uint32 first-pass carry chain.
+At magnitude 32, `get_bounds(16) + get_bounds(16)` permits a limb of
+`2 * 32 * (2^26 - 1) = 0xFFFFFFC0`; adding the top-limb reduction and carrying
+through uint32 drops high carry bits before the final field reduction. The
+independent reference computes the canonical residue directly, so the proof
+does not compare two paths that share the same broken normalization.
+
+This remains **Medium, latent internal field correctness on master**, not a
+High/Critical production vulnerability. Bitcoin Core's ordinary 64-bit
+consensus builds select the int128/5x52 backend; 10x26 is used on supported
+fallback platforms or an explicit test override. No peer-supplied block or
+witness has been minimized that reaches this exact maximum-magnitude opaque
+field representation, and no invalid-block acceptance, invalid-witness
+acceptance, consensus divergence, key compromise, memory-safety failure, or
+remote availability failure was demonstrated. The rating would rise only
+after an actual Core caller-level trigger proves such an impact, especially
+on a deployment that naturally selects 10x26. The fact that malformed input
+can reach a fuzzer is not itself a consensus severity claim.
+
+The fixed branch contains the production repair from `6e5e385c`/`84549065`
+and the separate zero-predicate repair `f34ff1ba`. Neither repair is present
+in current master. The clean-master failure happens at the independent
+normalized-byte check before the zero-predicate code, so `f34ff1ba` cannot
+mask, downgrade, or explain away the normalization defect. This exact
+current-master replay therefore preserves the original finding and proves
+that the latest upstream state has not silently resolved it. The existing
+ordinary tests did not catch it because default 64-bit builds do not exercise
+10x26, and the clean master has no deterministic maximum-magnitude regression
+or fuzz target for this state. No new production fix is claimed by this
+revalidation; the existing fix and deterministic regression remain the
+strongest proof of the repair.
