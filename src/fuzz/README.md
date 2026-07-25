@@ -30272,3 +30272,42 @@ Payments and oracle-only checks remain Low or Informational; and a nonce or
 counter without cryptographic meaning is not Critical merely because it is
 retained. `origin/master` and `l0rinc/master` were both `d2d04864`, so no fork
 or incidental repair masked this result.
+
+## 2026-07-25 Schnorr Consensus-Contract Mutation Matrix
+
+The consensus-facing Schnorr target was rebuilt in a disposable worktree at
+`df5f6fbc` with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64
+arithmetic, and all optional modules. The restored target passed its 18
+tracked corpus files plus empty input, 19 executions in four seconds.
+
+Four temporary production mutations were checked against the existing oracle
+set. Replacing the BIP340 challenge-tag initializer with the BIP340 nonce-tag
+initializer caused `schnorrsig/arbitrary-signature-verification-equation` to
+abort with exit 134. Reversing the verifier's even-Y predicate to accept odd-Y
+also aborted on that seed. Changing the scalar-overflow failure from `return
+0` to `return 1` likewise aborted on the same independent equation seed. These
+three mutations were rebuilt separately, and the source was restored after
+each; they show that the fuzzer's byte-level BIP340 challenge and public point
+model detects signer/verifier agreement on a wrong rule, the parity rule, and
+fail-open scalar parsing.
+
+A fourth mutation bypassed the `r.x < field_p` guard and called the modular
+field setter instead. It compiled and all 18 existing corpus files remained
+green. This survivor is not evidence that the guard is unnecessary: the
+existing `rx-overflow` oracle already sends both `field_p` and `field_p + 1`
+and requires rejection, while the modularly reduced values do not form valid
+BIP340 signatures with the unchanged challenge and response. Constructing an
+accepted signature for that mutation would require a separate valid discrete
+log relation, not merely a changed input byte. The result is therefore
+non-probative for a production bug and does not justify duplicating the
+existing range assertion. A deliberately fail-open return mutation was used
+for causal oracle proof instead.
+
+After restoring every line, the complete target replay again exited 0 with
+`Done 19 runs`, and the disposable worktree was removed. No production
+mutation was committed, no clean-master failure was reproduced, and no
+invalid-block acceptance or High/Critical finding was shown. The relevant
+Bitcoin Core Tapscript path remains consensus-sensitive, but a severity
+escalation requires a clean-master acceptance/rejection discrepancy or a
+demonstrated memory/concurrency impact. `origin/master` and `l0rinc/master`
+remain `d2d04864`.
