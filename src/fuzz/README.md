@@ -30465,6 +30465,38 @@ fix is justified, and the exact mutations, seeds, restored control, and
 verifier command are recorded so a fork repair cannot hide a master-relative
 discrepancy.
 
+## 2026-07-25 Recovery Module Mutation Matrix
+
+The recoverable-ECDSA module was tested in a disposable worktree at
+`12a532b5` with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64
+arithmetic, recovery enabled, and `fuzz_recovery`. The restored target passed
+all 17 tracked recovery corpus files before and after the probes. This module
+has a distinct recid/x-coordinate state machine and is exercised by Bitcoin
+Core's compact message-signature recovery wrappers.
+
+The first mutant changed the recovery equation's high-x selector from
+`if (recid & 2)` to `if (recid & 1)`. It aborted with exit 134 on the first
+corpus seed, `recovery/arbitrary-recovery-equation`; the fuzzer's independent
+public-point equation and serialized recovery checks reject the wrong
+recid-to-coordinate mapping. The second mutant bypassed the
+`secp256k1_ge_set_xo_var` failure return. The compiler correctly warned that
+the resulting path could pass an uninitialized point onward; this warning is
+from the intentional mutant, not master. The mutant then aborted with exit
+134 on the dedicated `recovery/recovery-invalid-x-coordinate` seed, which
+requires failure cleanup and a zeroed public-key output.
+
+Both mutations were restored, the target was rebuilt, and all 17 corpus files
+passed with `-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`; no sanitizer
+diagnostic or clean-master failure remained. These are oracle-validation
+results, not production bugs. Recovery affects Bitcoin Core message signing
+and verification rather than block validity; no invalid-block acceptance,
+consensus failure, key compromise, or memory/concurrency impact was
+reproduced. Severity is therefore **Informational/Low oracle validation**,
+not High/Critical. No production fix or redundant assertion is justified.
+The exact recid mutation, invalid-x mutation, corpus seeds, compiler result,
+restored replay, and verifier command are recorded so a fork repair cannot be
+mistaken for a master-relative finding.
+
 ## 2026-07-25 Context Lifecycle and Callback Mutation Matrix
 
 Context lifecycle behavior was tested in a disposable worktree at
