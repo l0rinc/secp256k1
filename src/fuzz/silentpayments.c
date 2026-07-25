@@ -64,6 +64,29 @@ static const unsigned char *secp256k1_fuzz_silentpayments_multi_label_lookup(con
     return NULL;
 }
 
+typedef struct {
+    const void *self;
+    unsigned char label33[3][33];
+    unsigned char label_tweak[3][32];
+    size_t entries_used;
+} secp256k1_fuzz_silentpayments_three_label_cache;
+
+static const unsigned char *secp256k1_fuzz_silentpayments_three_label_lookup(const unsigned char *label33, const void *label_context) {
+    const secp256k1_fuzz_silentpayments_three_label_cache *cache = (const secp256k1_fuzz_silentpayments_three_label_cache *)label_context;
+    size_t i;
+
+    FUZZ_CHECK(label33 != NULL);
+    FUZZ_CHECK(cache != NULL);
+    FUZZ_CHECK(cache->self == cache);
+    FUZZ_CHECK(cache->entries_used <= 3);
+    for (i = 0; i < cache->entries_used; i++) {
+        if (memcmp(cache->label33[i], label33, sizeof(cache->label33[i])) == 0) {
+            return cache->label_tweak[i];
+        }
+    }
+    return NULL;
+}
+
 static void secp256k1_fuzz_silentpayments_check_spend_tweak(
     const secp256k1_context *ctx,
     const secp256k1_silentpayments_found_output *found_output,
@@ -340,6 +363,109 @@ static void secp256k1_fuzz_silentpayments_check_multiple_labels(
     }
 }
 
+static void secp256k1_fuzz_silentpayments_check_three_labels(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *outpoint,
+    const unsigned char *scan_seckey,
+    const unsigned char *spend_seckey,
+    const unsigned char *input_seckey,
+    const secp256k1_pubkey *scan_pubkey,
+    const secp256k1_pubkey *spend_pubkey,
+    const secp256k1_pubkey *input_pubkey,
+    secp256k1_fuzz_silentpayments_illegal_data *illegal_data
+) {
+    static const unsigned char trigger[] = "Silent Payments three labels\n";
+    unsigned char label_tweak[3][32];
+    unsigned char label_ser[3][33];
+    unsigned char found_label_ser[33];
+    const unsigned char *input_seckey_ptrs[1];
+    const secp256k1_pubkey *prevout_pubkey_ptrs[1];
+    const secp256k1_silentpayments_recipient *recipient_ptrs[4];
+    const secp256k1_xonly_pubkey *tx_output_ptrs[4];
+    secp256k1_silentpayments_recipient recipients[4];
+    secp256k1_silentpayments_label labels[3];
+    secp256k1_pubkey labeled_spend_pubkeys[3];
+    secp256k1_xonly_pubkey generated_outputs[4];
+    secp256k1_xonly_pubkey *generated_output_ptrs[4];
+    secp256k1_silentpayments_prevouts_summary prevouts_summary;
+    secp256k1_silentpayments_found_output found_outputs[4];
+    secp256k1_silentpayments_found_output *found_output_ptrs[4];
+    secp256k1_fuzz_silentpayments_three_label_cache label_cache;
+    uint32_t n_found = 0;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < 3; i++) {
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_label_create(ctx, &labels[i],
+            label_tweak[i], scan_seckey, (uint32_t)i) == 1);
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+            label_ser[i], &labels[i]) == 1);
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(ctx,
+            &labeled_spend_pubkeys[i], spend_pubkey, &labels[i]) == 1);
+        if (i > 0) {
+            FUZZ_CHECK(memcmp(label_ser[i - 1], label_ser[i], sizeof(label_ser[i])) != 0);
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &labeled_spend_pubkeys[i - 1],
+                &labeled_spend_pubkeys[i]) != 0);
+        }
+    }
+
+    recipients[0].scan_pubkey = *scan_pubkey;
+    recipients[0].spend_pubkey = *spend_pubkey;
+    recipients[0].index = 0;
+    for (i = 0; i < 3; i++) {
+        recipients[i + 1].scan_pubkey = *scan_pubkey;
+        recipients[i + 1].spend_pubkey = labeled_spend_pubkeys[i];
+        recipients[i + 1].index = i + 1;
+    }
+    for (i = 0; i < 4; i++) {
+        recipient_ptrs[i] = &recipients[i];
+        generated_output_ptrs[i] = &generated_outputs[i];
+        tx_output_ptrs[i] = &generated_outputs[i];
+        found_output_ptrs[i] = &found_outputs[i];
+    }
+    input_seckey_ptrs[0] = input_seckey;
+    prevout_pubkey_ptrs[0] = input_pubkey;
+    FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+        generated_output_ptrs, recipient_ptrs, 4, outpoint,
+        NULL, 0, input_seckey_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+        &prevouts_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
+
+    label_cache.self = &label_cache;
+    label_cache.entries_used = 3;
+    for (i = 0; i < 3; i++) {
+        memcpy(label_cache.label33[i], label_ser[i], sizeof(label_ser[i]));
+        memcpy(label_cache.label_tweak[i], label_tweak[i], sizeof(label_tweak[i]));
+    }
+    illegal_data->calls = 0;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+        found_output_ptrs, &n_found, tx_output_ptrs, 4, scan_seckey,
+        &prevouts_summary, spend_pubkey,
+        secp256k1_fuzz_silentpayments_three_label_lookup, &label_cache) == 1);
+    FUZZ_CHECK(illegal_data->calls == 0);
+    FUZZ_CHECK(n_found == 4);
+    for (i = 0; i < 4; i++) {
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &found_outputs[i].output,
+            &generated_outputs[i]) == 0);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+            &found_outputs[i], spend_seckey);
+        if (i == 0) {
+            FUZZ_CHECK(found_outputs[i].found_with_label == 0);
+        } else {
+            FUZZ_CHECK(found_outputs[i].found_with_label == 1);
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+                found_label_ser, &found_outputs[i].label) == 1);
+            FUZZ_CHECK(memcmp(found_label_ser, label_cache.label33[i - 1],
+                sizeof(found_label_ser)) == 0);
+        }
+    }
+}
+
 static void secp256k1_fuzz_silentpayments_check_roundtrip(
     const secp256k1_context *ctx,
     const unsigned char *input,
@@ -484,6 +610,9 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     }
 
     secp256k1_fuzz_silentpayments_check_multiple_labels(ctx, input, size,
+        outpoint, scan_seckey, spend_seckey, input_seckey, &scan_pubkey,
+        &spend_pubkey, &input_pubkey, illegal_data);
+    secp256k1_fuzz_silentpayments_check_three_labels(ctx, input, size,
         outpoint, scan_seckey, spend_seckey, input_seckey, &scan_pubkey,
         &spend_pubkey, &input_pubkey, illegal_data);
 

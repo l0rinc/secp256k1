@@ -23,7 +23,7 @@ Targets:
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, duplicate-key and all-identical-key signing round trips, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
-- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, one- and multiple-label labeled-spend lookup, label parse/serialize round trips, and summary scanning with one, two, or three recipients. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
+- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, one-, two-, and three-label labeled-spend lookup, label parse/serialize round trips, and summary scanning with one through four recipients. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
 
 Standalone corpus replay:
 
@@ -29946,3 +29946,55 @@ key compromise, or remotely reachable Bitcoin Core error was demonstrated,
 so High/Critical severity is not claimed. `l0rinc/master` still equals
 `origin/master d2d04864`; no fork repair masked this master-relative proof.
 No cryptographic nonce or nonce-erasure issue is implicated.
+
+## 2026-07-25 Silent Payments Three-Label Scan Oracle
+
+The prior multiple-label oracle covered two labels and three recipients. The
+public Silent Payments callback contract does not impose that limit, while
+the fuzzer's special cache stopped at two entries. Existing deterministic
+vectors can exercise several labels, but their full check only verifies that
+each returned label belongs to the cache set; it does not bind every label to
+the exact output produced from that label.
+
+The new `three-labels` corpus input is exactly
+`Silent Payments three labels\n`. It creates labels `m = 0`, `m = 1`, and
+`m = 2`, four recipients sharing one scan key (one unlabeled spend key and
+three independently labeled spend keys), and four transaction outputs. The
+three-entry callback cache is checked by serialized label. The oracle
+requires all four outputs in transaction order, exactly one unlabeled result,
+the exact label for each labeled result, and a spend-key reconstruction for
+every returned tweak.
+
+The incremental gap is proven against parent `b009a69e` with this disposable
+production mutation in `src/modules/silentpayments/main_impl.h`:
+
+```
+for (i = 0; i < 2 * n_batch; i++)
+    ->
+for (i = 0; i < 2 * (n_batch == 4 ? 3 : n_batch); i++)
+```
+
+This models a size-four candidate-batch regression that drops the final
+candidate pair. The current target with the mutation aborted with exit 77 on
+the exact new seed, while all five pre-existing Silent Payments inputs passed
+with exit 0. The committed parent, built with the same production mutation,
+passed the new seed and all five parent inputs because it had no three-label
+oracle. Restoring the production loop made the current target pass all six
+inputs. This is a differential oracle proof, not a claim that unmodified
+master currently truncates four-entry label batches.
+
+The restored Clang 22.1.7 ASan/UBSan forced-int64 target passed the focused
+input and all six corpus files. The parent mutation control used the same
+sanitized configuration. A two-worker/two-job replay ran 37 and 38 units in
+the two jobs; both exited 0 with no sanitizer diagnostic, assertion, timeout,
+OOM, or artifact. The native GCC 16.1.0 standalone fuzzer passed all six
+files, and `tests -t=silentpayments -i=4` passed in 120.006 seconds.
+
+This is **Informational/Low oracle hardening**, not a clean-master production
+finding. Bitcoin Core's wallet-side BIP352 scanner can reach arbitrary label
+lookups, so a real regression could make a labeled payment unfindable or
+associate the wrong spend tweak. That path is not a consensus block-validity
+predicate and cannot make an invalid block acceptable; no High/Critical
+severity is claimed. `l0rinc/master` equals `origin/master d2d04864`; no fork
+fix or minor repair masked this master-relative proof. No cryptographic nonce
+or nonce-erasure issue is implicated.
