@@ -31209,3 +31209,112 @@ branch's deterministic tests and group assertions close those gaps. No new
 production mutation or regression test is added by this revalidation, no
 l0rinc commit was cherry-picked, and a nonce or other buffer without
 standalone cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-25 Current-master recoverable-signature opaque-state revalidation
+
+This entry reiterates the existing `ec34c404` production finding and repair:
+`recovery: validate opaque recoverable signatures`. The authoritative clean
+baseline is `origin/master` and `l0rinc/master` at `d2d04864ef9b056151603a3ced7980958b058028`.
+The audited branch was `e0dd2574e0c5c592fa35f56555c794c49fba42d4`; the branch
+production loader hash is
+`abce943ff8f588fd1d7e4170ae692db9371809010ebc8cfcc625d5255af255a7`, while
+the unmodified clean-master loader hash is
+`fbec2358a560b669d85720108b0b1a8f653c91531a88ded0a1da339445266cc9`.
+No l0rinc commit was cherry-picked in this pass because the relevant behavior
+is already represented by the branch repair and its deterministic proof.
+
+### Fixed-branch replay
+
+The current `fuzz_recovery` source SHA-256 is
+`ecdfb380801c2c20be6079d968166f2c5b5528b1f185d8160982f2855d234ae0`; the
+`fuzz.h` SHA-256 is
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`.
+The recovery corpus contains 17 files and 782 bytes. Its focused witness
+`opaque-recoverable-signature-state` is 52 bytes with SHA-256
+`c2d69e7cda8a4d4ebbe0bb77919bfe7711be868323c7c0b80e44747c4a4cb6a1`.
+
+Clang 22.1.7 ASan/UBSan fixed replays passed all 17 files with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0` on both native 4x64/5x52
+and forced-int64/10x26 configurations. The restored native binary SHA-256 was
+`1f03e83d58d35d6e15c763960d0c5354a21b74d0462f2135fed82a0a75bc2840`; the
+forced-int64 binary SHA-256 was
+`2faf0e3dc3a4313a375f280488edc578f6ad9bd6d2a36410ca7e6ed6b8976382`.
+Copied-corpus native and forced-int64 campaigns used
+`-fork=2 -jobs=2 -max_total_time=15 -timeout=180 -rss_limit_mb=0`; both
+managers and all workers exited 0, with no sanitizer diagnostic, assertion,
+OOM, timeout, crash, or artifact. The fixed focused witness also passed in
+the native and forced-int64 builds.
+
+### Clean-master replay and masking order
+
+Because this master snapshot predates the committed fuzz directory, the
+disposable clean worktree overlaid only the current fuzzer sources, CMake
+fuzzer wiring, recovery corpus, and shared callback/reference headers. The
+production tree remained at `d2d04864`; no production file was changed for
+the first replay.
+
+The untouched clean-master target first aborts on the same witness at
+`src/fuzz/recovery.c:1150`, where the newer harness requires an explicit
+`secp256k1_nonce_function_rfc6979` call to use a custom context SHA compressor.
+That is the separate Low API dispatch finding fixed by `3b4e5a60`, not the
+recoverable-signature finding. It must be recorded as a masking condition:
+the later callback-routing repair can otherwise make a recovery-state replay
+look fixed without exercising the older loader.
+
+For causal isolation, a disposable harness-only edit changed only the two
+explicit callback-count assertions to `if (0)`; it did not alter a production
+file, input byte, or library result. With that control, the unmodified clean
+loader aborted on the first independently corrupted scalar in the witness:
+
+```
+src/scalar_impl.h:43: test condition failed: secp256k1_scalar_check_overflow(r) == 0
+src/modules/recovery/main_impl.h:69: secp256k1_ecdsa_recoverable_signature_serialize_compact
+src/fuzz/recovery.c:622: state-barrier serialization of corrupted r
+```
+
+The forced-int64/8x32 stack reaches `src/scalar_8x32_impl.h:196`; the native
+4x64 stack reaches `src/scalar_4x64_impl.h:162`. Both are the same master
+condition, not sanitizer-only behavior. The existing commit's independent
+`r`, `s`, and `recid` mutations remain the strongest per-field proof: deleting
+the three loader checks makes the deterministic recovery test and focused
+corpus abort in all supported representations, while restoring them makes
+the tests and corpus pass. As a direct replay control, overlaying only the
+`ec34c404` recovery implementation on the clean worktree made the exact
+focused witness exit 0 with the harness-only callback bypass still present.
+
+### Finding, Core boundary, and severity
+
+* **Medium on unmodified master, API/state-boundary only:** a directly
+  corrupted or manually constructed opaque recoverable signature can carry an
+  overflowing `r` or `s`, or an invalid recovery id. Clean master serializes
+  the invalid scalar into an invariant assertion before returning; the other
+  consumers can reach the same unchecked state. The repair validates both
+  scalars and `recid <= 3`, and clears output objects on failure. Compact wire
+  parsing already rejects overflow and invalid recovery ids, so this is not a
+  remotely supplied malformed compact signature.
+
+* **Bitcoin Core reachability:** Core's `CPubKey::RecoverCompact` parses the
+  64-byte compact signature and recovery id before calling
+  `secp256k1_ecdsa_recover`; `CKey::SignCompact` creates the opaque object from
+  a valid signer. This path is wallet/message-signature functionality, not
+  block or witness validation. No invalid-block acceptance, consensus
+  divergence, key compromise, or demonstrated memory/concurrency impact was
+  reproduced. High/Critical severity is therefore not justified, even though
+  the direct API state failure is a real Medium availability/correctness bug.
+
+The separate `3b4e5a60` callback-dispatch discrepancy remains Low for a caller
+that installs a custom SHA backend and explicitly passes a library-owned nonce
+alias; it does not change the cryptographic result when the backend is
+SHA-256-equivalent. Bitcoin Core's normal block-validation path does not use
+that signing configuration, so it does not elevate the recovery finding.
+No cryptographic nonce is being cleared or exposed here; a non-cryptographic
+nonce/public callback buffer would not be a Critical cleanup finding.
+
+Verification commands for this revalidation were the fixed-corpus command
+above, the two copied-corpus worker commands above, the clean-master focused
+replays under both backends, and the repaired-production control. No new
+production fix or regression test is added by this documentation commit; the
+existing `ec34c404` test and fuzzer witness are the proof of the fix. Any
+future cherry-pick that changes recovery loading, callback routing, or Core's
+compact-signature adapter must preserve this masking order and state whether
+it changes or merely hides the master-relative reproduction.
