@@ -30421,3 +30421,46 @@ therefore **Informational oracle validation**, with no High/Critical finding.
 The exact modular mutation, temporary vector condition, exit codes, restored
 control replay, and the non-compiling substitution are recorded so a later
 fork or minor repair cannot be mistaken for a master-relative discovery.
+
+## 2026-07-25 ECDSA Signature Codec Mutation Matrix
+
+The compact and strict-DER signature codecs were tested in a disposable
+worktree at `e012a36b` with Clang 22.1.7 ASan/UBSan, assembly disabled,
+forced-int64 arithmetic, recovery enabled, and `fuzz_api_roundtrip`. The
+restored target passed all 63 tracked corpus files before and after the
+mutations. The probes cover the scalar representation and wire boundaries
+that Bitcoin Core's legacy ECDSA signature path feeds into verification.
+
+The compact parser's first overflow result was inverted from `ret &=
+!overflow` to `ret &= overflow`. The mutant aborted with exit 134 on the
+first ordinary input, `api_roundtrip/ascii-near-der`; the existing compact
+round-trip and independent ECDSA-equation checks therefore reject a parser
+that confuses an in-range scalar with overflow.
+
+The DER integer overflow cleanup was changed from
+`secp256k1_scalar_set_int(r, 0)` to `secp256k1_scalar_set_int(r, 1)`. The
+mutant aborted with exit 134 on the dedicated
+`api_roundtrip/ecdsa-der-scalar-overflow` seed, which constructs positive
+33-byte and long-form DER integers that are syntactically valid but do not fit
+the scalar. The existing contract expects a successful parse with the
+overflowed component mapped to zero, then verifies that serialized state and
+verification remain consistent.
+
+Finally, the strict DER parser's final `pos != size` trailing-garbage check
+was bypassed with `if (0)`. The mutant aborted with exit 134 on the dedicated
+`api_roundtrip/ecdsa-der-parser-boundaries` seed. This proves that malformed
+length/trailing-byte cases are checked independently of the production parser
+result, rather than only through a crash or a self-roundtrip.
+
+All three mutations were rebuilt independently, restored, and followed by a
+clean replay of all 63 corpus inputs using
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`; no sanitizer output or
+clean-master failure occurred. These are oracle-validation results, not
+production bugs. Codec behavior is reachable from Bitcoin Core's ECDSA
+signature checks, but no current-master invalid-block acceptance, consensus
+failure, key compromise, or memory/concurrency impact was reproduced. The
+master-relative severity is therefore **Informational oracle validation**;
+no High/Critical finding is claimed. No additional assertion or production
+fix is justified, and the exact mutations, seeds, restored control, and
+verifier command are recorded so a fork repair cannot hide a master-relative
+discrepancy.
