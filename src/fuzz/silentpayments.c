@@ -8,6 +8,62 @@
 
 #ifdef ENABLE_MODULE_SILENTPAYMENTS
 
+#include "sha256_reference.h"
+
+static void secp256k1_fuzz_silentpayments_label_tweak_reference(
+    unsigned char out32[32], const unsigned char scan_key32[32], uint32_t m
+) {
+    static const unsigned char tag[] = "BIP0352/Label";
+    unsigned char tag_hash[32];
+    unsigned char tagged_input[64 + 32 + 4];
+
+    secp256k1_fuzz_sha256_standalone(tag_hash, tag, sizeof(tag) - 1);
+    memcpy(tagged_input, tag_hash, sizeof(tag_hash));
+    memcpy(tagged_input + sizeof(tag_hash), tag_hash, sizeof(tag_hash));
+    memcpy(tagged_input + 2 * sizeof(tag_hash), scan_key32, 32);
+    tagged_input[2 * sizeof(tag_hash) + 32] = (unsigned char)(m >> 24);
+    tagged_input[2 * sizeof(tag_hash) + 33] = (unsigned char)(m >> 16);
+    tagged_input[2 * sizeof(tag_hash) + 34] = (unsigned char)(m >> 8);
+    tagged_input[2 * sizeof(tag_hash) + 35] = (unsigned char)m;
+    secp256k1_fuzz_sha256_standalone(out32, tagged_input, sizeof(tagged_input));
+
+    memset(tag_hash, 0, sizeof(tag_hash));
+    memset(tagged_input, 0, sizeof(tagged_input));
+}
+
+static void secp256k1_fuzz_silentpayments_check_label_integer_maximum(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *scan_seckey
+) {
+    static const unsigned char trigger[] = "Silent Payments label integer maximum\n";
+    unsigned char expected_tweak[32];
+    unsigned char actual_tweak[32];
+    unsigned char expected_ser[33];
+    unsigned char actual_ser[33];
+    secp256k1_pubkey expected_pubkey;
+    secp256k1_silentpayments_label label;
+    size_t expected_serlen = sizeof(expected_ser);
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_fuzz_silentpayments_label_tweak_reference(expected_tweak,
+        scan_seckey, UINT32_MAX);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_label_create(ctx, &label,
+        actual_tweak, scan_seckey, UINT32_MAX) == 1);
+    FUZZ_CHECK(memcmp(actual_tweak, expected_tweak, sizeof(actual_tweak)) == 0);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &expected_pubkey, expected_tweak) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected_ser,
+        &expected_serlen, &expected_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(expected_serlen == sizeof(expected_ser));
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+        actual_ser, &label) == 1);
+    FUZZ_CHECK(memcmp(actual_ser, expected_ser, sizeof(actual_ser)) == 0);
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -639,6 +695,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     FUZZ_CHECK(secp256k1_silentpayments_recipient_label_parse(ctx, &parsed_label, label_ser) == 1);
     FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx, parsed_label_ser, &parsed_label) == 1);
     FUZZ_CHECK(memcmp(label_ser, parsed_label_ser, sizeof(label_ser)) == 0);
+    secp256k1_fuzz_silentpayments_check_label_integer_maximum(ctx, input, size,
+        scan_seckey);
 
     have_label = secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(ctx, &labeled_spend_pubkey, &spend_pubkey, &label);
     n_recipients = have_label ? 2 : 1;
