@@ -29191,3 +29191,238 @@ caller can actually reach them; the reachable 10x26 magnitude-32 issue is
 **Medium/latent**; documented tweak overlap is **Low**; cleanup/oracle-only
 checks are **Informational**; and a nonce with no cryptographic meaning is
 not a Critical erasure finding. No invalid-block acceptance was found.
+## 2026-07-25 10x26 Zero-Predicate Repair Reapplied
+
+The active audit branch had the deterministic `zero-predicate-false-positive`
+oracle and corpus from `371ac710`, but its production-side repair was absent.
+The separate `356c2074` audit stack contained the repair, while the later
+normalize-only `3f60e4a9` commit was based on its older parent
+`2816ca11`. Combining those stacks without preserving the zero-predicate
+hunk leaves both `secp256k1_fe_normalizes_to_zero` variants with the old
+uint32 carry chain. This entry records the interaction so a future
+cherry-pick or rebase does not silently restore the defect.
+
+On clean `origin/master d2d04864ef9b056151603a3ced7980958b058028`, the valid
+10x26 magnitude-32 state with
+`n[0]=0xffff0f91`, `n[1]=0xfffff040`, `n[9]=0x0fc00000`, and all other limbs
+zero represents `63*p + 2^58 + 2^32`. The old constant-time and variable-time
+zero predicates each report zero after losing two 32-bit carries. The
+pre-fix active branch reproduced this exact failure under Clang 22.1.7
+forced-int64 ASan/UBSan: `fuzz_field` aborted on
+`src/fuzz/corpora/field/zero-predicate-false-positive` with exit 134. The
+canonical residue is independently `0000000000000000000000000000000000000000000000000400000100000000`,
+so this is not a self-referential zero-test failure.
+
+The production repair carries the first pass through a uint64 accumulator in
+both predicates. The deterministic `fe_normalize_max_magnitude` unit test now
+checks both false-zero results and the canonical nonzero residue. The existing
+field fuzzer seed remains the independent postcondition oracle. The fix is
+**Medium/latent against clean master**: the field state is valid under the
+documented internal magnitude-32 contract and can poison group exceptional
+case, equality, or inversion decisions if reached. Bitcoin Core feeds this
+library serialized keys, signatures, and blocks through public parsing and
+group APIs; no public path producing this exact raw magnitude-32 state has
+been demonstrated, and no invalid block can be accepted from this finding.
+It is therefore not High/Critical consensus impact, and it is not reduced to
+Informational merely because the trigger is internal.
+
+This repair is deliberately a follow-up to `3f60e4a9`, not a replacement for
+its normalize/normalize_var/normalize_weak fix. Cherry-picking a normalize
+patch generated from a pre-zero-predicate parent can overwrite this hunk;
+the final tree and commit note must retain both repairs. The production
+mutation and all earlier audit fixes were left untouched.
+
+After the repair, the forced-int64 Clang ASan/UBSan CTest suite passed all
+229 tests in 431.76 seconds. The exact field corpus replay passed all 20
+tracked inputs, including the new false-positive witness. A two-worker,
+two-job libFuzzer replay loaded all 20 corpus files in each job, executed 277
+and 278 inputs, and both jobs exited 0 with no sanitizer diagnostic, timeout,
+OOM, or artifact. The native GCC CTest suite also passed all 246 tests.
+
+## 2026-07-25 Direct API Round-Trip Sanitizer Replay
+
+After the field repair, the direct `fuzz_api_roundtrip` target was replayed
+from the current clean-master descendant using all 44 tracked corpus inputs.
+The target covers the public parsing, key-combine, sorting, tweak, ECDSA
+sign/verify, DER/compact serialization, callback, and failure-cleanup paths
+used most directly by Bitcoin Core. The forced-int64 Clang 22.1.7 ASan/UBSan
+binary ran two workers and two jobs with `-max_total_time=30` and
+`-timeout=120`; the jobs completed 191 and 196 executions, respectively.
+Both exited 0, with no sanitizer diagnostic, assertion, timeout, OOM, or
+artifact. No fuzzer process remained after polling.
+
+This is negative evidence, not a production finding. The replay did not
+expose a new master-branch inconsistency and did not justify changing the
+severity ledger: the reachable 10x26 magnitude-32 arithmetic defect remains
+**Medium/latent**, malformed opaque state and public callback failures remain
+**Medium** only when an actual caller can reach them, documented tweak-input
+overlap remains **Low**, and cleanup/oracle-only checks remain
+**Informational**. Bitcoin Core's direct callers parse network-facing keys,
+signatures, and related objects through the public API; this replay found no
+invalid-block acceptance path. A nonce without cryptographic meaning is not a
+Critical erasure finding.
+
+## 2026-07-25 Current-Master Reiteration of Existing Findings
+
+To anchor the existing findings to one current baseline, a disposable worktree
+was checked out at clean `origin/master d2d04864ef9b056151603a3ced7980958b058028`.
+Only the committed audit `src/fuzz` tree, its `src/CMakeLists.txt` fuzz wiring,
+and corpus files were overlaid; no production file from the audit branch was
+copied. The current master does not expose the internal
+`SECP256K1_SHA256_MAX_SIZE` macro used by the newer harness, so the baseline
+fuzz-only build supplied `-DSECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL`.
+That compile definition changes no library source or behavior. The focused
+targets were built with Clang 22.1.7, ASan/UBSan, no assembly, and forced
+int64/10x26 arithmetic.
+
+The unmodified baseline reproduced each existing condition:
+
+- `field/zero-predicate-false-positive` exited 134 at the fuzzer assertion;
+- `silentpayments/opaque-label-state` and `opaque-prevouts-state` each exited
+  134 at their invalid-opaque-state assertions;
+- `context/sha256-impossible-lengths` produced an ASan heap-buffer-overflow
+  while the baseline hashed an unrepresentable length from the one-byte
+  fallback input;
+- `ecdh/explicit-builtin-invalid-scalar` exited 134 because the explicit
+  built-in callback's stale digest was observable after the API returned 0;
+- `api_roundtrip/privkey-der-export-failure` exited 134 because failed DER
+  export left the prefilled output sentinel unchanged;
+- `api_roundtrip/rfc6979-counter-max` did not return: clean master enters the
+  unbounded `for (i = 0; ; i++)` loop for `counter == UINT_MAX`. A two-second
+  libFuzzer timeout terminated the run through its signal path, and a run with
+  the fuzzer timeout disabled required a hard external termination after three
+  seconds. No production timeout or mutation was needed to demonstrate this.
+
+The repaired branch replayed all seven exact inputs with `-runs=1` and
+`-handle_abrt=0`; every invocation exited 0. The fixed field, label, prevouts,
+SHA, ECDH, DER, and RFC6979 replays completed in 79, 32, 33, 129, 121, 164,
+and 156 ms respectively, with no sanitizer diagnostic or artifact. The
+baseline signal-handler processes were terminated only in the disposable
+worktree and no fuzz process remained afterward.
+
+Severity is still evaluated against this unmodified master, not against the
+repaired branch or later l0rinc patches. The impossible SHA length is
+**Medium** library memory-safety/availability impact with low practical
+exploitability because the public caller must provide an invalid pointer and
+length; Bitcoin Core's normal parsed-key/signature paths do not provide this
+pair, and no invalid-block acceptance is implied. RFC6979 maximum-counter
+nontermination is **Medium** for a direct public callback caller but
+**Low/edge-case** for Bitcoin Core's ordinary signing path, which does not
+forward an attacker-controlled retry counter; it is denial of service, not a
+cryptographic compromise. The 10x26 zero-predicate defect remains
+**Medium/latent**, with no demonstrated public Bitcoin Core path to the exact
+internal magnitude-32 state. Silent Payments opaque-state validation remains
+**Low/defensive API hardening** because the state is locally constructed and
+not a consensus-block serialization boundary. ECDH and DER stale-output
+behavior remain **Low/fail-closed API hygiene**. None of these is invalid-block
+acceptance, and clearing a nonce without cryptographic meaning is not a
+Critical erasure finding.
+
+## 2026-07-25 Refreshed l0rinc Topic Reconciliation
+
+The l0rinc remote was fetched again after the current-master replay. The
+reference baseline is still clean `origin/master d2d04864ef9b056151603a3ced7980958b058028`;
+the audit branch is a direct descendant and has no rebase delta. This pass
+included the newly published topic refs, not only the previously inventoried
+pull heads. Every behavior-bearing commit was compared with the current
+source and the existing audit commits before deciding whether a cherry-pick
+would add evidence or merely change the order of an already-proven fix.
+
+The following mappings are behavior-equivalent or stronger on this branch:
+
+```
+19c82a24 ecdh context-SHA aliases       -> e1c8c718 (+ callback/output oracles)
+144e38eb ECDSA nonce context aliases    -> 7fc76165 (+ callback/output oracles)
+0700f7bb/dda36140 EllSwift zero-u       -> e430340e (+ forced-zero-u barrier)
+a1b58eea/d4394823 MuSig overflow sig    -> ab479920/ffddb6c5
+1d7d39ae/88424b7a MuSig zero nonces     -> cab2cea9 (+ exhaustive/fuzzer proof)
+56a9a650/a2a0ac20 tweak input overlap   -> 57520d9b/82a7f6e7
+d1dca5c1 invalid loaded public keys     -> eab2348c/2b890d1a (+ stronger load checks)
+0eb964fc invalid recoverable signature  -> aa3fa78f
+d7815724/b0b9b3b7 odd-Y x-only state    -> 9a82e39c
+0deac2a1/a6658112 off-curve opaque key  -> 2b890d1a (+ canonical/subgroup checks)
+97dab671 overflowing ECDSA signature   -> e8b85be5
+87e57c85 scalar shift above 512 bits    -> 5a39ca9d
+```
+
+The l0rinc `fe-equal-magnitude-bound` ref (`994b3501`) and
+`silentpayments-flush-label-batch` ref (`1ae90bde`) are already ancestors of
+current master, so there is no fork-side delta to cherry-pick. The active
+branch also retains the separate 10x26 zero-predicate repair; it must not be
+lost when applying the earlier normalize-only field fix.
+
+The remaining fetched topics were deliberately not cherry-picked:
+
+* `fe361c7f` only reuses an EllSwift denominator square. It changes no
+  contract, parser boundary, or result and supplies no new bug-discovery
+  oracle.
+* `c0f32d48` only removes a test-only scratch-free warning.
+* `15c667cb` repairs the BER test generator's multi-byte length encoding and
+  adds a known-answer test. The production lax-DER parser is unchanged, and
+  the patch does not apply cleanly after the audit's DER and failure-output
+  changes. Its intended long-form-length behavior is already represented by
+  the DER corpus and the independent offset parser checks, so manually
+  replaying the same test-only patch would not prove a production finding.
+
+No new master-branch bug was found in this refresh. In particular, the
+context-SHA topics are dispatch/performance correctness findings already
+proved by the branch's callback counters; the MuSig, opaque-key, recovery,
+ECDSA, and tweak topics are already covered by deterministic mutations and
+stronger failure checks here. The EllSwift optimization is not a security
+fix. The characterization commits in the multi-commit topics were treated as
+evidence, not as production changes.
+
+Severity remains anchored to unmodified master, before these audit repairs or
+any later fork topic: the reachable malformed-opaque and callback failure
+paths are **Medium** where an actual caller can reach them; the 10x26
+magnitude-32 arithmetic issue is **Medium/latent**; documented tweak-input
+overlap is **Low**; test/optimization/oracle-only changes are
+**Informational**. Bitcoin Core's normal block-facing paths parse serialized
+keys and signatures before calling the library, and this refresh found no
+invalid-block acceptance path. A nonce with no cryptographic meaning is not a
+Critical erasure finding. No fork fix was allowed to lower a master-relative
+severity, and no additional production change is justified without a clean
+master reproduction or a minimal production mutation proof.
+
+## 2026-07-25 Silent Payments Mixed-Input Fuzzer Oracle
+
+The Silent Payments fuzzer previously exercised only ordinary inputs: the
+sender received one plain secret key and the recipient summary received one
+full public key. The new `mixed-inputs` seed adds one taproot keypair and one
+ordinary input. The sender therefore uses the keypair and plain-secret paths,
+while the recipient uses one x-only and one full public key. The generated
+output is then scanned and compared independently.
+
+The oracle gap is proven by a disposable production mutation in
+`src/modules/silentpayments/main_impl.h`: change the x-only accumulation loop
+from `for (i = 0; i < n_xonly_pubkeys; i++)` to `for (i = 0; i < 0; i++)`.
+The original pre-change control was parent `80165dd8`; after porting this
+commit, the rebased pre-change control is parent `ae336212`. Both left the
+existing
+`roundtrip`, `opaque-label-state`, and `opaque-prevouts-state` seeds green
+(exit 0) under this mutation. The new `mixed-inputs` seed exits 134 under the
+same mutation. Restoring the loop makes all four seeds pass on the forced
+int64 Clang 22.1.7 ASan/UBSan build; the rebased fixed tree was replayed after
+the metadata update and its deterministic Silent Payments suite also passed.
+
+The first multi-worker replay also found an expected domain boundary rather
+than a library defect: fuzz-derived valid input keys can sum to infinity, so
+`sender_create_outputs` or `prevouts_summary_create` may return 0 by contract.
+The oracle now skips that degenerate positive-construction case instead of
+asserting success. The exact failing artifact was replayed successfully after
+this change. Private corpus copies were then run with two workers and two
+jobs on the forced-int64 Clang 22.1.7 ASan/UBSan binary using
+`-max_total_time=5 -timeout=60 -rss_limit_mb=4096`; the two jobs completed 125
+and 126 executions with exit 0, no sanitizer report, assertion, timeout, OOM,
+or artifact. The native GCC build also compiled `fuzz_silentpayments` from
+the same source; it is a non-libFuzzer build and was not counted as a worker
+campaign.
+
+This is **Informational oracle hardening**, not a production finding. Existing
+BIP352 vectors and unit tests already cover mixed inputs; the fuzzer did not.
+The mutation was never merged, does not demonstrate an invalid-block
+acceptance path, and does not change Bitcoin Core severity. Bitcoin Core uses
+this wallet-side functionality with locally constructed summaries from
+parsed keys. The already-merged l0rinc label-batch ordering fix is unrelated,
+and no later production repair was used to mask this oracle proof. A nonce
+without cryptographic meaning is not a Critical erasure finding.

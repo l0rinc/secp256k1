@@ -55,21 +55,33 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     unsigned char label_ser[33];
     unsigned char parsed_label_ser[33];
     const unsigned char *input_seckey_ptrs[1];
+    const unsigned char *mixed_seckey_ptrs[1];
     const secp256k1_pubkey *prevout_pubkey_ptrs[1];
+    const secp256k1_pubkey *mixed_pubkey_ptrs[1];
+    const secp256k1_xonly_pubkey *mixed_xonly_pubkey_ptrs[1];
+    const secp256k1_keypair *mixed_keypair_ptrs[1];
     const secp256k1_xonly_pubkey *tx_output_ptrs[2];
+    const secp256k1_xonly_pubkey *mixed_tx_output_ptrs[1];
     secp256k1_pubkey scan_pubkey;
     secp256k1_pubkey spend_pubkey;
     secp256k1_pubkey labeled_spend_pubkey;
     secp256k1_pubkey input_pubkey;
+    secp256k1_keypair taproot_keypair;
+    secp256k1_xonly_pubkey taproot_xonly;
+    secp256k1_xonly_pubkey mixed_output;
     secp256k1_silentpayments_label label;
     secp256k1_silentpayments_label parsed_label;
     secp256k1_silentpayments_prevouts_summary prevouts_summary;
+    secp256k1_silentpayments_prevouts_summary mixed_summary;
     secp256k1_silentpayments_recipient recipients[2];
     const secp256k1_silentpayments_recipient *recipient_ptrs[2];
     secp256k1_xonly_pubkey generated_outputs[2];
     secp256k1_xonly_pubkey *generated_output_ptrs[2];
+    secp256k1_xonly_pubkey *mixed_output_ptrs[1];
     secp256k1_silentpayments_found_output found_outputs[2];
     secp256k1_silentpayments_found_output *found_output_ptrs[2];
+    secp256k1_silentpayments_found_output mixed_found_output;
+    secp256k1_silentpayments_found_output *mixed_found_output_ptrs[1];
     secp256k1_fuzz_silentpayments_label_cache label_cache;
     uint32_t n_found;
     uint32_t label_index;
@@ -150,6 +162,43 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     for (i = 0; i < n_recipients; i++) {
         FUZZ_CHECK(matched[i]);
     }
+
+    /* Exercise the BIP352 mixed-input contract: taproot inputs are supplied as
+     * x-only pubkeys to the recipient and as keypairs to the sender, while
+     * ordinary inputs use full pubkeys and secret keys. */
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &taproot_keypair, input_seckey) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &taproot_xonly, NULL, &taproot_keypair) == 1);
+    mixed_keypair_ptrs[0] = &taproot_keypair;
+    mixed_seckey_ptrs[0] = scan_seckey;
+    mixed_xonly_pubkey_ptrs[0] = &taproot_xonly;
+    mixed_pubkey_ptrs[0] = &scan_pubkey;
+    mixed_output_ptrs[0] = &mixed_output;
+    mixed_tx_output_ptrs[0] = &mixed_output;
+    mixed_found_output_ptrs[0] = &mixed_found_output;
+    recipients[0].spend_pubkey = spend_pubkey;
+    recipients[0].index = 0;
+    /* A valid input-key set can still sum to infinity, which is a documented
+     * no-output case. Skip that degenerate fuzzer domain rather than treating
+     * an expected API failure as an oracle violation. */
+    if (!secp256k1_silentpayments_sender_create_outputs(ctx,
+        mixed_output_ptrs, recipient_ptrs, 1, outpoint,
+        mixed_keypair_ptrs, 1, mixed_seckey_ptrs, 1)) {
+        return;
+    }
+    if (!secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+        &mixed_summary, outpoint, mixed_xonly_pubkey_ptrs, 1,
+        mixed_pubkey_ptrs, 1)) {
+        return;
+    }
+    illegal_data->calls = 0;
+    n_found = 0;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+        mixed_found_output_ptrs, &n_found, mixed_tx_output_ptrs, 1,
+        scan_seckey, &mixed_summary, &spend_pubkey, NULL, NULL) == 1);
+    FUZZ_CHECK(illegal_data->calls == 0);
+    FUZZ_CHECK(n_found == 1);
+    FUZZ_CHECK(mixed_found_output.found_with_label == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &mixed_found_output.output, &mixed_output) == 0);
 
     /* Magic-preserving mutations exercise opaque state that ordinary API
      * round trips cannot produce. Keep the input hash intact in the point
