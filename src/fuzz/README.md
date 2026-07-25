@@ -30497,6 +30497,41 @@ The exact recid mutation, invalid-x mutation, corpus seeds, compiler result,
 restored replay, and verifier command are recorded so a fork repair cannot be
 mistaken for a master-relative finding.
 
+## 2026-07-25 ecmult_multi Scratch and Zero-Term Mutation Matrix
+
+The ecmult_multi implementation was tested in a disposable worktree at
+`2526dc33` with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64
+arithmetic, recovery enabled, and `fuzz_ecmult_multi`. The restored target
+passed all 29 tracked corpus files before and after the probes.
+
+Three narrow mutations were rebuilt independently. First, the top-level
+empty-batch dispatch changed `inp_g_sc == NULL && n == 0` to an `||` check,
+which drops a non-null generator-only term. It aborted with exit 134 on
+`ecmult_multi/batch-size-zero`; the canonical infinity and independent
+reference-result checks catch the lost generator contribution. Second, the
+simple callback-failure path stopped resetting the output to canonical
+infinity. It aborted with exit 134 on
+`ecmult_multi/error-callback-clone` after 11 earlier seeds, proving that a
+failed callback cannot expose a partial accumulated result. Third, the
+Pippenger batch entry count changed from `2*n_points + 2` to
+`2*n_points + 1`. It was killed immediately by
+`ecmult_multi/batch-size-zero` with a UBSan null `pippenger_point_state`
+access at `ecmult_impl.h:530` and a full fuzzer stack, demonstrating why the
+scratch-size accounting and endomorphism split count must agree.
+
+All mutations were restored, the target was rebuilt, and all 29 corpus files
+passed with `-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`; no sanitizer
+diagnostic or clean-master failure remained. These are mutation proofs, not
+new production bugs. The existing master-relative ecmult_multi ledger remains
+**Medium API-only** for callers that can construct malformed scratch or
+opaque state, with low or non-consensus Bitcoin Core reachability. The
+underallocation mutant would be a memory-safety defect if present in master,
+but it is not present here; no invalid-block acceptance, consensus failure,
+key compromise, or demonstrated master memory/concurrency impact was found.
+No High/Critical escalation or redundant assertion is justified. The exact
+mutations, corpus seeds, UBSan location, restored replay, and verifier command
+are recorded so a fork or minor repair cannot hide a master-relative result.
+
 ## 2026-07-25 Context Lifecycle and Callback Mutation Matrix
 
 Context lifecycle behavior was tested in a disposable worktree at
