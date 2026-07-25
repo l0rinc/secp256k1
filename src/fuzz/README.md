@@ -30378,3 +30378,46 @@ was no clean-master invalid-block acceptance, consensus failure, key
 compromise, or demonstrated memory/concurrency impact. The commit records the
 mutation, exact fixtures, why the old oracle was sufficient, and the verifier
 command so a later fork fix cannot conceal a master-relative discrepancy.
+
+## 2026-07-25 SEC1 Public-Key Parser Mutation Matrix
+
+The legacy SEC1 public-key parser was tested in a disposable worktree at
+`2ebd9716` with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64
+arithmetic, recovery enabled, and `fuzz_api_roundtrip`. The restored target
+passed all 63 tracked corpus files before and after the probes. This parser is
+particularly relevant to Bitcoin Core's legacy `CPubKey::Verify` path, so the
+checks below were treated as consensus-sensitive oracle validation.
+
+The first mutant changed only the compressed-key coordinate conversion in
+`src/eckey_impl.h` from the rejecting `secp256k1_fe_set_b32_limit` contract to
+modular reduction with `secp256k1_fe_set_b32_mod`, followed by the same point
+constructor. A literal expression substitution was rejected by the compiler
+because the modular setter returns `void`; that failed attempt is not counted
+as a behavioral result. The corrected compiled mutant aborted with exit 134
+on the first ordinary corpus input, `api_roundtrip/ascii-near-der`, because
+the always-run field-overflow fixture passes `field_p + 1` and requires both
+compressed parity forms to be rejected and zero the output. The strict field
+range oracle therefore kills modular aliasing of an out-of-range wire
+coordinate.
+
+The second mutant bypassed the hybrid SEC1 parity consistency check in
+`src/eckey_impl.h`. The tracked corpus did not contain a 65-byte hybrid key,
+so a temporary exact input was used: one byte `0x07` (hybrid-odd) followed by
+the generator's standard x and y coordinates, whose y coordinate is even.
+The mutated target aborted with exit 134 because the independent
+`secp256k1_fuzz_pubkey_parse_reference` rejects the inconsistent prefix while
+the mutant accepts it. After restoring the check, the same 65-byte input
+exited 0, and the temporary input was deleted. The full restored corpus then
+passed all 63 files again with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0` and no sanitizer output.
+
+These probes found no clean-master production bug and require no new
+assertion: the existing reference parser and field-boundary fixture already
+kill both meaningful mutations. A real regression could change acceptance of
+malformed SEC1 encodings at a Bitcoin Core legacy signature boundary, but no
+invalid-block acceptance, consensus failure, key compromise, or
+memory/concurrency impact exists on current master. Severity for this audit is
+therefore **Informational oracle validation**, with no High/Critical finding.
+The exact modular mutation, temporary vector condition, exit codes, restored
+control replay, and the non-compiling substitution are recorded so a later
+fork or minor repair cannot be mistaken for a master-relative discovery.
