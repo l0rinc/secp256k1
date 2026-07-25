@@ -29426,3 +29426,39 @@ this wallet-side functionality with locally constructed summaries from
 parsed keys. The already-merged l0rinc label-batch ordering fix is unrelated,
 and no later production repair was used to mask this oracle proof. A nonce
 without cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-25 Silent Payments Multi-Group Output Index Oracle
+
+The sender's Silent Payments API sorts recipient pointers by scan public key,
+but its documented output contract is indexed by each recipient's original
+`index`. The previous fuzzer used one scan-key group, so sorted order and
+caller order were identical and an output-slot swap could pass every seed.
+The oracle now creates two distinct scan-key groups in deliberately reverse
+lexicographic order, scans each group independently, and requires the result
+to remain in its original output slot. It also restores the intentionally
+in-place-sorted pointer array before the later mixed-input check.
+
+The original gap proof used clean parent `d1a04f10` and this disposable
+production mutation in `src/modules/silentpayments/main_impl.h`:
+
+```
+generated_outputs[recipients[i]->index]
+    -> generated_outputs[i]
+```
+
+On the forced-int64 Clang 22.1.7 ASan/UBSan build, the pre-change fuzzer
+passes all four existing Silent Payments seeds, including `mixed-inputs`,
+under that mutation with exit 0. The new reverse-sorted two-group oracle
+aborts on `mixed-inputs` with exit 134. Restoring the production expression
+makes all four seeds pass. After porting onto current parent `6cf04d30`, the
+rebased fixed fuzzer and deterministic Silent Payments suite passed again.
+This is a targeted oracle proof, not a claim that clean master currently
+contains the swapped-index bug.
+
+Severity is **Informational/Low**: this protects wallet-side BIP352 output
+association, but it has no Bitcoin Core consensus or invalid-block acceptance
+impact. Bitcoin Core's block-facing paths do not use this wallet output
+ordering as a block validity predicate. The mutation was never merged, the
+l0rinc label-batch fix is unrelated, and no later fix was allowed to mask the
+master-relative proof. A nonce without cryptographic meaning is not a
+Critical erasure finding.
