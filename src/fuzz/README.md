@@ -31318,3 +31318,95 @@ existing `ec34c404` test and fuzzer witness are the proof of the fix. Any
 future cherry-pick that changes recovery loading, callback routing, or Core's
 compact-signature adapter must preserve this masking order and state whether
 it changes or merely hides the master-relative reproduction.
+
+## 2026-07-26 Current-master ecmult_multi callback-failure revalidation
+
+This entry reiterates the existing `12b2e3cb` production repair:
+`ecmult_multi` must clear its output when a callback rejects after an earlier
+term was accumulated. The clean baseline is `origin/master` and
+`l0rinc/master` at `d2d04864ef9b056151603a3ced7980958b058028`; the audited
+branch was `1bbc1ad43071e2fbc6b4d6a7789df3f0a1e12008`. The clean
+`src/ecmult_impl.h` SHA-256 is
+`ce70d26cb987c9bb2a2477389459437fc2831546c9c14404b58cf7ed07f32cc1`; the
+fixed branch version is
+`663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0`.
+The current `src/fuzz/ecmult_multi.c` SHA-256 is
+`aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`.
+The corpus has 29 files and 1028 bytes; the focused
+`callback-failure-output-state` witness is 43 bytes with SHA-256
+`605855a1db2299ebe6a79851137a4abbd0f0252ae8e5677f507203a53057e897`.
+
+### Clean-master differential and masking order
+
+The clean snapshot predates the current fuzz directory, so the disposable
+replay overlaid only the current fuzz sources, CMake fuzz wiring, shared fuzz
+headers, and the ecmult corpus. A harness-only compatibility definition for
+`checked_size_mul` supplied a helper absent from this older `util.h`; no
+production source was changed. The first direct replay of the focused input
+was masked on both native and forced-int64 ASan/UBSan builds by the separate
+clean-master scratch boundary at `src/scratch_impl.h:18`: a 31-byte
+allocation was cleared with a 32-byte write from
+`secp256k1_fuzz_check_scratch_create_boundaries` at `src/fuzz/ecmult_multi.c:308`.
+That is the existing scratch-wrap finding, not proof of the callback-output
+defect.
+
+To remove only those unrelated fuzzer preconditions, a disposable
+harness-only trigger recognized the exact witness, initialized two valid
+`secp256k1_scalar_one`/`secp256k1_ge_const_g` terms, set `fail_at = 1`, and
+called the existing failing-callback helper before scratch checks. The
+callback accepted index 0, rejected index 1, and `ecmult_multi_var` returned
+0. The clean master left a finite partial Jacobian result, so
+`secp256k1_fuzz_ecmult_multi_check_failure_output` at the oracle in
+`src/fuzz/ecmult_multi.c:429` aborted with exit 134 in both native and
+forced-int64 builds. The trigger-only harness SHA-256 was
+`769086dc45db028353cb3a48cc140a0109cc9d0053048b38cf14dade6925d8d4`.
+
+For the repaired control, the exact clean production file received only the
+two `secp256k1_gej_set_infinity(r)` statements from `12b2e3cb`, one in the
+simple callback loop and one after a failed batch. The same 43-byte witness
+then exited 0 in native and forced-int64 ASan/UBSan builds. This is a
+production differential, not a sanitizer-only memory report.
+
+### Finding, Core boundary, and severity
+
+* **Low on unmodified master:** the failure leaves stale partial state in an
+  internal helper even though it returns failure. `secp256k1_ecmult_multi_var`
+  is not a public wire parser, and callers are required to honor its return.
+  The defect is nevertheless a real state-transition oracle: code that
+  inspects the output after failure can observe a plausible but invalid
+  aggregate. No use-after-free, overwrite, key compromise, or concurrency
+  impact was demonstrated by this witness.
+
+* **Bitcoin Core reachability:** the relevant in-tree MuSig aggregation path
+  constructs its point/scalar vector locally and calls the internal helper
+  with no scratch space; it is not fed attacker-controlled block or witness
+  bytes. The caller uses the return value, and no invalid-block acceptance,
+  consensus divergence, or witness sigop result follows from this stale
+  output. High or Critical severity is therefore not justified on master.
+  This finding is correctness/availability hygiene at an internal API
+  boundary, not a consensus vulnerability. A nonce or buffer without
+  cryptographic meaning would likewise not be a Critical clearing issue.
+
+The earlier tests checked return values, callback traces, scratch accounting,
+and successful arithmetic, but did not bind the output to canonical infinity
+after a callback failed following a prior contribution in both the simple
+fallback and batched paths. `12b2e3cb` adds that deterministic assertion and
+production repair; this pass adds no new production mutation or regression
+test. Its exact corpus witness, the clean-master reproduction, and the
+two-line restored control are the strongest proof that the oracle matters.
+
+Current fixed-branch verification used Clang 22.1.7 ASan/UBSan builds with
+native and forced-int64 arithmetic. The focused witness and all 29 corpus
+files passed with `-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0` in
+both builds. Two-worker/two-job campaigns used
+`-fork=2 -jobs=2 -max_total_time=15 -timeout=180 -rss_limit_mb=0
+-handle_abrt=0`; every manager and worker exited 0 with no crash, timeout,
+OOM, sanitizer diagnostic, or retained artifact. LibFuzzer-generated corpus
+files were removed after verification.
+
+No new l0rinc commit was cherry-picked in this pass because both refs are
+identical and the existing `12b2e3cb` repair already represents this finding.
+Any later cherry-pick touching scratch setup, callback routing, or ecmult
+batching must state whether it merely masks this master reproduction or
+changes the callback-output contract; the master-relative control should be
+re-run before assigning a new severity.
