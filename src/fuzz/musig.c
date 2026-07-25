@@ -3936,6 +3936,34 @@ static void secp256k1_fuzz_check_musig_sixteen_sign_roundtrip(secp256k1_context 
     secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, SECP256K1_FUZZ_MUSIG_MAX_SIGNERS, msg32);
 }
 
+static void secp256k1_fuzz_check_musig_duplicate_sign_roundtrip(secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    enum { N_DUPLICATE_SIGNERS = 9 };
+    static const unsigned char trigger[] = "duplicate MuSig signing\n";
+    static const unsigned char key_indices[N_DUPLICATE_SIGNERS] = {
+        1, 1, 2, 3, 2, 4, 5, 6, 7
+    };
+    unsigned char seckey[N_DUPLICATE_SIGNERS][32] = { { 0 } };
+    unsigned char msg32[32];
+    secp256k1_keypair keypairs[N_DUPLICATE_SIGNERS];
+    secp256k1_pubkey pubkeys[N_DUPLICATE_SIGNERS];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_fuzz_derive(msg32, sizeof(msg32), input, size, 479);
+    for (i = 0; i < N_DUPLICATE_SIGNERS; i++) {
+        seckey[i][31] = key_indices[i];
+        FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypairs[i], seckey[i]) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[i], seckey[i]) == 1);
+    }
+    secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, (const unsigned char (*)[32])seckey,
+        keypairs, pubkeys, N_DUPLICATE_SIGNERS, msg32);
+    memset(seckey, 0, sizeof(seckey));
+    memset(keypairs, 0, sizeof(keypairs));
+}
+
 static void secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(const secp256k1_context *ctx, const secp256k1_pubkey *pubkey, const unsigned char *valid_seckey, const unsigned char *msg32, const secp256k1_musig_keyagg_cache *keyagg_cache, const unsigned char *extra_input32, const unsigned char *session_rand32) {
     unsigned char session_rand[32];
     unsigned char session_rand_before[32];
@@ -4620,6 +4648,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     }
     secp256k1_fuzz_check_musig_infinity_nonce_process(ctx, &keypairs[0], &pubkeys[0], tweak, &single_cache, &single_agg_xonly);
     secp256k1_fuzz_check_musig_sign_roundtrip(ctx, input, size, seckey, keypairs, pubkeys, n_pubkeys, tweak);
+    secp256k1_fuzz_check_musig_duplicate_sign_roundtrip(ctx, input, size);
     secp256k1_fuzz_check_musig_nonce_gen_failure_cleanup(ctx, &pubkeys[0], seckey[0], tweak, &cache, tweak, session_rand);
     secp256k1_fuzz_check_musig_nonce_gen_zero_scalar_failure(ctx, &pubkeys[0], seckey[0], tweak, &cache, tweak, session_rand);
     if (size == sizeof(first_zero_nonce_trigger) - 1

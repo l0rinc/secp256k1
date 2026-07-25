@@ -29723,3 +29723,59 @@ an invalid block acceptable, so no consensus High/Critical severity is claimed.
 The current `l0rinc/master` equals `origin/master`; no fork fix or minor repair
 masked this master-relative proof. A nonce without cryptographic meaning is
 not a Critical erasure finding.
+
+## 2026-07-25 MuSig Duplicate-Key Nine-Signer Signing Oracle
+
+The existing duplicate-key MuSig scenario checked only key aggregation: it
+compared the aggregate point, x-only output, and cache hash for a 16-entry
+list containing repeated keys. The ordinary signing roundtrip generated
+distinct keys, and its input-controlled path covered at most eight signers
+before the separate 16-signer trigger. It therefore did not prove that a
+valid duplicate-key cache remains usable through nonce generation, partial
+signing, partial-signature verification, aggregation, and final Schnorr
+verification.
+
+The new `duplicate-signing-9` corpus input invokes a nine-signer roundtrip
+with key indices `[1, 1, 2, 3, 2, 4, 5, 6, 7]`. It deliberately repeats both
+the first key and the first coefficient-one key, while keeping the message
+and scalar material deterministic. The existing independent partial-sign
+equation, final-signature equation, and Schnorr verification checks are now
+run over that duplicate list, so the oracle validates the complete signing
+state transition rather than only the aggregate cache.
+
+The incremental gap is proven against parent `39f10806` with a disposable
+one-line production mutation in `src/modules/musig/session_impl.h`:
+
+```
+for (i = 0; i < n_sigs; i++)
+    -> for (i = 0; i < (n_sigs == 9 ? n_sigs - 1 : n_sigs); i++)
+```
+
+This models a nine-signer boundary regression that silently omits the final
+partial signature. The mutated new fuzzer aborts on
+`src/fuzz/corpora/musig/duplicate-signing-9` with libFuzzer exit 77 at the
+final-signature equation. The pre-change fuzzer at parent `39f10806`, built
+with the identical mutation and replayed against the same seed, exits 0;
+the restored clean tree also exits 0. This is an oracle differential proof,
+not a claim that clean master currently truncates nine-signer aggregates.
+The earlier coefficient mutation was discarded from this proof because the
+parent's existing two-signer tweaked-signing check already detected it.
+
+The clean forced-int64 Clang 22.1.7 ASan/UBSan replay covered all 78 MuSig
+corpus files in 163 seconds. A two-worker/two-job replay of the same 78 files
+also completed both jobs in 163 seconds with exit 0 and no sanitizer
+diagnostic, assertion, timeout, OOM, or artifact. The deterministic `tests
+--log=1` binary passed all tests in 526.785 seconds. The native GCC 16.1.0
+standalone fuzzer replayed all 78 files as positional inputs with exit 0.
+
+This is **Informational/Low oracle hardening**, not a production finding on
+master. A real regression of this form would make a MuSig signature fail
+verification or cause a signing workflow to abort, but it would not make
+Bitcoin Core accept an invalid block: Bitcoin Core's consensus validation is
+not a caller of MuSig partial-signature aggregation. No High/Critical
+severity is claimed without a concrete Bitcoin Core or other security
+boundary that turns this into acceptance, key compromise, or a remotely
+reachable denial of service. The current `l0rinc/master` equals
+`origin/master d2d04864`; no fork fix or minor repair masked this master-
+relative proof. A nonce without cryptographic meaning is not a Critical
+erasure finding.
