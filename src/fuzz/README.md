@@ -31410,3 +31410,92 @@ Any later cherry-pick touching scratch setup, callback routing, or ecmult
 batching must state whether it merely masks this master reproduction or
 changes the callback-output contract; the master-relative control should be
 re-run before assigning a new severity.
+
+## 2026-07-26 Complete clean-master MuSig corpus differential
+
+This pass revalidated the complete current MuSig corpus after the branch was
+rebased on clean `origin/master`
+`d2d04864ef9b056151603a3ced7980958b058028`. The disposable clean worktrees
+overlaid only the current fuzz sources, CMake fuzz wiring, shared headers, and
+the 79 tracked MuSig inputs. The production MuSig source remained the exact
+master tree; `src/modules/musig/session_impl.h` was
+`afb0e3ba18768184b551ae43acd1419390ed50cd4a276ee80d9054ab401a5ba5` in the
+clean tree and `529e4577e6246c3c9a71f9c8879f83218e16628be067ecf1744a506fa5d19ff7`
+in the repaired branch. The corpus contained 79 files and 2998 bytes; its
+sorted filename manifest SHA-256 was
+`bc59ad334e2d9d87b1bd7250ea9f82e9190f418e3c40529a4dba31016ec791af`.
+
+### Clean-master first stop and masking order
+
+All 79 clean-master inputs exited 134 on both arithmetic backends. Native
+5x52 stopped at `src/field_5x52_impl.h:29`; forced-int64/10x26 stopped at
+`src/field_10x26_impl.h:33`. The representative native binary was
+`18fa6b6bed7da48b46a6830f35732da659a57bb200cb1db1b8985b38ae6c6903`, and the
+forced-int64 binary was
+`dd42f38b704f657a08f6e64cb7ae42e828574c399cf0985cb533868af60933c5`.
+The native backtrace is:
+
+    field_5x52_impl.h:29 -> ge_from_storage -> ge_from_bytes
+    -> secp256k1_pubkey_load -> secp256k1_ec_pubkey_serialize
+    -> fuzz_musig.c:2327
+
+The forced-int64 backtrace is identical apart from the field backend and ends
+at `field_10x26_impl.h:33`. The first helper is
+`secp256k1_fuzz_check_musig_noncanonical_duplicate`, called for every input
+before the later MuSig state-machine checks. It parses the valid x = 1 point,
+copies the opaque object, replaces its serialized x storage with the
+noncanonical field representation `p + 1`, and requires
+`secp256k1_ec_pubkey_serialize` to reject it and clear its output. Clean master
+enters `secp256k1_ge_from_bytes` before validating that opaque representation;
+the field verifier aborts before the API can return 0. Therefore these 79
+aborts are one existing invalid-opaque-key finding repeated 79 times, not 79
+MuSig findings, and no nonce, cache, parity, aggregation, or signing
+transition was reached by this full clean replay.
+
+This ordering is material. It does not prove that later clean-master MuSig
+transitions are correct. The earlier isolated ordering matrix bypassed only
+this helper and then separately reproduced the existing cache, keypair,
+nonce, and public-nonce state findings. A later loader fix, l0rinc cherry-pick,
+or incidental minor repair must not receive credit for those later behaviors
+without rerunning the corresponding clean-master baseline or a harness-only
+isolation. The separate 10x26 magnitude-32 carry finding is not this failure:
+this path is the noncanonical opaque-public-key representation check.
+
+### Repaired branch and severity
+
+The repaired branch replayed all 79 inputs with exit 0 on native 5x52. The
+current fixed native binary was
+`67fc2e3126661b0925ef72678eb0c00ba3e3c244cbcee80a7dcecb9c52abf1be`; the
+current forced-int64 binary was
+`a535eaab8dec890bef769cb91f0b8f43517ab0f571f1ce3ff26c58f88ac09da8`. Private
+corpus copies were used for two-worker/two-job sanitizer campaigns:
+
+    -fork=2 -jobs=2 -max_total_time=20 -timeout=120
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -rss_limit_mb=0 -handle_abrt=0 -verbosity=0
+
+Both backends exited 0 with no sanitizer diagnostic or artifact. Native jobs
+reported `oom/timeout/crash: 0/0/0` at 106 and 107 seconds; int64 jobs
+reported the same counters at 184 seconds. The native and forced-int64
+worker corpora each retained all 79 tracked inputs.
+
+The master-relative finding remains **Medium direct-API/in-memory state
+correctness**, covered by the existing `f106aaa5` and `91b9d762` repairs. A
+directly constructed or corrupted opaque `secp256k1_pubkey` can cross a public
+API boundary and reach internal field/group invariants instead of being
+rejected. Bitcoin Core's `CPubKey::Unserialize` parses wire bytes through
+`secp256k1_ec_pubkey_parse`, which validates the serialized curve point before
+creating this opaque representation. No block, witness, peer message,
+consensus divergence, invalid-block acceptance, key compromise, or
+memory-safety exploit was demonstrated. High/Critical severity is therefore
+not justified for Bitcoin Core on this evidence. A nonce or buffer without
+standalone cryptographic meaning is likewise not a Critical erasure finding.
+
+This is a revalidation and masking-order record, not a new production bug or
+regression test. The existing deterministic tests, exact mutations, and
+Core-call-site analysis remain the strongest proof for the production fixes.
+No new l0rinc commit was cherry-picked: `origin/master == l0rinc/master ==
+d2d04864`. Any future commit that changes this first stop must amend its
+commit message with the clean-master input, first stack, preconditions,
+postconditions, Core reachability, master-relative severity, verifier
+commands, and an explicit preserve/change/mask classification.
