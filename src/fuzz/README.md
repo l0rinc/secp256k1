@@ -30564,3 +30564,59 @@ reproduced. Severity is therefore **Informational/Low oracle validation**,
 not High/Critical. No additional assertion or production fix is justified.
 The exact mutations, seed, restored control replay, and verifier command are
 recorded so a fork change cannot be mistaken for a master-relative finding.
+
+## 2026-07-25 Silent Payments Opaque-State and Summary Mutation Matrix
+
+The Silent Payments label and scanner-summary state machine was tested in a
+disposable worktree at `b0a6ecb2` with Clang 22.1.7 ASan/UBSan, assembly
+disabled, forced-int64 arithmetic, recovery and Silent Payments enabled, and
+`fuzz_silentpayments`. The restored target passed all nine tracked inputs:
+`input-hash-reference`, `label-integer-maximum`, `mixed-inputs`,
+`multiple-labels`, `opaque-label-state`, `opaque-prevouts-state`,
+`recipient-group-limit`, `roundtrip`, and `three-labels`.
+
+Six production mutations were rebuilt independently and restored before the
+next probe. First, both serialized summary-point checks
+`secp256k1_ge_is_valid_var` and `secp256k1_ge_is_in_correct_subgroup` were
+replaced with `ARG_CHECK(1)`. `opaque-prevouts-state` aborted with exit 134 as
+the invalid point reached shared-secret arithmetic; every corpus seed also
+aborted when it reached the always-run malformed-summary check. A narrower
+mutation that removed only `secp256k1_ge_is_valid_var` was still rejected by
+the remaining subgroup check, so it is not counted as an independent oracle
+gap. Second, the summary mode bound `data[4] <= 1` was relaxed to `<= 2`; the
+same opaque-summary seed aborted with exit 134 instead of accepting an
+unsupported combined-state value. Third, the zero-input-hash assertion was
+bypassed with `ARG_CHECK(1)`; `opaque-prevouts-state` aborted with exit 134 at
+the downstream `!secp256k1_scalar_is_zero(secret_component)` contract.
+
+Fourth, the scanner's labeled-result branch
+`if (label_tweak != NULL)` was changed to `if (0)`. Both
+`multiple-labels` and `three-labels` aborted with exit 134 because the oracle
+requires the exact label and spend-tweak state for each labeled output.
+Fifth, the uncombined-summary loader branch was inverted from
+`if (!combined)` to `if (combined)`; `roundtrip` aborted with exit 134 when
+the input-hash scalar was not loaded for the ordinary summary. As a separate
+field-boundary probe, the scanner's read offset `data[5 + 64]` was changed to
+`data[5 + 63]`; both `roundtrip` and `input-hash-reference` aborted with exit
+134. The latter independently binds the summary's serialized hash while the
+former proves the scanner consumes that field at the same boundary.
+
+The restored target again passed all nine files with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`. A copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=180 -rss_limit_mb=0` replay
+completed with 49 files in the temporary corpus (the nine tracked inputs plus
+40 generated units), no artifact, timeout, OOM, assertion, or sanitizer
+diagnostic. No production mutation was left active or committed.
+
+These are **Informational/Low oracle-validation results**, not clean-master
+production findings. Bitcoin Core reaches BIP352 label and scanner-summary
+code from wallet-side transaction construction and rescanning; these paths do
+not decide block validity and cannot accept an invalid block. A clean-master
+failure could make a valid Silent Payment unfindable or derive the wrong
+wallet-side spend tweak, but no consensus failure, key compromise, or
+master-relative memory/concurrency impact was demonstrated. High/Critical
+severity is therefore not claimed. `origin/master` and `l0rinc/master` remain
+`d2d04864`; no fork repair or minor fix masked this proof. No cryptographic
+nonce or nonce-erasure issue is implicated. The exact mutations, corpus
+conditions, exit codes, restored controls, and worker command are recorded so
+future cherry-picks cannot be mistaken for a finding on unmodified master.
