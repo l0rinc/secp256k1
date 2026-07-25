@@ -23,7 +23,7 @@ Targets:
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, duplicate-key and all-identical-key signing round trips, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
-- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, one-, two-, and three-label labeled-spend lookup, independent BIP0352 label-tweak derivation including the `uint32_t` maximum, label parse/serialize round trips, summary scanning with one through four recipients, and the 2323-recipient group-limit boundary. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
+- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, independent BIP0352 input-hash and label-tweak derivation including the `uint32_t` maximum, one-, two-, and three-label labeled-spend lookup, label parse/serialize round trips, summary scanning with one through four recipients, and the 2323-recipient group-limit boundary. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
 
 Standalone corpus replay:
 
@@ -30118,3 +30118,62 @@ acceptable; no High/Critical severity is claimed. `origin/master` and
 `l0rinc/master` remain `d2d04864`, and no fork fix or minor repair masked the
 master-relative mutation proof. No cryptographic nonce or nonce-erasure issue
 is implicated.
+
+## 2026-07-25 Silent Payments Input-Hash Reference Oracle
+
+The sender and recipient summary paths both call the production
+`secp256k1_silentpayments_calculate_input_hash_scalar` helper. Their normal
+round trip therefore proves that both sides agree with each other, but it can
+miss a shared mistake in the BIP0352/Inputs tag, outpoint serialization, or
+compressed input-pubkey serialization. The existing deterministic tests and
+the older fuzzer seeds did not provide an independent digest comparison for
+the summary's input-hash field.
+
+The new `input-hash-reference` corpus input is exactly
+`Silent Payments input hash reference\n`. In the round-trip path its gated
+oracle serializes the input public key independently and computes
+
+```
+SHA256(SHA256("BIP0352/Inputs") || SHA256("BIP0352/Inputs") ||
+       outpoint_smallest36 || compressed(input_pubkey))
+```
+
+with the standalone SHA-256 reference. It compares the result with the
+summary's 32-byte input-hash field at offset 69. The reference does not call
+the production Silent Payments hash helper, and the fixed-size reference
+buffer is checked before its copies.
+
+The incremental gap is proven by temporarily changing the production code in
+`src/modules/silentpayments/main_impl.h`:
+
+```
+secp256k1_sha256_write(hash_ctx, &hash, outpoint_smallest36, 36)
+->
+secp256k1_sha256_write(hash_ctx, &hash, outpoint_smallest36, 35)
+```
+
+With that mutation, the current target aborts on the exact new seed with exit
+134, while all eight older seeds pass. A detached parent at `264c7227`, built
+with the same mutation but without this input-hash oracle, passes the new seed
+with exit 0. This differential result shows that the new assertion detects a
+shared helper regression rather than merely replaying an already-failing
+production path. The production mutation was restored before the clean
+replays.
+
+The restored Clang 22.1.7 forced-int64 ASan/UBSan target, default-int128
+Clang target, and native GCC 16.1.0 forced-int64 target each passed all nine
+corpus files. A two-worker/two-job `-max_total_time=20` replay exited 0 with
+no sanitizer diagnostic, assertion, timeout, OOM, or leftover corpus
+artifacts. The deterministic Silent Payments test selection was also run
+against the restored production tree with
+`tests -t=silentpayments -i=1`; it exited 0 after 120.084 seconds.
+
+This is **Informational/Low oracle hardening**, not a clean-master production
+bug. Bitcoin Core's wallet-side BIP352 scanner uses this summary for locally
+constructed transaction state, so a real input-hash mismatch could make a
+Silent Payment unfindable or derive the wrong wallet-side result. It is not a
+consensus block-validity predicate and cannot make an invalid block
+acceptable; no High/Critical severity is claimed. No cryptographic nonce or
+nonce-erasure issue is involved. `origin/master` and `l0rinc/master` remain
+`d2d04864`, and no fork fix or minor repair masked this master-relative
+oracle proof.

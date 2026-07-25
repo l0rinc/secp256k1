@@ -10,25 +10,40 @@
 
 #include "sha256_reference.h"
 
+static void secp256k1_fuzz_silentpayments_tagged_hash_reference(
+    unsigned char out32[32], const unsigned char *tag, size_t taglen,
+    const unsigned char *part1, size_t part1len,
+    const unsigned char *part2, size_t part2len
+) {
+    unsigned char tag_hash[32];
+    unsigned char tagged_input[64 + 36 + 33];
+    size_t tagged_input_len = 64 + part1len + part2len;
+
+    FUZZ_CHECK(tagged_input_len <= sizeof(tagged_input));
+    secp256k1_fuzz_sha256_standalone(tag_hash, tag, taglen);
+    memcpy(tagged_input, tag_hash, sizeof(tag_hash));
+    memcpy(tagged_input + sizeof(tag_hash), tag_hash, sizeof(tag_hash));
+    memcpy(tagged_input + 2 * sizeof(tag_hash), part1, part1len);
+    memcpy(tagged_input + 2 * sizeof(tag_hash) + part1len, part2, part2len);
+    secp256k1_fuzz_sha256_standalone(out32, tagged_input, tagged_input_len);
+
+    memset(tag_hash, 0, sizeof(tag_hash));
+    memset(tagged_input, 0, sizeof(tagged_input));
+}
+
 static void secp256k1_fuzz_silentpayments_label_tweak_reference(
     unsigned char out32[32], const unsigned char scan_key32[32], uint32_t m
 ) {
     static const unsigned char tag[] = "BIP0352/Label";
-    unsigned char tag_hash[32];
-    unsigned char tagged_input[64 + 32 + 4];
+    unsigned char m_serialized[4];
 
-    secp256k1_fuzz_sha256_standalone(tag_hash, tag, sizeof(tag) - 1);
-    memcpy(tagged_input, tag_hash, sizeof(tag_hash));
-    memcpy(tagged_input + sizeof(tag_hash), tag_hash, sizeof(tag_hash));
-    memcpy(tagged_input + 2 * sizeof(tag_hash), scan_key32, 32);
-    tagged_input[2 * sizeof(tag_hash) + 32] = (unsigned char)(m >> 24);
-    tagged_input[2 * sizeof(tag_hash) + 33] = (unsigned char)(m >> 16);
-    tagged_input[2 * sizeof(tag_hash) + 34] = (unsigned char)(m >> 8);
-    tagged_input[2 * sizeof(tag_hash) + 35] = (unsigned char)m;
-    secp256k1_fuzz_sha256_standalone(out32, tagged_input, sizeof(tagged_input));
-
-    memset(tag_hash, 0, sizeof(tag_hash));
-    memset(tagged_input, 0, sizeof(tagged_input));
+    m_serialized[0] = (unsigned char)(m >> 24);
+    m_serialized[1] = (unsigned char)(m >> 16);
+    m_serialized[2] = (unsigned char)(m >> 8);
+    m_serialized[3] = (unsigned char)m;
+    secp256k1_fuzz_silentpayments_tagged_hash_reference(out32, tag,
+        sizeof(tag) - 1, scan_key32, 32, m_serialized, sizeof(m_serialized));
+    memset(m_serialized, 0, sizeof(m_serialized));
 }
 
 static void secp256k1_fuzz_silentpayments_check_label_integer_maximum(
@@ -62,6 +77,34 @@ static void secp256k1_fuzz_silentpayments_check_label_integer_maximum(
     FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
         actual_ser, &label) == 1);
     FUZZ_CHECK(memcmp(actual_ser, expected_ser, sizeof(actual_ser)) == 0);
+}
+
+static void secp256k1_fuzz_silentpayments_check_input_hash_reference(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *outpoint,
+    const secp256k1_pubkey *input_pubkey,
+    const secp256k1_silentpayments_prevouts_summary *prevouts_summary
+) {
+    static const unsigned char trigger[] = "Silent Payments input hash reference\n";
+    static const unsigned char tag[] = "BIP0352/Inputs";
+    unsigned char input_pubkey_ser[33];
+    unsigned char expected_hash[32];
+    size_t input_pubkey_serlen = sizeof(input_pubkey_ser);
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, input_pubkey_ser,
+        &input_pubkey_serlen, input_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(input_pubkey_serlen == sizeof(input_pubkey_ser));
+    secp256k1_fuzz_silentpayments_tagged_hash_reference(expected_hash, tag,
+        sizeof(tag) - 1, outpoint, 36, input_pubkey_ser,
+        sizeof(input_pubkey_ser));
+    FUZZ_CHECK(memcmp(expected_hash, prevouts_summary->data + 69,
+        sizeof(expected_hash)) == 0);
 }
 
 typedef struct {
@@ -717,6 +760,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         NULL, 0, input_seckey_ptrs, 1) == 1);
     FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
         &prevouts_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
+    secp256k1_fuzz_silentpayments_check_input_hash_reference(ctx, input, size,
+        outpoint, &input_pubkey, &prevouts_summary);
 
     label_cache.self = &label_cache;
     label_cache.entries_used = 0;
