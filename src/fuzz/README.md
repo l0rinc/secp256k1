@@ -30311,3 +30311,25 @@ Bitcoin Core Tapscript path remains consensus-sensitive, but a severity
 escalation requires a clean-master acceptance/rejection discrepancy or a
 demonstrated memory/concurrency impact. `origin/master` and `l0rinc/master`
 remain `d2d04864`.
+
+## 2026-07-25 Corrected Copied-Corpus MemorySanitizer Workers
+
+The MSan worker replay was repeated after correcting the wrapper hygiene issue
+above. For every target, the tracked corpus was copied to a unique temporary
+directory before invoking
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0`; the
+artifact prefix and all generated corpus units were also inside that temporary
+directory. All 15 managers exited 0, every diagnostic scan was clean, and no
+repository path changed. The temporary copies generated 2,240 additional
+libFuzzer units in aggregate, including 181 for api_roundtrip, 209 for
+context, 137 for ecdh, 251 for ecmult_const, 9 for ecmult_multi, 143 for
+ellswift, 83 for field, 217 for group, 34 for hash, none for musig, 240 for
+recovery, 296 for scalar, 215 for schnorrsig, 158 for silentpayments, and 67
+for xonly_tweak; all were removed with their temporary directories.
+
+This corrected campaign is the authoritative multiworker MSan evidence for
+the current target set. It found no uninitialized-state, memory-safety,
+concurrency, assertion, OOM, timeout, invalid-block, or consensus failure.
+The prior 2,203-unit source-directory incident remains documented as a wrapper
+failure, not a fuzzer finding. No production mutation or severity change is
+claimed; `origin/master` and `l0rinc/master` remain `d2d04864`.
