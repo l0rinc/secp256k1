@@ -30464,3 +30464,36 @@ no High/Critical finding is claimed. No additional assertion or production
 fix is justified, and the exact mutations, seeds, restored control, and
 verifier command are recorded so a fork repair cannot hide a master-relative
 discrepancy.
+
+## 2026-07-25 Context Lifecycle and Callback Mutation Matrix
+
+Context lifecycle behavior was tested in a disposable worktree at
+`3bb6ab65` with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64
+arithmetic, recovery enabled, and `fuzz_context`. The restored target passed
+all 13 tracked context corpus files before and after the probes.
+
+Three narrow production mutations were rebuilt independently. First,
+`secp256k1_context_preallocated_clone` was changed to copy the context and
+then reinitialize the clone's hash backend. Second, the built-generator guard
+inside `secp256k1_context_randomize` was replaced with `if (0)`, so blinding
+could not invoke the configured SHA compression callback. Third, the
+`secp256k1_selftest_sha256(fn_compression)` check in
+`secp256k1_context_set_sha256_compression` was bypassed. Each mutant aborted
+with exit 134 on the first ordinary seed,
+`context/flag-matrix`. That seed already compares heap and preallocated clones
+across all context flag combinations, checks callback state and deterministic
+signatures, and exercises custom compression during randomization. The
+always-run invalid-compressor oracle also requires the illegal callback and
+zeroed output state, so the self-test mutant is independently causal.
+
+After restoration, the target was rebuilt and all 13 corpus files passed with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`; no sanitizer output or
+fuzzer assertion remained. These are oracle-validation results, not
+clean-master production bugs. Context cloning and randomization are API and
+side-channel-hardening behavior, not Bitcoin block-validity predicates; Core
+does not normally replace the SHA backend, and no key compromise, invalid
+block acceptance, consensus failure, or memory/concurrency impact was
+reproduced. Severity is therefore **Informational/Low oracle validation**,
+not High/Critical. No additional assertion or production fix is justified.
+The exact mutations, seed, restored control replay, and verifier command are
+recorded so a fork change cannot be mistaken for a master-relative finding.
