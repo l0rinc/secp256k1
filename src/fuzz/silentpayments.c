@@ -444,6 +444,117 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &mixed_found_output.output, &mixed_output) == 0);
     secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &mixed_found_output, spend_seckey);
 
+    /* Exercise the multi-input aggregation contract independently of the
+     * one-plain/one-taproot mixed-input case above. Two ordinary inputs must
+     * be equivalent to their scalar and public-key sum on both sides of the
+     * protocol. This is the form used when a transaction has multiple
+     * Silent Payments-eligible inputs. */
+    {
+        unsigned char second_input_seckey[32];
+        unsigned char summed_input_seckey[32];
+        const unsigned char *multi_input_seckey_ptrs[2];
+        const unsigned char *summed_input_seckey_ptrs[1];
+        const secp256k1_pubkey *multi_input_pubkey_ptrs[2];
+        const secp256k1_pubkey *summed_input_pubkey_ptrs[1];
+        secp256k1_pubkey second_input_pubkey;
+        secp256k1_pubkey summed_input_pubkey;
+        secp256k1_pubkey combined_input_pubkey;
+        secp256k1_silentpayments_recipient aggregate_recipient;
+        const secp256k1_silentpayments_recipient *aggregate_recipient_ptrs[1];
+        secp256k1_xonly_pubkey multi_input_output;
+        secp256k1_xonly_pubkey summed_input_output;
+        secp256k1_xonly_pubkey *multi_input_output_ptrs[1];
+        secp256k1_xonly_pubkey *summed_input_output_ptrs[1];
+        const secp256k1_xonly_pubkey *multi_input_tx_output_ptrs[1];
+        secp256k1_silentpayments_found_output multi_input_found_output;
+        secp256k1_silentpayments_found_output summed_input_found_output;
+        secp256k1_silentpayments_found_output *multi_input_found_ptrs[1];
+        secp256k1_silentpayments_found_output *summed_input_found_ptrs[1];
+        secp256k1_silentpayments_prevouts_summary multi_input_summary;
+        secp256k1_silentpayments_prevouts_summary summed_input_summary;
+        uint32_t multi_input_n_found;
+
+        secp256k1_fuzz_valid_seckey32(ctx, second_input_seckey, input, size, 243);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &second_input_pubkey,
+            second_input_seckey) == 1);
+        memcpy(summed_input_seckey, input_seckey, sizeof(summed_input_seckey));
+        if (secp256k1_ec_seckey_tweak_add(ctx, summed_input_seckey,
+            second_input_seckey) == 1) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &summed_input_pubkey,
+                summed_input_seckey) == 1);
+            multi_input_seckey_ptrs[0] = input_seckey;
+            multi_input_seckey_ptrs[1] = second_input_seckey;
+            summed_input_seckey_ptrs[0] = summed_input_seckey;
+            multi_input_pubkey_ptrs[0] = &input_pubkey;
+            multi_input_pubkey_ptrs[1] = &second_input_pubkey;
+            summed_input_pubkey_ptrs[0] = &summed_input_pubkey;
+            FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &combined_input_pubkey,
+                multi_input_pubkey_ptrs, 2) == 1);
+            FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined_input_pubkey,
+                &summed_input_pubkey) == 0);
+
+            aggregate_recipient.scan_pubkey = scan_pubkey;
+            aggregate_recipient.spend_pubkey = spend_pubkey;
+            aggregate_recipient.index = 0;
+            aggregate_recipient_ptrs[0] = &aggregate_recipient;
+            multi_input_output_ptrs[0] = &multi_input_output;
+            summed_input_output_ptrs[0] = &summed_input_output;
+            FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+                multi_input_output_ptrs, aggregate_recipient_ptrs, 1,
+                outpoint, NULL, 0, multi_input_seckey_ptrs, 2) == 1);
+            FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+                summed_input_output_ptrs, aggregate_recipient_ptrs, 1,
+                outpoint, NULL, 0, summed_input_seckey_ptrs, 1) == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &multi_input_output,
+                &summed_input_output) == 0);
+
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+                &multi_input_summary, outpoint, NULL, 0,
+                multi_input_pubkey_ptrs, 2) == 1);
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+                &summed_input_summary, outpoint, NULL, 0,
+                summed_input_pubkey_ptrs, 1) == 1);
+            FUZZ_CHECK(memcmp(multi_input_summary.data,
+                summed_input_summary.data, sizeof(multi_input_summary.data)) == 0);
+
+            multi_input_tx_output_ptrs[0] = &multi_input_output;
+            multi_input_found_ptrs[0] = &multi_input_found_output;
+            summed_input_found_ptrs[0] = &summed_input_found_output;
+            illegal_data->calls = 0;
+            multi_input_n_found = 0;
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+                multi_input_found_ptrs, &multi_input_n_found,
+                multi_input_tx_output_ptrs, 1, scan_seckey,
+                &multi_input_summary, &spend_pubkey, NULL, NULL) == 1);
+            FUZZ_CHECK(illegal_data->calls == 0);
+            FUZZ_CHECK(multi_input_n_found == 1);
+            FUZZ_CHECK(multi_input_found_output.found_with_label == 0);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+                &multi_input_found_output.output, &multi_input_output) == 0);
+            secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+                &multi_input_found_output, spend_seckey);
+
+            illegal_data->calls = 0;
+            multi_input_n_found = 0;
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+                summed_input_found_ptrs, &multi_input_n_found,
+                multi_input_tx_output_ptrs, 1, scan_seckey,
+                &summed_input_summary, &spend_pubkey, NULL, NULL) == 1);
+            FUZZ_CHECK(illegal_data->calls == 0);
+            FUZZ_CHECK(multi_input_n_found == 1);
+            FUZZ_CHECK(summed_input_found_output.found_with_label == 0);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+                &summed_input_found_output.output, &summed_input_output) == 0);
+            FUZZ_CHECK(memcmp(multi_input_found_output.tweak,
+                summed_input_found_output.tweak,
+                sizeof(multi_input_found_output.tweak)) == 0);
+            secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+                &summed_input_found_output, spend_seckey);
+        }
+        memset(second_input_seckey, 0, sizeof(second_input_seckey));
+        memset(summed_input_seckey, 0, sizeof(summed_input_seckey));
+    }
+
     /* Magic-preserving mutations exercise opaque state that ordinary API
      * round trips cannot produce. Keep the input hash intact in the point
      * mutation so the failure is specifically attributable to point loading. */

@@ -29604,3 +29604,66 @@ invalid block and the clean master has no such failure. The current
 ancestor and no fork change was cherry-picked or allowed to mask this
 boundary proof. A nonce without cryptographic meaning is not a Critical
 erasure finding.
+
+## 2026-07-25 Silent Payments Multi-Input Aggregation Oracle
+
+The fuzzer previously exercised one ordinary input, plus a separate
+one-plain/one-taproot mixed-input case. It did not check the multi-input
+contract used when a transaction has several Silent Payments-eligible
+ordinary inputs. The new roundtrip path derives a second valid secret key and
+checks the same payment through two independent representations:
+
+* the sender receives both secret keys, while the recipient sums both full
+  public keys;
+* the sender receives the scalar sum as one secret key, while the recipient
+  receives the equivalent summed public key.
+
+It requires the public-key combination, generated output, serialized
+prevouts summary, scan result, returned tweak, and spend-key reconstruction to
+agree. The comparison is metamorphic: it does not use the sender's output as
+the only expected value, and it checks both sides of the sender/recipient
+input-aggregation boundary.
+
+The gap is proven against clean parent `4353a461` with two disposable
+production mutations in `src/modules/silentpayments/main_impl.h`. The two
+input-aggregation loops being mutated are byte-identical to clean
+`origin/master d2d04864`; the parent contains only the earlier unrelated
+opaque-state validation repair in this module:
+
+```
+for (i = 0; i < n_seckeys; i++)
+    -> for (i = 0; i < (n_seckeys > 1 ? 1 : n_seckeys); i++)
+
+for (i = 0; i < n_pubkeys; i++)
+    -> for (i = 0; i < (n_pubkeys > 1 ? 1 : n_pubkeys); i++)
+```
+
+The first mutation drops every ordinary sender input after the first. The
+second drops every ordinary prevout public key after the first. The
+pre-change fuzzer at parent `4353a461` passed all four existing inputs
+(`roundtrip`, `mixed-inputs`, `opaque-label-state`, and
+`opaque-prevouts-state`) under each mutation with exit 0. The new fuzzer
+aborted on `roundtrip` with exit 134 under each mutation. Both production
+mutations were restored before the clean replay; this is not a claim that
+unmodified master currently drops inputs.
+
+On the clean tree, forced-int64 Clang 22.1.7 ASan/UBSan replay passed all four
+corpus inputs. A private two-worker/two-job run with
+`-max_total_time=15 -timeout=60 -rss_limit_mb=4096` completed 82 executions
+in each job, both with exit 0 and no sanitizer diagnostic, assertion, timeout,
+OOM, or artifact. The direct forced-int64 deterministic `tests --log=1`
+binary passed all tests in 96.201 seconds. The native GCC 16.1.0 fuzzer
+replay also passed all four corpus inputs.
+
+This is **Informational/Low oracle hardening**, not a clean-master production
+finding. Bitcoin Core can reach this wallet-side path when constructing or
+scanning a transaction with multiple eligible inputs, so a real dropped-input
+regression could cause wrong Silent Payments output derivation or make wallet
+funds unfindable; that hypothetical production failure would be materially
+more serious than the oracle commit itself. The path is not a Bitcoin Core
+block-validity predicate and cannot make an invalid block acceptable, so no
+consensus High/Critical finding is claimed. Existing BIP352 vectors exercise
+some multi-input cases, but the fuzzer had no metamorphic aggregation check.
+The current `l0rinc/master` equals `origin/master`; no fork fix or later
+minor repair masked this master-relative mutation proof. A nonce without
+cryptographic meaning is not a Critical erasure finding.
