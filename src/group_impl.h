@@ -955,7 +955,7 @@ static int secp256k1_ge_x_on_curve_var(const secp256k1_fe *x) {
     return secp256k1_fe_is_square_var(&c);
 }
 
-static int secp256k1_ge_x_frac_on_curve_var(const secp256k1_fe *xn, const secp256k1_fe *xd) {
+static int secp256k1_ge_x_frac_on_curve_xd2_var(const secp256k1_fe *xn, const secp256k1_fe *xd, const secp256k1_fe *xd2) {
     /* We want to determine whether (xn/xd) is on the curve.
      *
      * (xn/xd)^3 + 7 is square <=> xd*xn^3 + 7*xd^4 is square (multiplying by xd^4, a square).
@@ -966,12 +966,17 @@ static int secp256k1_ge_x_frac_on_curve_var(const secp256k1_fe *xn, const secp25
      secp256k1_fe_mul(&r, xd, xn); /* r = xd*xn */
      secp256k1_fe_sqr(&t, xn); /* t = xn^2 */
      secp256k1_fe_mul(&r, &r, &t); /* r = xd*xn^3 */
-     secp256k1_fe_sqr(&t, xd); /* t = xd^2 */
-     secp256k1_fe_sqr(&t, &t); /* t = xd^4 */
+    secp256k1_fe_sqr(&t, xd2); /* t = xd^4 */
      VERIFY_CHECK(SECP256K1_B <= 31);
      secp256k1_fe_mul_int(&t, SECP256K1_B); /* t = 7*xd^4 */
      secp256k1_fe_add(&r, &t); /* r = xd*xn^3 + 7*xd^4 */
-     return secp256k1_fe_is_square_var(&r);
+    return secp256k1_fe_is_square_var(&r);
+}
+
+static int secp256k1_ge_x_frac_on_curve_var(const secp256k1_fe *xn, const secp256k1_fe *xd) {
+    secp256k1_fe xd2;
+    secp256k1_fe_sqr(&xd2, xd); /* xd2 = xd^2 */
+    return secp256k1_ge_x_frac_on_curve_xd2_var(xn, xd, &xd2);
 }
 
 static void secp256k1_ge_to_bytes(unsigned char *buf, const secp256k1_ge *a) {
