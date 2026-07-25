@@ -31603,3 +31603,113 @@ loading, or SHA-256 length checks must state whether it preserves or masks each
 of these master-relative reproductions, include the exact corpus/helper and
 Core reachability, and rerun the unmodified-master baseline before claiming a
 new severity.
+
+## 2026-07-26 Complete clean-master API round-trip differential
+
+This pass revalidated the complete current `fuzz_api_roundtrip` corpus against
+unmodified `origin/master` `d2d04864ef9b056151603a3ced7980958b058028`. The
+`l0rinc/master` ref was the same commit, so there was no fork-side commit to
+cherry-pick. A disposable worktree contained the exact clean production tree;
+only the current audit fuzzer sources, fuzz CMake wiring, API corpus, and the
+baseline-only `SECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL` compatibility
+definition were overlaid. The production `src/secp256k1.c` hash in that
+worktree was
+`7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb`.
+
+The corpus had 63 files and 2933 bytes, with filename manifest SHA-256
+`06df09d6853d275cb1b6ce8a3379dbf13f6bb42b2c4cf58fdb257d0ed7739fbf`. Clang
+22.1.7 ASan/UBSan binaries were built with assembly disabled, all optional
+public modules enabled, and both native 5x52 and forced-int64/10x26 arithmetic.
+Every seed was run independently with:
+
+    -runs=1 -handle_abrt=0 -timeout=60 -rss_limit_mb=0 -print_funcs=0
+
+### Unmodified-master first-stop order
+
+The ordinary `ascii-near-der` seed was used to expose ordering. Each stop was
+reproduced on clean master before it was isolated; later stops were not counted
+as new bugs merely because an earlier known failure had been bypassed.
+
+1. `privkey-der-export-failure` stopped at the documented 279-byte failed
+   export region (`36a009f`). This is **Low/Nice-to-have for Bitcoin Core**:
+   stale wallet-side DER output after a zero return, with no block, witness, or
+   peer-validation path.
+2. Direct RFC6979 callback calls with NULL output, message, and key inputs
+   crashed or dereferenced NULL before returning (`926dd6b4`). This is
+   **Medium for an arbitrary direct library caller**, but **Low/Nice-to-have
+   for Core** because normal signing supplies validated inputs and a library-
+   owned output buffer. Clearing this public nonce buffer is fail-closed API
+   hygiene; the nonce has no standalone cryptographic meaning and this is not
+   a Critical erasure finding.
+3. The direct RFC6979 callback with `counter == UINT_MAX` entered the unbounded
+   retry loop (`cd96b549`). This is **Medium direct-API denial of service** and
+   **Low/edge-case for Core**, whose normal signing path does not forward an
+   attacker-controlled retry counter. It is not nonce reuse, forgery, or key
+   compromise.
+4. Too-small public-key serialization and variable DER output failures left
+   caller-owned lengths or bytes live (`fc20c290`). These are **Low to Medium
+   fail-open API state**. Core checks the return value, and malformed block or
+   witness bytes do not reach these wallet/direct-output misuse cases.
+5. NULL ECDSA parser inputs left opaque signatures live (`c02dc5e`), and NULL
+   tweaks returned before invalidating in/out keys (`5af572cb`). Both remain
+   **Low to Medium API-state findings**, not memory corruption or consensus
+   failures; Core parses fresh serialized objects and does not pass these NULL
+   states from block validation.
+6. A zeroed opaque public key was allowed through the clean-master combine load
+   boundary (`f106aaa5`). This is **Medium local opaque-state integrity** only:
+   a caller must directly construct or corrupt the in-memory representation.
+   Bitcoin Core's serialized-key adapters validate new objects, so no invalid
+   block or witness trigger was demonstrated.
+7. Explicit RFC6979/default callback aliases bypassed the caller's custom SHA
+   backend (`3b4e5a60`). The resulting signatures remain SHA-equivalent, so
+   this is **Low API dispatch/performance correctness**, not a cryptographic
+   result or consensus issue.
+8. Invalid opaque ECDSA signature scalars reached an internal overflow check
+   (`00bb4aca`). This is **Medium local API/state-boundary correctness** only;
+   Core's ECDSA route parses wire signatures rather than accepting this opaque
+   layout from a block.
+9. ECDSA NULL-signature signing/compact-output cleanup and related fixed-output
+   paths retained stale state (`27cc01dc`). This is **Low to Medium fail-open
+   signing state**. A stale signature can matter if a caller ignores failure,
+   but no invalid-block acceptance, forgery, disclosure, or nonce-reuse path was
+   shown.
+10. The strict DER `SIZE_MAX` length witness `{0x00}` triggered pointer
+    overflow before rejection (`cd8c9f1`). This is **Low direct-API parser
+    robustness** because the public contract requires an array containing the
+    claimed input length; it is not a remote DER memory-corruption primitive.
+
+The exact masks were disposable harness-only `if (0)` gates, in this order:
+private-key DER failed-output check; the three direct RFC6979 NULL-input checks
+and the maximum counter check; short public-key serialization; NULL parser
+inputs; NULL tweaks; invalid combine state; explicit ECDSA nonce-alias routing;
+variable DER output; malformed opaque ECDSA signature state; the shared DER
+short-buffer assertion; ECDSA NULL signing inputs; the `SIZE_MAX` DER witness;
+and the gated compact NULL-output helper. No production source was mutated,
+and no gate was copied into the audit branch.
+
+After those already-recorded master failures were isolated, all 63 seeds exited
+0 independently on both native and forced-int64 ASan/UBSan builds. A corrected
+private-corpus campaign used:
+
+    -fork=2 -jobs=2 -max_total_time=15 -timeout=60
+    -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0
+    -ignore_crashes=0 -handle_abrt=0 -verbosity=0
+
+Both jobs on both arithmetic backends exited 0 with zero OOM, timeout, or crash
+counters. The two artifact directories were empty, and a final process check
+found no fuzz or sanitizer process. This is a complete negative differential
+after the known stops, not evidence that clean master was safe before the
+documented fixes.
+
+The normal unit suite did not serve as this proof because these probes combine
+direct exported callback misuse, sentinel-filled failure outputs, corrupted
+opaque objects, and the exact parser pointer-boundary witness. Bitcoin Core's
+consensus paths use validated serialized public keys/signatures and fixed-size
+message inputs; no invalid block or witness was accepted, no consensus
+divergence or peer-triggered memory/concurrency failure was reproduced, and no
+finding from this pass is High/Critical. Any future change touching these API
+boundaries, or any cherry-pick that can mask one of them, must amend its commit
+message with the clean-master first stop, exact corpus/helper or mutation,
+preconditions and postconditions, Core caller and input origin, severity on
+unmodified master, test gap, verifier commands, and whether the change
+preserves, changes, or hides the original reproduction.
