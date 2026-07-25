@@ -29549,3 +29549,58 @@ Critical. The current `l0rinc/master` is identical to `origin/master`, and
 the label-batch fix is already an ancestor, so no fork-side behavior was
 cherry-picked or allowed to mask this proof. A nonce without cryptographic
 meaning is not a Critical erasure finding.
+
+## 2026-07-25 Silent Payments Label-Batch Boundary Oracle
+
+The scanner batches eight transaction outputs when checking label candidates,
+then must flush a partial batch before accepting a later direct x-only match.
+The fuzzer previously used at most two outputs and did not cross a full batch
+boundary. The new scenario uses ten output records and pointers as required by
+the API contract: eight nonmatching decoys, a labeled `k = 0` output at index
+8, and an unlabeled direct `k = 0` output at index 9. It requires the earlier
+labeled result, label metadata, and spend-key reconstruction to win. The
+existing l0rinc direct-match fix is therefore exercised at a later partial
+batch boundary rather than rediscovered as a clean-master bug. The same ten
+outputs are then reordered so the label occupies index 7, the last candidate
+of the full batch, with a decoy at index 8 and the direct output at index 9.
+This checks both the partial-batch and full-batch ordering edges.
+
+The oracle gap is proven by a disposable production mutation in
+`src/modules/silentpayments/main_impl.h`:
+
+```
+label_batch_idx == LABEL_BATCH_SIZE
+    -> label_batch_idx > LABEL_BATCH_SIZE
+```
+
+With the mutation, the eight decoys are not flushed; the ninth candidate
+causes the fixed 16-entry candidate array to be indexed at 17. The forced-
+int64 Clang 22.1.7 ASan/UBSan replay of the new `roundtrip` scenario reported
+both the UBSan out-of-bounds index and an ASan stack-buffer-overflow (mutation
+exit 1). The pre-change fuzzer at parent `97eea8f2` passed all four existing
+corpus inputs under the same mutation with exit 0. The production condition
+was restored before the clean replay. A second scoped mutation changes only
+the full-batch argument from `label_batch_idx` to
+`label_batch_idx - (label_batch_idx == LABEL_BATCH_SIZE)`. It leaves partial
+batches unchanged, but drops the label in slot 7; the new `roundtrip` oracle
+aborts with exit 134 while the same pre-change four-seed control exits 0. An
+initial one-slot output-array experiment was discarded after ASan correctly
+identified that it violated the documented requirement that `found_outputs`
+have the same length as `tx_outputs`; the final oracle allocates all ten
+records and pointers.
+
+The clean forced-int64 Clang 22.1.7 ASan/UBSan replay passed all four fixed
+inputs. A private two-worker/two-job run with
+`-max_total_time=15 -timeout=60 -rss_limit_mb=4096` exited 0 after 101 and
+104 executions, with no sanitizer report, assertion, timeout, OOM, or
+artifact. The deterministic tests binary passed in 96.226 seconds, and the
+native GCC 16.1.0 forced-int64 fuzzer replay passed all four seeds.
+
+This is **Informational/Low oracle hardening**, not a production finding on
+master. A real batching regression would be wallet-side incorrect label
+association or a scanner DoS, but it would not make Bitcoin Core accept an
+invalid block and the clean master has no such failure. The current
+`l0rinc/master` equals `origin/master`; its label-batch repair is already an
+ancestor and no fork change was cherry-picked or allowed to mask this
+boundary proof. A nonce without cryptographic meaning is not a Critical
+erasure finding.

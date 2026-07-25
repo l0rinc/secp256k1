@@ -248,6 +248,98 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         }
     }
 
+    /* Exercise a full label batch followed by a partial batch. Eight decoys
+     * force one flush; the labeled k=0 output then sits at index 8 and the
+     * unlabeled direct k=0 output at index 9. The partial batch must be
+     * checked before the direct match is accepted. A second ordering puts the
+     * label in slot 7, the last candidate of the full batch. */
+    if (have_label) {
+        secp256k1_silentpayments_recipient batch_recipient;
+        const secp256k1_silentpayments_recipient *batch_recipient_ptrs[1];
+        secp256k1_xonly_pubkey batch_labeled_output;
+        secp256k1_xonly_pubkey *batch_output_ptrs[1];
+        secp256k1_xonly_pubkey batch_decoys[8];
+        const secp256k1_xonly_pubkey *batch_tx_outputs[10];
+        secp256k1_silentpayments_found_output batch_found_outputs[10];
+        secp256k1_silentpayments_found_output *batch_found_output_ptrs[10];
+        unsigned char decoy_seckey[32];
+        unsigned char batch_label_ser[33];
+        secp256k1_pubkey decoy_pubkey;
+        size_t batch_i;
+
+        batch_recipient.scan_pubkey = scan_pubkey;
+        batch_recipient.spend_pubkey = labeled_spend_pubkey;
+        batch_recipient.index = 0;
+        batch_recipient_ptrs[0] = &batch_recipient;
+        batch_output_ptrs[0] = &batch_labeled_output;
+        FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+            batch_output_ptrs, batch_recipient_ptrs, 1, outpoint,
+            NULL, 0, input_seckey_ptrs, 1) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &batch_labeled_output,
+            &generated_outputs[0]) != 0);
+        for (batch_i = 0; batch_i < 8; batch_i++) {
+            secp256k1_fuzz_valid_seckey32(ctx, decoy_seckey, input, size,
+                251 + (unsigned int)batch_i);
+            FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &decoy_pubkey,
+                decoy_seckey) == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx,
+                &batch_decoys[batch_i], NULL, &decoy_pubkey) == 1);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &batch_decoys[batch_i],
+                &batch_labeled_output) != 0);
+            FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &batch_decoys[batch_i],
+                &generated_outputs[0]) != 0);
+            batch_tx_outputs[batch_i] = &batch_decoys[batch_i];
+        }
+        batch_tx_outputs[8] = &batch_labeled_output;
+        batch_tx_outputs[9] = &generated_outputs[0];
+        for (batch_i = 0; batch_i < 10; batch_i++) {
+            batch_found_output_ptrs[batch_i] = &batch_found_outputs[batch_i];
+        }
+        illegal_data->calls = 0;
+        n_found = 0;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+            batch_found_output_ptrs, &n_found, batch_tx_outputs, 10,
+            scan_seckey, &prevouts_summary, &spend_pubkey,
+            secp256k1_fuzz_silentpayments_label_lookup, &label_cache) == 1);
+        FUZZ_CHECK(illegal_data->calls == 0);
+        FUZZ_CHECK(n_found == 1);
+        FUZZ_CHECK(batch_found_outputs[0].found_with_label == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+            &batch_found_outputs[0].output, &batch_labeled_output) == 0);
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+            batch_label_ser, &batch_found_outputs[0].label) == 1);
+        FUZZ_CHECK(memcmp(batch_label_ser, label_ser,
+            sizeof(batch_label_ser)) == 0);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+            &batch_found_outputs[0], spend_seckey);
+
+        /* Make the label the last entry in a full batch. This must not be
+         * confused with the direct output at index 9. */
+        for (batch_i = 0; batch_i < 7; batch_i++) {
+            batch_tx_outputs[batch_i] = &batch_decoys[batch_i];
+        }
+        batch_tx_outputs[7] = &batch_labeled_output;
+        batch_tx_outputs[8] = &batch_decoys[7];
+        batch_tx_outputs[9] = &generated_outputs[0];
+        illegal_data->calls = 0;
+        n_found = 0;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+            batch_found_output_ptrs, &n_found, batch_tx_outputs, 10,
+            scan_seckey, &prevouts_summary, &spend_pubkey,
+            secp256k1_fuzz_silentpayments_label_lookup, &label_cache) == 1);
+        FUZZ_CHECK(illegal_data->calls == 0);
+        FUZZ_CHECK(n_found == 1);
+        FUZZ_CHECK(batch_found_outputs[0].found_with_label == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+            &batch_found_outputs[0].output, &batch_labeled_output) == 0);
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+            batch_label_ser, &batch_found_outputs[0].label) == 1);
+        FUZZ_CHECK(memcmp(batch_label_ser, label_ser,
+            sizeof(batch_label_ser)) == 0);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+            &batch_found_outputs[0], spend_seckey);
+    }
+
     /* Exercise the sender's original-index contract across scan-key groups.
      * Deliberately put the lexicographically larger scan key first so the
      * sender must reorder its pointer array and still write outputs to the
