@@ -30620,3 +30620,48 @@ severity is therefore not claimed. `origin/master` and `l0rinc/master` remain
 nonce or nonce-erasure issue is implicated. The exact mutations, corpus
 conditions, exit codes, restored controls, and worker command are recorded so
 future cherry-picks cannot be mistaken for a finding on unmodified master.
+
+## 2026-07-25 Taproot X-Only Tweak Mutation Matrix
+
+The x-only Taproot target was tested in a disposable worktree at `1258f4c7`
+with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64 arithmetic,
+recovery enabled, and `fuzz_xonly_tweak`. The restored target passed all 20
+tracked inputs, including the Core-shaped control-block, CompactSize, maximum
+Merkle-depth, independent parse, parity-state, overlap, and zero/order-tweak
+seeds.
+
+Three production mutations were rebuilt independently and restored before the
+next probe. First, `secp256k1_xonly_pubkey_tweak_add_check` changed the final
+parity relation from
+`secp256k1_fe_is_odd(&pk.y) == tweaked_pk_parity` to `!=`. The mutant aborted
+with exit 134 on `core-taproot-control-composition`, `affine-reference`, and
+`zero-and-order-tweaks`. Second, x-only parsing bypassed the
+`secp256k1_ge_set_xo_var` failure return with `if (0)`. The mutant aborted
+with exit 134 on `independent-parse-reference` and
+`core-taproot-control-composition`, which exercise invalid field encodings and
+the resulting output contract. Third, `secp256k1_extrakeys_ge_even_y` was
+changed from `if (secp256k1_fe_is_odd(&r->y))` to `if (0)`. The mutant aborted
+with exit 134 on `keypair-create-vectors`, `opaque-xonly-parity-state`, and
+`core-taproot-control-composition` because the parity and x-only projection
+postconditions no longer agree.
+
+After restoration, all 20 corpus inputs passed with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`. A copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=180 -rss_limit_mb=0` replay
+completed with 24 temporary corpus files (20 tracked plus four generated
+units), zero artifacts, and no sanitizer, timeout, OOM, or assertion
+diagnostic. The disposable worktree and generated corpus were removed.
+
+This is **Informational oracle validation**, not a clean-master bug. The Core
+consensus path is direct: a Taproot witness control block reaches
+`VerifyTaprootCommitment`, `XOnlyPubKey::CheckTapTweak`, x-only parsing, and
+`secp256k1_xonly_pubkey_tweak_add_check`. Therefore a discrepancy on
+unmodified master that accepts an invalid witness or block would be High or
+Critical, but none was reproduced. The current implementation showed no
+invalid-block acceptance, consensus divergence, key compromise, or
+master-relative memory/concurrency impact. The existing extrakeys tests cover
+fixed tweak/parity vectors; this pass does not claim they missed these
+mutants, only that the independent affine and Core-shaped fuzzer oracles kill
+them across broader state and boundary combinations. No production fix or
+deterministic regression is justified, and no cryptographic nonce-erasure
+issue is involved. `origin/master` and `l0rinc/master` remain `d2d04864`.
