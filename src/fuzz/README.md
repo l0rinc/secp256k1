@@ -30714,3 +30714,49 @@ independent point/hash, scalar-state, callback-routing, and output-sentinel
 proof without claiming a deterministic-test gap. No cryptographic nonce or
 nonce-erasure issue is involved. `origin/master` and `l0rinc/master` remain
 `d2d04864`.
+
+## 2026-07-25 BIP324 EllSwift Mutation Matrix
+
+The ElligatorSwift target was tested in a disposable worktree at `2566d22f`
+with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64 arithmetic,
+recovery enabled, and `fuzz_ellswift`. The restored target passed all 19
+tracked inputs, including the independent BIP324 transcript, raw peer-wire,
+party-selector, modulo-alias, invalid-secret, static-context, and cleanup
+seeds.
+
+Four production mutations were rebuilt independently and restored before the
+next probe. First, the XDH party selection changed from
+`theirs64 = party ? ell_a64 : ell_b64` to
+`theirs64 = party ? ell_b64 : ell_a64`. The mutant aborted with exit 134 on
+`party-boolean-semantics`, `bip324-independent-reference`, and
+`core-bip324-arbitrary-peer-wire`. Second, the XDH scalar result changed from
+`return !!ret & !overflow` to `return !!ret | !overflow`; both
+`xdh-overflow-plus-one` and `xdh-builtins-and-cleanup` aborted with exit 134.
+Third, the BIP324 transcript serialized `ell_b64` with length 63 instead of
+64; `bip324-independent-reference`, `core-bip324-arbitrary-peer-wire`, and
+`bip324-reference` aborted with exit 134. Fourth, fixed-size built-in output
+cleanup changed from `overflow || !ret` to `overflow && !ret`; the invalid
+secret/cleanup seeds aborted with exit 134 after observing stale output.
+
+After restoration, all 19 corpus inputs passed with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`. A copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=180 -rss_limit_mb=0` replay
+completed with 93 temporary corpus files (19 tracked plus 74 generated
+units), zero artifacts, and no sanitizer, timeout, OOM, or assertion
+diagnostic. The disposable worktree and generated corpus were removed.
+
+This is **Informational oracle validation**, not a clean-master production
+finding. Bitcoin Core's direct path is
+`BIP324Cipher::Initialize -> CKey::ComputeBIP324ECDHSecret ->
+secp256k1_ellswift_xdh`; the remote 64-byte EllSwift value is peer input and
+feeds the BIP324 transcript and transport keys. A clean-master result that a
+remote peer could turn into a persistent handshake DoS, unauthenticated key
+agreement, or transport-integrity failure would be rated from that concrete
+impact and could be High/security-significant, but no such failure, crash,
+memory/concurrency issue, or key compromise was reproduced. This path is not
+block or witness validation, so no consensus-Critical claim is appropriate.
+Existing EllSwift tests cover fixed vectors and basic XDH; the independent
+raw-peer transcript and exact caller mapping extend those checks without
+claiming that the deterministic suite missed these mutants. No cryptographic
+nonce or nonce-erasure issue is involved. `origin/master` and `l0rinc/master`
+remain `d2d04864`.
