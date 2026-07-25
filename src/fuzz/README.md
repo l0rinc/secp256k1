@@ -30665,3 +30665,52 @@ mutants, only that the independent affine and Core-shaped fuzzer oracles kill
 them across broader state and boundary combinations. No production fix or
 deterministic regression is justified, and no cryptographic nonce-erasure
 issue is involved. `origin/master` and `l0rinc/master` remain `d2d04864`.
+
+## 2026-07-25 Standalone ECDH Mutation Matrix
+
+The standalone ECDH target was tested in a disposable worktree at `0b2b9022`
+with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64 arithmetic,
+recovery enabled, and `fuzz_ecdh`. The restored target passed all nine tracked
+inputs: `builtin-null-inputs`, `default-hash-independent-reference`,
+`explicit-builtin-invalid-scalar`, `generator-2g`, `generator-minus-g`,
+`invalid-scalar-callback-point`, `odd-y-default-hash`,
+`static-context-ecdh-barrier`, and `symmetric-secrets`.
+
+Four production mutations were rebuilt independently and restored before the
+next probe. First, the built-in compressed-point hash prefix changed from
+`(y32[31] & 0x01) | 0x02` to `(y32[31] & 0x01) | 0x03`; both
+`default-hash-independent-reference` and `odd-y-default-hash` aborted with
+exit 134. Second, the final scalar-validity result changed from
+`return !!ret & !overflow` to `return !!ret | !overflow`; the
+`explicit-builtin-invalid-scalar`, `invalid-scalar-callback-point`, and
+`generator-minus-g` seeds aborted with exit 134. Third, fixed-size built-in
+output cleanup changed from `overflow || !ret` to `overflow && !ret`; the
+explicit-invalid-scalar and callback-point seeds aborted with exit 134 after
+observing stale sentinel output. Fourth, built-in hashing was routed through
+`secp256k1_context_static` instead of the caller's `ctx`; both
+`static-context-ecdh-barrier` and `default-hash-independent-reference`
+aborted with exit 134 because the configured compression callback was bypassed
+or the independent result diverged.
+
+After restoration, all nine corpus inputs passed with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`. A copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=180 -rss_limit_mb=0` replay
+completed with 118 temporary corpus files (nine tracked plus 109 generated
+units), zero artifacts, and no sanitizer, timeout, OOM, or assertion
+diagnostic. The disposable worktree and generated corpus were removed.
+
+These are **Informational/Low oracle-validation results**, not clean-master
+production findings. The standalone production path is
+`secp256k1_ecdh -> secp256k1_ecmult_const`; Bitcoin Core's BIP324 path instead
+uses `BIP324Cipher::Initialize -> CKey::ComputeBIP324ECDHSecret ->
+secp256k1_ellswift_xdh`. Therefore a standalone ECDH mismatch cannot be
+invoked by an invalid block or witness and is not High/Critical on this
+evidence. The existing master-relative malformed-opaque/callback ledger stays
+**Medium only** where a direct caller can supply that state and survive the
+illegal callback; no clean-master consensus failure, key compromise, or
+master-relative memory/concurrency impact was reproduced. Existing ECDH
+unit/exhaustive vectors cover basic fixed behavior; this matrix adds
+independent point/hash, scalar-state, callback-routing, and output-sentinel
+proof without claiming a deterministic-test gap. No cryptographic nonce or
+nonce-erasure issue is involved. `origin/master` and `l0rinc/master` remain
+`d2d04864`.
