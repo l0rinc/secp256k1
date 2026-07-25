@@ -31713,3 +31713,154 @@ message with the clean-master first stop, exact corpus/helper or mutation,
 preconditions and postconditions, Core caller and input origin, severity on
 unmodified master, test gap, verifier commands, and whether the change
 preserves, changes, or hides the original reproduction.
+
+## 2026-07-26 Complete clean-master context differential
+
+This pass revalidated the complete current `fuzz_context` corpus against
+unmodified `origin/master` `d2d04864ef9b056151603a3ced7980958b058028`.
+`l0rinc/master` was the same commit, so no fork commit was cherry-picked for
+this target. The disposable baseline tree used the exact master production
+files and overlaid only the current fuzz sources, fuzz CMake wiring, context
+corpus, and the baseline-only
+`-DSECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL` compatibility macro.
+The macro was supplied only to compile the newer harness; it did not modify
+the master library.
+
+The clean production hashes were:
+
+    src/secp256k1.c  7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb
+    src/hash_impl.h 70247571d95e3c8824d6ca2e90956f6941c196a42d860083040690aaf9ccf6cc
+
+The repaired audit hashes were:
+
+    src/secp256k1.c  25830160566736d3c9ee58a52df32031146643179599680696f452be070a43b2
+    src/hash_impl.h 9040d926e994f0b088accdb62ac31e41e00e847c8da91e241bd5de4c5e9fdcc6
+
+The harness `src/fuzz/context.c` is SHA-256
+`2a6600270e4b1d3a8b27d42ff8f3c440e3d497a0f27468771334b7bb4fd609e9`.
+The 13-file corpus is 722 bytes; its sorted filename manifest SHA-256 is
+`4a7f30fdc903bcc0f5624e3b23183f6b8117fdfd7088223c1a826dbce814eea1`.
+Both native and forced-int64 builds used Clang 22.1.7, ASan/UBSan, assembly
+disabled, all optional modules enabled, and
+`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON` so invalid-context callback
+contracts were observable. The second build used
+`USE_FORCE_WIDEMUL_INT64`.
+
+### Clean-master first stops and causal masks
+
+The callback-off control established that every corpus input first reached the
+unrepresentable tagged-SHA length helper: clean master read beyond the finite
+fuzzer input while handling `context/sha256-impossible-lengths`, producing an
+ASan heap-buffer-overflow in `secp256k1_tagged_sha256`. The callback-on control
+established the other ordering boundary: every input first reached
+`src/secp256k1.c:130`, `VERIFY_CHECK(prealloc != NULL)`, when the harness
+called `secp256k1_context_preallocated_create(NULL, SECP256K1_CONTEXT_NONE)`.
+Those are configuration-dependent first stops, so they must not be conflated
+or counted as failures of every seed's intended state machine.
+
+The following disposable harness-only gates exposed the remaining master
+conditions. No production source, corpus byte, or library result was changed
+by a gate, and a diagnostic-only `FUZZ_CHECK` line-number wrapper was also
+kept outside the audit branch.
+
+1. `context/sha256-impossible-lengths` exercised
+   `taglen == SECP256K1_SHA256_MAX_SIZE` and
+   `msglen == SECP256K1_SHA256_MAX_SIZE - 64` with finite input pointers.
+   On clean master, both native and forced-int64 ASan/UBSan builds reported
+   the out-of-bounds read before the public API could reject the lengths.
+   This is **Medium direct-library memory-safety/availability** on master,
+   but **Low practical Core reachability**: Bitcoin Core does not forward an
+   attacker-controlled pointer/length pair into this tagged-hash API from
+   block or witness validation. It is not invalid-block acceptance, a
+   witness forgery, or a Critical cryptographic issue.
+
+2. After the length helper was gated, `context/flag-matrix` stopped at
+   `src/fuzz/context.c:220` because clean master returned 0 for a NULL tag
+   while leaving a prefilled 32-byte tagged-SHA output unchanged. The same
+   condition was reproduced on both arithmetic backends. This is the
+   `27cc01dc` fixed-output contract already covered by the API differential,
+   not a second bug count. Severity is **Low to Medium API fail-closed
+   hygiene**, and **Low for Core**: normal callers use a valid constant tag
+   and message and check the return; no block or witness path was found.
+
+3. With external default callbacks enabled, the NULL preallocation helper
+   then reproduced clean master `src/secp256k1.c:130` on both backends. The
+   expected contract is one illegal-callback invocation and a NULL return;
+   clean master aborts in VERIFY builds and can write through NULL in a
+   non-VERIFY build. This is **Low direct API availability/contract** on
+   master, not a remotely supplied Core or consensus input. The existing
+   `4d602a66` production repair and its context tests are the proof of the
+   corrected behavior.
+
+4. After the first three conditions were gated, only
+   `context/static-context-lifecycle` stopped, at
+   `src/fuzz/context.c:541`: clean master returned 0 from ECDSA signing with
+   `secp256k1_context_static` but left the prefilled opaque signature live.
+   This is the static-context manifestation of the fixed-size signing
+   cleanup in `27cc01dc`, not an independent severity claim. It remains
+   **Low to Medium fail-open API state**, and **Low for Core** because Core's
+   signing paths do not use the static verification context for this invalid
+   signing operation. No forgery, disclosure, nonce reuse, invalid block, or
+   witness acceptance was shown.
+
+After these four already-proven master conditions were isolated, all 13
+inputs passed independently on both clean-master sanitizer binaries. This is
+negative evidence after explicit causal masks, not evidence that unmodified
+master was safe before the recorded fixes. The other 12 inputs had no
+additional clean-master production stop.
+
+### Repaired control and verification
+
+The repaired branch, with all production fixes restored and no disposable
+gates, passed all 13 inputs on native and forced-int64 ASan/UBSan builds using
+each input independently with:
+
+    -runs=1 -handle_abrt=0 -timeout=60 -rss_limit_mb=0 -print_funcs=0
+
+Both corrected two-worker/two-job campaigns used copied corpora and:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=60
+    -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0
+    -ignore_crashes=0 -handle_abrt=0 -verbosity=0
+
+Native and forced-int64 managers exited 0. Every worker reported
+`oom/timeout/crash: 0/0/0`; no ASan, UBSan, assertion, timeout, OOM, or crash
+artifact was produced. The copied corpora and artifact directories were
+removed after the run. The deterministic verifier slices also passed on both
+backends:
+
+    bin/tests -i=1 -t=all_proper_context_tests \
+      -t=all_static_context_tests -t=deprecated_context_flags_test \
+      -t=hash -t=ec -t=ecdsa -t=schnorrsig
+    bin/noverify_tests -i=1 -t=all_proper_context_tests \
+      -t=all_static_context_tests -t=deprecated_context_flags_test \
+      -t=hash -t=ec -t=ecdsa -t=schnorrsig
+
+The existing `f247661c`, `27cc01dc`, and `4d602a66` deterministic tests are
+the strongest production regression proof for the three production fixes.
+This documentation commit adds no redundant production assertion or new fix.
+
+### Core severity and future cherry-picks
+
+Bitcoin Core's consensus callers validate serialized keys, signatures, and
+witness data before reaching the ordinary public secp256k1 APIs. The context
+cases above require a direct invalid pointer/length pair, an invalid opaque
+state, or an intentionally invalid static-context signing call. No clean
+master result accepted an invalid block or witness, changed a witness sigop
+count, compromised a key, or demonstrated a remote memory/concurrency issue.
+High or Critical severity is therefore not justified for this target. A
+nonce or retry counter without standalone cryptographic meaning is not a
+Critical erasure finding.
+
+The tagged-SHA output cleanup in `27cc01dc` depends on the prior impossible-
+length guards in `f247661c`; cherry-picking it without that context can omit
+or alter the oversized-length behavior. The preallocation repair in
+`4d602a66` is independent. If a later l0rinc commit, minor repair, or
+follow-up makes one of these oracles green, rerun the exact unmodified-master
+baseline and amend the affected commit message with the before/after source
+hashes, corpus/helper, preconditions and postconditions, Core caller and
+input origin, master-relative severity, failure mode, test gap, verifier
+commands, and whether the change preserves, changes, or merely masks the
+original condition. A later minor fix that hides the static-signature symptom
+must not downgrade the separate clean-master SHA-length or preallocation
+findings.
