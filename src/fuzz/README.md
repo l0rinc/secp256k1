@@ -29891,3 +29891,58 @@ acceptable. No High/Critical severity is claimed. `l0rinc/master` still
 equals `origin/master d2d04864`; no fork fix or minor repair masked this
 master-relative proof. No cryptographic nonce or nonce-erasure issue is
 implicated here.
+
+## 2026-07-25 Scalar Zero/One Predicate Oracle
+
+The scalar target already compared decoded arithmetic against independent
+byte-level references and exercised `is_even`, `is_high`, and equality. It did
+not directly assert the zero/one predicates at their canonical boundaries,
+and it did not verify that the non-canonical input `n` reports overflow and
+reduces to the canonical scalar zero. The ordinary fuzzer inputs therefore
+could leave a backend-specific predicate regression invisible even though
+the predicates are part of key validation, ECDSA checks, tweak handling, and
+ecmult filtering.
+
+The new `zero-one-boundaries` corpus input is exactly
+`scalar zero one predicates\n`. It checks canonical zero, one, and `n - 1`,
+then feeds `n` to `secp256k1_scalar_set_b32` and requires `overflow == 1`,
+the serialized result to be zero, `is_zero == 1`, and `is_one == 0`. The
+assertions are deliberately byte-independent at the reduction boundary and
+run for every input only when this exact trigger is present.
+
+The incremental gap is proven against parent `a6143e33` with this temporary
+production mutation in the active forced-int64 backend,
+`src/scalar_8x32_impl.h`:
+
+```
+return ((a->d[0] ^ 1) | a->d[1] | a->d[2] | a->d[3] | a->d[4] | a->d[5] | a->d[6] | a->d[7]) == 0;
+-> return 0;
+```
+
+The mutated parent target passed all eight pre-existing scalar seeds and also
+passed the new seed because the parent has no direct predicate oracle. The
+same mutation in the current target caused the new seed to hit
+`FUZZ_CHECK` immediately (`libFuzzer: deadly signal`), while the restored
+current target passed it. This is a differential oracle proof, not a claim
+that clean master currently miscomputes `is_one`; the mutation was restored
+before all clean replays. The corresponding default-int128 backend also
+passed the focused and complete corpus replays.
+
+The forced-int64 Clang 22.1.7 ASan/UBSan target passed all nine scalar corpus
+files. A two-worker `-fork=2 -runs=20 -max_total_time=8` replay completed 44
+iterations with zero crashes, timeouts, OOMs, or sanitizer diagnostics. The
+native GCC 16.1.0 standalone fuzzer passed all nine files, and
+`tests -t=scalar -i=4` passed. The default-int128 Clang ASan/UBSan target
+also passed the focused input and all nine files.
+
+This is **Informational/Low oracle hardening**, not a production finding on
+master. `secp256k1_scalar_is_one` has no Bitcoin Core production call path in
+this tree; the mutation proves an uncovered helper contract, not a consensus
+or wallet vulnerability. `secp256k1_scalar_is_zero` does have production
+callers, so a future clean-master zero-predicate failure must be rated from
+the concrete Bitcoin Core call chain, especially whether it changes signature
+or key validity; no such failure was found here. No invalid block acceptance,
+key compromise, or remotely reachable Bitcoin Core error was demonstrated,
+so High/Critical severity is not claimed. `l0rinc/master` still equals
+`origin/master d2d04864`; no fork repair masked this master-relative proof.
+No cryptographic nonce or nonce-erasure issue is implicated.

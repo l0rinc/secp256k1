@@ -980,6 +980,43 @@ static void secp256k1_fuzz_scalar_check_cadd_bit_carry_boundaries(void) {
     }
 }
 
+static void secp256k1_fuzz_scalar_check_zero_one_boundaries(const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "scalar zero one predicates\n";
+    secp256k1_scalar zero;
+    secp256k1_scalar one;
+    secp256k1_scalar order;
+    secp256k1_scalar order_minus_one;
+    unsigned char actual32[32];
+    int overflow;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    secp256k1_scalar_set_b32(&zero, secp256k1_fuzz_scalar_zero, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    FUZZ_CHECK(secp256k1_scalar_is_zero(&zero));
+    FUZZ_CHECK(!secp256k1_scalar_is_one(&zero));
+
+    secp256k1_scalar_set_b32(&one, secp256k1_fuzz_scalar_one, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    FUZZ_CHECK(!secp256k1_scalar_is_zero(&one));
+    FUZZ_CHECK(secp256k1_scalar_is_one(&one));
+
+    secp256k1_scalar_set_b32(&order_minus_one, secp256k1_fuzz_scalar_order_minus_one, &overflow);
+    FUZZ_CHECK(overflow == 0);
+    FUZZ_CHECK(!secp256k1_scalar_is_zero(&order_minus_one));
+    FUZZ_CHECK(!secp256k1_scalar_is_one(&order_minus_one));
+
+    /* The non-canonical input n reduces to zero, not one or an uninitialized value. */
+    secp256k1_scalar_set_b32(&order, secp256k1_fuzz_scalar_order, &overflow);
+    FUZZ_CHECK(overflow == 1);
+    secp256k1_scalar_get_b32(actual32, &order);
+    FUZZ_CHECK(memcmp(actual32, secp256k1_fuzz_scalar_zero, sizeof(actual32)) == 0);
+    FUZZ_CHECK(secp256k1_scalar_is_zero(&order));
+    FUZZ_CHECK(!secp256k1_scalar_is_one(&order));
+}
+
 static void secp256k1_fuzz_scalar_check_high_boundary(const unsigned char *input, size_t size) {
     static const unsigned char trigger[] = "scalar high boundary\n";
     static const unsigned char half_order32[32] = {
@@ -1069,6 +1106,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_scalar_check_pair(order_minus_one32, order_minus_one32, input, size, 43);
     secp256k1_fuzz_scalar_check_cadd_bit_noop_boundary();
     secp256k1_fuzz_scalar_check_cadd_bit_carry_boundaries();
+    secp256k1_fuzz_scalar_check_zero_one_boundaries(input, size);
     secp256k1_fuzz_scalar_check_high_boundary(input, size);
 
     return 0;
