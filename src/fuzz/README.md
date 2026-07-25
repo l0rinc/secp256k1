@@ -21,7 +21,7 @@ Targets:
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing, TapLeaf CompactSize boundary vectors, and maximum-depth 128-sibling Merkle-chain vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
 - `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, Bitcoin Core compact-recovery header and compressed/uncompressed serialization composition, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
-- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
+- `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, duplicate-key and all-identical-key signing round trips, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
 Standalone corpus replay:
 
@@ -29779,3 +29779,61 @@ reachable denial of service. The current `l0rinc/master` equals
 `origin/master d2d04864`; no fork fix or minor repair masked this master-
 relative proof. A nonce without cryptographic meaning is not a Critical
 erasure finding.
+
+## 2026-07-25 MuSig All-Identical-Key Signing Oracle
+
+The preceding duplicate-key signing oracle uses nine signers with two
+distinct public keys. The ordinary input-controlled path also has a bounded
+signer count, and the existing sixteen-signer special case uses distinct
+keys. Neither path exercised the stronger duplicate boundary in which every
+signer entry is the same public key while the complete nonce, partial-sign,
+partial-verification, final-signature, and Schnorr-verification equations are
+still required to agree.
+
+The new `all-identical-signing` corpus input invokes a ten-signer round trip
+with scalar one repeated for every signer. Ten is intentional: it is outside
+the parent fuzzer's ordinary and duplicate-signing cases, while remaining a
+small deterministic state. The trigger is exactly:
+
+```
+all-identical MuSig signing\n
+```
+
+The incremental oracle gap is proven against parent `c7acbde2` with this
+disposable one-condition mutation in `src/modules/musig/keyagg_impl.h`:
+
+```
+if (secp256k1_memcmp_var(pubkeys[0], pubkeys[i], sizeof(*pubkeys[0])) != 0)
+    ->
+if (secp256k1_memcmp_var(pubkeys[0], pubkeys[i], sizeof(*pubkeys[0])) != 0 || n_pubkeys == 10)
+```
+
+The mutation models a ten-entry duplicate-detection regression that stores
+the first duplicate as `cache.second_pk`, changing the coefficient-one
+boundary for an all-identical list. With that mutation, the new fuzzer
+detected the altered signing state on the exact corpus input and exited 77;
+the pre-change parent fuzzer replayed the same mutated production code and
+input with exit 0. The mutation was restored before clean replay. This is a
+differential oracle proof, not a claim that unmodified master currently has
+the regression. A broader first attempt using sixteen identical signers was
+discarded because an existing parent one-key coefficient reference detected
+the chosen mutation; the ten-entry proof is the non-overlapping incremental
+case.
+
+The restored current tree passes the focused corpus input with exit 0. The
+forced-int64 Clang 22.1.7 ASan/UBSan replay then covered all 79 MuSig corpus
+files with exit 0. A two-worker/two-job replay of the same 79 fixed inputs
+also had both jobs exit 0 with no sanitizer diagnostic, assertion, timeout,
+OOM, or crash artifact. The native GCC 16.1.0 standalone fuzzer replayed all
+79 files with exit 0, and the deterministic `tests --log=1` binary passed all
+tests in 525.810 seconds.
+
+This is **Informational/Low oracle hardening**, not a production finding on
+master. A real all-identical-key coefficient regression could make an
+application-level MuSig signing session produce an unverifiable signature or
+abort, but the MuSig module is optional and Bitcoin Core consensus validation
+does not call MuSig partial-signature aggregation. No invalid block can reach
+this path through Bitcoin Core consensus, so High/Critical severity is not
+claimed. The current `l0rinc/master` equals `origin/master d2d04864`; no fork
+fix or minor repair masked this master-relative proof. A nonce or counter
+without cryptographic meaning is not a Critical erasure finding.
