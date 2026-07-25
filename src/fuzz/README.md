@@ -31103,3 +31103,109 @@ claimed by this matrix. The upstreams remain
 cherry-picked for this pass, and the only behavior-changing comparison was
 the documented temporary HMAC-only mutation used to expose the masked
 RFC6979 condition.
+
+## 2026-07-25 Current-master group alias and opaque-key revalidation
+
+This entry reiterates two existing group findings against the latest clean
+master. It does not claim a new production bug or a new fix. The comparison
+refs are `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`, and the audit branch was
+`24872e2ae639cca6dec80ea94284b2223f24f3e0` before this documentation commit.
+Only the audited group harness, common fuzz header, and 23 group corpus files
+were overlaid into the disposable master worktree; all group production
+headers, `secp256k1.c`, and precomputed tables stayed at clean master.
+
+### Inputs and restored branch proof
+
+The exact target source is `src/fuzz/group.c`, SHA-256
+`c8b122ad7a011834ad7ef3a23d9ab57e006a5be903c17783f66dfdc059aa98b3`, and
+the common header is SHA-256
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`.
+The tracked group corpus has 23 files and 837 bytes. The focused inputs are:
+
+| input | size | SHA-256 |
+| --- | ---: | --- |
+| `rescale-x-alias` | 36 | `86408a49e8827a46a365101d3e3ebd97a64bfa33f0d476e4891042771fdf1491` |
+| `invalid-pubkey-tweak-mul` | 32 | `42567301ee31b92ee19770c2178930b6810447e5d20590c7502de13b0a4a8c55` |
+
+The restored branch was built with Clang 22.1.7, ASan/UBSan, libFuzzer, and
+the optional modules enabled. Native 5x52 and forced-int64/10x26 binaries
+passed both focused inputs, all 23 files with `-runs=1`, and copied-corpus
+`-fork=2 -jobs=2` worker campaigns. Native workers ran for 20 seconds each;
+forced-int64 workers ran for 15 seconds each. Every job exited 0 with
+`oom/timeout/crash: 0/0/0`, no sanitizer or assertion diagnostic, and no
+artifact. The restored native binary SHA-256 was
+`025df666b7488184b650a1c1b0104cb0b452cc2e21a3836e0d0f1e446673f4a0`; the
+forced-int64 binary was
+`fd3bc830bc0c3da12bc38ac9e29c8f3b9a2f263360f9d2beccb38b898c489569`.
+The existing deterministic `tests` and `noverify_tests` both passed
+`-t=gej_rescale_alias -i=1` in the native sanitizer build.
+
+### Exact clean-master results and masking order
+
+The clean production `src/group_impl.h` SHA-256 was
+`f55f65b95486c79ab44b55a767fb0879b27983a119757f9207b3c367478ff29e`; the
+fixed branch version was
+`6300da2da165001f65322847491813c5f21087073b272567227a1f54beb5217f`.
+The direct clean-master file-driver, built with Clang ASan/UBSan, forced-int64
+arithmetic, `-DVERIFY`, and the exact audited harness, had SHA-256
+`9c3344ec72a0db77514e5a6f4d4f42d258a88c15d99af3bd23233c2c9aec679a`.
+
+With no production changes, both focused clean-master inputs exited 134. The
+first stop for either input is the earlier malformed opaque-key barrier at
+`src/fuzz/group.c:124`: clean master accepts the encoded off-curve point
+`x = 1, y = 1` as a loaded public key because its loader checks only the old
+nonzero-X condition. A low-optimization clean-master backtrace for
+`invalid-pubkey-tweak-mul` ends at that exact fuzzer assertion. This is the
+existing invalid opaque-key finding, not evidence that the rescale input itself
+failed there.
+
+To expose the second condition, a disposable harness-only control changed
+only the call to `secp256k1_fuzz_group_check_opaque_pubkey_barrier` to `if (0)`.
+No production source, corpus byte, or library behavior was changed by this
+control. The isolated clean-master binary SHA-256 was
+`6519eb9271b082e4bc8e4fe88cfe557b37c351f9d38a3bae57e86f279d201cab`, and the
+exact `rescale-x-alias` input then exited 134 with:
+
+```
+field_impl.h:341: test condition failed: r != b
+group_impl.h:872: secp256k1_gej_rescale
+group.c:670: secp256k1_gej_rescale(&actual, &actual.z)
+```
+
+This ordering matters: a future fix for invalid opaque keys must not be
+credited with fixing the independent scale-alias defect. The clean worktree
+was restored to the original harness before teardown; its production tree
+remained byte-for-byte at `d2d04864`.
+
+### Findings, fixes, and Bitcoin Core severity
+
+* **Medium, invalid opaque public-key state on master:** the clean loader can
+  let a directly constructed or corrupted opaque `secp256k1_pubkey` with
+  off-curve coordinates cross serialization, combine, tweak, and group
+  boundaries. The branch repairs are `f106aaa5` (stop after failed loads) and
+  `91b9d762` (require the curve and subgroup invariant). This is a real bad
+  state transition for direct API callers, especially with a non-aborting
+  illegal callback, but it is not a wire-format attack: Bitcoin Core's
+  `CPubKey::Unserialize` reaches `secp256k1_ec_pubkey_parse`, which validates
+  serialized points before creating the opaque object. No invalid block or
+  witness can supply this malformed in-memory representation through the
+  normal Core path, so High/Critical severity is not justified.
+
+* **Low, internal `gej_rescale` scale alias on master:** passing `&r->x`,
+  `&r->y`, or `&r->z` as the documented nonzero scale aliases the destination
+  and triggers the field overlap assertion. The branch repair is `591452da`,
+  which snapshots the scale before modifying the Jacobian point; the existing
+  `gej_rescale_alias` deterministic test and both fuzzer witnesses verify it.
+  `gej_rescale` is static, and current in-tree callers such as generator
+  blinding pass a separate scale. No public Bitcoin Core or invalid-block
+  path was found that controls this alias, so this remains internal
+  availability/correctness, not consensus impact or cryptographic compromise.
+
+The ordinary tests previously used independent scale objects and did not
+exercise the alias contract. The old public-key tests likewise did not bind
+the loader to the curve equation for a manually populated opaque object. The
+branch's deterministic tests and group assertions close those gaps. No new
+production mutation or regression test is added by this revalidation, no
+l0rinc commit was cherry-picked, and a nonce or other buffer without
+standalone cryptographic meaning is not a Critical erasure finding.
