@@ -30808,3 +30808,53 @@ broken. No production fix or deterministic regression is justified. No
 cryptographic nonce-erasure issue is involved. `origin/master` and
 `l0rinc/master` remain `d2d04864`; no fork or incidental minor repair masked
 this master-relative proof.
+
+## 2026-07-25 ecmult_const State and X-Only Mutation Matrix
+
+The internal `fuzz_ecmult_const` target was rebuilt in a disposable worktree
+at `503209d3` with Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64
+wide multiplication, and libFuzzer. The restored target passed all 11
+tracked inputs with `-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`.
+
+Four production mutations were rebuilt independently and restored before the
+next probe. First, the rational x-only path's `known_on_curve == 0` square
+check for non-NULL `d` changed to `if (0)`. The mutant aborted with exit 134
+on `affine-arbitrary-scalar-reference`, `nonnormalized-fraction`,
+`scalar-derived-xonly-fractions`, and `xonly-order-minus-one` at the internal
+group precondition `group_impl.h:597 (rzr == NULL)`, before an off-curve point
+could be used. Second, the corresponding `d == NULL` square check was
+disabled; `affine-arbitrary-scalar-reference`, `generator-affine-agreement`,
+`scalar-derived-xonly-fractions`, and `xonly-order-minus-one` produced the
+same deterministic exit.
+
+Third, the final projective correction changed from multiplying `r->z` by
+`global_z` to multiplying by one. The fixed `generator-2g` coordinate/Y
+vector and the affine, generator-agreement, nonnormalized-fraction, and
+scalar-derived x-only paths all aborted with exit 134. Fourth, the signed
+table's Y-negation selection changed from `negative` to `negative ^ 1`; the
+fixed `generator-2g`, independent affine, generator-agreement, and
+`odd-multiples-table` inputs all aborted with exit 134. The Y-only mutation is
+deliberate: an x-only oracle could miss it, while the fixed full-coordinate
+and affine checks cannot.
+
+After restoration, all 11 corpus inputs passed again. A copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0` campaign
+exited 0 with 150 temporary corpus files (11 tracked plus 139 generated),
+zero artifacts, and every worker diagnostic reporting
+`oom/timeout/crash: 0/0/0`. The forced-int64 sanitizer `tests -t=ec -i=1`
+and `noverify_tests -t=ec -i=1` slices also exited 0. No sanitizer report,
+fuzzer assertion, timeout, OOM, or clean-master production mismatch was
+reproduced.
+
+This is **Informational/Low oracle hardening**, not a production finding.
+`secp256k1_ecmult_const` feeds standalone ECDH and wallet-side Silent
+Payments, while `secp256k1_ecmult_const_xonly` feeds ElligatorSwift/BIP324;
+Bitcoin Core's invalid-block and witness-validation paths do not call these
+helpers directly. A clean-master result that caused a demonstrated BIP324
+key-agreement or transport-integrity failure would be rated from that impact,
+but no such failure, key compromise, consensus discrepancy, or
+memory/concurrency issue was found. Existing EC tests and older fixed/oracle
+checks cover adjacent behavior; this matrix proves the four specific state
+transitions without claiming a deterministic-test gap or justifying a
+production fix. No cryptographic nonce-erasure issue is involved. The
+upstreams remain `origin/master == l0rinc/master == d2d04864`.
