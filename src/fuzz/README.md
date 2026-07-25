@@ -30177,3 +30177,54 @@ acceptable; no High/Critical severity is claimed. No cryptographic nonce or
 nonce-erasure issue is involved. `origin/master` and `l0rinc/master` remain
 `d2d04864`, and no fork fix or minor repair masked this master-relative
 oracle proof.
+
+## 2026-07-25 Full Current-Target Sanitizer and Worker Sweep
+
+After the Silent Payments reference-oracle additions, all 15 current fuzz
+targets were rebuilt from branch commit `3bc06c81` with Clang 22.1.7,
+forced-int64 arithmetic, ASan, UBSan, and libFuzzer:
+`fuzz_api_roundtrip`, `fuzz_context`, `fuzz_ecdh`, `fuzz_ecmult_const`,
+`fuzz_ecmult_multi`, `fuzz_ellswift`, `fuzz_field`, `fuzz_group`, `fuzz_hash`,
+`fuzz_musig`, `fuzz_recovery`, `fuzz_scalar`, `fuzz_schnorrsig`,
+`fuzz_silentpayments`, and `fuzz_xonly_tweak`. The branch was clean and no
+production mutation was active during this sweep.
+
+The exact replay covered all 350 existing corpus inputs: api_roundtrip 63,
+context 13, ecdh 9, ecmult_const 11, ecmult_multi 29, ellswift 19, field 21,
+group 23, hash 10, musig 79, recovery 17, scalar 9, schnorrsig 18,
+silentpayments 9, and xonly_tweak 20. Every input exited 0 with
+`-runs=1 -handle_abrt=0`; there were no sanitizer reports, fuzzer assertions,
+timeouts, or OOMs.
+
+Every target also completed a two-worker/two-job campaign with
+`-max_total_time=20`. MuSig needed the longer outer 300-second guard because
+its 79-input corpus took 166 and 167 seconds for the two jobs to finish
+loading and exercising; both jobs still exited 0 with no diagnostic. The five
+targets receiving a longer four-worker/four-job, 60-second campaign also
+completed cleanly: api_roundtrip processed 385 executions in 62 seconds,
+schnorrsig 275 in 61 seconds, xonly_tweak 97 in 64 seconds, ellswift 212 in
+64 seconds, and silentpayments 202 in 64 seconds. Temporary worker corpora
+were removed after each run; a `slow-unit-*` file containing `pippenger window
+1261` was confirmed as generated libFuzzer output and removed.
+
+The order-7 exhaustive build and test passed (`test count = 2`, no problems
+found). Order 199 was compiled successfully, but did not finish within a
+five-minute instrumented guard or a ten-minute Release guard; neither run
+printed a failure, assertion, sanitizer report, or crash. The compiler's
+`input_hash_scalar may be used uninitialized` warning in the Silent Payments
+scanner was observed in both builds, but the guarded control flow initializes
+the scalar before its use; no runtime evidence supports treating that warning
+as a bug.
+
+This sweep found no new production bug on clean master and no evidence of
+invalid-block acceptance, consensus failure, key compromise, or a High/Critical
+finding. The existing master-relative ledger remains: the ecmult_multi scratch
+wrap and malformed opaque-state/public-callback cases are Medium library/API
+findings with low or non-consensus Bitcoin Core reachability; stale output,
+tweak overlap, Silent Payments opaque-state, and shared-reference oracle gaps
+remain Low or Informational; latent secret-state retention is not a Critical
+finding without a read primitive. A witness sigop undercount would become
+High/Critical only with proof that Bitcoin Core accepts an invalid block, which
+was not shown here. A nonce or counter without cryptographic meaning is not a
+Critical clearing issue. `origin/master` and `l0rinc/master` were both
+`d2d04864`; no fork commit or incidental minor fix masked this result.
