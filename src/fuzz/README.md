@@ -30760,3 +30760,51 @@ raw-peer transcript and exact caller mapping extend those checks without
 claiming that the deterministic suite missed these mutants. No cryptographic
 nonce or nonce-erasure issue is involved. `origin/master` and `l0rinc/master`
 remain `d2d04864`.
+
+## 2026-07-25 MuSig State-Transition Mutation Matrix
+
+The MuSig target was rebuilt in a disposable worktree at `7294d735` with
+Clang 22.1.7 ASan/UBSan, assembly disabled, forced-int64 arithmetic, recovery
+enabled, and `fuzz_musig`. The restored binary passed all 79 tracked corpus
+inputs with `-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`.
+
+Three focused production mutations were rebuilt independently and restored
+before the next probe. First, the BIP327 infinity fallback in
+`src/modules/musig/session_impl.h` changed from
+`if (secp256k1_ge_is_infinity(&fin_nonce_pt))` to `if (0)`. The mutant aborted
+with exit 134 on `infinity-nonce-final-verification`,
+`finite-nonce-cancellation`, `intermediate-nonce-cancellation`,
+`partial-sig-equation`, and `arbitrary-partial-signature-equation` when the
+invalid infinity x-coordinate reached `secp256k1_ge_set_xo_var`.
+
+Second, the partial signer stopped negating both secret nonce scalars when
+`session_i.fin_nonce_parity` was set. The mutant aborted with exit 134 on
+`partial-sign-final-nonce-parity`, `tweaked-signing-parity`,
+`xonly-tweak-signing`, `four-signer-sign-roundtrip`, and the existing
+`duplicate-signing-9` complete roundtrip. Third, the partial-signature
+verifier's group-equation return changed from
+`secp256k1_gej_is_infinity(&tmp)` to `return 1`. The independent equation
+oracle rejected it with exit 134 on `arbitrary-partial-signature-equation`,
+`partial-sig-equation`, `partial-sig-pubnonce-binding`,
+`partial-sig-verify-invalid-state`, and `partial-sig-semantic-state`.
+
+After restoring every production line, the full 79-input replay again exited
+0. A copied-corpus `-fork=2 -jobs=2 -max_total_time=20 -timeout=120
+-rss_limit_mb=0` campaign exited 0 with 79 corpus files retained, zero
+artifacts, and both worker diagnostics reporting `oom/timeout/crash: 0/0/0`.
+The disposable worktree and generated temporary files were removed. No
+sanitizer report, fuzzer assertion, timeout, OOM, or crash was reproduced on
+clean master.
+
+This is **Informational/Low oracle hardening**, not a production finding.
+MuSig is used by Bitcoin Core's wallet/descriptor/PSBT signing workflow, not
+by consensus block or witness validation. A clean-master defect that made
+Core accept an invalid block would be High/Critical, and a concrete wallet
+key-compromise or remotely reachable availability impact would be rated from
+that demonstrated effect; none is shown here. These mutations prove that the
+existing nonce, parity, infinity-fallback, and independent partial-signature
+equation checks detect bad state transitions, not that unmodified master is
+broken. No production fix or deterministic regression is justified. No
+cryptographic nonce-erasure issue is involved. `origin/master` and
+`l0rinc/master` remain `d2d04864`; no fork or incidental minor repair masked
+this master-relative proof.
