@@ -23,7 +23,7 @@ Targets:
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, duplicate-key and all-identical-key signing round trips, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
-- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, one-, two-, and three-label labeled-spend lookup, label parse/serialize round trips, and summary scanning with one through four recipients. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
+- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, one-, two-, and three-label labeled-spend lookup, label parse/serialize round trips, summary scanning with one through four recipients, and the 2323-recipient group-limit boundary. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
 
 Standalone corpus replay:
 
@@ -29998,3 +29998,67 @@ predicate and cannot make an invalid block acceptable; no High/Critical
 severity is claimed. `l0rinc/master` equals `origin/master d2d04864`; no fork
 fix or minor repair masked this master-relative proof. No cryptographic nonce
 or nonce-erasure issue is implicated.
+
+## 2026-07-25 Silent Payments Scanner Group-Limit Oracle
+
+The deterministic Silent Payments tests already exercise the sender at exactly
+`SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT` recipients and at one over the
+limit. The fuzzer did not exercise the corresponding scanner loop through its
+last valid `k`, however: its largest scanner input had four outputs. This
+left the scanner's public bound independently unobserved.
+
+The new `recipient-group-limit` corpus input is exactly
+`Silent Payments recipient group limit\n`. It supplies the scanner with
+2323 valid output pointers, all referring to one valid x-only output. A
+deliberately controlled label callback returns the valid scalar one for every
+label candidate, so the scanner must report one found result for every
+`k = 0..2322` without requiring a minute-long sender construction. The oracle
+requires `n_found_outputs == 2323`, checks every returned output and label
+object, and observes the illegal-argument callback. This is a scanner-bound
+oracle, not a claim that the callback's synthetic labels describe spendable
+Silent Payments outputs; the sender's matching exact-limit behavior remains
+covered by the deterministic module tests.
+
+The incremental gap is proven by temporarily changing the production code in
+`src/modules/silentpayments/main_impl.h`:
+
+```
+k_max = (n_tx_outputs < SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT) ?
+         n_tx_outputs : SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT;
+->
+k_max = (n_tx_outputs < SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT) ?
+         n_tx_outputs : SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT - 1;
+```
+
+With that mutation, the exact new seed aborts at the `n_found_outputs ==
+2323` assertion with exit 77, while the six pre-existing Silent Payments
+seeds (`mixed-inputs`, `multiple-labels`, `opaque-label-state`,
+`opaque-prevouts-state`, `roundtrip`, and `three-labels`) pass. The restored
+clean target passes all seven corpus files, including the new seed in 8.348
+seconds, in the Clang 22.1.7 forced-int64 ASan/UBSan configuration. The
+mutated source was restored before the remaining clean replays.
+
+For the parent control, a detached worktree at `18f5b319` was built with the
+same Clang ASan/UBSan configuration and only the `k_max - 1` production
+mutation. It passed the new seed in 147 ms and all six parent corpus files in
+144--173 ms because that parent has no scanner group-limit oracle. This
+separates the new assertion from a pre-existing production failure and shows
+that the mutation is specifically detected by this commit.
+
+The restored forced-int64 Clang target passed the exact seed, all seven
+corpus files, and a two-worker/two-job `-max_total_time=30` replay. The two
+jobs exited 0 after 31 and 37 seconds with no sanitizer diagnostic, assertion,
+timeout, OOM, or artifact. The default-int128 Clang target passed all seven
+files, including the boundary seed in 4.944 seconds. The native GCC 16.1.0
+forced-int64 target passed all seven files, and the deterministic suite
+`tests -t=silentpayments -i=4` completed in 120.097 seconds.
+
+This is **Informational/Low oracle hardening**, not a production bug on clean
+master. Bitcoin Core's wallet-side BIP352 scanner can encounter transactions
+whose output count reaches this bound, so an actual off-by-one regression
+could make a valid payment at the final group index unfindable. Silent
+Payments scanning is not a consensus block-validity predicate and this cannot
+make an invalid block acceptable; no High/Critical severity is claimed. No
+cryptographic nonce or nonce-erasure issue is involved. `origin/master` and
+`l0rinc/master` remain `d2d04864`; no fork change masked this master-relative
+oracle.

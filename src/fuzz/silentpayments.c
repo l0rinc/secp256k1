@@ -41,6 +41,16 @@ static const unsigned char *secp256k1_fuzz_silentpayments_label_lookup(const uns
     return NULL;
 }
 
+static const unsigned char *secp256k1_fuzz_silentpayments_any_label_lookup(const unsigned char *label33, const void *label_context) {
+    const secp256k1_fuzz_silentpayments_label_cache *cache = (const secp256k1_fuzz_silentpayments_label_cache *)label_context;
+
+    FUZZ_CHECK(label33 != NULL);
+    FUZZ_CHECK(cache != NULL);
+    FUZZ_CHECK(cache->self == cache);
+    FUZZ_CHECK(cache->entries_used == 1);
+    return cache->label_tweak;
+}
+
 typedef struct {
     const void *self;
     unsigned char label33[2][33];
@@ -466,6 +476,82 @@ static void secp256k1_fuzz_silentpayments_check_three_labels(
     }
 }
 
+static void secp256k1_fuzz_silentpayments_check_recipient_group_limit(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *outpoint,
+    const unsigned char *scan_seckey,
+    const secp256k1_pubkey *spend_pubkey,
+    const secp256k1_pubkey *input_pubkey,
+    secp256k1_fuzz_silentpayments_illegal_data *illegal_data
+) {
+    static const unsigned char trigger[] = "Silent Payments recipient group limit\n";
+    const secp256k1_pubkey *prevout_pubkey_ptrs[1];
+    const secp256k1_xonly_pubkey **tx_output_ptrs;
+    secp256k1_silentpayments_found_output *found_outputs;
+    secp256k1_silentpayments_found_output **found_output_ptrs;
+    secp256k1_xonly_pubkey tx_output;
+    secp256k1_silentpayments_prevouts_summary prevouts_summary;
+    secp256k1_fuzz_silentpayments_label_cache label_cache;
+    unsigned char label_tweak[32] = { 0 };
+    uint32_t n_found = 0;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    tx_output_ptrs = (const secp256k1_xonly_pubkey **)malloc(
+        SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT * sizeof(*tx_output_ptrs));
+    found_outputs = (secp256k1_silentpayments_found_output *)malloc(
+        SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT * sizeof(*found_outputs));
+    found_output_ptrs = (secp256k1_silentpayments_found_output **)malloc(
+        SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT * sizeof(*found_output_ptrs));
+    FUZZ_CHECK(tx_output_ptrs != NULL);
+    FUZZ_CHECK(found_outputs != NULL);
+    FUZZ_CHECK(found_output_ptrs != NULL);
+
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &tx_output, NULL,
+        spend_pubkey) == 1);
+    for (i = 0; i < SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT; i++) {
+        tx_output_ptrs[i] = &tx_output;
+        found_output_ptrs[i] = &found_outputs[i];
+    }
+    prevout_pubkey_ptrs[0] = input_pubkey;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+        &prevouts_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
+
+    label_cache.self = &label_cache;
+    label_cache.entries_used = 1;
+    label_tweak[31] = 1;
+    memcpy(label_cache.label_tweak, label_tweak, sizeof(label_cache.label_tweak));
+    illegal_data->calls = 0;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+        found_output_ptrs, &n_found, tx_output_ptrs,
+        SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT, scan_seckey,
+        &prevouts_summary, spend_pubkey,
+        secp256k1_fuzz_silentpayments_any_label_lookup, &label_cache) == 1);
+    FUZZ_CHECK(illegal_data->calls == 0);
+    FUZZ_CHECK(n_found == SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT);
+    for (i = 0; i < SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT; i++) {
+        unsigned char label_ser[33];
+
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &found_outputs[i].output,
+            &tx_output) == 0);
+        FUZZ_CHECK(found_outputs[i].found_with_label == 0 ||
+            found_outputs[i].found_with_label == 1);
+        if (found_outputs[i].found_with_label) {
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+                label_ser, &found_outputs[i].label) == 1);
+        }
+    }
+
+    free(found_output_ptrs);
+    free(found_outputs);
+    free(tx_output_ptrs);
+}
+
 static void secp256k1_fuzz_silentpayments_check_roundtrip(
     const secp256k1_context *ctx,
     const unsigned char *input,
@@ -615,6 +701,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     secp256k1_fuzz_silentpayments_check_three_labels(ctx, input, size,
         outpoint, scan_seckey, spend_seckey, input_seckey, &scan_pubkey,
         &spend_pubkey, &input_pubkey, illegal_data);
+    secp256k1_fuzz_silentpayments_check_recipient_group_limit(ctx, input, size,
+        outpoint, scan_seckey, &spend_pubkey, &input_pubkey, illegal_data);
 
     /* The scanner also accepts a compact summary in which input_hash has
      * already been multiplied into the summed prevout point. Construct that
