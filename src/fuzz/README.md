@@ -30985,3 +30985,121 @@ ordinary tests did not catch it because default 64-bit builds do not exercise
 or fuzz target for this state. No new production fix is claimed by this
 revalidation; the existing fix and deterministic regression remain the
 strongest proof of the repair.
+
+## 2026-07-25 Hash finalizer and consumed-buffer mutation matrix
+
+This entry strengthens the existing hash cleanup oracles. It is not a new
+clean-master production finding: the branch already contains the repairs from
+`3b3b49fc` (consumed SHA-256 buffer cleanup) and `3d34c795` (HMAC/RFC6979
+final-state cleanup). The purpose of this pass is to prove that each focused
+postcondition detects the corresponding production transition and to record
+the ordering when one missing cleanup masks another.
+
+### Baseline and exact inputs
+
+The mutation worktree was detached at audit HEAD
+`0326bb66da5c5427b606c1c0c9f0dec49b269890`. The restored fixed source
+`src/hash_impl.h` has SHA-256
+`9040d926e994f0b088accdb62ac31e41e00e847c8da91e241bd5de4c5e9fdcc6`; the
+unmodified current `origin/master` source at
+`d2d04864ef9b056151603a3ced7980958b058028` has SHA-256
+`70247571d95e3c8824d6ca2e90956f6941c196a42d860083040690aaf9ccf6cc`.
+The shared audited harness `src/fuzz/hash.c` has SHA-256
+`f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc`.
+
+The target was built with Clang 22.1.7, ASan/UBSan, assembly disabled,
+forced-int64 wide multiplication, `-O1 -g`, and libFuzzer. The restored
+binary SHA-256 is
+`b674b5953a96c278a23ff9679b75a3b6394650c91c552299ed978a1a950493cb`.
+The tracked corpus has 10 files and 446 bytes. Focused inputs are:
+
+| input | size | SHA-256 |
+| --- | ---: | --- |
+| `sha256-write-buffer-clear` | 20 | `d98d6210724ee37f8ba4e6311f85ba836214e36d37a62cbc5e92f637c441d431` |
+| `hmac-independent-reference` | 13 | `36e19b679f95412b19b8bb66f57b735a5558505c5eb2e33a9d876a66c248141c` |
+| `hmac-rfc6979-finalize` | 51 | `d121f8aff2052a38bb58c3b52228c43b473810e7fa1fa6f4a2543502a0b3fcaf` |
+
+The restored binary replayed all 10 corpus files with
+`-runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0`: 11 total runs and exit
+0. The forced-int64 sanitizer `tests -t=hash -i=1` and
+`noverify_tests -t=hash -i=1` also exited 0. The one-iteration slice skips
+the million-input SHA stress case by design; it still executes the SHA,
+HMAC, RFC6979, tagged-hash, and midstate test cases selected by the hash
+module.
+
+### Focused production mutations
+
+Each mutation was applied to the disposable worktree, rebuilt, run against
+one exact seed, and restored before the next mutation. Every failure was a
+fuzzer assertion with exit 134 and no ASan/UBSan diagnostic:
+
+| production mutation | exact witness | assertion |
+| --- | --- | --- |
+| Remove `secp256k1_memclear_explicit(hash->buf, sizeof(hash->buf))` after a buffered block is compressed at `src/hash_impl.h:160`. | `sha256-write-buffer-clear` | `src/fuzz/hash.c:101`, `secp256k1_fuzz_cleared_zero(hash.buf, sizeof(hash.buf))` |
+| Remove `secp256k1_hmac_sha256_clear(hash)` at `src/hash_impl.h:251`. | `hmac-independent-reference` | `src/fuzz/hash.c:298`, HMAC key-boundary final-state check |
+| Replace `secp256k1_rfc6979_hmac_sha256_clear(rng)` at `src/hash_impl.h:320` with no operation, while retaining HMAC cleanup. | `hmac-rfc6979-finalize` | `src/fuzz/hash.c:382`, RFC6979 one-shot final-state check |
+
+The HMAC seed reaches the state postcondition after the independent HMAC
+output vectors have already passed, so the oracle does not mistake retention
+for a digest error. The RFC6979 mutation similarly leaves the independent
+stream/reference checks intact before testing final-state clearing.
+
+### Exact clean-master replay and masking order
+
+The same audited harness was symlinked into a disposable exact
+`origin/master` checkout, while all production headers, `src/secp256k1.c`,
+and precomputed tables came from clean master. The direct file-driver binary
+SHA-256 was
+`ffd9ec71a9903e1833e7c24352561c96a8d444ccf06f65eedbcd7e326237cefb`.
+Unmodified master reproduced these conditions deterministically:
+
+* `sha256-write-buffer-clear` exited 134 at `src/fuzz/hash.c:101` because
+  the consumed 64-byte buffer remained nonzero.
+* `hmac-independent-reference` exited 134 at `src/fuzz/hash.c:298` because
+  HMAC finalization left `inner`/`outer` state live.
+* `hmac-rfc6979-finalize` also exited 134 at `src/fuzz/hash.c:298`; the
+  earlier HMAC assertion masks the later RFC6979 assertion in unmodified
+  master.
+
+To prove the masked condition without treating the first failure as the RFC
+result, a temporary clean-master production mutation added only the HMAC
+clear at the end of `secp256k1_hmac_sha256_finalize`. The RFC6979 seed then
+exited 134 at `src/fuzz/hash.c:382`, the independent RFC6979 finalizer
+postcondition. The resulting diagnostic binary SHA-256 was
+`78cded143e5b7fb7db434e715c28f52ff1117583a4ab49e1a5f810b4f1b22123`.
+That HMAC-only mutation was removed and the clean-master production file
+returned byte-for-byte to its original state. This ordering is recorded so a
+future HMAC fix is not mistaken for fixing RFC6979, and so a green follow-up
+does not hide a separate master defect.
+
+### Worker replay and severity on Bitcoin Core paths
+
+After all mutations were restored, a copied-corpus
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0` campaign
+exited 0 with zero artifacts. LibFuzzer reduced the 10 files to 7 retained
+seed inputs; both jobs reached approximately 48,000 executions, coverage
+439, and 1298 features, and every worker reported
+`oom/timeout/crash: 0/0/0`. No sanitizer, assertion, timeout, OOM, or
+concurrency diagnostic remained.
+
+The existing clean-master retention findings remain **Medium memory hygiene**,
+not High/Critical vulnerabilities on this evidence. SHA-256 output itself
+matched independent vectors, and Bitcoin Core's consensus block, transaction,
+witness, script, and address hashing paths therefore showed no digest mismatch
+or invalid-block acceptance. HMAC and RFC6979 state can contain key-derived
+material and deterministic signing-nonce state, so their lifetime matters in
+wallet/signing callers; however, this library code provides no standalone
+memory-read primitive and no remote Core path was shown to read the stale
+objects. A nonce or counter without independent cryptographic meaning is not
+Critical merely because it is not cleared. These results do not establish key
+compromise, consensus divergence, or remote denial of service.
+
+The normal clean-master tests did not catch the retention transitions because
+their digest/output vectors remain correct and the old tests did not assert
+the post-finalizer object state. The repaired branch's deterministic hash
+tests and fuzzer assertions close that specific gap. No new production fix is
+claimed by this matrix. The upstreams remain
+`origin/master == l0rinc/master == d2d04864`; no new fork commit was
+cherry-picked for this pass, and the only behavior-changing comparison was
+the documented temporary HMAC-only mutation used to expose the masked
+RFC6979 condition.
