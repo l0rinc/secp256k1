@@ -59,6 +59,160 @@ static void secp256k1_fuzz_silentpayments_check_spend_tweak(
     memset(tweaked_seckey, 0, sizeof(tweaked_seckey));
 }
 
+static void secp256k1_fuzz_silentpayments_check_taproot_aggregation(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *outpoint,
+    const secp256k1_pubkey *scan_pubkey,
+    const secp256k1_pubkey *spend_pubkey,
+    const unsigned char *scan_seckey,
+    const unsigned char *spend_seckey,
+    secp256k1_fuzz_silentpayments_illegal_data *illegal_data
+) {
+    unsigned char taproot_seckey_a[32];
+    unsigned char taproot_seckey_b[32];
+    unsigned char normalized_seckey_a[32];
+    unsigned char normalized_seckey_b[32];
+    unsigned char summed_taproot_seckey[32];
+    int taproot_parity_a;
+    int taproot_parity_b;
+    const secp256k1_keypair *taproot_keypair_ptrs[2];
+    const unsigned char *summed_taproot_seckey_ptrs[1];
+    const secp256k1_xonly_pubkey *taproot_xonly_ptrs[2];
+    const secp256k1_pubkey *taproot_pubkey_ptrs[2];
+    const secp256k1_pubkey *summed_taproot_pubkey_ptrs[1];
+    secp256k1_keypair taproot_keypair_a;
+    secp256k1_keypair taproot_keypair_b;
+    secp256k1_xonly_pubkey taproot_xonly_a;
+    secp256k1_xonly_pubkey taproot_xonly_b;
+    secp256k1_pubkey normalized_taproot_pubkey_a;
+    secp256k1_pubkey normalized_taproot_pubkey_b;
+    secp256k1_pubkey combined_taproot_pubkey;
+    secp256k1_pubkey summed_taproot_pubkey;
+    secp256k1_silentpayments_recipient taproot_recipient;
+    const secp256k1_silentpayments_recipient *taproot_recipient_ptrs[1];
+    secp256k1_xonly_pubkey two_taproot_output;
+    secp256k1_xonly_pubkey summed_taproot_output;
+    secp256k1_xonly_pubkey *two_taproot_output_ptrs[1];
+    secp256k1_xonly_pubkey *summed_taproot_output_ptrs[1];
+    const secp256k1_xonly_pubkey *taproot_tx_output_ptrs[1];
+    secp256k1_silentpayments_found_output two_taproot_found_output;
+    secp256k1_silentpayments_found_output summed_taproot_found_output;
+    secp256k1_silentpayments_found_output *two_taproot_found_ptrs[1];
+    secp256k1_silentpayments_found_output *summed_taproot_found_ptrs[1];
+    secp256k1_silentpayments_prevouts_summary two_taproot_summary;
+    secp256k1_silentpayments_prevouts_summary summed_taproot_summary;
+    uint32_t taproot_n_found;
+
+    secp256k1_fuzz_valid_seckey32(ctx, taproot_seckey_a, input, size, 263);
+    secp256k1_fuzz_valid_seckey32(ctx, taproot_seckey_b, input, size, 269);
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &taproot_keypair_a,
+        taproot_seckey_a) == 1);
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &taproot_keypair_b,
+        taproot_seckey_b) == 1);
+    FUZZ_CHECK(secp256k1_keypair_sec(ctx, normalized_seckey_a,
+        &taproot_keypair_a) == 1);
+    FUZZ_CHECK(secp256k1_keypair_sec(ctx, normalized_seckey_b,
+        &taproot_keypair_b) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &taproot_xonly_a,
+        &taproot_parity_a, &taproot_keypair_a) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &taproot_xonly_b,
+        &taproot_parity_b, &taproot_keypair_b) == 1);
+    if (taproot_parity_a) {
+        FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, normalized_seckey_a) == 1);
+    }
+    if (taproot_parity_b) {
+        FUZZ_CHECK(secp256k1_ec_seckey_negate(ctx, normalized_seckey_b) == 1);
+    }
+    memcpy(summed_taproot_seckey, normalized_seckey_a,
+        sizeof(summed_taproot_seckey));
+    if (secp256k1_ec_seckey_tweak_add(ctx, summed_taproot_seckey,
+        normalized_seckey_b) == 1) {
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx,
+            &normalized_taproot_pubkey_a, normalized_seckey_a) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx,
+            &normalized_taproot_pubkey_b, normalized_seckey_b) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &summed_taproot_pubkey,
+            summed_taproot_seckey) == 1);
+        taproot_keypair_ptrs[0] = &taproot_keypair_a;
+        taproot_keypair_ptrs[1] = &taproot_keypair_b;
+        summed_taproot_seckey_ptrs[0] = summed_taproot_seckey;
+        taproot_xonly_ptrs[0] = &taproot_xonly_a;
+        taproot_xonly_ptrs[1] = &taproot_xonly_b;
+        taproot_pubkey_ptrs[0] = &normalized_taproot_pubkey_a;
+        taproot_pubkey_ptrs[1] = &normalized_taproot_pubkey_b;
+        summed_taproot_pubkey_ptrs[0] = &summed_taproot_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx,
+            &combined_taproot_pubkey, taproot_pubkey_ptrs, 2) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &combined_taproot_pubkey,
+            &summed_taproot_pubkey) == 0);
+
+        taproot_recipient.scan_pubkey = *scan_pubkey;
+        taproot_recipient.spend_pubkey = *spend_pubkey;
+        taproot_recipient.index = 0;
+        taproot_recipient_ptrs[0] = &taproot_recipient;
+        two_taproot_output_ptrs[0] = &two_taproot_output;
+        summed_taproot_output_ptrs[0] = &summed_taproot_output;
+        FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+            two_taproot_output_ptrs, taproot_recipient_ptrs, 1,
+            outpoint, taproot_keypair_ptrs, 2, NULL, 0) == 1);
+        FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+            summed_taproot_output_ptrs, taproot_recipient_ptrs, 1,
+            outpoint, NULL, 0, summed_taproot_seckey_ptrs, 1) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &two_taproot_output,
+            &summed_taproot_output) == 0);
+
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+            &two_taproot_summary, outpoint, taproot_xonly_ptrs, 2,
+            NULL, 0) == 1);
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+            &summed_taproot_summary, outpoint, NULL, 0,
+            summed_taproot_pubkey_ptrs, 1) == 1);
+        FUZZ_CHECK(memcmp(two_taproot_summary.data,
+            summed_taproot_summary.data, sizeof(two_taproot_summary.data)) == 0);
+
+        taproot_tx_output_ptrs[0] = &two_taproot_output;
+        two_taproot_found_ptrs[0] = &two_taproot_found_output;
+        summed_taproot_found_ptrs[0] = &summed_taproot_found_output;
+        illegal_data->calls = 0;
+        taproot_n_found = 0;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+            two_taproot_found_ptrs, &taproot_n_found,
+            taproot_tx_output_ptrs, 1, scan_seckey,
+            &two_taproot_summary, spend_pubkey, NULL, NULL) == 1);
+        FUZZ_CHECK(illegal_data->calls == 0);
+        FUZZ_CHECK(taproot_n_found == 1);
+        FUZZ_CHECK(two_taproot_found_output.found_with_label == 0);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+            &two_taproot_found_output.output, &two_taproot_output) == 0);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+            &two_taproot_found_output, spend_seckey);
+
+        illegal_data->calls = 0;
+        taproot_n_found = 0;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+            summed_taproot_found_ptrs, &taproot_n_found,
+            taproot_tx_output_ptrs, 1, scan_seckey,
+            &summed_taproot_summary, spend_pubkey, NULL, NULL) == 1);
+        FUZZ_CHECK(illegal_data->calls == 0);
+        FUZZ_CHECK(taproot_n_found == 1);
+        FUZZ_CHECK(summed_taproot_found_output.found_with_label == 0);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+            &summed_taproot_found_output.output, &summed_taproot_output) == 0);
+        FUZZ_CHECK(memcmp(two_taproot_found_output.tweak,
+            summed_taproot_found_output.tweak,
+            sizeof(two_taproot_found_output.tweak)) == 0);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx,
+            &summed_taproot_found_output, spend_seckey);
+    }
+    memset(taproot_seckey_a, 0, sizeof(taproot_seckey_a));
+    memset(taproot_seckey_b, 0, sizeof(taproot_seckey_b));
+    memset(normalized_seckey_a, 0, sizeof(normalized_seckey_a));
+    memset(normalized_seckey_b, 0, sizeof(normalized_seckey_b));
+    memset(summed_taproot_seckey, 0, sizeof(summed_taproot_seckey));
+}
+
 static void secp256k1_fuzz_silentpayments_check_roundtrip(
     const secp256k1_context *ctx,
     const unsigned char *input,
@@ -554,6 +708,10 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         memset(second_input_seckey, 0, sizeof(second_input_seckey));
         memset(summed_input_seckey, 0, sizeof(summed_input_seckey));
     }
+
+    secp256k1_fuzz_silentpayments_check_taproot_aggregation(ctx, input, size,
+        outpoint, &scan_pubkey, &spend_pubkey, scan_seckey, spend_seckey,
+        illegal_data);
 
     /* Magic-preserving mutations exercise opaque state that ordinary API
      * round trips cannot produce. Keep the input hash intact in the point

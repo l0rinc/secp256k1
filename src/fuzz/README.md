@@ -29667,3 +29667,59 @@ some multi-input cases, but the fuzzer had no metamorphic aggregation check.
 The current `l0rinc/master` equals `origin/master`; no fork fix or later
 minor repair masked this master-relative mutation proof. A nonce without
 cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-25 Silent Payments Taproot-Keypair Aggregation Oracle
+
+The fuzzer now checks the multi-keypair path used for Silent Payments inputs
+whose public keys are represented x-only. It creates two independent keypairs
+and compares the sender's keypair-array representation with an independently
+constructed scalar-sum representation. The oracle also compares the
+normalized full-point combination, the two-input x-only recipient summary with
+the equivalent one-point summary, generated outputs, both scan results,
+returned spend tweaks, and spend-key reconstruction.
+
+The model accounts for the production contract rather than treating
+`keypair_sec` as an already-normalized Taproot secret: keypair creation stores
+the original scalar, while the sender negates a keypair contribution when its
+public point has odd Y. The oracle obtains each x-only parity, applies the same
+normalization to the independent scalar, and only then forms the aggregate.
+This prevents a false failure while directly checking the parity boundary.
+
+The gap is proven from parent `39f10806` with two disposable production-only
+mutations in `src/modules/silentpayments/main_impl.h`. The affected loops are
+byte-identical to clean `origin/master d2d04864`:
+
+```
+for (i = 0; i < n_keypairs; i++)
+    -> for (i = 0; i < (n_keypairs > 1 ? 1 : n_keypairs); i++)
+
+for (i = 0; i < n_xonly_pubkeys; i++)
+    -> for (i = 0; i < (n_xonly_pubkeys > 1 ? 1 : n_xonly_pubkeys); i++)
+```
+
+The first mutation drops every Taproot keypair after the first. The parent
+fuzzer passed all four existing inputs (`mixed-inputs`, `opaque-label-state`,
+`opaque-prevouts-state`, and `roundtrip`) with exit 0; the new fuzzer detected
+the mutation on `roundtrip` with libFuzzer exit 77 and ASan symbolization
+disabled. The second mutation drops every x-only prevout after the first. The
+parent again passed all four inputs with exit 0, while the new oracle detected
+all four with exit 77. Both mutations were restored before clean verification;
+this is not a claim that unmodified master currently drops an input.
+
+The restored tree passed all four fixed inputs. The forced-int64 Clang 22.1.7
+ASan/UBSan libFuzzer run used `-workers=2 -jobs=2 -max_total_time=15`
+`-timeout=60 -rss_limit_mb=4096`: its two jobs exited 0 after 66 and 68
+executions, with no sanitizer diagnostic, assertion, timeout, OOM, or
+artifact. The direct forced-int64 deterministic `tests --log=1` binary passed
+all tests in 96.374 seconds, and the native GCC 16.1.0 replay passed all four
+fixed inputs.
+
+This is **Informational/Low oracle hardening**, not a clean-master production
+finding. Bitcoin Core can reach the wallet-side BIP352 construction and scan
+paths with multiple eligible Taproot inputs, so a real dropped-keypair or
+dropped-prevout regression could derive wrong Silent Payments outputs or make
+wallet funds unfindable. It is not a block-validity predicate and cannot make
+an invalid block acceptable, so no consensus High/Critical severity is claimed.
+The current `l0rinc/master` equals `origin/master`; no fork fix or minor repair
+masked this master-relative proof. A nonce without cryptographic meaning is
+not a Critical erasure finding.
