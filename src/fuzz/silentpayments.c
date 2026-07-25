@@ -95,6 +95,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     secp256k1_silentpayments_label parsed_label;
     secp256k1_silentpayments_prevouts_summary prevouts_summary;
     secp256k1_silentpayments_prevouts_summary mixed_summary;
+    secp256k1_silentpayments_prevouts_summary combined_summary;
+    secp256k1_pubkey combined_prevouts_pubkey;
     secp256k1_silentpayments_recipient recipients[2];
     const secp256k1_silentpayments_recipient *recipient_ptrs[2];
     secp256k1_xonly_pubkey generated_outputs[2];
@@ -102,6 +104,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     secp256k1_xonly_pubkey *mixed_output_ptrs[1];
     secp256k1_silentpayments_found_output found_outputs[2];
     secp256k1_silentpayments_found_output *found_output_ptrs[2];
+    secp256k1_silentpayments_found_output combined_found_outputs[2];
+    secp256k1_silentpayments_found_output *combined_found_output_ptrs[2];
     secp256k1_silentpayments_found_output mixed_found_output;
     secp256k1_silentpayments_found_output *mixed_found_output_ptrs[1];
     secp256k1_fuzz_silentpayments_label_cache label_cache;
@@ -153,6 +157,7 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         generated_output_ptrs[i] = &generated_outputs[i];
         found_output_ptrs[i] = &found_outputs[i];
         tx_output_ptrs[i] = &generated_outputs[i];
+        combined_found_output_ptrs[i] = &combined_found_outputs[i];
     }
     input_seckey_ptrs[0] = input_seckey;
     prevout_pubkey_ptrs[0] = &input_pubkey;
@@ -195,6 +200,52 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     for (i = 0; i < n_recipients; i++) {
         FUZZ_CHECK(matched[i]);
         secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &found_outputs[i], spend_seckey);
+    }
+
+    /* The scanner also accepts a compact summary in which input_hash has
+     * already been multiplied into the summed prevout point. Construct that
+     * representation from the ordinary summary and require both paths to
+     * produce the same wallet result. The summary point and pubkey share the
+     * library's documented 64-byte opaque representation; this is deliberate
+     * coverage of the implementation-defined combined mode. */
+    combined_summary = prevouts_summary;
+    memcpy(combined_prevouts_pubkey.data, prevouts_summary.data + 5,
+        sizeof(combined_prevouts_pubkey.data));
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &combined_prevouts_pubkey,
+        prevouts_summary.data + 69) == 1);
+    combined_summary.data[4] = 1;
+    memcpy(combined_summary.data + 5, combined_prevouts_pubkey.data,
+        sizeof(combined_prevouts_pubkey.data));
+    memset(combined_summary.data + 69, 0, 32);
+    illegal_data->calls = 0;
+    n_found = 0;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+        combined_found_output_ptrs, &n_found, tx_output_ptrs, n_recipients,
+        scan_seckey, &combined_summary, &spend_pubkey,
+        secp256k1_fuzz_silentpayments_label_lookup, &label_cache) == 1);
+    FUZZ_CHECK(illegal_data->calls == 0);
+    FUZZ_CHECK(n_found == n_recipients);
+    for (i = 0; i < n_recipients; i++) {
+        unsigned char ordinary_label[33];
+        unsigned char combined_label[33];
+
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx,
+            &combined_found_outputs[i].output, &found_outputs[i].output) == 0);
+        FUZZ_CHECK(memcmp(combined_found_outputs[i].tweak,
+            found_outputs[i].tweak, sizeof(found_outputs[i].tweak)) == 0);
+        FUZZ_CHECK(combined_found_outputs[i].found_with_label ==
+            found_outputs[i].found_with_label);
+        if (found_outputs[i].found_with_label) {
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+                ordinary_label, &found_outputs[i].label) == 1);
+            FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+                combined_label, &combined_found_outputs[i].label) == 1);
+            FUZZ_CHECK(memcmp(combined_label, ordinary_label,
+                sizeof(ordinary_label)) == 0);
+        } else {
+            FUZZ_CHECK(memcmp(&combined_found_outputs[i].label,
+                &found_outputs[i].label, sizeof(found_outputs[i].label)) == 0);
+        }
     }
 
     /* Exercise the sender's original-index contract across scan-key groups.

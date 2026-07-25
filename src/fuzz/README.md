@@ -29508,3 +29508,44 @@ libFuzzer build ran with `-workers=2 -jobs=2 -max_total_time=15` over an
 isolated copy of the four-seed corpus. Both jobs exited 0 after 168 and 170
 generated executions, adding 53 and 51 units respectively; no sanitizer
 diagnostic, assertion, timeout, OOM, or artifact was produced.
+
+## 2026-07-25 Silent Payments Combined-Summary Oracle
+
+The scanner has a second summary mode in which the input hash has already
+been multiplied into the summed prevout point (`data[4] == 1`). The public
+summary constructor currently emits only the ordinary, separate-point and
+scalar representation, so the existing fuzzer never entered the combined
+branch. The new oracle derives a combined summary from each valid ordinary
+summary using `secp256k1_ec_pubkey_tweak_mul`, clears the stored scalar, scans
+the same transaction outputs, and compares the count, output keys, returned
+spend tweaks, label flags, and serialized labels with the ordinary scan. The
+64-byte point copy is intentionally scoped to this implementation-defined
+summary mode: the summary and parsed public-key objects use the library's
+same internal group-storage encoding.
+
+The gap is proven by a disposable production-only mutation in
+`src/modules/silentpayments/main_impl.h`: immediately after the existing
+`if (!combined)` input-hash multiplication, add the same multiplication under
+`if (combined)`. This hashes the scan key twice only for compact summaries.
+The old fuzzer at rebased parent `a983defb` passed all four existing corpus
+inputs (`roundtrip`, `opaque-label-state`, `opaque-prevouts-state`, and
+`mixed-inputs`) under that mutation with exit 0. The new oracle aborts on the
+`roundtrip` input with exit 134. The mutation was restored before the clean
+replay; no production defect is claimed.
+
+On the clean rebased tree, the forced-int64 Clang 22.1.7 ASan/UBSan binary
+passed all four fixed inputs. A private two-worker/two-job run with
+`-max_total_time=15 -timeout=60 -rss_limit_mb=4096` exited 0 in both jobs
+after 146 and 147 executions, with no sanitizer report, assertion, timeout,
+OOM, or artifact. The forced-int64 deterministic `tests` binary also passed
+in 96.213 seconds.
+
+This is **Informational/Low oracle hardening**, not a clean-master production
+finding. The combined representation is not currently produced by the
+public constructor and no current Bitcoin Core block-validation caller uses
+it as an invalid-block predicate. A future wallet or serialized-rescan bug
+would affect Silent Payments scanning, not consensus acceptance; it is not
+Critical. The current `l0rinc/master` is identical to `origin/master`, and
+the label-batch fix is already an ancestor, so no fork-side behavior was
+cherry-picked or allowed to mask this proof. A nonce without cryptographic
+meaning is not a Critical erasure finding.
