@@ -6997,6 +6997,23 @@ static int nonce_function_test_retry(unsigned char *nonce32, const unsigned char
    return nonce_function_rfc6979(nonce32, msg32, key32, algo16, data, counter - 5);
 }
 
+static int nonce_function_test_max_counter(unsigned char *nonce32, const unsigned char *msg32, const unsigned char *key32, const unsigned char *algo16, void *data, unsigned int counter) {
+    unsigned int *calls = (unsigned int *)data;
+
+    (void)msg32;
+    (void)key32;
+    (void)algo16;
+    CHECK(calls != NULL);
+    if (counter == UINT_MAX) {
+        memset(nonce32, 0, 32);
+        (*calls)++;
+        return 1;
+    }
+    CHECK(counter == 0);
+    (*calls)++;
+    return 0;
+}
+
 static int is_empty_signature(const secp256k1_ecdsa_signature *sig) {
     static const unsigned char res[sizeof(secp256k1_ecdsa_signature)] = {0};
     return secp256k1_memcmp_var(sig, res, sizeof(secp256k1_ecdsa_signature)) == 0;
@@ -8142,6 +8159,31 @@ static void run_ecdsa_edge_cases(void) {
         memset(nonce, 1, sizeof(nonce));
         CHECK(nonce_function_rfc6979(nonce, zeros, zeros, NULL, NULL, UINT_MAX) == 0);
         CHECK(secp256k1_memcmp_var(nonce, zeros, sizeof(nonce)) == 0);
+    }
+
+    {
+        unsigned char key[32] = { 0 };
+        unsigned char msg[32] = { 0 };
+        secp256k1_scalar r;
+        secp256k1_scalar s;
+        unsigned int calls = 0;
+        int recid = 7;
+
+        key[31] = 1;
+        msg[31] = 1;
+        CHECK(secp256k1_ecdsa_sign_inner(CTX, &r, &s, NULL, msg, key, nonce_function_test_max_counter, &calls, UINT_MAX) == 0);
+        CHECK(calls == 1);
+        CHECK(secp256k1_scalar_is_zero(&r));
+        CHECK(secp256k1_scalar_is_zero(&s));
+
+        calls = 0;
+        CHECK(secp256k1_ecdsa_sign_inner(CTX, &r, &s, &recid, msg, key, nonce_function_test_max_counter, &calls, UINT_MAX) == 0);
+        CHECK(calls == 1);
+        CHECK(recid == 0);
+        CHECK(secp256k1_scalar_is_zero(&r));
+        CHECK(secp256k1_scalar_is_zero(&s));
+        secp256k1_scalar_clear(&r);
+        secp256k1_scalar_clear(&s);
     }
 
 

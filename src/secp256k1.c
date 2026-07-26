@@ -631,7 +631,9 @@ static int nonce_function_rfc6979(unsigned char *nonce32, const unsigned char *m
 const secp256k1_nonce_function secp256k1_nonce_function_rfc6979 = nonce_function_rfc6979;
 const secp256k1_nonce_function secp256k1_nonce_function_default = nonce_function_rfc6979;
 
-static int secp256k1_ecdsa_sign_inner(const secp256k1_context* ctx, secp256k1_scalar* r, secp256k1_scalar* s, int* recid, const unsigned char *msg32, const unsigned char *seckey, secp256k1_nonce_function noncefp, const void* noncedata) {
+/* count is the next nonce callback retry number; public entry points pass zero.
+ * Keeping it explicit lets the tests exercise the terminal unsigned boundary. */
+static int secp256k1_ecdsa_sign_inner(const secp256k1_context* ctx, secp256k1_scalar* r, secp256k1_scalar* s, int* recid, const unsigned char *msg32, const unsigned char *seckey, secp256k1_nonce_function noncefp, const void* noncedata, unsigned int count) {
     secp256k1_scalar sec, non, msg;
     int ret = 0;
     int is_sec_valid;
@@ -639,7 +641,6 @@ static int secp256k1_ecdsa_sign_inner(const secp256k1_context* ctx, secp256k1_sc
         || noncefp == secp256k1_nonce_function_rfc6979
         || noncefp == secp256k1_nonce_function_default;
     unsigned char nonce32[32];
-    unsigned int count = 0;
     /* Default initialization here is important so we won't pass uninit values to the cmov in the end */
     *r = secp256k1_scalar_zero;
     *s = secp256k1_scalar_zero;
@@ -675,6 +676,12 @@ static int secp256k1_ecdsa_sign_inner(const secp256k1_context* ctx, secp256k1_sc
                 break;
             }
         }
+        /* A custom nonce callback may return an invalid nonce even at the
+         * largest representable retry count. Do not let the counter wrap. */
+        if (count == UINT_MAX) {
+            ret = 0;
+            break;
+        }
         count++;
     }
     /* We don't want to declassify is_sec_valid and therefore the range of
@@ -708,7 +715,7 @@ int secp256k1_ecdsa_sign(const secp256k1_context* ctx, secp256k1_ecdsa_signature
     ARG_CHECK(msghash32 != NULL);
     ARG_CHECK(seckey != NULL);
 
-    ret = secp256k1_ecdsa_sign_inner(ctx, &r, &s, NULL, msghash32, seckey, noncefp, noncedata);
+    ret = secp256k1_ecdsa_sign_inner(ctx, &r, &s, NULL, msghash32, seckey, noncefp, noncedata, 0);
     if (ret) {
         VERIFY_CHECK(!secp256k1_scalar_is_high(&s));
     }

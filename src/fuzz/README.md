@@ -35166,3 +35166,67 @@ replayed both the new EllSwift and Silent Payments corpus directories with
 `-fork=2 -jobs=2 -max_total_time=20`. All four target/backend commands exited
 0; every worker reported `oom/timeout/crash=0/0/0`. LibFuzzer-generated
 untracked corpus files and the one artifact were removed after the run.
+
+## 2026-07-26 ECDSA custom nonce retry counter boundary
+
+The ECDSA signer now terminates a failed custom-nonce attempt at
+`UINT_MAX` instead of incrementing the unsigned retry counter back to zero.
+The counter is explicit only in the private signing helper so the unit test
+can enter the terminal state without executing 2^32 callbacks; both public
+signing entry points still start at zero. Normal and recoverable signing use
+the same guard, and the existing final cleanup leaves the output signature
+zeroed on failure.
+
+The causal clean-master proof started from pristine `origin/master`
+`d2d04864ef9b056151603a3ced7980958b058028` (also `l0rinc/master`). A
+temporary focused test installed a callback that returns an invalid all-zero
+nonce only when its counter is `UINT_MAX`, then returns failure at counter
+zero. With the unmodified master initialization (`count = 0`), the callback
+is called once and signing fails; the focused test exited 0 with that line
+restored. In a disposable worktree, the one-line
+production mutation
+
+    unsigned int count = 0;  ->  unsigned int count = UINT_MAX;
+
+made the unpatched loop call the callback at `UINT_MAX`, wrap the counter,
+call it again at zero, and fail the focused `calls == 1` assertion with exit
+134 (`./bin/tests -i=1 -j=1 -t=ecdsa_counter_max`). On the repaired audit
+branch, the equivalent private-helper test starts
+at `UINT_MAX`; native and forced-int64/10x26 builds both pass with one callback,
+zero `r`/`s`, and `recid == 0` for normal and recoverable signing. This is a
+boundary proof, not a claim that ordinary fuzz input can reach 2^32 retries.
+
+The existing RFC6979 `UINT_MAX` rejection from l0rinc commit `b1bc6f3e`
+(merged as `9e4ec507`) protects the library-owned callback, but it does not
+protect a caller-supplied custom callback. That interaction matters: a test
+that exercises only the default callback can look fixed while the custom
+callback path still wraps. No l0rinc commit masks this custom-path proof;
+future changes to the retry loop must amend this note if they fix or merely
+mask the same transition.
+
+The repaired native and forced-int64/10x26 Clang ASan/UBSan builds passed:
+
+    cmake --build /mnt/my_storage/secp256k1-build-next --target tests fuzz_api_roundtrip fuzz_recovery -j4
+    cmake --build /mnt/my_storage/secp256k1-build-next-int64 --target tests fuzz_api_roundtrip fuzz_recovery -j4
+    ./bin/tests -i=1 -j=2 -t=ecdsa
+    ./bin/tests -i=1 -j=2 -t=recovery
+
+The complete `api_roundtrip` and `recovery` corpus directories also replayed
+with `-runs=1` on both backends without a crash, timeout, OOM, or sanitizer
+diagnostic. The targeted multi-worker corpus sweeps used `-fork=2 -jobs=2`
+and reported `oom/timeout/crash=0/0/0` for every worker.
+
+Severity is **Low direct-API availability/retry-state robustness** and
+**Informational to very Low for Bitcoin Core**. Core's surveyed `CKey::Sign`
+and `SignCompact` paths pass the library-owned RFC6979 callback, so this is
+not reachable through Core's normal signing path, an invalid block, or a
+witness. There is no demonstrated consensus divergence, invalid-block
+acceptance, signature forgery, key compromise, memory-safety failure, or
+remote concurrency issue. It is therefore not High/Critical. The nonce here
+is only a retry candidate; its clearing is not the severity driver, and no
+standalone cryptographic meaning is being attributed to the retry counter.
+
+No fuzz corpus was added for this finding because a corpus cannot
+meaningfully encode 2^32 invalid callback attempts. The deterministic test
+is the stronger verifier. The production mutation was discarded after the
+causal run; the temporary proof worktree is not part of this commit.
