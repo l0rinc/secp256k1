@@ -36775,3 +36775,35 @@ remote memory/concurrency failure was demonstrated, so no High/Critical
 rating is justified. Any future Core header-validation change must rerun both
 the exact Core message probe and these recovery seeds and state explicitly
 whether it changes or merely masks the wrapper-level behavior.
+
+## 2026-07-26 Schnorr/Taproot sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_schnorrsig` replayed the existing
+18-file `src/fuzz/corpora/schnorrsig` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_schnorrsig -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 18 seeds (670 bytes), exited 0, and completed 240 and 241
+executions. Each reached coverage 2956; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`41c380e7e2e06a23b9f124069d3edc0ca5ce787346acea35566e1263ba4c7f72` and
+`f4947f1706a34417de10340b621555a57d95ac7292edda5672672a7acdf031d7`.
+The copied corpus grew to 159 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of the Schnorr/Taproot signing and
+verification boundary used by Bitcoin Core. It found no new production bug,
+invalid witness or block acceptance, sigop undercount, consensus divergence,
+signature forgery, key compromise, or remote memory/concurrency failure.
+The existing master-relative findings and severity ratings are unchanged;
+this run does not justify a High/Critical rating or a production fix. Future
+changes to Schnorr parsing, x-only handling, or Taproot caller composition
+must rerun the exact corpus under sanitizer and state whether they preserve,
+change, or mask these oracle results.
