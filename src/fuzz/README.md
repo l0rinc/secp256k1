@@ -36676,3 +36676,67 @@ future Core or fork fix must record whether it changes parsing only, changes
 wallet signing behavior, or merely masks this availability boundary; the
 five hashes and the owned Taproot signing control should be rerun before
 assigning a higher severity.
+
+## 2026-07-26 Public API mutation-worker revalidation
+
+After the remote refresh, `origin/master` and `l0rinc/master` still resolve
+to `d2d04864ef9b056151603a3ced7980958b058028`, and the audit branch remained
+clean-master-descendant. The broad `api_roundtrip` corpus was replayed from
+four independent libFuzzer workers using the normal current build:
+
+    bin/fuzz_api_roundtrip -jobs=4 -workers=4 -max_total_time=30 \
+      -timeout=180 -ignore_crashes=0 -ignore_ooms=0 \
+      -ignore_timeouts=0 -handle_abrt=0 -print_final_stats=1 \
+      src/fuzz/corpora/api_roundtrip
+
+Each worker loaded all 63 tracked inputs (2933 bytes total) and then spent
+the remaining time mutating them. All four jobs exited 0. Their completed
+execution counts were 314, 316, 314, and 321; each reached coverage 4262;
+and the temporary corpora added 38, 51, 42, and 41 units respectively. No
+assertion, abort, crash, timeout, OOM, or artifact was reported. The worker
+log SHA-256 values, in job order, were:
+
+    a381e9b88145705c1e6d81fc978d077a92fb816aad3416afb2ad64268c09306d
+    5aff632a687207648d1a2d48037ea480d93e07b61b426d2b8ea4c90bf9fec6f4
+    6df3c88782c74ad6c3d9cbd32b099964dcf764f2c8022573c2afe83bfa2d76a1
+    28b2db1ccb2b0d8f5afe5c72e06847e9054ad2aa69b7eea2a70d899292146751
+
+This was a normal-build mutation replay, not an ASan/UBSan run. The
+sanitized deterministic and corpus evidence recorded by the earlier ledger
+remains the memory-safety proof; this pass adds breadth and worker
+independence only. No generated unit was promoted into the tracked corpus,
+no production mutation was needed, and no new production bug, Core caller
+consequence, invalid block/witness acceptance, consensus divergence,
+signature forgery, key compromise, or remote memory/concurrency failure was
+found. The existing direct API findings retain their recorded Low-to-Medium
+master-relative ratings, and no High/Critical rating or production fix is
+justified by this replay. A later source or fork change must rerun the
+affected exact seed under sanitizer and state whether it preserves, changes,
+or masks this worker result.
+
+The follow-up sanitizer check also separated the old baseline failure from a
+new result. The existing clean-baseline ASan binary
+`/tmp/secp256k1-clean-master-oracles-asan/bin/fuzz_api_roundtrip` (binary
+SHA-256 `3955175c2c1e2f3d930174b9087f214db2ccc85ef8936aacf0c4c4dc2846d5e3`,
+library SHA-256
+`e047fe0c11dcd0d402d577648d7106ab0695ae06013b802ad1ea6f8a159f67d2`)
+aborted both workers with exit 134 before corpus initialization. A GDB replay
+of `ascii-near-der` stopped at the pre-existing
+`sixteen-term-pubkey-combine` zeroed-output assertion in
+`src/fuzz/api_roundtrip.c:1831`; it emitted no ASan/UBSan diagnostic. This
+is the known clean-baseline first stop covered by `f106aaa5`, not a new
+finding from this pass.
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_api_roundtrip` (binary SHA-256
+`b1cdefe5cd50a9c68db898d3c5da873d08e249a256bd50cce75b44c98bfe2689`,
+library SHA-256
+`2edba8742644f4593e27371ba528bfe1fc400946d0e020899478f7ff8773b4c2`)
+passed the same copied 63-file corpus with two workers. The jobs completed
+315 and 321 runs, reached coverage 3867, exited 0, and reported no
+sanitizer, assertion, crash, timeout, OOM, or artifact. Their log SHA-256
+values were `e02e41b211a21a7cb04b45092ebc1fd787f1ecc9755693ae9879567e6336bf97`
+and `7fea1998ae5889e03d9f09ca2b586f4f13d5b14abfc4abdc723f129714df8602`.
+The temporary corpus grew to 201 files and was discarded. This confirms the
+repaired failure-output contract without changing the API finding ledger or
+claiming that the clean baseline passed.
