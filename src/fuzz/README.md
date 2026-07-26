@@ -33994,6 +33994,63 @@ Core caller/input origin, master-relative severity, first assertion, and
 verifier commands. No fuzz, sanitizer, compiler, or test process remains
 running.
 
+## 2026-07-26 Hash and context lifecycle worker revalidation
+
+Hash finalization and context lifecycle/callback ownership were rechecked
+after the arithmetic pass. This is negative evidence preserving existing
+clean-master classifications, not a new production bug. The fuzzer source
+hashes are `src/fuzz/hash.c`
+`f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc` and
+`src/fuzz/context.c`
+`2a6600270e4b1d3a8b27d42ff8f3c440e3d497a0f27468771334b7bb4fd609e9`.
+`origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`.
+
+Fresh private copies of the tracked 10-input hash and 13-input context
+corpora ran in native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds
+with:
+
+    -fork=2 -jobs=2 -max_total_time=60 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+All four managers and all eight fork workers exited 0. Every observed
+`oom/timeout/crash` counter was `0/0/0`; no sanitizer or assertion diagnostic
+was produced and all artifact directories were empty. The private corpora
+grew only with passing inputs: hash ended at 375 native and 373 forced-int64
+files, while context ended at 554 native and 319 forced-int64 files.
+
+Each tracked input was replayed once per backend with
+`-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0`: hash 10/10 and context
+13/13 in both backends, all exit 0 with no diagnostic. Replay log hashes are:
+
+| target / backend | replay log |
+| --- | --- |
+| `hash` / native | `f6965e1c0c4b3609f2c255d7d476321ea1694b130b8917c9fc4121528021e507` |
+| `hash` / forced-int64 | `fd7d5cf598b0c1f47d30db9e693781d4b9e1f694d34c43c5cf338690ad1a1a08` |
+| `context` / native | `45f26876fdfe567316f84aec4f39264768640c4c98372782d06231411b18919c` |
+| `context` / forced-int64 | `78b974a5691aae47d9c8d1b984f6c6a7b0f0054590a5017459b9c78338cb8d4f` |
+
+Existing consumed SHA/HMAC/RFC6979 state-clearing findings remain **Medium
+direct-library memory hygiene** when they concern key- or signing-nonce
+material, but no read primitive, key disclosure, invalid-block or
+invalid-witness acceptance, consensus divergence, signature forgery, or
+remote memory/concurrency failure was demonstrated. A retry counter or other
+value without standalone cryptographic meaning is not being rated Critical
+merely because it is uncleared. Context oversized-length and lifecycle cases
+remain Low-to-Medium direct API robustness with lower current Core reachability
+because Bitcoin Core passes bounded inputs and does not install attacker-
+controlled hash callbacks on consensus paths. High/Critical is not justified.
+
+No l0rinc commit was cherry-picked because the refs remain identical and the
+existing hash/context mutation matrices already preserve the clean-master
+first stops. This pass adds no production fix or deterministic regression
+test. Any later cleanup, callback, context, or hash optimization, fix, or
+cherry-pick must state whether it preserves, changes, or masks each original
+failure, with the exact Core caller/input origin, master-relative severity,
+first assertion, and verifier commands. No fuzz, sanitizer, compiler, or test
+process remains running.
+
 ## 2026-07-26 Arithmetic and recovery worker revalidation
 
 The remaining backend-sensitive arithmetic and recovery boundaries were
