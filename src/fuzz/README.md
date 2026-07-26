@@ -33926,3 +33926,70 @@ cherry-pick that changes a follow-up result must state whether it preserves,
 changes, or masks each original witness, with its exact Core input origin,
 master-relative severity, first assertion, and verifier commands. No fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 ecmult_multi long worker preservation pass
+
+The high-state `ecmult_multi` boundary was exercised again after the rebase
+with the current repaired branch. This is a worker-strength and preservation
+pass, not a new clean-master finding. `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`; the current production hashes are
+`src/ecmult_impl.h` `663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0`,
+`src/scratch_impl.h` `6d0ac9640db7627b2997375c2ecdbcfffae4f4883f0fe08ff5ea90e74ec17540`,
+and `src/fuzz/ecmult_multi.c`
+`aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`.
+
+The checked-in corpus contains 29 inputs. Fresh private copies were run in
+both native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds with:
+
+    -fork=2 -jobs=2 -max_total_time=120 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+Both managers and all four workers exited 0. Every observed
+`oom/timeout/crash` counter was `0/0/0`; there was no sanitizer diagnostic,
+assertion failure, or crash artifact. The private native corpus grew from 29
+to 152 inputs and the forced-int64 corpus from 29 to 227 inputs. The only
+non-crash artifact was a forced-int64 libFuzzer `slow-unit` containing
+`pippenger window 1261` (SHA-256
+`4fc6f788771c52d6cf80186f9dd6763a35acb0d37c4e3912d5974a63fc5aeda9`). Its
+fixed replay took 11.729 seconds, below the 180-second timeout; native took
+7.451 seconds. It is an intentional 1,261-point window-boundary fixture, not
+a timeout or production availability failure.
+
+For deterministic controls, each of the 29 tracked inputs was replayed once
+in each backend with `-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0`.
+Both completed 29/29 with exit 0 and no sanitizer or assertion diagnostic.
+The replay log hashes are native
+`7b2a163984883fe078036cbf646aeab7bedf11ac9fd806c376aee8c9b0e7feec` and
+forced-int64
+`b274ad60be0dce7df5975b5a30744fdebc1c9074b9654a26dd7d4511789be333`.
+The full current native `tests -i=1` and `noverify_tests -i=1` suites also
+passed in 164.764 and 68.338 seconds; forced-int64 passed them in 213.257 and
+118.889 seconds. No production source or corpus was changed by this pass.
+
+The existing master-relative findings remain separate and authoritative:
+`efa8b464`/`d7e3b49` is **Medium internal memory safety** for scratch-size
+wrap, with low current Bitcoin Core reachability because Core MuSig2
+aggregation uses `ecmult_multi_var(..., NULL, ...)` and does not construct a
+scratch space from peer-controlled block or witness bytes. The clean-master
+first stop is `secp256k1_scratch_create` at clean `src/scratch_impl.h:18`,
+where the wrapped allocation is first written. `12b2e3cb` is **Low
+internal output-state correctness** when a callback rejects after a partial
+aggregate; its clean-master first stop is the failure return from
+`secp256k1_ecmult_multi_var` at clean `src/ecmult_impl.h:861` before the
+partial `r` is cleared. Current Core checks the return value. Neither is
+High/Critical:
+no invalid-block or invalid-witness acceptance, consensus divergence, key
+compromise, signature forgery, or remote memory/concurrency failure was
+demonstrated. No witness-sigop consequence or cryptographically meaningful
+nonce-erasure issue is involved.
+
+No l0rinc commit was cherry-picked because the refs remain identical and the
+existing clean-master first-stop and repair records already cover these
+transitions. This pass adds no production fix or deterministic regression
+test. A later optimization, fix, or cherry-pick that changes a worker result
+must preserve the clean-master scratch-wrap and callback-failure controls and
+state whether it preserves, changes, or masks each finding, with the exact
+Core caller/input origin, master-relative severity, first assertion, and
+verifier commands. No fuzz, sanitizer, compiler, or test process remains
+running.
