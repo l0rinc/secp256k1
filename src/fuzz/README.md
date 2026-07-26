@@ -35377,3 +35377,38 @@ single-target replays recorded above. The result adds no production bug and
 no severity change. It is retained to prevent a future audit from treating a
 shared fork/merge scheduling timeout as a code failure or rediscovering the
 same inconclusive run.
+
+## 2026-07-26 Unsupported Schnorr signing input/output alias boundary
+
+A disposable clean-master probe against
+`d2d04864ef9b056151603a3ced7980958b058028` found that the first 32 bytes of
+`sig64` overlapping the 32-byte `msg32` make signing return success while the
+result fails verification against the original message:
+`alias_ret=1 separate_ret=1 alias_verify=0 separate_verify=1 equal=0`.
+The cause is the clean-master ordering that writes the nonce point's x
+coordinate into `sig64` before hashing `msg` for the BIP-340 challenge.
+
+This is deliberately **not** a master-relative production finding. The public
+header defines `sig64` as `Out` and `msg`/`msg32` as `In`, but does not promise
+an In/Out alias contract. That is the same boundary recorded by `ba8d379` and
+the unsupported x-only output/tweak alias retraction in `4e19c3d4`; an
+Out-plus-In overlap cannot be promoted to a production bug solely because the
+implementation happens to write too early. The temporary production change,
+unit test, fuzzer oracle, corpus input, and Low severity claim were removed
+from this audit commit. The probe remains recorded so the behavior is not
+rediscovered or accidentally treated as a consensus issue.
+
+Bitcoin Core's signing caller at `src/key.cpp:431` passes disjoint
+`sig.data()` and `hash.data()` buffers. Block and witness validation only
+verify signatures and do not call signing. There is therefore no demonstrated
+invalid-block or invalid-witness acceptance, consensus divergence, signature
+forgery, key compromise, memory corruption, or severe remote concurrency; no
+severity is assigned beyond Informational boundary evidence. This is also
+unrelated to nonce erasure: the nonce buffer and retry state have no standalone
+cryptographic meaning here.
+
+No l0rinc commit changes this ordering, and the current `l0rinc/master` ref is
+equal to `origin/master`. If the public API is later deliberately documented
+to support output/message overlap, reintroduce the independent oracle and
+regression then, with the clean-master reproduction and Core reachability
+re-evaluated against that new contract.
