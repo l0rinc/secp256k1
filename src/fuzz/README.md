@@ -37437,3 +37437,34 @@ remote severe memory/concurrency failure was demonstrated. No nonce with
 standalone cryptographic meaning was found to require erasure, and no
 potential fix was cherry-picked or allowed to mask a master-relative failure
 in this replay.
+
+## 2026-07-27 Bitcoin Core consumer-dispatcher replay
+
+The existing Bitcoin Core fuzz dispatcher was also exercised without changing
+the Core worktree. The source checkout was at `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`,
+and the prebuilt ASan/UBSan dispatcher was
+`build_fuzz/bin/fuzz` (SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`). The
+Core worktree's dirty files, including
+`src/test/blockencodings_tests.cpp` and fuzz logs, were left untouched.
+
+With `FUZZ=key`, the dispatcher selected two applicable seeds from the
+`api_roundtrip` corpus and ran two workers for 15 seconds. With
+`FUZZ=bip324_ecdh`, it selected 13 applicable seeds from the `ellswift` corpus
+and ran the same two-worker campaign. Both commands used
+`-fork=2 -jobs=2 -max_total_time=15 -timeout=180 -rss_limit_mb=0` with
+crashes, OOMs, and timeouts non-ignored. Both managers reported both jobs
+exiting 0 and `oom/timeout/crash: 0/0/0`; no sanitizer diagnostic, assertion,
+or promoted artifact appeared in either run.
+
+This consumer replay confirms reachability, not a new defect. The Core `key`
+target reaches wallet/message signing, compact recovery, and BIP32-style key
+operations; `bip324_ecdh` reaches transport XDH. Neither dispatcher target
+turns a malformed block or witness into an accepted consensus result, and
+neither changes sigop accounting. The compact-header alias and malformed
+opaque-recovery states remain **Informational/Low for current Core**; direct
+library state robustness remains at most Low/Medium. No invalid-block or
+witness acceptance, sigop undercount, consensus divergence, signature
+forgery, key compromise, or severe remote memory/concurrency failure was
+demonstrated. This is a verification-only commit: no production mutation,
+fix, regression test, cherry-pick, or nonce-erasure claim is made.
