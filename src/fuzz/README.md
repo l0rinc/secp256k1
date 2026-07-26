@@ -34478,3 +34478,28 @@ blocks/witnesses, and no invalid-block or invalid-witness acceptance,
 consensus divergence, key compromise, signature forgery, or remote crash was
 shown. The finding therefore does not warrant Medium/High/Critical severity.
 No production source or fuzzer corpus changed in this commit.
+
+## 2026-07-26 ecmult_const Worker Revalidation
+
+The current 11-file, 406-byte `ecmult_const` corpus was copied into
+disposable native and forced-int64 directories and run with the existing
+Clang ASan/UBSan binaries using `-fork=2 -jobs=2 -max_total_time=30`,
+`-timeout=60`, strict `-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0`,
+and a 120-second outer deadline. Both managers and all four workers exited
+0; each worker reported `oom/timeout/crash: 0/0/0`, and both artifact
+directories stayed empty. The private native and forced-int64 corpora grew
+to 680 and 481 inputs respectively through ordinary libFuzzer discoveries;
+none was added to the tracked corpus. The captured log SHA-256 values are
+native
+`2d30cc9c28cfb00741c9a67189383d3f11c54cfc23b187c48c4679df06489775` and
+forced-int64
+`8711c61549e16525bd5c2307f0633b21adaec43a6c17bf2cac2792a538ea46db`.
+
+This revalidation found no new production mismatch, invalid-block or
+invalid-witness acceptance, consensus divergence, key compromise, signature
+forgery, or remote memory/concurrency failure. Existing `ecmult_const`, ECDH,
+and EllSwift findings remain Low-to-Medium direct-library/transport hygiene
+against current Bitcoin Core; the relevant direct ECDH path is optional and
+the Core BIP324 path uses EllSwift, not attacker-controlled block or witness
+inputs. No High/Critical severity is justified and no production fix is
+claimed. No fuzz, sanitizer, compiler, or test process remains running.
