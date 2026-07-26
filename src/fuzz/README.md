@@ -32579,3 +32579,155 @@ message with the first assertion and Core input origin, and state whether it
 preserves, changes, or masks each earlier trigger. A minor fix that makes a
 follow-up replay green must not downgrade the corresponding unmodified-master
 severity without rerunning its original witness.
+
+## 2026-07-26 Complete clean-master ecmult_multi corpus first-stop differential
+
+This is a complete current-corpus replay and a reiteration of the existing
+ecmult findings, extending the focused callback revalidation above. The exact
+clean baseline is `origin/master` and `l0rinc/master` at
+`d2d04864ef9b056151603a3ced7980958b058028`. The audit branch was
+`1a5e98eeeb8022759d7516aef43b4f4ed1c5bfcb`, a descendant of that baseline;
+neither remote moved and no new fork commit was cherry-picked. The clean
+worktree kept production sources at d2d and overlaid only the current fuzz
+sources, CMake fuzz wiring, shared fuzz header, and tracked ecmult corpus.
+
+The corpus contains 29 files and 1028 bytes. Its sorted filename manifest is
+`e125fff7a4d0bb3926e4d0276d4357addbec772fc4a61a4fee3207de58223da1`.
+Important witnesses are:
+
+* `scratch-wrap-create` is 23 bytes, SHA-256
+  `db72836642228acaab2fd266ee26cad512be8b64c592fefc4ea0c9ebf92d6620`.
+* `callback-failure-output-state` is 43 bytes, SHA-256
+  `605855a1db2299ebe6a79851137a4abbd0f0252ae8e5677f507203a53057e897`.
+* `distinct-pippenger-batches` is 34 bytes, SHA-256
+  `f7597f073b8677724f518b35433820580fe9c21f86325902248f12ee8de60e30`.
+
+The clean production hashes for `src/ecmult_impl.h` and `src/scratch_impl.h`
+are respectively
+`ce70d26cb987c9bb2a2477389459437fc2831546c9c14404b58cf7ed07f32cc1` and
+`294a55d429fa4cc9dec46ade345bbb2bfdff4055eb1cbf1ba6168a23e5e74db6`.
+The overlaid `src/fuzz/ecmult_multi.c` hash is
+`aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`.
+
+### Unmodified-master first stop
+
+The first unmodified replay stopped on all 29 inputs, in both native 5x52 and
+forced-int64/10x26 Clang 22.1.7 ASan/UBSan builds, at the same production
+transition: `secp256k1_scratch_create` in clean `src/scratch_impl.h:18`.
+`SIZE_MAX` and `SIZE_MAX - base_alloc + 1` wrap `base_alloc + size` before
+allocation. The constructor then writes its 32-byte scratch header through a
+31-byte allocation, producing the deterministic ASan heap-buffer-overflow.
+This is the existing `efa8b464` / l0rinc `d7e3b49` scratch-wrap finding, not
+29 independent failures.
+
+The causal isolation order was recorded explicitly because later fixes can
+otherwise hide earlier master bugs:
+
+1. Gating only `secp256k1_fuzz_check_scratch_create_boundaries` exposed the
+   newer `checked_size_mul` helper contract. Clean d2d does not contain that
+   production helper; the temporary compatibility definition and its oracle
+   were harness-version mismatches, not production findings.
+2. Gating that compatibility probe exposed the newer
+   `scratch_accounting_boundary` contract against clean master scratch
+   bookkeeping. This was also harness-only and was not counted as a bug.
+3. Gating both harness-only stops exposed the already-recorded
+   `12b2e3cb` callback-output contract. The generic no-scratch/simple failure
+   helper left a finite partial Jacobian result after callback index 1 rejected.
+4. Gating that exact failure check exposed the same `12b2e3cb` state boundary in
+   repeated Pippenger, repeated multi-batch Pippenger, and repeated Strauss.
+   The distinct Pippenger fixture then reached its failure positions on either
+   side of the batch boundary. Only that failure subcase was gated; its
+   successful distinct-batch arithmetic reference remained active. These are
+   implementation-path manifestations of one production contract, not new
+   vulnerabilities or separate severity entries.
+
+After those masks, all 29 inputs exited 0 in both clean backends. No new
+arithmetic, batch partition, scratch accounting, serialization, sanitizer, or
+concurrency failure remained. The masks were disposable only and were not
+copied into the audit branch.
+
+### Master-relative severity and Core reachability
+
+* **Medium, confirmed internal memory safety, low current Core reachability:**
+  the scratch-wrap condition is a real clean-master allocation-size overflow
+  and out-of-bounds header write. `efa8b464` rejects the wrapped size and its
+  deterministic `src/tests.c` regression covers `SIZE_MAX`. Current Bitcoin
+  Core MuSig aggregation builds local vectors and reaches the bundled
+  `ecmult_multi_var(..., NULL, ...)` no-scratch path; it does not call
+  `secp256k1_scratch_create`. Invalid block or witness bytes cannot supply
+  `SIZE_MAX` through this path. There is no demonstrated invalid-block
+  acceptance, witness acceptance, consensus divergence, or remote Core memory
+  impact, so this is not High or Critical on master. A future Core caller must
+  be rated by its actual reachable consequence, not by this internal proof
+  alone.
+* **Low, internal output-state correctness, low current Core reachability:**
+  `12b2e3cb` clears the result when a callback fails after an earlier simple or
+  batched contribution. The clean witness proves that master returns failure
+  while leaving a finite partial aggregate. Callers must honor the return;
+  current Core's relevant MuSig caller does so and does not obtain this state
+  from block or witness input. No invalid-block acceptance, consensus issue,
+  key compromise, use-after-free, or concurrency impact was shown. High or
+  Critical is therefore not justified. The repeated Pippenger, distinct
+  Pippenger, and Strauss stops do not raise the rating because they are the
+  same output contract.
+* The `checked_size_mul` and scratch-accounting stops are informational
+  harness compatibility conditions, not master production findings. No nonce
+  erasure issue is involved; a value without standalone cryptographic meaning
+  is not Critical merely because it is uncleared.
+
+The existing tests missed the exact scratch constructor wrap because ordinary
+inputs did not request the one-byte-over-boundary or `SIZE_MAX` sizes. The
+earlier ecmult tests checked return values, callback traces, scratch rollback,
+and successful arithmetic, but did not require canonical infinity after a
+rejection following an earlier contribution in every implementation path.
+`efa8b464` and `12b2e3cb` already add the deterministic production regressions;
+the clean-master crash plus the restored controls are the strongest proof that
+these oracles matter. This pass adds no production mutation or new regression
+test.
+
+### Repaired-branch verification
+
+The repaired source retained `src/ecmult_impl.h` hash
+`663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0` and
+`src/scratch_impl.h` hash
+`6d0ac9640db7627b2997375c2ecdbcfffae4f4883f0fe08ff5ea90e74ec17540`.
+Fresh Clang 22.1.7 ASan/UBSan builds used assembly OFF and the same native and
+forced-int64 configurations. Relevant standalone fuzzer hashes were
+`98c5d7b85e0cf055ad7355f6d91076bac2f140219ce96e5ae7452d6d7d09d594` and
+`66bc38cc4d9884a24b3af3b816afd237de5e15b8af05f217f41fb849ec2bade8`.
+The exact 29-file replay exited 0 in both builds. The result manifests for
+native and forced-int64 were identical:
+`109963a3874671609f12bdfcc07260eb249cb8f652eda6c03c604a90022c4953`.
+
+The deterministic commands, each run for native and forced-int64, were:
+
+    bin/fuzz_ecmult_multi src/fuzz/corpora/ecmult_multi/<seed>
+    bin/tests -i=1 -t=ecmult -t=scratch_tests -t=invalid_scratch_space_tests
+    bin/noverify_tests -i=1 -t=ecmult -t=scratch_tests -t=invalid_scratch_space_tests
+
+All four test slices exited 0. The test and no-verify binary hashes were,
+respectively, native `b9002721086523567fbc138d680c574b38d7a5e879035b2a90b7781b5f00685e`,
+`0f0ffd86e6d3aceea2bfbbdcea0e32783f9d3f7790b00345376cd7675a8c692e`, and
+forced-int64 `0fae88d1822d71fc58fe2e3d0be19452e63fcec63237716154ec3f6d2b751b30`,
+`5f9b2fc24af99617bfcf126ad8a051acc4ae74eb34b6d2b1c31c3e5b8a2d29b3`.
+
+Fresh libFuzzer builds replayed private corpus copies with
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0
+-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0`.
+Both managers and all workers exited 0. Native reached
+`oom/timeout/crash: 0/0/0` and coverage 3368; forced-int64 reached
+`oom/timeout/crash: 0/0/0` and coverage 5208. There were zero sanitizer
+diagnostics and zero artifact files; the native campaign added only passing
+corpus inputs and the forced-int64 campaign retained its 29 seeds. No fuzz,
+sanitizer, compiler, or test process remains running.
+
+No new l0rinc commit was cherry-picked: the refs are identical, and the
+existing `efa8b464` and `12b2e3cb` commits already carry the relevant fork
+context and fixes. Any future cherry-pick that touches scratch construction,
+callback routing, batch sizing, or ecmult implementation must preserve the
+unmodified-master first-stop order, state whether it changes or merely masks
+each witness, and amend its own commit message with the exact corpus/mutation,
+Core input origin, master-relative severity, strongest proof, and verifier
+commands. A minor later fix making a follow-up replay green must not be used
+to downgrade a severe master finding without replaying its original clean
+master witness.
