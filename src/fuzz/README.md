@@ -34883,6 +34883,7 @@ wallet/application boundaries in the surveyed Bitcoin Core checkout. No
 invalid-block or invalid-witness acceptance, consensus divergence, key
 compromise, signature forgery, or remote memory/concurrency failure was shown.
 No l0rinc commit was added because the fork and master refs remain identical.
+
 No fuzz, sanitizer, compiler, or test process remains running.
 
 ## 2026-07-26 Silent Payments label failure-cleanup oracle
@@ -35016,3 +35017,43 @@ checkout. No invalid-block or invalid-witness acceptance, consensus divergence,
 key compromise, signature forgery, or remote memory/concurrency failure was
 shown. The label cleanup oracle also passed in both workers and both backends.
 No l0rinc commit was added because the fork and master refs remain identical.
+
+## 2026-07-26 Callback-owned outputs and Silent Payments label-cache boundary
+
+The remaining callback-owned output paths were reviewed after the complete
+worker sweep. ECDH and EllSwift explicitly give custom hash callbacks control
+of their output and failure cleanup; only the library-owned SHA256/BIP324
+callbacks have a fixed 32-byte zero-on-failure postcondition. The ECDSA nonce
+callback likewise owns nonce generation and must fill its 32-byte output when
+it returns success. The existing fuzzers assert the built-in output cleanup,
+callback arguments, callback counts, and successful custom transcripts without
+inventing a cleanup rule for custom callbacks.
+
+The Silent Payments label callback is the one remaining application-owned
+state boundary. A cache hit returns a pointer to 32 bytes, valid through the
+next callback call or the scan's return. Those bytes are now documented as a
+valid nonzero scalar, matching the output of
+`secp256k1_silentpayments_recipient_label_create`. This is a caller
+precondition, not a new production validation or a claim that arbitrary
+callback memory is trusted input.
+
+For completeness, a deliberately corrupted callback entry has a distinct
+current-master behavior: a zero tweak is accepted by the generic secret-key
+tweak-add helper, while an overflowing tweak makes that helper fail and the
+scanner stores a zero spend tweak but still returns a labeled result. The
+valid exact-negation case is different and intentional: a valid label tweak
+can cancel the output tweak, and the resulting zero transaction tweak is
+spendable with the unlabeled spend secret key. The malformed zero/overflow
+cases therefore classify as invalid callback-domain construction or local
+cache corruption, not as a Silent Payments protocol failure.
+
+Severity remains **Informational to Low direct-API robustness** for the
+malformed-cache cases. The surveyed Bitcoin Core checkout has no production
+Silent Payments caller, so these bytes cannot arrive through an invalid block
+or witness, create consensus divergence, forge a signature, compromise a
+key, or cause a remote memory/concurrency failure. They are not High/Critical,
+and this is unrelated to clearing a nonce or retry counter. No production
+mutation, clean-master failure, or l0rinc cherry-pick is claimed here; the
+purpose of the documentation and existing valid-cache oracle is to preserve
+the boundary and prevent future fuzzers from treating corrupted callback data
+as a library finding.

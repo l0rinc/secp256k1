@@ -300,6 +300,10 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_silentpayments_recipien
  *
  *  Returns: pointer to the 32-byte label tweak if there is a match.
  *           NULL pointer if there is no match.
+ *  The returned 32 bytes MUST encode a valid nonzero scalar, as accepted by
+ *  `secp256k1_ec_seckey_verify`. A zero or overflowing value is not a label
+ *  tweak; callers must reject such corrupted cache entries instead of
+ *  returning them from this callback.
  *
  *  In:         label: pointer to the serialized 33-byte label to check
  *                     (computed during scanning)
@@ -337,7 +341,9 @@ typedef struct secp256k1_silentpayments_found_output {
  *  If used, the `label_lookup` function must return a pointer to a 32-byte label
  *  tweak if the label is found, or NULL otherwise. The returned pointer must remain
  *  valid until the next call to `label_lookup` or until the function returns,
- *  whichever comes first. It is not retained beyond that.
+ *  whichever comes first. It is not retained beyond that. The pointed-to bytes
+ *  must encode a valid nonzero scalar, as accepted by
+ *  `secp256k1_ec_seckey_verify`.
  *
  *  For creating the label cache, `secp256k1_silentpayments_recipient_label_create`
  *  and `secp256k1_silentpayments_recipient_label_serialize` can be used.
