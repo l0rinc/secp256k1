@@ -17175,6 +17175,40 @@ uninitialized secret, or sanitizer finding in the library. The isolated
 the HMAC target passed. The same contract applied to the buffered SHA wipe
 assertion.
 
+## 2026-07-26 Scalar arithmetic sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_scalar` replayed the existing 10-file
+`src/fuzz/corpora/scalar` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_scalar -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 10 seeds (349 bytes), exited 0, and completed 363 and 360
+executions. Each reached coverage 1952; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`a116795c944ceae5ae2933913786078b341a7366a2d7e30ae8acad5f41280f93` and
+`d05cd1d2162ec93dff99bcf22364a1a057a9d7af2e74d4c10e94df20dd4a58c3`.
+The copied corpus grew to 191 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of scalar parsing, normalization,
+order reduction, multiplication, inversion, conditional moves, zero and
+overflow predicates, and independent reference equations. It found no new
+production bug, invalid witness or block acceptance, sigop undercount,
+consensus divergence, signature forgery, key compromise, or remote
+memory/concurrency failure. Existing scalar and ECDSA retry findings retain
+their master-relative Low/Medium direct-API ratings; a retry counter without
+standalone cryptographic meaning is not a Critical clearing issue. This run
+does not justify a High/Critical rating or a production fix. Future scalar or
+nonce changes must rerun these exact seeds under sanitizer and show the public
+signing or Core caller consequence before escalation.
+
 The test repair adds `all_bytes_equal_after_clear` in `src/tests.c`. It calls
 `SECP256K1_CHECKMEM_MSAN_DEFINE` only for the range whose implementation-level
 zero postcondition is intentionally being inspected, then performs the
