@@ -36312,3 +36312,78 @@ PR28 was available when the fork was fetched. Any future Core or fork change
 that makes the probe pass must state whether it adds index identity, changes
 the supported BIP390 domain, or merely masks a later stage; it must not reduce
 the severity of an independently reproducible master failure.
+
+## 2026-07-26 Stateful current-master corpus and worker recheck
+
+After the latest ref check, the clean-master base remained
+`d2d04864ef9b056151603a3ced7980958b058028` for both `origin/master` and
+`l0rinc/master`; the audit branch was
+`59aa15109ff559c60fbc249d18d59a47a88e2c01`. The l0rinc fork still had no PR
+head newer than PR28. This campaign used the tracked corpora as they existed
+at that base and ran each seed in isolation under Clang ASan/UBSan with
+`abort_on_error=1`, `halt_on_error=1`, `allocator_may_return_null=1`,
+`-runs=1`, `-timeout=180`, `-rss_limit_mb=0`, `-handle_abrt=0`, and all
+libFuzzer failure classes set to non-ignored. The per-backend seed counts and
+summary-file hashes were:
+
+    target          seeds   native 5x52 summary                         forced-int64/10x26 summary
+    api_roundtrip     63    892fafe8e3515153a3a5e45fba135bf3617c3539f1c23fe1469c843f1b142952  98b30743915d3c5a72802189e650ae6f3483fd743b8d65454c7f7ff2aa990260
+    context           13    5e2bde6f316deb454b46d8f23329d160726b7bdd08a5d9214d159b75319a478f  e3b31be04722f152f570f3a92a2460ee9192e60bd1e776486fe36195391151d6
+    ecmult_multi      29    b685af6fc617cc28ffebc4c4256af8ef6faff650b6d124756e405c1c9e5fb40e  5c2c3ef76500a1264ea872ad3cc83a65e70686f244a65a1f9382d63095717d3f
+    ellswift          20    68639eaf77b0df67ad54064ac1008d738c34aa500d7644ed2c99642efc7bad28  a3c36de08d4ae7df111cd49970174906c3a26313c853bcf87d44503baa2d0f94
+    recovery          18    ae59357186fe372f7b8c09b7ea13964e9bec9e1b50f57df99a8c0b8ed219b888  9df71cbc2e357619c70e7f72b39a422763f85fe3f5e4986de03992b5e242d785
+    schnorrsig        18    f6919b7ebcd62b611a50ad3ab54ba08a9a745a4e36220667e1bdc9fe50263bf2  0787be8ee1ccacaf61528e30dffb633ddaa24a41f4425f23d1cfd1b5c87720f7
+    silentpayments    14    03597215a4b0091bf08bb2d9e37a15abd811694063f2a69b57016d58cec653eb  b81c0fded098283be4a40368a29f21473c8bab43bb05ee88e7dbe7f534b3ed23
+    musig             81    6b86b7a7cf323d76d030d17b3a4d022a540be8393908bb97aacba63c2180942f  8c305d791b03c50abd8f779a43200be3396f98d4885537115adb2dc73226b969
+    xonly_tweak       20    eeafed7ce8c042fa182c739d0609adf119c30ca7f16d069ef9dec38a3d942a4f  283bbf12e885331a16aaa156f0078ce35dfc7739ce5b0e2b2b32f85e383fb3d3
+
+That is 276 direct seed replays per backend, 552 executions total. Every
+execution exited 0. The logs contain no ASan/UBSan diagnostic, callback
+error, assertion failure, OOM, timeout, crash, or artifact. The sweep
+included the high-value recipient-group-limit, pippenger-window-1261,
+serialization, malformed opaque-state, static-context, aliasing, and
+failure-cleanup seeds already present in the tracked corpora.
+
+The MuSig corpus was also run with two libFuzzer fork workers and two jobs:
+
+    -fork=2 -jobs=2 -max_total_time=20 -timeout=180 -rss_limit_mb=0
+    -ignore_ooms=0 -ignore_timeouts=0 -ignore_crashes=0 -handle_abrt=0
+    -print_final_stats=1 -verbosity=0
+
+On native 5x52, both jobs consumed all 81 seeds, ran for 111-112 seconds,
+and reported `cov: 4694`, `ft: 13892`, `oom/timeout/crash: 0/0/0`.
+The worker log hashes were `8ea5af8b23feae7e75c390f3b7cb88ac604491ffc918ce0340740e255dcb10cf`
+and `7c458905e6714adc5b2c2a2848cdcfeb9351453da74d776b081c6e01ac4ca134`;
+the manager hash was
+`ceccaff3390246498b510b874df1921b3581bffe137374d2de64c2c04c314d70`.
+On forced-int64/10x26, both jobs consumed all 81 seeds, ran for 191-193
+seconds, and reported `cov: 6737`, `ft: 22555`,
+`oom/timeout/crash: 0/0/0`. The worker hashes were
+`9fb195b4a012a486fc95e0f7634fe8e21f0f5453ba89f780e4916f6a79d46150` and
+`3905426d7fe74c7be9677d131dffbaf46a6b042796c02cfa20b7ca5c02f675ac`;
+the manager hash was
+`11aabb0de3d654a44c57a7a37606e9ddc2731d97175735c7caf6b0dd585f00e8`.
+An earlier 90-second outer timeout interrupted a manager before any unit
+completed; that run is explicitly excluded from the evidence and is not a
+failure.
+
+No new clean-master production failure or severity upgrade was found. In
+particular, this sweep did not demonstrate invalid-block or invalid-witness
+acceptance, witness/sigop undercount leading to acceptance, consensus
+divergence, signature forgery, key compromise, or severe remote
+memory/concurrency failure. A nonce or retry counter with no standalone
+cryptographic meaning is not a Critical finding merely because it is not
+cleared. The existing duplicate-participant BIP390 result remains the only
+actionable Core integration finding in this slice: **Medium wallet/application
+spend availability**, not a secp256k1 production or High/Critical consensus
+finding. The latest exact-Core probe and its two-wallet deterministic proof
+remain in the preceding entry.
+
+No source mutation was needed for this negative campaign because no candidate
+failure required causal confirmation. The previously documented production
+mutations remain the control evidence for the static-context, silent-payment,
+group-alias, and internal arithmetic oracles. Any future source or harness
+change must rerun the exact affected seed, the clean-master control, and the
+appropriate two-worker matrix, then say in its commit message whether the
+change preserves, alters, or masks the master-relative result. No production
+fix or bug claim is justified by this clean replay alone.
