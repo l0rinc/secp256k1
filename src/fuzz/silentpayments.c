@@ -9,6 +9,14 @@
 #ifdef ENABLE_MODULE_SILENTPAYMENTS
 
 #include "sha256_reference.h"
+#include "../field_impl.h"
+
+static const unsigned char secp256k1_fuzz_silentpayments_field_p_plus_one[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
 
 static void secp256k1_fuzz_silentpayments_tagged_hash_reference(
     unsigned char out32[32], const unsigned char *tag, size_t taglen,
@@ -1300,6 +1308,34 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         FUZZ_CHECK(illegal_data->calls == calls + 1);
     }
     {
+        secp256k1_fe noncanonical_x;
+        secp256k1_fe_storage x_storage;
+        secp256k1_silentpayments_label malformed_label = label;
+        unsigned char serialized[33];
+        unsigned char zero_serialized[33] = { 0 };
+        unsigned char zero_pubkey[sizeof(labeled_spend_pubkey)] = { 0 };
+
+        STATIC_ASSERT(sizeof(secp256k1_fe_storage) == 32);
+        secp256k1_fe_set_b32_mod(&noncanonical_x,
+            secp256k1_fuzz_silentpayments_field_p_plus_one);
+        secp256k1_fe_impl_to_storage(&x_storage, &noncanonical_x);
+        memcpy(malformed_label.data + 4, &x_storage, sizeof(x_storage));
+
+        memset(serialized, 0xA5, sizeof(serialized));
+        calls = illegal_data->calls;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+            serialized, &malformed_label) == 0);
+        FUZZ_CHECK(illegal_data->calls == calls + 1);
+        FUZZ_CHECK(memcmp(serialized, zero_serialized, sizeof(serialized)) == 0);
+
+        memset(&labeled_spend_pubkey, 0xA5, sizeof(labeled_spend_pubkey));
+        calls = illegal_data->calls;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(ctx,
+            &labeled_spend_pubkey, &spend_pubkey, &malformed_label) == 0);
+        FUZZ_CHECK(illegal_data->calls == calls + 1);
+        FUZZ_CHECK(memcmp(&labeled_spend_pubkey, zero_pubkey, sizeof(zero_pubkey)) == 0);
+    }
+    {
         secp256k1_silentpayments_prevouts_summary malformed_summary = prevouts_summary;
 
         memset(malformed_summary.data + 5, 0, 64);
@@ -1310,6 +1346,25 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
             scan_seckey, &malformed_summary, &spend_pubkey,
             secp256k1_fuzz_silentpayments_label_lookup, &label_cache) == 0);
         FUZZ_CHECK(illegal_data->calls == calls + 1);
+    }
+    {
+        secp256k1_fe noncanonical_x;
+        secp256k1_fe_storage x_storage;
+        secp256k1_silentpayments_prevouts_summary malformed_summary = prevouts_summary;
+
+        STATIC_ASSERT(sizeof(secp256k1_fe_storage) == 32);
+        secp256k1_fe_set_b32_mod(&noncanonical_x,
+            secp256k1_fuzz_silentpayments_field_p_plus_one);
+        secp256k1_fe_impl_to_storage(&x_storage, &noncanonical_x);
+        memcpy(malformed_summary.data + 5, &x_storage, sizeof(x_storage));
+        calls = illegal_data->calls;
+        n_found = 0;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+            found_output_ptrs, &n_found, tx_output_ptrs, n_recipients,
+            scan_seckey, &malformed_summary, &spend_pubkey,
+            secp256k1_fuzz_silentpayments_label_lookup, &label_cache) == 0);
+        FUZZ_CHECK(illegal_data->calls == calls + 1);
+        FUZZ_CHECK(n_found == 0);
     }
     {
         secp256k1_silentpayments_prevouts_summary malformed_summary = prevouts_summary;

@@ -34572,3 +34572,107 @@ amend its commit message with whether it preserves, changes, or masks the
 clean-master witness, plus the exact Core input origin, first assertion,
 master-relative severity, and verifier commands. No fuzz, sanitizer,
 compiler, or test process remains running.
+
+## 2026-07-26 Silent Payments canonical opaque storage
+
+This pass found a remaining state-boundary gap after `ae336212` added curve and
+subgroup checks for Silent Payments labels and prevout summaries. Both objects
+store two field elements in a public opaque byte array. Their loaders still
+called `secp256k1_ge_from_bytes` before checking that the 64-byte field-storage
+encoding was canonical. A caller that preserved the object magic and replaced
+only the x storage with field `p + 1` reached `secp256k1_fe_from_storage` with
+an invalid normalized representation. In verification builds this aborts in
+the field verifier before the intended API error path; in non-VERIFY builds it
+leaves the API accepting an opaque representation that the public-key loader
+would reject. Ordinary label parse and summary creation always emit canonical
+storage, so existing round-trip tests did not generate this state.
+
+The production repair adds the same barrier already used by public-key and
+MuSig loaders:
+
+    label_load:       ge_storage_is_canonical(label->data + 4)
+    scan_outputs:     ge_storage_is_canonical(&summary->data[5])
+
+The fuzzer now constructs the exact `p + 1` field representation with
+`secp256k1_fe_set_b32_mod` and `secp256k1_fe_impl_to_storage`, while preserving
+the magic and all unrelated bytes. It requires label serialization and labeled
+spend-key construction to return 0, clear their outputs, and make one illegal
+callback; it separately requires summary scanning to return 0 with no found
+outputs. The deterministic unit suite covers the same label and summary
+objects. The new corpus witness is the 43-byte input
+`silentpayments noncanonical opaque storage\n`, SHA-256
+`03f711951c93cba5444f6dcdea6fb5633e3ffd8538318b1aa60e66ca62bde61c`.
+The 12-file Silent Payments corpus manifest SHA-256 is
+`11b55d83fbd856bd060e74f0704cb53acd8df8a0aec15a390ce47aa8cb55bba4`.
+
+### Minimal mutation proof
+
+The clean control used the current audit branch and removed only the two new
+`secp256k1_ge_storage_is_canonical` checks. This avoids allowing the older
+label-batch changes or a later cherry-pick to mask the finding. With both
+checks removed, the witness exited 134 on both sanitizer builds. Native
+5x52 stopped at `field_5x52_impl.h:29`; forced-int64/10x26 stopped at
+`field_10x26_impl.h:33`. The GDB stacks were
+
+    field verifier -> fe_from_storage -> ge_from_storage -> ge_from_bytes
+      -> silentpayments_label_load:358 -> label_serialize:388
+      -> silentpayments.c:1323
+
+Native and forced-int64 mutation log SHA-256 values were respectively
+`90f0d9bfd21aafc554a02c57d054515bc268331e17e4b6e41010441fbb0026e1` and
+`b0f846caf30ca8b20a12a20adb7d8586ab5bb1af7532a2547845159bb01961ea`.
+
+To prove the summary path independently, the disposable mutation restored
+only the label check and removed only the summary check. It again exited 134
+on both backends, now at `scan_outputs:644` from `silentpayments.c:1364`.
+The backend-specific GDB stacks were the same field-verifier path ending in
+`secp256k1_silentpayments_recipient_scan_outputs`. Native and forced-int64
+summary-mutation log SHA-256 values were
+`92e6d2b0c0a7eafbe330e6210d64ad810e0459c250a07e999b9a1725975ac3da` and
+`82b1e227c80fd93cc11c800b516079e9253a5e7ab7b7e7d62758e1976434918c`.
+The exact verifier command for each control was:
+
+    gdb -q -batch -ex 'set pagination off' \
+      -ex 'set env ASAN_OPTIONS detect_leaks=0' \
+      -ex 'set env UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1' \
+      -ex run -ex bt --args fuzz_silentpayments \
+      corpora/silentpayments/noncanonical-storage -runs=1 \
+      -handle_abrt=0 -timeout=180 -rss_limit_mb=0 -print_funcs=0
+
+### Repaired verification and severity
+
+The repaired native and forced-int64 binaries replayed all 12 corpus files
+with exit 0. Their replay log SHA-256 values were
+`edc7fabc4c2aec198976ccf4d750d84b6731cbe9e09ec5d0c306574359648c9a` and
+`b09f97d1dcc821ffabc02146987d14672d39f11a7a8347ec2a9a68ba8128c1f6`.
+`tests -t=silentpayments -i=1` passed on both backends. Two-worker/two-job
+sanitizer campaigns used private copies of all 12 seeds:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=180
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+Both managers and all workers exited 0 with `oom/timeout/crash: 0/0/0`.
+Native and forced-int64 worker log SHA-256 values were
+`227a5c3cbfde22f06ebe308a5a72aba4d9646c18f68e94b7568f47fcc213f07d` and
+`258449a051e5416800b41aabe4b6f7b45e0b3af58e40e7e60ae255b03047cf33`.
+Generated files were removed and no artifact was promoted.
+
+Master-relative severity is **Medium direct-API/in-memory state correctness**
+for callers that can mutate or receive corrupted opaque Silent Payments
+objects; the pre-fix behavior can terminate a verification build or propagate
+invalid internal field state. For the surveyed Bitcoin Core checkout it is
+**Low/Informational**: Core has no Silent Payments production caller, and its
+consensus public-key adapters parse wire encodings before entering opaque
+state. No invalid block or witness acceptance, consensus divergence, key
+compromise, signature forgery, or remote memory-safety exploit was shown.
+High/Critical is not justified, and this is unrelated to witness sigop
+accounting. The finding also does not become Critical because an unrelated
+nonce or retry counter is uncleared.
+
+No l0rinc commit was cherry-picked for this pass because
+`origin/master == l0rinc/master == d2d04864` and no fork commit supplies this
+canonical-storage repair. Any later fix or cherry-pick touching these loaders
+must amend its commit message with the exact `p + 1` mutation, first-stop
+ordering, whether it preserves/changes/masks the two controls, Core caller
+reachability, master-relative severity, and verifier commands.

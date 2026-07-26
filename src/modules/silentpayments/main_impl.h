@@ -355,6 +355,7 @@ static void secp256k1_silentpayments_label_save(secp256k1_silentpayments_label* 
 /* Loads a group element from a label. Returns 1 unless the label wasn't properly initialized. */
 static int secp256k1_silentpayments_label_load(const secp256k1_context* ctx, secp256k1_ge* ge, const secp256k1_silentpayments_label* label) {
     ARG_CHECK(secp256k1_memcmp_var(&label->data[0], secp256k1_silentpayments_label_magic, 4) == 0);
+    ARG_CHECK(secp256k1_ge_storage_is_canonical(label->data + 4));
     secp256k1_ge_from_bytes(ge, label->data + 4);
     ARG_CHECK(secp256k1_ge_is_valid_var(ge));
     ARG_CHECK(secp256k1_ge_is_in_correct_subgroup(ge));
@@ -643,6 +644,7 @@ int secp256k1_silentpayments_recipient_scan_outputs(
     ARG_CHECK(prevouts_summary != NULL);
     ARG_CHECK(secp256k1_memcmp_var(&prevouts_summary->data[0], secp256k1_silentpayments_prevouts_summary_magic, 4) == 0);
     ARG_CHECK(prevouts_summary->data[4] <= 1);
+    ARG_CHECK(secp256k1_ge_storage_is_canonical(&prevouts_summary->data[5]));
     secp256k1_ge_from_bytes(&prevouts_pubkey_sum_ge, &prevouts_summary->data[5]);
     ARG_CHECK(secp256k1_ge_is_valid_var(&prevouts_pubkey_sum_ge));
     ARG_CHECK(secp256k1_ge_is_in_correct_subgroup(&prevouts_pubkey_sum_ge));

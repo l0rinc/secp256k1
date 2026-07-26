@@ -85,6 +85,12 @@ static unsigned char ALICE_SECKEY[32] = {
     0x8a, 0x4c, 0x53, 0xf6, 0xe0, 0x50, 0x7b, 0x42,
     0x15, 0x42, 0x01, 0xb8, 0xe5, 0xdf, 0xf3, 0xb1
 };
+static const unsigned char FIELD_P_PLUS_ONE[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
 
 struct label_cache_entry {
     unsigned char label[33];
@@ -412,6 +418,18 @@ static void test_label_api(void) {
             memset(malformed_label.data + 4, 0, sizeof(malformed_label.data) - 4);
             CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &malformed_label));
         }
+        {
+            secp256k1_fe noncanonical_x;
+            secp256k1_fe_storage x_storage;
+            secp256k1_silentpayments_label malformed_label = l;
+
+            STATIC_ASSERT(sizeof(secp256k1_fe_storage) == 32);
+            secp256k1_fe_set_b32_mod(&noncanonical_x, FIELD_P_PLUS_ONE);
+            secp256k1_fe_impl_to_storage(&x_storage, &noncanonical_x);
+            memcpy(malformed_label.data + 4, &x_storage, sizeof(x_storage));
+            CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &malformed_label));
+            CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(CTX, &ls, &s, &malformed_label));
+        }
     }
 
     /* Check null values are handled */
@@ -530,6 +548,17 @@ static void test_recipient_api(void) {
     {
         secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
         memset(malformed_ps.data + 5, 0, 64);
+        CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
+    }
+    {
+        secp256k1_fe noncanonical_x;
+        secp256k1_fe_storage x_storage;
+        secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
+
+        STATIC_ASSERT(sizeof(secp256k1_fe_storage) == 32);
+        secp256k1_fe_set_b32_mod(&noncanonical_x, FIELD_P_PLUS_ONE);
+        secp256k1_fe_impl_to_storage(&x_storage, &noncanonical_x);
+        memcpy(malformed_ps.data + 5, &x_storage, sizeof(x_storage));
         CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
     }
     {
