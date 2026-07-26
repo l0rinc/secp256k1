@@ -34849,3 +34849,38 @@ standalone cryptographic meaning is not Critical merely because it is live.
 No l0rinc commit was added because `origin/master == l0rinc/master` and the
 existing clean-master controls remain authoritative. No fuzz, sanitizer,
 compiler, or test process remains running.
+
+## 2026-07-26 Public codec and transport worker replay
+
+The private tracked corpora for `api_roundtrip` (63 seeds), `recovery` (17),
+`schnorrsig` (18), `ecdh` (9), and `silentpayments` (12) were replayed on both
+the native and forced-int64/10x26 Clang ASan/UBSan binaries. Each run used
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -ignore_timeouts=0
+-ignore_ooms=0 -ignore_crashes=0 -rss_limit_mb=0 -handle_abrt=0
+-print_final_stats=1` under a 75-second outer timeout. All ten managers exited
+0 and every worker reported `oom/timeout/crash: 0/0/0`.
+
+| target / backend | manager log SHA-256 |
+| --- | --- |
+| `api_roundtrip` / native | `cda52e505324c9d99e0c71fa6ff15e8536e20bc47eba675db7a7cc476acbe373` |
+| `api_roundtrip` / forced-int64 | `e940d73c15bab7cb35124dc18ec7186f0cc67ae1d180e7e269671a46c674610f` |
+| `recovery` / native | `f0a60f19369984a14ba34b20e7e55bb1a29446aba4778f7da521b6a5a5c7e1c7` |
+| `recovery` / forced-int64 | `564729b23328e85b965494ad4bf149524402f838ffd442e2bf78168c2763fa04` |
+| `schnorrsig` / native | `b65232b44741d6040163adda82547dd84a5b15ff45847d1ed0620ade7587dbe7` |
+| `schnorrsig` / forced-int64 | `04dd9555934c38c5575866eea44ac1f989babde7195455ac2c96510da7be448f` |
+| `ecdh` / native | `c000087257876a613e92fe198b3ba1ef9d4a41f374afd51a0f570020513b0688` |
+| `ecdh` / forced-int64 | `66a1e95adfe767ad4d9def129da98fba6a8b21031bc0cd2f344e132284b75826` |
+| `silentpayments` / native | `2d7946dece91c57ffe0dbd5709ea7dbe8a9eb8107182e8ded7c3b1c7c764f11b` |
+| `silentpayments` / forced-int64 | `274223264b05ea42c6999344da25df0fc2c1db68530c18205c4d87aaac6f2754` |
+
+No sanitizer, assertion, or target failure was present, and no crash, timeout,
+or OOM artifact was created. Any libFuzzer corpus growth stayed in disposable
+directories and is not checked-in evidence. This is negative evidence only:
+no new clean-master failure, production bug, or severity upgrade was found.
+The consensus ECDSA/Schnorr callers remain covered by serialized parsing and
+return-value checks; ECDH and Silent Payments remain transport or
+wallet/application boundaries in the surveyed Bitcoin Core checkout. No
+invalid-block or invalid-witness acceptance, consensus divergence, key
+compromise, signature forgery, or remote memory/concurrency failure was shown.
+No l0rinc commit was added because the fork and master refs remain identical.
+No fuzz, sanitizer, compiler, or test process remains running.
