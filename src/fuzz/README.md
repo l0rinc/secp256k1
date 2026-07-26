@@ -33866,3 +33866,63 @@ Any later change to x-only summary construction or input hashing must replay
 the branch-restricted mutation, preserve this clean-master control, and amend
 its commit message with the exact first assertion, Core input origin, severity,
 verifier commands, and whether it preserves, changes, or masks this oracle.
+
+## 2026-07-26 Forced-int64 direct API worker revalidation
+
+The four direct API targets with the closest Bitcoin Core signing, parsing,
+verification, and transport-adjacent boundaries were rechecked with the
+test-only forced-int64/10x26 Clang ASan/UBSan binaries after the rebase:
+`api_roundtrip`, `recovery`, `schnorrsig`, and `ecdh`. This is negative
+evidence, not a new production finding. The current source is descended from
+`origin/master == l0rinc/master == d2d04864ef9b056151603a3ced7980958b058028`.
+
+Fresh copies of the tracked corpora were replayed one time per input with
+`-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0`. The exact checked-in
+corpus identities and current fuzzer/binary identities were:
+
+| target | files / bytes | corpus manifest | fuzzer source | binary | replay log |
+| --- | ---: | --- | --- | --- | --- |
+| `api_roundtrip` | 63 / 2933 | `06df09d6853d275cb1b6ce8a3379dbf13f6bb42b2c4cf58fdb257d0ed7739fbf` | `f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5` | `e53013f338277cf1753baec76c14514f177eea5585cd19b0360792001061af02` | `e17fb3a84ae62b6c1054ea6ce994ecdf9f6f6c5afdf5f2eddad57dd9279b90cd` |
+| `recovery` | 17 / 782 | `914e3b35321f5cc34c372935f6de9a81378e6760d65efc17f544ae13a23ac5b5` | `ecdfb380801c2c20be6079d968166f2c5b5528b1f185d8160982f2855d234ae0` | `b369ff9c1359fcfc933007f744e86b44b1df34cb4d0e0f550a6021c27f6b9b24` | `b7921fce5976916dc835b13a9be962c4561eb33119253a7a885f4a6b15daf54c` |
+| `schnorrsig` | 18 / 670 | `622ca21847c8aa3daab163d0dc595f0d89dafe273bb3500efc19a6f15133ecf7` | `47c871312162705d4355265bf682d4e195dcb64a3d13bb253a71a68552ce822b` | `5baebcf51826503a67d7a77c5177590caf9b49f6a6533d70258132b4906939a4` | `6dbdcf12ea63ff4fb0b9dc96e83ff39ea92d48ba21f4e00090de0b35a6b42ad9` |
+| `ecdh` | 9 / 283 | `ec8b69a36ab826af8adadafcc364b09ee29f9d05d8b726f33d2a385d1df67b7d` | `034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79` | `2065952a45d9eeae00ede26e369cb3e8a329450e06678f678163a8240c0de8c6` | `399597d0e6b1489d19957409c92b980d0b561dd0e51adde56c8686b56f42fc1c` |
+
+All four fixed replays returned 0 with no sanitizer or assertion diagnostic.
+Each target also ran from an isolated private corpus with
+`-fork=2 -jobs=2 -max_total_time=30`, using
+`ASAN_OPTIONS=detect_leaks=0:abort_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. Both managers and all
+workers exited 0; every observed `oom/timeout/crash` counter was `0/0/0`,
+and all artifact directories were empty. The manager log hashes were
+`api_roundtrip: 5acd903a524ce0dbd0752fef1d0ca9c03d39071329be6f16a8a6f2e39b1c7c50`,
+`recovery: 2ace55a7f0918f65e90c34bb1517556e6bbc6b774bd77344eda790532bf32e0d`,
+`schnorrsig: 0692c86d696c50932fbcbf665dcfde6d22cef2ed8070f4fefed6e7a5e1757bb7`,
+and `ecdh: 737f6818ed251b9346697a38af567124e68cdc687bee33ac23eb153694729415`.
+LibFuzzer-generated additions stayed in those private copies and were not
+treated as checked-in corpus evidence.
+
+The reviewed postconditions remain independent of the production result where
+the target has them: ECDSA and recoverable equations, BIP340 point equations
+and scalar boundaries, ECDH callback coordinates and symmetric secrets, parser
+and failure cleanup, opaque-state barriers, and Core-shaped serialization
+composition. No new clean-master failure, invalid-block or invalid-witness
+acceptance, consensus divergence, key compromise, signature forgery, remote
+memory/concurrency failure, or witness-sigop consequence was reproduced.
+
+Severity therefore remains unchanged. The direct malformed-input and opaque
+state classes are Low to Medium at the library API boundary, with lower
+practical severity for current Bitcoin Core where callers parse wire objects
+and check return values. The standalone ECDH target is not the Core BIP324
+entry point; Core uses `CKey::ComputeBIP324ECDHSecret` through EllSwift. A
+witness-sigop discrepancy would be High/Critical only after proving invalid
+block acceptance, which this pass did not approach. No nonce or retry buffer
+with standalone cryptographic meaning is implicated. No production mutation,
+fix, or deterministic regression test is claimed by this revalidation.
+
+No l0rinc commit was cherry-picked because the refs remain identical and the
+existing mutation matrices already cover these state transitions. This record
+must not be used to erase the earlier clean-master first stops: a later fix or
+cherry-pick that changes a follow-up result must state whether it preserves,
+changes, or masks each original witness, with its exact Core input origin,
+master-relative severity, first assertion, and verifier commands. No fuzz,
+sanitizer, compiler, or test process remains running.
