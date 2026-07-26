@@ -36907,3 +36907,38 @@ handshake effects without an authenticated-key or memory-safety consequence
 remain below High/Critical. Future EllSwift or BIP324 caller changes must
 rerun these exact seeds under sanitizer and state whether they preserve,
 change, or mask the recorded transport boundary evidence.
+
+## 2026-07-26 Ecmult-multi allocator and scratch sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_ecmult_multi` replayed the existing
+29-file `src/fuzz/corpora/ecmult_multi` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_ecmult_multi -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 29 seeds (1028 bytes), exited 0, and completed 81 and 82
+executions. Each reached coverage 3287; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`d6b389b22bc5423c78e3f5f80c6d0502de10c8b3b713807bc59ce99dda40921e` and
+`888a8a2f705d1e4832c86ae0de951d5816b9be57d113d1b91c481cffcaece2e5`.
+The copied corpus grew to 77 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of ecmult-multi allocation failure,
+scratch accounting, filtered batches, callback failure, output cleanup, and
+planner transitions. It found no new production bug, invalid witness or
+block acceptance, sigop undercount, consensus divergence, signature forgery,
+key compromise, or remote memory/concurrency failure. Bitcoin Core reaches
+the underlying arithmetic through public signing and verification APIs, but
+does not give network-controlled data ownership of this internal allocator
+or failure callback. Existing internal/direct-API severity ratings therefore
+remain unchanged; no High/Critical rating or production fix follows from
+this worker replay. Future allocator or scratch changes must rerun these
+exact seeds under sanitizer and identify both the first failure and the real
+Core caller path before assigning severity.
