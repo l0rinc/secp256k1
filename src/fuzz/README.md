@@ -31864,3 +31864,118 @@ commands, and whether the change preserves, changes, or merely masks the
 original condition. A later minor fix that hides the static-signature symptom
 must not downgrade the separate clean-master SHA-length or preallocation
 findings.
+
+## 2026-07-26 Complete clean-master hash differential
+
+This pass revalidated the complete current `fuzz_hash` corpus against
+unmodified `origin/master` and `l0rinc/master`, both
+`d2d04864ef9b056151603a3ced7980958b058028`. No fork commit was cherry-picked
+for this target. The disposable master tree contained the exact master hash
+implementation and precomputed tables, with only the current fuzz sources,
+fuzz CMake wiring, and hash corpus overlaid. The master production
+`src/hash_impl.h` SHA-256 is
+`70247571d95e3c8824d6ca2e90956f6941c196a42d860083040690aaf9ccf6cc`; the
+repaired audit version is
+`9040d926e994f0b088accdb62ac31e41e00e847c8da91e241bd5de4c5e9fdcc6`.
+The current `src/fuzz/hash.c` SHA-256 is
+`f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc`.
+
+The corpus has 10 files and 446 bytes. Its sorted filename manifest SHA-256
+is `15c5706349567e5ed437bf11dcd3d3fd3811abcc0434dff47a74be7296388dd2`.
+Native and forced-int64 builds used Clang 22.1.7, ASan/UBSan, assembly off,
+all optional modules enabled, and libFuzzer. The forced build used
+`USE_FORCE_WIDEMUL_INT64`.
+
+### Clean-master stops and masked conditions
+
+The unmodified master replay ran every corpus input independently with:
+
+    -runs=1 -handle_abrt=0 -timeout=10 -rss_limit_mb=0 -print_funcs=0
+
+Both arithmetic backends produced the same first-stop classes:
+
+* `sha256-write-buffer-clear` exited 134 at `src/fuzz/hash.c:101` because
+  the 64-byte buffered block remained nonzero after compression. The digest
+  comparison was not reached, so this is a state-retention failure rather
+  than a digest mismatch.
+* The other nine inputs exited 134 at `src/fuzz/hash.c:298`, the HMAC
+  key-boundary final-state check. This includes
+  `hmac-rfc6979-finalize`; its RFC6979 finalizer assertion is masked by the
+  earlier HMAC state assertion in the same target.
+
+For causal separation, a disposable clean-master production mutation added
+only `secp256k1_hmac_sha256_clear(hash)` at the end of
+`secp256k1_hmac_sha256_finalize`. With that single mutation, the same nine
+inputs passed their digest and HMAC state checks and stopped at
+`src/fuzz/hash.c:382`, the independent RFC6979 final-state postcondition, on
+both native and forced-int64 builds. A second disposable mutation added only
+`secp256k1_rfc6979_hmac_sha256_clear(rng)` to the RFC6979 finalizer. With both
+cleanup mutations present, 9 of 10 inputs passed; only the independent
+`sha256-write-buffer-clear` witness still stopped at line 101. The two
+mutations were removed with the disposable tree and never touched the
+authoritative branch.
+
+These are the existing `3b3b49fc` and `3d34c795` master-relative findings,
+not new production bugs in this documentation pass. Their strongest proof is
+the deterministic production regression already committed with each fix:
+
+* The consumed SHA buffer must be cleared immediately after the buffered
+  compression, while the independent digest remains unchanged.
+* HMAC finalization must clear `inner` and `outer` state, and RFC6979
+  finalization must clear the reusable RNG object after the independent stream
+  and one-shot reference outputs match.
+
+### Repaired control and verification
+
+The repaired branch passed all 10 corpus inputs independently on both
+sanitizer backends with no assertion or sanitizer diagnostic. The corrected
+two-worker/two-job campaigns used copied corpora and:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=60
+    -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0
+    -ignore_crashes=0 -handle_abrt=0 -verbosity=0
+
+Both managers exited 0, every worker reported
+`oom/timeout/crash: 0/0/0`, and both artifact directories were empty. The
+verify and no-verify deterministic slices also passed on native and
+forced-int64 builds:
+
+    bin/tests -i=1 -t=hash
+    bin/noverify_tests -i=1 -t=hash
+
+The one-iteration hash slice intentionally skips the million-input SHA stress
+case, but executes the fixed vectors, padding boundaries, HMAC, RFC6979,
+tagged-hash, and midstate tests. The full fuzzer corpus exercises the
+one-shot/chunked/reference relations and all final-state postconditions.
+
+### Severity on Bitcoin Core paths
+
+The three clean-master conditions remain **Medium memory hygiene** findings,
+not High or Critical vulnerabilities. SHA-256 output and all independent
+HMAC/RFC6979 stream outputs matched their references; no digest discrepancy,
+invalid block or witness acceptance, consensus divergence, key compromise,
+remote crash, or memory-read primitive was demonstrated. Bitcoin Core uses
+these helpers in authorized signing, wallet/key derivation, BIP340-related
+hashing, and transport/key-agreement support, so the stale state is relevant
+to secret lifetime, but this fuzzer does not show an attacker-controlled read
+of the retained bytes. The normal consensus paths therefore provide no
+trigger for a High/Critical claim from this result.
+
+The RFC6979 object can contain key-derived deterministic signing state, which
+supports the existing Medium memory-hygiene rating. A nonce or retry counter
+without standalone cryptographic meaning is not Critical merely because it
+is not cleared. This distinction does not downgrade a future finding with a
+demonstrated Core disclosure, key compromise, invalid-witness acceptance, or
+remote availability impact.
+
+Existing digest tests missed the defects because they validated outputs and
+did not inspect the intermediate consumed buffer or the helper object after
+finalization. The `3b3b49fc` and `3d34c795` tests and fuzzer witnesses close
+that exact gap. If a future l0rinc commit, cleanup patch, or optimization
+makes HMAC green, preserve the HMAC-only clean-master mutation and rerun it so
+RFC6979 is not silently treated as fixed. Any cherry-pick touching hash
+cleanup must amend the same commit message and ledger with the exact master
+baseline, source hashes, corpus/mutation, preconditions, postconditions,
+failure and assertion, Bitcoin Core caller/input origin, master-relative
+severity, existing-test gap, verifier commands/results, and whether it
+preserves, changes, or masks each original condition.
