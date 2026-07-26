@@ -33018,3 +33018,189 @@ each clean-master first stop, and amend its commit message with the exact
 helper/seed, Core caller and input origin, master-relative severity, strongest
 proof, and verifier commands. No fuzz, sanitizer, compiler, or test process
 remains running.
+
+## 2026-07-26 Production Ledger Completeness and Full Worker Sweep
+
+This entry closes the production-ledger review after the current branch was
+rebased on the latest available master. `origin/master` and `l0rinc/master`
+both resolve to `d2d04864ef9b056151603a3ced7980958b058028`; the audit branch
+is a descendant and no fork commit was omitted from the review because the
+two refs are identical. The older behavior-bearing commit bodies were
+inspected for their exact trigger, clean-master status, mutation or corpus
+witness, proof, severity, and verifier. Where an older body did not use the
+literal phrase "Bitcoin Core", this section makes the caller mapping explicit;
+the bodies already contained the underlying master-relative impact and proof,
+so rewriting 999 descendants was not necessary or justified.
+
+### Explicit Core mapping for earlier ledger entries
+
+The following entries are existing findings or hardening changes, not new
+findings from this sweep:
+
+* `3b3b49fc`, `3d34c795`, `11fcdaed`, `c2cacecf`, and `036406a3` concern
+  consumed SHA/HMAC/RFC6979, split-scalar, multiplication-temporary, or
+  EllSwift RNG-derived state lifetime. Their master-relative rating is Low to
+  Medium secret-state hygiene, depending on whether the value is key-derived.
+  Bitcoin Core reaches related hashing, signing, and BIP324 operations, but no
+  read primitive, key disclosure, signature forgery, invalid block or witness
+  acceptance, consensus divergence, or remote availability consequence was
+  proven. A retry counter or other value without standalone cryptographic
+  meaning is not Critical merely because it is uncleared.
+* `8889a447` is Low to Medium direct API state hygiene for parsed public tweak
+  scalars. Core's key and wallet tweak callers provide bounded, intentional
+  values; public tweak material is not a consensus input and no disclosure or
+  invalid-witness consequence was demonstrated.
+* `02ea5d95` is Low direct API aliasing/state correctness. The Core x-only
+  tweak callers use their own validated buffers and do not expose arbitrary
+  overlapping in-memory objects from blocks or witnesses.
+* `5c50a963` is a caller-domain precondition oracle, not a clean-master
+  production bug: the add-int magnitude boundary is valid only for its
+  documented internal caller range. `5697a578` is a serializer optimization
+  replay with byte-equivalence proof and no security finding. Neither changes
+  the severity of the independent 10x26 normalization finding.
+* `a259f52c` is informational callback-mutation postcondition hardening for
+  EllSwift decode; `8a5ba7c9` is informational infinity-aggregate hardening
+  requiring a reduced-order model; and `5ece49ed` reiterates Low cleanup that
+  was already fixed on master. Core uses EllSwift/BIP324 and MuSig in wallet or
+  transport/application paths, not block or witness validation for these
+  exact triggers. No invalid-block acceptance or consensus impact was shown.
+* `b77fffa7`, `bdca5b26`, `d5dd7a74`, and `18eff0b7` are Medium local opaque
+  object/state correctness findings. Core parses wire public keys and creates
+  keypairs, nonce objects, and MuSig caches through validated library paths;
+  the corrupted or mixed opaque representations require a caller-side state
+  mutation. They are not remote invalid-block or invalid-witness triggers on
+  the current Core call graph, and no High/Critical consequence was proven.
+* `ac4c4c55` is Low context-SHA backend dispatch correctness/performance: the
+  digest remains equal and the configured compressor was skipped for one
+  explicit callback alias. Core's peer-facing key agreement uses the BIP324
+  EllSwift path rather than a user-controlled standalone ECDH callback here.
+  `30eb010b` is Low direct DER API robustness for a caller that supplies an
+  incoherent `SIZE_MAX` length; Core's compact/DER adapters pass bounded input
+  spans and do not obtain that length from a block or witness.
+* `ae336212` is Low wallet-side Silent Payments opaque-label and summary
+  validation. Core's scanner is not part of block acceptance, and the exact
+  clean-master mutation did not produce a consensus, key-compromise, memory,
+  or concurrency consequence.
+* `5a6468ea` is Low documented tweak input/output aliasing. Its clean-master
+  proof shows a successful call consuming zero after clearing the in/out
+  object; Core's key and Taproot paths use separate validated buffers and do
+  not expose this deliberate in-memory alias through block or witness data.
+  `d3c88265` is a compatibility repair for Core's valid static-context Taproot
+  keypair path, while the underlying mismatched opaque-keypair condition stays
+  Medium local state correctness and below High/Critical because the keypair
+  is wallet/application state, not consensus input.
+* `6a9af161` and `c0745428` affect the `contrib/lax_der_privatekey_parsing`
+  helper. The former is Low stale export-buffer hygiene; the latter is
+  Medium direct-tooling malformed-length pointer-arithmetic hardening. The
+  current Bitcoin Core call-site inventory found this helper only in the
+  vendored secp256k1 test build, not in production key, wallet, block, or
+  witness validation. They are therefore Low/Nice-to-have for Core. A direct
+  replay of `{0x30, 0x82, 0xff, 0xff}` under ASan/UBSan returned 0 with a
+  zeroed output in both clean and repaired builds and emitted no diagnostic;
+  this does not weaken the existing code-path proof, because the clean-master
+  issue is formation of an out-of-object pointer before a dereference rather
+  than a required runtime read.
+
+These ratings are against unmodified master, before the corresponding local
+repair. A later minor fix that makes a follow-up seed pass must not be used to
+downgrade the original rating: rerun the clean-master witness or the exact
+minimal production mutation, record the first assertion and caller input
+origin, and state in the same commit message whether the change preserves,
+changes, or masks the earlier trigger. A High/Critical rating requires a
+demonstrated Core-level consequence such as invalid-block or invalid-witness
+acceptance, consensus divergence, key compromise/signature forgery, or a
+remotely reachable memory/concurrency/availability failure. A witness
+sigop-count discrepancy alone is not High/Critical without proof that an
+invalid block is accepted.
+
+### Fresh current-HEAD worker sweep
+
+The current repaired sources were rebuilt with Clang 22.1.7, assembly OFF,
+ASan/UBSan, libFuzzer, all optional public modules including recovery, and
+both native 5x52 and test-only forced-int64/10x26 arithmetic. The source
+manifest for the 15 fuzz target translation units is
+`3b434ce42e89131340bb9ebeb6e454b97b068bfc8948eab055eff7daf032d47b`.
+The tracked corpora contain 350 files and 13,986 bytes; the sorted
+path-and-size manifest is
+`7a1dbf3a80021807c46d6d690b29e583f19458dab80189d6cde2257acf757d28`.
+
+The targets were `api_roundtrip`, `context`, `ecdh`, `ecmult_const`,
+`ecmult_multi`, `ellswift`, `field`, `group`, `hash`, `musig`, `recovery`,
+`scalar`, `schnorrsig`, `silentpayments`, and `xonly_tweak`. Each used a
+private copy of its existing corpus and the following command shape:
+
+    -fork=2 -jobs=2 -max_total_time=12 -timeout=120 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -artifact_prefix=<isolated>/artifacts/
+
+All 15 native and all 15 forced-int64 target invocations returned 0. Every
+worker reported `oom/timeout/crash: 0/0/0`; no sanitizer diagnostic or
+artifact file was created. The native and forced-int64 binary-manifest hashes
+are respectively `5275970b18b811e78e46aac45f82ad54ef65557691984c6e25598ff549adf77d`
+and `d19dcc46671942ee849c79c02313c6cedaefca05ac9c2270d01600732a813551`.
+The campaign-log manifests are `5565813855510d5005a2d78a201b2b249e08aae8da0101a4ca25975a2048fdd9`
+and `4911da8a6ff8892399316e2d682ed32302b70ab8ad1ad2f930415748c13e5291`.
+
+The fresh native and forced-int64 `tests -i=1` and `noverify_tests -i=1`
+executions also returned 0. Their combined sorted log manifest is
+`f8605c01a71642fdf6816da13512ed5659fe9c6980a80a3c9a8443e40d4a32ff`.
+The full tests completed after skipping only the documented high-iteration
+constant-table cases because `-i=1` was requested. No fuzz, sanitizer,
+compiler, or test process remains running.
+
+This is negative current-HEAD evidence, not a claim that unmodified master
+passes. It adds no production bug or regression test and does not change the
+existing severity ledger. The clean-master differentials and minimal
+mutations recorded above remain the authoritative proof for the existing
+production fixes. The sweep found no new invalid-block or invalid-witness
+acceptance, consensus divergence, key compromise, or remotely reachable
+memory/concurrency failure. Any future cherry-pick, optimization, or local
+fix must preserve the listed clean-master controls and amend its own commit
+message with the exact corpus/mutation, first failure, Core caller/input
+origin, master-relative severity, strongest proof, verifier commands, and
+preserve/change/mask classification.
+
+### Isolated `02477da1` NULL-tweak revalidation
+
+The ledger review also re-ran the existing `02477da1` keypair failure
+contract in isolation. The clean library was built from unmodified master
+`d2d04864ef9b056151603a3ced7980958b058028` with the forced-int64 sanitizer
+configuration retained at
+`/mnt/my_storage/secp256k1-build/baseline-d2d-int64`. The repaired comparison
+used the current native sanitizer library. Both probes used secret key one,
+installed a non-aborting illegal callback, created a valid 96-byte keypair,
+and then invoked `secp256k1_keypair_xonly_tweak_add` with a NULL tweak through
+an unannotated function pointer. The indirection is deliberate: the public
+header marks the parameter nonnull, while this test exercises the library's
+documented illegal-argument callback and failure invalidation behavior.
+
+The clean probe returned `0` but reported
+`nonzero_after_failure=1` and exited 1. The repaired probe returned `0`,
+reported `nonzero_after_failure=0`, and exited 0. There was no ASan or UBSan
+diagnostic. The clean and repaired probe binary hashes are
+`b5f7c1353ec0a5d6239e02bb8be3da84ca1ef3caa8041618649e7f3bc2223cab` and
+`cd1c6dd7e16794b0bfed0fde6f1b18784425ed4eed2195f600fc952ab55ed47e`;
+the corresponding output-log hashes are
+`5b7dea6062626f47be705a75aa16079262a9178bafb02067521170f0b8e8f0a0` and
+`dd7da7b05d786614249dcc3f2cc68d49c684fe10f3d8739a8f1ee28c1884f393`.
+
+This reiterates a **Low to Medium direct-API fail-closed state** finding on
+master. It is **Low/Nice-to-have for Bitcoin Core**: Core's
+`KeyPair::KeyPair` path calls this function only with a computed non-NULL
+TapTweak when a merkle root is present, checks the result, and clears its
+keypair storage on failure. The no-merkle-root case does not call the tweak
+function. A NULL tweak therefore cannot be supplied by an invalid block or
+witness through this current Core path. No memory corruption, key disclosure,
+signature forgery, invalid-block acceptance, invalid-witness acceptance,
+consensus divergence, or remote availability impact was demonstrated. This
+is not a Critical nonce-erasure issue; no cryptographic meaning is attached
+to the failed call's absent tweak.
+
+The existing `xonly_tweak` oracle, `tests -t=extrakeys` coverage, and
+`02477da1` production change remain the strongest proof. This revalidation
+adds no production source or deterministic test. Any future change to
+illegal-argument callbacks, keypair invalidation, or Core's Taproot keypair
+constructor must preserve this clean-master control and amend its own commit
+message with the exact NULL-input precondition, output postcondition, Core
+call-site reachability, severity, and whether it preserves, changes, or masks
+the finding.
