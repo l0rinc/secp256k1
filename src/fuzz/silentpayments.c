@@ -107,6 +107,52 @@ static void secp256k1_fuzz_silentpayments_check_input_hash_reference(
         sizeof(expected_hash)) == 0);
 }
 
+static void secp256k1_fuzz_silentpayments_check_xonly_input_hash_reference(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *outpoint,
+    const unsigned char *input_seckey
+) {
+    static const unsigned char trigger[] = "Silent Payments x-only input hash reference\n";
+    static const unsigned char tag[] = "BIP0352/Inputs";
+    unsigned char expected_hash[32];
+    unsigned char xonly32[32];
+    unsigned char xonly_ser[33];
+    secp256k1_keypair keypair;
+    secp256k1_xonly_pubkey xonly;
+    secp256k1_pubkey expected_pubkey;
+    secp256k1_silentpayments_prevouts_summary prevouts_summary;
+    const secp256k1_xonly_pubkey *xonly_pubkeys[1];
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* Taproot prevouts enter the summary as x-only keys. Reconstruct the
+     * even-Y SEC1 encoding independently before hashing the outpoint. */
+    FUZZ_CHECK(secp256k1_keypair_create(ctx, &keypair, input_seckey) == 1);
+    FUZZ_CHECK(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, xonly32, &xonly) == 1);
+    xonly_ser[0] = SECP256K1_TAG_PUBKEY_EVEN;
+    memcpy(xonly_ser + 1, xonly32, sizeof(xonly32));
+    FUZZ_CHECK(secp256k1_ec_pubkey_parse(ctx, &expected_pubkey, xonly_ser,
+        sizeof(xonly_ser)) == 1);
+    secp256k1_fuzz_silentpayments_tagged_hash_reference(expected_hash, tag,
+        sizeof(tag) - 1, outpoint, 36, xonly_ser, sizeof(xonly_ser));
+
+    xonly_pubkeys[0] = &xonly;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+        &prevouts_summary, outpoint, xonly_pubkeys, 1, NULL, 0) == 1);
+    FUZZ_CHECK(memcmp(expected_hash, prevouts_summary.data + 69,
+        sizeof(expected_hash)) == 0);
+    /* The summary point uses the same opaque group-element representation as
+     * a public key. Compare that representation without interpreting it as
+     * a wire SEC1 encoding. */
+    FUZZ_CHECK(memcmp(expected_pubkey.data, prevouts_summary.data + 5,
+        sizeof(expected_pubkey.data)) == 0);
+}
+
 static void secp256k1_fuzz_silentpayments_check_output_tweak_reference(
     const secp256k1_context *ctx,
     const unsigned char *input,
@@ -832,6 +878,8 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         &prevouts_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
     secp256k1_fuzz_silentpayments_check_input_hash_reference(ctx, input, size,
         outpoint, &input_pubkey, &prevouts_summary);
+    secp256k1_fuzz_silentpayments_check_xonly_input_hash_reference(ctx, input,
+        size, outpoint, input_seckey);
     secp256k1_fuzz_silentpayments_check_output_tweak_reference(ctx, input, size,
         input_seckey, &scan_pubkey, &spend_pubkey,
         have_label ? &labeled_spend_pubkey : NULL, n_recipients,

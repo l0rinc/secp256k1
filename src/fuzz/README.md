@@ -33773,3 +33773,96 @@ even-Y normalization, Taproot adapters, or the parity oracle must state in its
 own amended commit message whether it preserves, changes, or masks the
 master-relative transition, with the exact first assertion, Core input origin,
 severity, and verifier commands.
+
+## 2026-07-26 Silent Payments x-only input-hash reference oracle
+
+The recipient summary has a separate x-only-only input path that was not
+covered by an independent BIP0352 equation. The existing round-trip and
+mixed-input checks compare sender and scanner behavior, so a shared change in
+the x-only input representation or input-hash calculation could make both
+sides agree. This addition creates the exact corpus input
+`Silent Payments x-only input hash reference\n` (44 bytes, SHA-256
+`1140d27ae6204258b557540de7c60816dad2eef6e3aba1feb75ccb03d512d1cd`).
+
+`secp256k1_fuzz_silentpayments_check_xonly_input_hash_reference` derives an
+x-only public key from the fuzz-derived secret key, reconstructs its even-Y
+compressed SEC1 form, and computes the BIP0352 `BIP0352/Inputs` tagged hash
+with the standalone SHA-256 reference. It then calls
+`secp256k1_silentpayments_recipient_prevouts_summary_create` with exactly one
+x-only key and no ordinary keys, and checks both the independent hash and the
+summary's opaque group-element storage against a separately parsed even-Y
+public key. The check does not call the production input-hash helper.
+
+The causal proof used an isolated mutation in
+`src/modules/silentpayments/main_impl.h`, immediately after the x-only load:
+
+```
+if (n_xonly_pubkeys == 1 && n_pubkeys == 0) {
+    secp256k1_ge_neg(&addend, &addend);
+}
+```
+
+This models a branch-specific parity regression in the x-only-only summary
+path. It was applied only in disposable mutation worktrees and is absent from
+this commit. On audit parent `a44f6fb0`, with production master
+`d2d04864ef9b056151603a3ced7980958b058028`, the parent fuzzer without this
+oracle returned 0 for the new seed (binary SHA-256
+`f60894f0ba1a9cb6fb4d8f1e372ecabb1171ebf03f657efb1e9dd7e24c64f62e`, log
+SHA-256 `861758b6970c995eb18f7e871b0bc4443783506af8ef38ba0d72b9fde6d39639`).
+
+With the oracle present, the clean native and forced-int64 sanitizer binaries
+(`a1abeec2032a7601eba3796f18b8b022e3dff84670fa12b26f3ccffa63b68a48` and
+`b0c67173da9f68f9fb208fbca43ae0a4b5777513703361fc75a9b965330b58ac`) returned
+0 for all 11 Silent Payments corpus inputs. Their per-input log manifests
+are `f4cd83b738eb9ed427eaf42401cc8937b553d62624779355527c59e30c9ff422` and
+`3efaf44dd7dc7d267b4fba7703201c0a896f027751da6d60f665219f015dc455`.
+The mutated native and forced-int64 binaries
+(`b9b59bb0155dcd5bf7387a935f76bb7d8e0af8e4114ea8b66667ea1b5138a90a` and
+`7a88e915e41c24fb03f93a125bfd15873f8a68e3677510e1f823ab79def59f83`)
+returned 0 for each of the 10 pre-existing inputs and 134 for the new seed.
+The mutated log manifests are `7f5c866af9cca4892367955d710372b891d694f7fcda29b8f468070c87f6f250`
+and `66121d10962238730ddf491067027e7fb060bba0282b4099fbe38994dea8748d`.
+The first failing oracle was the independent input-hash comparison at
+`silentpayments.c:148`; the native and forced-int64 new-seed log hashes are
+`2f71ad28c4ede829eb72d847c254bdff45e0e21ed73e5fa1fc853dc026391335` and
+`39e0030c4b0365b253cebf1a98f33ce4e5d34d5592d648ffdc4daacad9d1ab76`.
+
+This is incremental over the previous fuzz corpus: the old fuzzer had no
+x-only-only reference and its 10 existing inputs all passed the branch-
+restricted mutation. The deterministic BIP352 test vectors do catch this
+particular mutation at `src/modules/silentpayments/tests_impl.h:915` on both
+native and forced-int64 builds. Therefore this commit does not claim a test
+suite gap or a current production bug; it adds a cheap isolated fuzzer oracle
+that can catch future common-mode sender/recipient regressions during fuzzing.
+The restored current tree passed `tests -t=silentpayments -i=1` and
+`noverify_tests -t=silentpayments -i=1` on both arithmetic backends, and the
+two-worker `-fork=2 -jobs=2 -max_total_time=12` campaigns returned 0 with
+`oom/timeout/crash: 0/0/0` and no artifacts. The four focused test log hashes
+are `8d45c91c1e98b9ebb130418c516ecfab1c498c7118eea3b9c54fb0be28dc4df0`,
+`7b633341c533a7b92b92b0b05a74b699e1900c32b1420d7bda4aaaf12023a4ee`,
+`c6016b0cd7006be1cdd14dcf9c14bbf003b01955b166dfd9aef8e960b0cb6770`, and
+`20139a44e2871d968b112ccd968b735a08b49c72ab5a95368be5202bcbdc5d24`.
+The native and forced-int64 campaign logs are
+`c1186975c7ef0213b0347ac8aecbe1fea97941a64a8c40fd8676f080cdd79eb0` and
+`8d2266ed47a6c30ce9ebe51430a74133a6cc275aa171788435e07eed24c4e7d8`; both
+artifact directories were empty.
+
+Severity is **Informational/Low oracle hardening** against unmodified master.
+The current Bitcoin Core checkout surveyed for this audit has no
+`Silent Payments`, `BIP352`, or `secp256k1_silentpayments` call site, so this
+is wallet/application correctness rather than block or witness validation.
+No invalid-block or invalid-witness acceptance, consensus divergence, key
+compromise, signature forgery, remote memory/concurrency failure, or
+witness-sigop consequence was shown. High/Critical is not justified. No
+nonce-erasure issue is involved. This commit changes only the fuzzer, corpus,
+and notes; it adds no production fix or deterministic regression test.
+
+`origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; no fork commit or incidental
+minor fix changed or masked this proof. The fuzzer source and corpus hashes
+are `2050405be8f94d77b4fa86d77fb70a649c39eaa15d13df8004a712aa2cfdc4d1` and
+`1140d27ae6204258b557540de7c60816dad2eef6e3aba1feb75ccb03d512d1cd`.
+Any later change to x-only summary construction or input hashing must replay
+the branch-restricted mutation, preserve this clean-master control, and amend
+its commit message with the exact first assertion, Core input origin, severity,
+verifier commands, and whether it preserves, changes, or masks this oracle.
