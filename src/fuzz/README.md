@@ -36196,3 +36196,59 @@ opaque-state findings. No cryptographically meaningful nonce or retry-counter
 clearing issue is implicated. A future group optimization or cherry-pick must
 rerun this exhaustive alias test and the existing fuzzer checks, and state
 whether it preserves, changes, or masks the original master result.
+
+## 2026-07-26 Core static keypair tweak oracle reconciliation
+
+The existing `schnorrsig/core-taproot-signing-composition` seed was previously
+using the full signing context for `secp256k1_keypair_xonly_tweak_add` because
+the earlier `9989133d` opaque-keypair consistency guard rejected a valid
+secret-consuming call through `secp256k1_context_static`. That was deliberately
+avoiding a known branch barrier, but it no longer matched Bitcoin Core after
+`d3c88265` added constant-time no-table public derivation for keypair
+validation. The fuzzer now passes `secp256k1_context_static`, exactly as Core's
+`KeyPair::KeyPair` does; signing still uses the full context and verification
+still checks both full and static contexts. No new corpus input was added: the
+existing 33-byte `core-taproot-signing-composition\n` seed already reaches all
+three NULL/null-root/script-root TapTweak states.
+
+The current Core comparison checkout is `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+Its path is wallet/descriptor/PSBT signing state ->
+`MutableTransactionSignatureCreator::CreateSchnorrSig` -> `CKey::SignSchnorr`
+-> `KeyPair::KeyPair` (`/mnt/my_storage/bitcoin/src/key.cpp:409-424`). Core
+creates the keypair on `secp256k1_context_sign`, extracts the x-only key on the
+static context, computes TapTweak, and calls
+`secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, ...)`. This is a
+wallet/API path, not block, witness, peer-input, or consensus validation.
+
+Master-relative status and severity are unchanged. Exact `origin/master`
+(`d2d04864ef9b056151603a3ced7980958b058028`) already accepts the valid static
+tweak; the pre-compatibility audit mutation restored the old
+`ecmult_gen_context_is_built` rejection. The exact seed then aborted with exit
+134 on both native 5x52 and forced-int64/10x26 ASan/UBSan builds, reporting
+`secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx)`. Restored source
+passed the seed with exit 0 on both backends. This proves the corrected oracle
+detects the follow-up compatibility regression without claiming that clean
+master is defective. The existing mismatched opaque-keypair invariant remains
+**Medium direct API/local-state correctness**; the historical static-context
+regression was **Medium wallet/API availability** on the affected audit branch.
+Neither is High/Critical on unmodified master: Core cannot reach this
+constructor from an invalid block or witness, and no consensus divergence,
+signature forgery, key compromise, or severe remote memory/concurrency failure
+was demonstrated. A nonce or retry counter with no standalone cryptographic
+meaning is not Critical merely because it is not cleared.
+
+Verification after restoring the production source:
+
+    cmake --build /mnt/my_storage/secp256k1-build-next --target fuzz_schnorrsig tests -j4
+    cmake --build /mnt/my_storage/secp256k1-build-next-int64 --target fuzz_schnorrsig tests -j4
+    ./bin/fuzz_schnorrsig src/fuzz/corpora/schnorrsig/core-taproot-signing-composition -runs=1 -timeout=30 -rss_limit_mb=0 -handle_abrt=0
+    ./bin/tests -i=1 -j=2 -t=schnorrsig -t=extrakeys
+
+Both targeted replays and both unit-suite runs exited 0 with no sanitizer
+diagnostic. The causal production mutation and all generated state were
+restored/removed before this entry. Future changes to `keypair_load`, static
+contexts, generator precomputation, TapTweak, or Core `KeyPair::KeyPair` must
+rerun this exact seed and the clean-origin control, and must say in the commit
+message whether they preserve, alter, or mask the `9989133d` interaction.
+An incidental fix that makes this follow-up call pass must not lower the
+severity of any independent master finding.

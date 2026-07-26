@@ -881,12 +881,9 @@ static void secp256k1_fuzz_check_core_taproot_signing_composition(const secp256k
                 i == 1 ? NULL : merkle_root, i == 1 ? 0 : sizeof(script_root32),
                 NULL, 0);
             FUZZ_CHECK(memcmp(tweak32, expected_tweaks[i - 1], sizeof(tweak32)) == 0);
-            /* The Core call site currently passes context_static here. The
-             * audit branch's 9989133d inconsistent-keypair guard correctly
-             * rejects that secret-consuming context; use the full context to
-             * exercise the same valid transformation without rediscovering
-             * the tracked static-context barrier. */
-            FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(ctx, &keypair, tweak32) == 1);
+            /* Match Core's KeyPair::KeyPair call. The no-table consistency
+             * fallback in d3c88265 preserves this valid static-context path. */
+            FUZZ_CHECK(secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, &keypair, tweak32) == 1);
         }
 
         FUZZ_CHECK(secp256k1_keypair_xonly_pub(secp256k1_context_static, &xonly, &output_parity, &keypair) == 1);
