@@ -33710,3 +33710,66 @@ input. The filename manifest is
 per-input log manifest is
 `a38019132ea5d5a210b4951789feff9ff391fe9f2be0251298a280da9595126d`.
 No sanitizer diagnostic, assertion, timeout, OOM, or artifact was produced.
+
+## 2026-07-26 Revalidated latest-master x-only parity invariant
+
+The latest master change `89a54b5a` adds a `VERIFY_CHECK` in
+`secp256k1_xonly_pubkey_save` requiring the saved group element to have even Y.
+This is an internal representation invariant, not a new runtime behavior or a
+new clean-master finding. The audit fuzzer already normalizes every successful
+x-only projection, round-trips serialized x-only keys, and rejects an odd-Y
+opaque x-only object before serialization or tweaking.
+
+The focused native and forced-int64/10x26 Clang 22.1.7 ASan/UBSan replays used
+the current audit binaries
+`feb84a4320b71c9735f49051bb42886d2149cb9dc441c557430f11409b608132` and
+`2ee902f97b243596e413f8445377c40e71df224958ec2e4222de01abef9ecfbc`.
+Both backends returned 0 for all three existing parity witnesses:
+
+* `keypair-create-vectors` (23 bytes, SHA-256
+  `71f736b20c4e31a3a9846b7cdde230d073acbdb57aeb6c557588171cb92ef4d4`),
+* `opaque-xonly-parity-state` (48 bytes, SHA-256
+  `ed8087212e904b7264ccb8d2307bd61737d5912a498df68ac31ba46d949f5a8e`),
+* `core-taproot-control-composition` (33 bytes, SHA-256
+  `51b39917c03cb9a5eaffa94a30da609a273837a84d08973feafe506ee04d7e2e`).
+
+The per-input log hashes, in the same order, were
+`c989d8df41674445afd1978242b4076b51ea3a93c0298a873eb08ffefe400eb4`,
+`51c99a8e58f86170a146f531de774241b75dc37733ac124f6ab7d972d68e720c`, and
+`97160dcb3a401b0e57893b350231bfd32b6834a8a83b8314662d61fc767905eb` on
+native, and
+`e3f765e6ad2594d6146fc3073d60809b4c15b5ee42a354a64176bc43ec223981`,
+`61e447020e194bfb79849dd461fc37a3d257fc11bbdbcd1ecf7be3ada91ee21c`, and
+`d2a2f24ea00130f30bf1ed57e6fba43068d047b6361211a9ba6cf4eb1a7fda15` on
+forced-int64. The deterministic `tests -t=extrakeys -i=1 -log=1` run passed all
+seven extrakeys tests; its log hash was
+`8748b73972296564fa1555214143ddead49afb507c4f998be66c23a82d01ab91`.
+
+The existing causal mutation changed
+`secp256k1_extrakeys_ge_even_y` from `if (secp256k1_fe_is_odd(&r->y))` to
+`if (0)`. It aborts on `keypair-create-vectors`,
+`opaque-xonly-parity-state`, and `core-taproot-control-composition`; the
+mutation matrix at the earlier entry remains the authoritative proof that the
+parity oracle detects a wrong normalization rule. This replay intentionally
+does not duplicate that mutation or claim a new production defect.
+
+Severity is **Informational oracle revalidation** on unmodified master. A real
+wrong-Y x-only state reaching Bitcoin Core's Taproot signing or verification
+adapter could cause wallet or signature-result divergence, but this pass found
+no such master behavior. Core receives wire x-only keys through validated
+parsing, and no invalid block or witness was accepted, no consensus divergence,
+key compromise, signature forgery, remote memory/concurrency failure, or
+witness-sigop consequence was demonstrated. High/Critical is therefore not
+justified. This is unrelated to nonce erasure; no nonce with standalone
+cryptographic meaning is involved.
+
+The production source hash for `src/modules/extrakeys/main_impl.h` is
+`6233eddd4539c3adbaa1bc4313ae67910a4df43a0e1f3141d83752eb02a73e5a`, and the
+current fuzzer source hash is
+`f7910e0c16f3c682acd0892fe7de9a1df6d4d216084161a9da42993a624ed870`.
+`origin/master == l0rinc/master == d2d04864`; no fork commit or incidental fix
+changed or masked this result. Any later change touching x-only saving,
+even-Y normalization, Taproot adapters, or the parity oracle must state in its
+own amended commit message whether it preserves, changes, or masks the
+master-relative transition, with the exact first assertion, Core input origin,
+severity, and verifier commands.
