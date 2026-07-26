@@ -36740,3 +36740,38 @@ and `7fea1998ae5889e03d9f09ca2b586f4f13d5b14abfc4abdc723f129714df8602`.
 The temporary corpus grew to 201 files and was discarded. This confirms the
 repaired failure-output contract without changing the API finding ledger or
 claiming that the clean baseline passed.
+
+## 2026-07-26 Recovery compact-signature sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_recovery` replayed the 18 tracked
+`src/fuzz/corpora/recovery` inputs with two independent libFuzzer workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_recovery -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -ignore_crashes=0 -ignore_ooms=0 \
+      -ignore_timeouts=0 -handle_abrt=0 -detect_leaks=0 \
+      -print_final_stats=1 corpus
+
+Both jobs loaded all 18 seeds, completed 447 executions, reached coverage
+2869, and exited 0. Neither worker reported an assertion, ASan/UBSan
+diagnostic, crash, timeout, OOM, or artifact. Their worker-log SHA-256 values
+were `518b8c784cef37b9435c0f9fd6e475229002a9be257f2801289409096a1f1a9f`
+and `d55a51e5aa6be42921e0dc683cc7bb57d85f71ef393efae7483b0b0275e09200`.
+Generated mutation units were discarded; none was promoted to the tracked
+corpus.
+
+This is a negative revalidation of the library recovery contract. The corpus
+includes the compact-header boundary cases, but `fuzz_recovery` exercises
+canonical recovery identifiers and did not reproduce the separate Bitcoin
+Core `RecoverCompact` wrapper's acceptance of header aliases. That alias
+finding remains a Core message-API canonicalization issue, not evidence that
+secp256k1 recovery accepts an invalid recid. No secp production fix or
+deterministic regression test is claimed from this run. The master-relative
+severity ledger is unchanged: no block or witness acceptance, sigop
+undercount, consensus divergence, signature forgery, key compromise, or
+remote memory/concurrency failure was demonstrated, so no High/Critical
+rating is justified. Any future Core header-validation change must rerun both
+the exact Core message probe and these recovery seeds and state explicitly
+whether it changes or merely masks the wrapper-level behavior.
