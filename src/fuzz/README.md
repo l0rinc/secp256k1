@@ -34230,3 +34230,51 @@ first stops and state whether it preserves, changes, or masks them, with the
 exact Core caller/input origin, master-relative severity, first assertion, and
 verifier commands. No fuzz, sanitizer, compiler, or test process remains
 running.
+
+## 2026-07-26 Independent maximum-magnitude field campaign
+
+The maximum-magnitude field oracle was run again after the worker revalidation
+to separate a new arithmetic mismatch from replay of the known 10x26 cases.
+The current branch is `078efcca4375a17fed6423b6262b4b54c27ef24a`; both
+`origin/master` and `l0rinc/master` are
+`d2d04864ef9b056151603a3ced7980958b058028`. The target source is
+`src/fuzz/field.c` (`sha256`
+`2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`). The
+production 10x26 implementation under test is
+`src/field_10x26_impl.h` (`sha256`
+`2c642c6c87d53e358c8254b0e3985c2917f999af362afe6dd8e5d0c1478f8289`).
+
+The tracked field corpus had 21 inputs totaling 742 bytes. Fresh private
+copies ran in the native 5x52 and forced-int64/10x26 Clang ASan/UBSan
+libFuzzer builds with:
+
+    -fork=2 -jobs=2 -max_total_time=120 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+Both managers and all four fork workers in the two-backend campaign exited 0.
+The native private corpus ended at 837 files and the forced-int64 corpus at
+939 files;
+these additions were passing inputs only. There were no artifact files, and
+all 36 observed worker-stat records per backend reported
+`oom/timeout/crash: 0/0/0`. The fixed tracked corpus plus the empty input was
+then replayed exactly once per backend: 22/22 executions completed with no
+diagnostic. Replay log hashes are:
+
+| backend | replay log |
+| --- | --- |
+| native 5x52 | `e04d28b50a7fb37ee64a3997d7e5da0f6d978abd3e2d390540b8767b708e2295` |
+| forced-int64 10x26 | `1d3ed18ade4585a35bbf055d61361c81e4f86e55dca71bb515e134e1a5058440` |
+
+This pass found no new production mismatch, sanitizer failure, assertion
+failure, invalid-block or invalid-witness acceptance, consensus divergence,
+key compromise, signature forgery, or witness-sigop consequence. It therefore
+does not change the existing **Medium latent internal field-correctness**
+rating for the clean-master magnitude-32 normalization and zero-predicate
+findings. Bitcoin Core's serialized key, signature, and block paths still do
+not demonstrate construction of these exact opaque raw states, so High or
+Critical is not justified. No cryptographically meaningful nonce-erasure
+issue is involved. No l0rinc commit was cherry-picked because the refs remain
+identical. No production fix or deterministic regression test was added by
+this negative pass. No fuzz, sanitizer, compiler, or test process remains
+running.
