@@ -34444,3 +34444,37 @@ this commit and no severity upgrade is justified. Any later fix or cherry-pick
 that changes this first stop must preserve the trigger or minimal mutation and
 amend its notes with whether it preserves, changes, or masks the master
 baseline. No fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 Generic WNAF Unit-Oracle Lower Bound
+
+The deterministic `test_wnaf` checker had a precedence error in its negative
+digit bound: `v >= -(1 << (w-1)) - 1` admitted one extra odd value. The
+production contract in `secp256k1_ecmult_wnaf` and the independent scalar
+fuzzer model require
+`-((1 << (w-1)) - 1) <= v <= (1 << (w-1)) - 1`. The checker now uses that
+bound and explicitly exercises scalar `7` with window `4`, the positive edge
+whose equivalent malformed representation is easy to construct.
+
+The differential proof used a disposable production-only mutation in
+`src/ecmult_impl.h`, active only for `len >= 5`, `w == 4`, and scalar `7`:
+it changed the normal digit `7` at position zero to `-9`, added `1` at
+position four, and returned five positions. The representation still sums to
+`7`, remains odd, and preserves the required four-bit separation. The frozen
+old `tests -t=wnaf -i=1` slice passed on native and forced-int64 ASan/UBSan
+builds under this mutation; after the bound and vector were added, both builds
+failed deterministically at the corrected condition. The mutation was removed
+before the clean replay. Clean unit replay passed on both backends; current
+`src/tests.c` and restored `src/ecmult_impl.h` hashes are
+`d02190fae1c2ad88b873510c2de12f9d2b57ef0a4145274b72f1468a5f91c37b` and
+`663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0`.
+
+This is **Informational/Low test-oracle hardening**, not a clean-master
+production finding. If an actual production regression emitted `-9` for
+window 4, the release build's table index could exceed a four-entry
+odd-multiple table; the checked helper's `VERIFY` guard is not a release
+safety boundary. Bitcoin Core's normal default uses `WINDOW_A=5` and
+`ECMULT_WINDOW_SIZE=15`, its callers do not derive WNAF lengths or digits from
+blocks/witnesses, and no invalid-block or invalid-witness acceptance,
+consensus divergence, key compromise, signature forgery, or remote crash was
+shown. The finding therefore does not warrant Medium/High/Critical severity.
+No production source or fuzzer corpus changed in this commit.

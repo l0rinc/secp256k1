@@ -5819,7 +5819,7 @@ static void test_wnaf(const secp256k1_scalar *number, int w) {
             zeroes=0;
             CHECK((v & 1) == 1); /* check non-zero elements are odd */
             CHECK(v <= (1 << (w-1)) - 1); /* check range below */
-            CHECK(v >= -(1 << (w-1)) - 1); /* check range above */
+            CHECK(v >= -((1 << (w-1)) - 1)); /* check range above */
         } else {
             CHECK(zeroes != -1); /* check that no unnecessary zero padding exists */
             zeroes++;
@@ -5944,6 +5944,9 @@ static void run_wnaf(void) {
     /* Exercise the largest window accepted by the generic WNAF helper. */
     secp256k1_scalar_set_int(&n, 0x7fffffffU);
     test_wnaf(&n, 31);
+    /* Exercise the negative digit boundary of the generic WNAF helper. */
+    secp256k1_scalar_set_int(&n, 7);
+    test_wnaf(&n, 4);
     /* Random tests */
     for (i = 0; i < COUNT; i++) {
         testutil_random_scalar_order(&n);
