@@ -36459,3 +36459,88 @@ affected seed and, where relevant, the two-worker matrix, then amend the
 commit message with the Core caller, master-relative severity, first failing
 assertion or stack, and whether the change preserves, changes, or masks the
 baseline.
+
+## 2026-07-26 Third wide-multiply backend replay
+
+The third arithmetic implementation was built with Clang Debug ASan/UBSan
+from audit branch `ef585b2a`, whose clean-master fork base remains
+`d2d04864ef9b056151603a3ced7980958b058028` for both `origin/master` and
+`l0rinc/master`. The build used
+`-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int128_struct`, assembly disabled,
+all optional modules enabled, and libFuzzer enabled. The normal tests and all
+15 fuzz binaries built successfully. The compiler emitted existing
+int128-header static-inline warnings while compiling Silent Payments; they did
+not produce a link or runtime failure and are not treated as a finding.
+
+The corresponding int128 module test run also passed with exit 0 in 138.409
+seconds:
+
+    tests -i=1 -j=2 -t=ecmult -t=ecdsa -t=ecdh -t=ellswift -t=extrakeys
+      -t=recovery -t=schnorrsig -t=musig -t=silentpayments
+
+Its log hash is
+`ff899c9bb5bc9dc767eeab874e843a88c1cf5d1b1111c2f2677c238c14df423c`.
+The suite's iteration-count-gated `test_ecmult_constants_sha` and
+`test_ecmult_constants_2bit` cases were skipped at `-i=1`, matching the
+documented reduced deterministic test mode; this is not a failure.
+
+The complete tracked corpus set was replayed one input at a time with the
+same strict ASan/UBSan environment used above: 276 stateful/module inputs plus
+84 primitive inputs, 360 executions total. Every execution exited 0. The
+summary manifest hash is
+`35bea6fa98256863cc5f153475e68beeec96422baed3dd3c55442bbe4d4d8ee8`.
+Per-target log hashes, in target order, are:
+
+    api_roundtrip  9cf27197f0f945ee981f770bcca9d01bcba342d6fd3cbcad28166803bf33b6ca
+    context        2cfb1755bbaaf74e2d0d259a800dddc5c89c7f593debf1bfe20b23c19fd49d3e
+    hash           9ecf49a2eb2a15963bd5c67cfc559f9764aeb26cc172cca8031f2670bae287b2
+    scalar         fb2d0c8d2cbb50efcadcca34652776559fb173d8f17f019e3e81e160c6cd1d81
+    field          9c92de31d135ef851c97fc495c57c343b6c088eb347132757b82a28a92f824ea
+    group          08c9ec90e57d1127a017ff27295abdd6b1886dc757a5f9f4e73ac9435350e118
+    ecmult_const   78c8157c128c16c8fd136b953f1834ed1fe3fd68a7a02ffa0162bb920f16d416
+    ecmult_multi   e886dff979dbd402d3ae94996243a098a2f4d429a434a01d3c926662a9c11110
+    ecdh           b5fed11aa138ef567402e118d6294a5d333dd3f9696704e0a37c2e0e98b56654
+    ellswift       9a01ce500bd23a4902209e5b9725aaa51374062915e342f7da35f0c5fde76d0c
+    recovery       7988f956a04b5639a43e42977111528cab4f62f8ce8cb049bf50a1fea4f7c15c
+    schnorrsig     9e3bfb1527dba0f54749f5bcf4ee3d80ab9f75d894f4318293aba738cd9609a5
+    musig          c638bc66c1b01b64b581cb7d2c76484b7afc62d79b897e218a415a916bec65b6
+    silentpayments 4e54d30eaca1c45c5b43f2e55cfbc364f537c6753d8fc89b61054d985e1579f3
+    xonly_tweak    5c8acb38e237c89ddc5edc38bebd3cb133272af562e13c51492016eb163d8288
+
+The logs contain no ASan/UBSan diagnostic, callback error, assertion failure,
+OOM, timeout, crash, or artifact. The high-risk `group`, `ecdh`, and `musig`
+corpora were also run from disposable copies with
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=180`, all failure classes
+non-ignored, and strict sanitizer options. All six workers and three managers
+exited 0. Final worker observations were:
+
+    group  cov=2969, ft=5458-5479, oom/timeout/crash=0/0/0, 19-25 seconds
+    ecdh   cov=2704, ft=5061-5307, oom/timeout/crash=0/0/0, 18-25 seconds
+    musig  cov=4767, ft=14234,    oom/timeout/crash=0/0/0, 182-184 seconds
+
+Manager and worker log hashes are:
+
+    group  6882aaa7131b33c3c4e2b800d878d48c21f558f7ec9bc926fe40c9d1eac58807  3b5a3607b1270d9c864676ee839df7228cebab23d7126b2ed0149a7ba0b6b376  080163432f522912a4a756259cef1a8b727d5e08bc318cb32ae7480cf7177121
+    ecdh   a46edb1bb397f7b974840144265631b65eba168a6c3b0196ffdca6efba51898c  b1c766b45ae27f18e482f04790bdc343108fb66bc244feb2256527d137b30a8e  6b3bb8a210f8a61c175b54f904a78f4e25043085dab62c1058e09f4ccae2fe03
+    musig  2853c8a399b062b0c39ef0aa1933130d18104325d9642827895b9d9b9321634d  09962f1075ed05ff2d9a04c557f3a31fee1fe5ab1e31b14c238ea4dd9bdd7216  d8f12f8b7b8637e90a84b39bf82da25a7af5c4a1686c43cd6986c0d37d913a38
+
+The three hash groups are manager, worker 0, and worker 1 respectively.
+Worker-generated files were confined to disposable directories and were not
+promoted into the tracked corpora. This backend replay therefore found no
+additional production failure and gives no master-relative severity upgrade.
+It did not demonstrate invalid-block or invalid-witness acceptance,
+witness/sigop undercount leading to acceptance, consensus divergence,
+signature forgery, key compromise, or severe remote memory/concurrency
+failure. The repeated-participant MuSig issue remains **Medium Core
+wallet/application spend availability**; the arithmetic/API findings retain
+their existing Low-to-Medium ratings. A nonce or retry counter with no
+standalone cryptographic meaning is still not Critical merely because it is
+not cleared.
+
+This is a third-backend consistency result, not proof that an unmodified
+master binary without the audit branch's fuzzer/oracle changes is bug-free.
+No source mutation, production fix, or deterministic regression test was
+justified by this negative run. Future changes to wide multiplication or its
+callers must rerun the exact 360-seed manifest and the three worker matrices,
+then state in the commit message whether they preserve, alter, or mask this
+master-relative result.
