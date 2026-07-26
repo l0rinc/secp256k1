@@ -33204,3 +33204,95 @@ constructor must preserve this clean-master control and amend its own commit
 message with the exact NULL-input precondition, output postcondition, Core
 call-site reachability, severity, and whether it preserves, changes, or masks
 the finding.
+
+## 2026-07-26 l0rinc PR17-27 reconciliation
+
+The fork was fetched again after the rebase. `origin/master` and
+`l0rinc/master` are still the identical commit
+`d2d04864ef9b056151603a3ced7980958b058028`; no rebase was needed. PR heads
+17 through 27 were reviewed against the complete audit stack, in addition to
+the already recorded PR1-16 reconciliation. The rule for this pass is
+behavioral equivalence, not commit-count equivalence: a fork patch is not
+cherry-picked a second time when the audit branch already contains the same
+production transition with a stronger fuzzer, deterministic regression, or
+clean-master proof. Duplicating it would create conflicts and could change the
+first-stop order, which would make a later clean-master replay look safer than
+the original baseline.
+
+### PR disposition and existing equivalent proof
+
+* PR17 (`1ae90bde`) has no tree difference from current master and contributes
+  no behavior to replay.
+* PR18 contains `71fb2a37` (return on failed public-key loads), `0deac2a1`
+  (characterization), and `a6658112` (curve/subgroup validation). These are
+  already represented by `44265ec4` and `91b9d762`, with the latter's
+  deterministic opaque `(x,y)=(1,1)` proof and current `group`/`ecdh` oracles.
+  The master-relative issue is Medium direct opaque-state correctness and Low
+  to Medium for current Core: serialized `CPubKey` parsing validates the point,
+  so no invalid block or witness supplies this object. No PR18 commit was
+  duplicated.
+* PR19 (`144e38eb`) is behaviorally covered by `3b4e5a60`; both route the
+  exported RFC6979/default aliases through the caller's SHA context while
+  retaining arbitrary callback dispatch. The effect is Low API dispatch or
+  performance correctness because SHA-equivalent signatures do not change.
+  PR20 (`19c82a24`) is likewise covered by `ac4c4c55` for ECDH aliases and is
+  Low for the same reason: the shared secret remains equal and Core's BIP324
+  path uses EllSwift. The fork's added header wording is documentation, not a
+  second production behavior to fuzz.
+* PR21 (`15c667cb`) is a test-oracle/helper documentation improvement for
+  non-minimal BER length generation, already covered by `921e3428` and the
+  existing DER parser matrix. It changes no parser code and has no Core
+  security severity. The helper note was not duplicated as a production
+  cherry-pick; the malformed-length direct-tooling limitation remains recorded
+  above.
+* PR22 (`b0b9b3b7`, preceded by `d7815724`) is covered by `5d58e62c` and the
+  `opaque-xonly-parity-state` seed. An odd-Y full key copied into an x-only
+  object is a Medium local opaque-state contract failure, not a wire-level
+  block or witness input for Core. No duplicate fix was added.
+* PR23 (`dda36140`, preceded by `0700f7bb`) is covered by `8e3ef067`: the
+  zero field value forced through the EllSwift hash callback is normalized
+  before inversion and round-trips. This is Low/informational on the current
+  Core BIP324 transport boundary, not consensus impact or key compromise.
+* PR24 (`d4394823`, preceded by `a1b58eea`) is split more narrowly in this
+  branch between `077510b7` (aggregation/verification rejection) and
+  `bb36b625` (serialization rejection). Both preserve the clean-master
+  distinction between invalid opaque MuSig state and valid wire parsing. The
+  direct API rating is Medium for stale protocol-state correctness, below High
+  or Critical because Core consensus does not construct MuSig objects from
+  blocks or witnesses and no forgery, disclosure, or remote crash was shown.
+* PR25 (`97dab671`) is covered by `00bb4aca`: overflowed opaque ECDSA `r` and
+  `s` scalars are rejected at every loader consumer. This remains Medium local
+  API/state-boundary correctness; Core parses serialized signatures before
+  verification and no invalid-block acceptance was demonstrated.
+* PR26 (`88424b7a`, preceded by `1d7d39ae`) is covered by `6c45aa1a` and its
+  reduced-order exhaustive model. A zero MuSig secret nonce is
+  cryptographically meaningful, but the normal-order relation is approximately
+  `2^-255`; the deterministic order-13 proof establishes invalid-state
+  rejection, not a practical remote key-recovery or consensus attack. It is
+  Low/informational on current Core wallet/application reachability. This is
+  distinct from clearing a retry counter or other value with no standalone
+  cryptographic meaning, which is not Critical solely because it remains live.
+* PR27 (`fe361c7f`) was the one unreconciled behavior-bearing head and was
+  cherry-picked as `3eafe49b`. It reuses the already computed ElligatorSwift
+  denominator square in the decode on-curve predicate. The repaired ASan/UBSan
+  replay passed all 19 seeds, `tests -t=ellswift -i=1`,
+  `noverify_tests -t=ellswift -i=1`, and a two-worker replay with
+  `oom/timeout/crash: 0/0/0`. The clean-master control with the same PR applied
+  still stopped all 19 seeds at the existing zero-`u` assertion
+  `src/modules/ellswift/main_impl.h:361`; its per-input log manifest is
+  `0af9b5e4bf28b6bc2ef52d576a2f1a0a363cf7cf1bcfa32d4583a179c5e7306a`.
+  Thus PR27 preserves, changes none of, and does not mask the prior master
+  finding. It is an informational optimization, not a security fix.
+
+All dispositions above are severity ratings against unmodified master and
+the current Bitcoin Core call graph, before the corresponding local repair.
+None of PR17-27 demonstrates invalid-block or invalid-witness acceptance,
+consensus divergence, key compromise/signature forgery, or a remotely
+reachable memory/concurrency failure. They therefore do not justify a
+High/Critical rating. Any later fork cherry-pick that changes one of these
+first stops must preserve the original clean-master seed or minimal mutation,
+amend its commit message with the exact precondition/postcondition and Core
+input origin, and state explicitly whether it preserves, changes, or masks
+the earlier finding. Every claimed production fix still requires a
+deterministic regression and a verifier that fails on the unmodified master
+or minimal production mutation.
