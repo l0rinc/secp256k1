@@ -36026,3 +36026,53 @@ boundary. Future changes to recovery-id decoding, `r+n` handling, compact
 serialization, or Core's message adapter must state whether they preserve,
 change, or mask this master-relative oracle and rerun the 19-input matrix in
 the same commit's notes.
+
+## 2026-07-26 Isolated post-checkpoint Core-boundary worker sweep
+
+After the wide MuSig aggregation and compact-recovery checkpoints, the
+current audit branch was rebuilt in native 5x52 and forced-int64/10x26 Clang
+ASan/UBSan configurations. The checked-in corpora for the six highest-value
+Core-facing targets were replayed with two libFuzzer fork workers and two
+jobs per manager using:
+
+    -fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0
+    -ignore_ooms=0 -ignore_timeouts=0 -ignore_crashes=0 -handle_abrt=0
+    -print_final_stats=1
+
+Each target used a dedicated working directory so worker logs and generated
+corpus mutations could not overlap. An earlier parallel wrapper invocation
+used one shared directory and was discarded because its `fuzz-0.log` and
+`fuzz-1.log` files were interleaved; it is not evidence. The isolated run
+processed these checked-in seed counts, and all managers exited 0 with every
+worker reporting `oom/timeout/crash: 0/0/0` and no artifact:
+
+| target | seeds | native manager log SHA-256 | forced-int64 manager log SHA-256 |
+| --- | ---: | --- | --- |
+| `api_roundtrip` | 63 | `958ee75db59d92b0ef0034040013a816ce05af56b7ffad463cef30d5cb8ecccb` | `a6459e10e929a4da1cb00918b142e974b69bd083e5a9f748c1f78fe12572e307` |
+| `schnorrsig` | 18 | `7bb610963b151eccc831f19d22ff0faaa4e7211ad24f310d3021f7bb36e2163a` | `c8c8eaf69df90169ab42cb0605c4722affb67942ce2132c8fc3a41cb6c3d69f5` |
+| `xonly_tweak` | 20 | `88d960df37315f20d4fcf56c5bf1217cb81d3c60d3a23632e87e0c2089d7a66f` | `289c0d85641a5a4c6b84db551cf1fe165dc4e6ef55a32940e5936e0cec3248af` |
+| `ellswift` | 20 | `e67e5e034b44aa7bad4e519a85a9f426bea2b540a93ce82795c3e4b71b28e178` | `4ab0cd277d353265d01302238258cdadff84148367ced55d3d5d1456bf8d7851` |
+| `musig` | 81 | `97da61c2b79ba303f8202e05d1bc0b39b9c8a6f6ccac5d7c5d6380af9f57674a` | `f9a52c2d7f4894f36832645c820412089f2b8b1a358e5d4a04745954dcdbfa03` |
+| `recovery` | 18 | `687f3d7ae929badf4086964af90e9ab8ad405d69b0ff79d53d8e924b7db9dca7` | `1e9bb717e30aa087b798fab0243ef4d4c1013875a7eb63a074a7273187efb9e0` |
+
+The corresponding public-module tests also exited 0 in both builds with
+`tests -i=1 -j=2 -t=ecdh -t=ecdsa -t=recovery -t=extrakeys
+-t=schnorrsig -t=musig -t=ellswift`. The native and forced-int64 test-log
+hashes are `d2cda5df37fe14627f9332ce1fd0407a68554d75cb539c6b608932ce48b16097`
+and `373a8d1d2cd32d131f16e18f7df192e4cf69eb0e8fbf761e35e81b2cf6d2fd82`.
+
+This is branch-regression evidence after the latest oracle commits, not a
+clean-master control and not a new production finding. The exercised Core
+boundaries remain legacy ECDSA and Tapscript Schnorr/Taproot verification,
+BIP324 transport XDH, wallet/message recovery, and wallet/descriptor/PSBT
+MuSig. No invalid-block or invalid-witness acceptance, consensus divergence,
+signature forgery, key compromise, witness-sigop consequence, or severe
+remote memory/concurrency failure was demonstrated. Existing findings must
+continue to be rated against unmodified `origin/master`; this sweep does not
+upgrade any of them to High/Critical and makes no claim about clearing a
+nonce or retry counter whose bytes have no standalone cryptographic meaning.
+
+`origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; no fork change masks this
+recheck. Generated mutation corpora were removed after the run, and no fuzz,
+sanitizer, compiler, or test process remains running.
