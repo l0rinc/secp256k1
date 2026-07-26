@@ -35592,3 +35592,64 @@ consequence. High/Critical is therefore not justified. This oracle involves
 no nonce-clearing claim. `origin/master` and `l0rinc/master` are still the
 same `d2d04864ef9b056151603a3ced7980958b058028`, so no fork commit was
 cherry-picked and no masking interaction exists to amend.
+
+## 2026-07-26 Core Taproot leaf-version dispatch oracle
+
+The existing `core taproot control composition` seed now also models the
+outer leaf-version decision in Bitcoin Core's Taproot script-path witness
+validation. The oracle independently rebuilds the TapLeaf, Merkle root, and
+TapTweak commitment before checking the dispatch result, so a future change
+cannot satisfy the leaf-version assertion by merely bypassing the commitment
+check. It covers:
+
+* a valid C0 control block executing Tapscript with either value of the
+  `SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION` policy flag;
+* control blocks shorter than 33 bytes and witness programs other than 32
+  bytes failing before leaf dispatch; and
+* a runtime-generated valid C2 commitment being accepted as a future-softfork
+  witness program when discouragement is disabled, but rejected when the
+  policy flag is enabled, without executing C2 as Tapscript.
+
+This follows Bitcoin Core's `VerifyWitnessProgram` sequence at
+`src/script/interpreter.cpp:1957-1998` and its commitment boundary at
+`src/script/interpreter.cpp:1913-1924`. The C0 branch sets up Tapscript
+execution and validation weight; unknown leaf versions return success for
+future-softfork compatibility unless the discourage policy flag is set. The
+oracle is intentionally limited to this outer dispatch contract and does not
+claim to execute the script or duplicate the separate Tapscript signature
+sequencing model.
+
+After rebuilding native 5x52 and forced-int64/10x26 Clang ASan/UBSan
+configurations, the 20 tracked `xonly_tweak` corpus files (including the
+control-composition trigger) and one disposable empty input passed in each
+backend. The trigger was also run as an explicit preflight. The recorded
+replay covered 21 input executions per backend; the native and forced-int64 log
+hashes were
+`31eb812a315dfb9ec5d3f08323fa21669f9fe737cb848f575da00e5c25549596` and
+`c3ce40e2edfe1eef4a66215cc8d1a39ae907040c29be2dbc2a4cbbd4d6d84888`.
+`tests -i=1 -j=2 -t=extrakeys` also passed in both builds.
+
+The same source and tracked corpus were run with `-fork=2 -jobs=2
+-max_total_time=15 -timeout=30 -rss_limit_mb=0`, strict zero-ignore flags,
+and `-handle_abrt=0`. Both campaigns exited 0 with
+`oom/timeout/crash: 0/0/0`, zero artifacts, and 20 corpus files at shutdown.
+The native and forced-int64 manager log hashes were
+`458f240821f7d14e8f93d36c19d525a209573e350826a4c0ce365c3963e0afe3` and
+`b4ca3e981d0def91dbd2a5bdcc218e58788c70ee01a23152e0366f9cef960fc5`.
+
+This is a harness-only consensus-boundary oracle, not a production finding.
+No master-relative production mutation, deterministic regression test,
+invalid-block or invalid-witness acceptance, consensus divergence, signature
+forgery, key compromise, remote severe memory/concurrency failure, or
+witness-sigop consequence was demonstrated. The current Bitcoin Core caller
+therefore provides no basis for a High/Critical rating; the future-version
+policy result is expected compatibility behavior. This change makes no
+nonce-clearing claim: a nonce or retry value without standalone cryptographic
+meaning is not Critical merely because it is uncleared.
+
+`origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`. No l0rinc commit was cherry-picked
+for this boundary, and there is no fix/masking interaction to amend. Any
+future Taproot commitment or leaf-version fix must state whether it preserves,
+changes, or masks this master-relative oracle and must include the exact
+corpus condition and Core caller impact in its commit message.

@@ -139,6 +139,27 @@ static int secp256k1_fuzz_core_taproot_commitment(const secp256k1_context *ctx, 
     return secp256k1_xonly_pubkey_tweak_add_check(ctx, program32, control[0] & 1u, &internal_key, tweak32);
 }
 
+/* Model VerifyWitnessProgram's leaf-version dispatch after the Taproot
+ * commitment has been checked. C0 executes Tapscript; unknown versions are
+ * accepted as future-softfork programs unless the discourage flag is set. */
+static int secp256k1_fuzz_core_taproot_witness_path(const secp256k1_context *ctx, const unsigned char control[], size_t control_len, const unsigned char program32[32], size_t program_len, const unsigned char *script, size_t script_len, int discourage_upgradable, int *execute_tapscript) {
+    if (program_len != 32 || control_len < 33 || control_len > 33 + 32 * 128 || (control_len - 33) % 32 != 0) {
+        return 0;
+    }
+    if (!secp256k1_fuzz_core_taproot_commitment(ctx, control, control_len, program32, program_len, script, script_len)) {
+        return 0;
+    }
+    if ((control[0] & 0xFEu) == 0xC0u) {
+        *execute_tapscript = 1;
+        return 1;
+    }
+    if (discourage_upgradable) {
+        return 0;
+    }
+    *execute_tapscript = 0;
+    return 1;
+}
+
 static void secp256k1_fuzz_check_core_taproot_control_composition(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
     static const unsigned char trigger[] = "core taproot control composition\n";
     static const unsigned char script[] = { 'f', 'o', 'o', 'b', 'a', 'r' };
@@ -201,13 +222,22 @@ static void secp256k1_fuzz_check_core_taproot_control_composition(const secp256k
     unsigned char tweak32[32];
     unsigned char bad_control[65];
     unsigned char bad_program[32];
+    unsigned char upgradable_control[33];
+    unsigned char upgradable_program[32];
+    unsigned char upgradable_tapleaf[32];
+    unsigned char upgradable_tweak[32];
     secp256k1_xonly_pubkey internal_key;
     secp256k1_pubkey actual_pubkey;
     secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_xonly_pubkey upgradable_internal_key;
+    secp256k1_pubkey upgradable_actual_pubkey;
+    secp256k1_xonly_pubkey upgradable_actual_xonly;
     unsigned char actual_program[32];
     size_t i;
     size_t j;
     int parity;
+    int upgradable_parity;
+    int execute_tapscript;
 
     if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
         return;
@@ -259,6 +289,38 @@ static void secp256k1_fuzz_check_core_taproot_control_composition(const secp256k
         FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, 32, cases[i].expected_program, 32, script, sizeof(script)) == 0);
         FUZZ_CHECK(secp256k1_fuzz_core_taproot_commitment(ctx, control, cases[i].node == NULL ? 33 : sizeof(control), cases[i].expected_program, 31, script, sizeof(script)) == 0);
     }
+
+    /* Core dispatches leaf versions only after the commitment is valid. The
+     * C0 path executes regardless of the discourage-upgrade policy flag. */
+    memset(control, 0, sizeof(control));
+    control[0] = 0xC1u;
+    memcpy(control + 1, secp256k1_fuzz_xonly_g_x, 32);
+    FUZZ_CHECK(secp256k1_fuzz_core_taproot_witness_path(ctx, control, 33, expected_program_one, 32, script, sizeof(script), 0, &execute_tapscript) == 1);
+    FUZZ_CHECK(execute_tapscript == 1);
+    FUZZ_CHECK(secp256k1_fuzz_core_taproot_witness_path(ctx, control, 33, expected_program_one, 32, script, sizeof(script), 1, &execute_tapscript) == 1);
+    FUZZ_CHECK(execute_tapscript == 1);
+    FUZZ_CHECK(secp256k1_fuzz_core_taproot_witness_path(ctx, control, 32, expected_program_one, 32, script, sizeof(script), 0, &execute_tapscript) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_taproot_witness_path(ctx, control, 33, expected_program_one, 31, script, sizeof(script), 0, &execute_tapscript) == 0);
+
+    /* Build a valid future-version commitment at runtime. This keeps the
+     * policy/consensus dispatch check independent of a production-derived
+     * output key while retaining the real Taproot tweak equation. */
+    memset(upgradable_control, 0, sizeof(upgradable_control));
+    upgradable_control[0] = 0xC2u;
+    memcpy(upgradable_control + 1, secp256k1_fuzz_xonly_g_x, 32);
+    secp256k1_fuzz_taproot_tapleaf_hash(upgradable_tapleaf, upgradable_control[0] & 0xFEu, script, sizeof(script));
+    FUZZ_CHECK(secp256k1_fuzz_taproot_merkle_root(merkle_root, upgradable_control, sizeof(upgradable_control), upgradable_tapleaf) == 1);
+    secp256k1_fuzz_taproot_tagged_hash(upgradable_tweak, (const unsigned char *)"TapTweak", sizeof("TapTweak") - 1, upgradable_control + 1, 32, merkle_root, 32);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_parse(ctx, &upgradable_internal_key, upgradable_control + 1) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_tweak_add(ctx, &upgradable_actual_pubkey, &upgradable_internal_key, upgradable_tweak) == 1);
+    upgradable_parity = -1;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &upgradable_actual_xonly, &upgradable_parity, &upgradable_actual_pubkey) == 1);
+    FUZZ_CHECK(upgradable_parity == 0 || upgradable_parity == 1);
+    upgradable_control[0] |= (unsigned char)upgradable_parity;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, upgradable_program, &upgradable_actual_xonly) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_core_taproot_witness_path(ctx, upgradable_control, 33, upgradable_program, 32, script, sizeof(script), 0, &execute_tapscript) == 1);
+    FUZZ_CHECK(execute_tapscript == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_taproot_witness_path(ctx, upgradable_control, 33, upgradable_program, 32, script, sizeof(script), 1, &execute_tapscript) == 0);
 }
 
 static void secp256k1_fuzz_check_core_taproot_tapleaf_boundaries(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
