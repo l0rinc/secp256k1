@@ -33296,3 +33296,80 @@ input origin, and state explicitly whether it preserves, changes, or masks
 the earlier finding. Every claimed production fix still requires a
 deterministic regression and a verifier that fails on the unmodified master
 or minimal production mutation.
+
+## 2026-07-26 Complete clean-master Silent Payments first-stop differential
+
+The clean-master baseline for the current Silent Payments oracle was rerun
+after the PR17-27 reconciliation. `origin/master` and `l0rinc/master` both
+resolve to `d2d04864ef9b056151603a3ced7980958b058028`. The fuzzer source hash
+is `4c247052bc5db5bef0b9b73695e69fc1631f9b69f8f06d9978d200c5cf91dd48`; the
+clean-master production `src/modules/silentpayments/main_impl.h` hash is
+`5b8fcce63e2520b6b59a65854bb44b4ab307806f80f6ea780179a62fac3ea41`. The nine
+tracked inputs are 316 bytes in total; their existing corpus manifest is
+`3f7d84f159f3746add305fa0fff2bd68a9b768ca681f58772c848dd8fb6d2c9a`.
+
+With Clang 22.1.7, Debug, ASan/UBSan, assembly disabled, libFuzzer enabled,
+the SHA-256 wide-input limit override enabled, and all optional modules
+enabled, every one of the nine unmodified clean-master inputs exited 134 on
+the first `FUZZ_CHECK` assertion. The native clean binary hash was
+`58420a8c3db0bc54445d99e6b29aae4d43a36030ad12f9fa61235d2931900980`; the
+unmodified-baseline log manifest was
+`b608714a7ce0ed16f3b90c0554b9c682d1187adb1fd7b1207da31ebda1d239ba`.
+The same replay with `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` also made
+all nine inputs exit 134. Its binary hash is
+`ac7ed44919585084d186f43cc19088ddbdcae718aceaaccdb66fe19f6fc84d08`; its
+relative log manifest is
+`9ff0278acfa8b3931cf3ba263f69d8c74738f4f4b35ab613bdce19b58da3ddcf`.
+No sanitizer report or output artifact was produced. The exact invocations
+were `-runs=1 -handle_abrt=0 -timeout=45`, one input at a time.
+
+To identify the first-stop masking order, a temporary diagnostic `FUZZ_CHECK`
+macro and temporary harness-only `if (0)` gates were used in a disposable
+clean-master worktree. Neither the production tree, corpus, nor authoritative
+fuzzer source was changed by that probe. Starting from the same nine inputs,
+the first failed oracle was, in order:
+
+* `silentpayments.c:1177`: zeroing a valid label's serialized point made
+  `recipient_label_serialize` succeed instead of rejecting invalid opaque
+  label state.
+* `silentpayments.c:1189`: zeroing the serialized summary point made
+  `recipient_scan_outputs` continue instead of rejecting invalid opaque
+  summary state.
+* `silentpayments.c:1201`: setting the summary mode byte to `2` was accepted
+  instead of rejected.
+* With those three harness checks gated, zeroing the summary input hash
+  reached `main_impl.h:93`, where the production shared-secret assertion
+  rejected a zero scalar.
+* With that check gated too, an all-`FF` input hash reached
+  `silentpayments.c:1225` and was accepted/reduced instead of rejected.
+
+Gating all five checks made all nine inputs exit 0. The gated diagnostic
+binary hash was `a135625435707c2552f99ffe1f9809e767f98908702aead2d586048e547b6d3f`
+and its log manifest was
+`0b55679440e2f27d2af98530eb975af5abe7fc3a313f999d066e6f6a9cdf3a17`.
+This is a proof of oracle ordering and masking, not a new production defect:
+all five conditions are already addressed by `ae336212` through label
+curve/subgroup validation, summary point validation, summary mode validation,
+and strict nonzero/non-overflow input-hash parsing. Existing constructors and
+parsers create canonical state, which explains why ordinary unit tests did
+not reach these magic-preserving opaque-state mutations.
+
+Severity is against unmodified master and the current Bitcoin Core caller
+surface. Direct callers that can corrupt or deserialize opaque label/summary
+state face Low label serialization correctness and Medium summary state or
+availability risk. The current Bitcoin Core checkout surveyed on this date
+has no `Silent Payments`, `BIP352`, or `secp256k1_silentpayments` call site,
+and these APIs are wallet/application-side rather than block or witness
+validation. Therefore this evidence is Low to Medium for the library boundary
+and Low/Nice-to-have for current Core reachability, never High/Critical: no
+invalid-block or invalid-witness acceptance, consensus divergence, key
+compromise, signature forgery, or remote memory/concurrency failure was shown.
+The zero value here is an input-hash scalar, not a nonce whose erasure would
+be non-critical; the severity does not rely on a clearing omission.
+
+The clean-master first-stop corpus and the five minimal mutation gates must
+be retained when later repairs or fork commits are replayed. A later change
+that passes because it masks an earlier first stop must amend its commit
+message with the exact mutation, affected line, master-relative severity,
+Core input origin, and whether it preserves, changes, or masks this result.
+This differential leaves no fuzz or sanitizer process running.
