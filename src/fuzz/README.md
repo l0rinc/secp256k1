@@ -36873,3 +36873,37 @@ consequence was demonstrated. This run therefore does not justify a
 High/Critical rating or a production fix. Future lifecycle changes must rerun
 these seeds under sanitizer and identify whether any failure is reachable
 from a real Core context owner.
+
+## 2026-07-26 EllSwift/BIP324 sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_ellswift` replayed the existing
+20-file `src/fuzz/corpora/ellswift` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_ellswift -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 20 seeds (820 bytes), exited 0, and completed 182 and 185
+executions. Each reached coverage 2715; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`7ce7cabc5b73462111a338159bbfd0307e4f076ddff39cfa8e24c37b068285a8` and
+`40fab7f023d05d932f9e3e30408617d67ecad3c3dd46d4cd5da4d239e84a03ac`.
+The copied corpus grew to 146 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of EllSwift encoding/decoding,
+XDH symmetry, invalid-encoding rejection, and static-context composition at
+the BIP324 transport boundary used by Bitcoin Core. It found no new
+production bug, invalid witness or block acceptance, sigop undercount,
+consensus divergence, signature forgery, key compromise, or remote
+memory/concurrency failure. Existing direct-API robustness findings and
+master-relative severity ratings are unchanged; transport availability or
+handshake effects without an authenticated-key or memory-safety consequence
+remain below High/Critical. Future EllSwift or BIP324 caller changes must
+rerun these exact seeds under sanitizer and state whether they preserve,
+change, or mask the recorded transport boundary evidence.
