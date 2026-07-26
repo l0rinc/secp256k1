@@ -35466,3 +35466,38 @@ allocation order, callback routing, or fork fixes must replay the clean-master
 scratch-wrap and callback-failure controls and state whether they preserve,
 change, or mask each existing finding, with the exact Core caller and verifier
 commands documented in the same commit.
+
+## 2026-07-26 Public codec worker recheck
+
+The public `api_roundtrip` target was rechecked after the serialization and
+opaque-object review. Its tracked corpus contains 63 files and 2,933 bytes;
+deterministic replays from disposable copies executed 64 inputs in each
+backend, including the implicit empty input. Both native 5x52 and forced-
+int64/10x26 Clang ASan/UBSan binaries exited 0 with no sanitizer, assertion,
+crash, timeout, or OOM diagnostic. Native completed in 6 seconds with
+`cov=4256` and `ft=9546`; forced-int64 completed in 10 seconds with
+`cov=6230` and `ft=15754`.
+
+Each backend then ran `-fork=2 -jobs=2 -max_total_time=30 -timeout=10` with
+strict zero-ignore settings. All four workers/jobs exited 0 and reported
+`oom/timeout/crash=0/0/0`; the native workers reached about 10.9k/11.2k
+features and the forced-int64 workers about 17.8k/18.6k. Worker logs and
+artifacts were removed after collection.
+
+This is negative oracle evidence, not a new production finding. The review
+reconfirmed canonical public-key and signature parsing, failed-output state,
+opaque keypair consistency, tweak transitions, DER/compact round trips,
+static-context equivalence, and illegal-argument barriers. Bitcoin Core's
+consensus adapters parse serialized ECDSA/Schnorr keys and signatures before
+verification; the surveyed signing and Taproot callers pass disjoint buffers.
+No invalid-block or invalid-witness acceptance, consensus divergence,
+signature forgery, key compromise, remote memory/concurrency failure, or
+witness-sigop consequence was demonstrated. Existing direct-API codec issues
+remain Low-to-Medium hygiene only; no High/Critical rating is justified, and
+this pass makes no nonce-clearing claim.
+
+No production mutation, deterministic test, corpus input, or l0rinc
+cherry-pick was added. The master and fork refs remain identical. A future
+codec change must preserve the clean-master controls for invalid opaque state,
+failed-output cleanup, and documented alias boundaries, and record whether a
+new fix preserves, changes, or masks each existing finding in the same commit.
