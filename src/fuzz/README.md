@@ -34809,3 +34809,43 @@ audit base remain `d2d04864`, and no fork change supplied this repair. Any
 later cherry-pick or fix that changes this helper must amend its commit notes
 with whether it preserves, changes, or masks the `INT_MAX + 1` control and
 must retain the exact Core reachability, severity, and verifier commands.
+
+## 2026-07-26 Final optional-module verification slice
+
+After the label-batch repair, the selected public-module test matrix was run
+on both sanitizer builds with `tests -i=1 -j=2 -t=ecdsa -t=recovery
+-t=extrakeys -t=schnorrsig -t=musig -t=silentpayments`. Native and forced-int64
+both exited 0. Their log SHA-256 values are respectively
+`1ee6ac2ec17472399bb077c46cc8dd2fe73c95a21f26d59ddcd735abde7aee2d` and
+`2fc7650b05f0f3861510deedfbb54603a70f63e799e8cb8a66add37d981f9559`.
+
+The five focused MuSig opaque-state seeds (`opaque-nonce-state`,
+`noncanonical-nonce-storage`, `session-semantic-state`,
+`keyagg-cache-semantic-state`, and `partial-sig-semantic-state`) were replayed
+with two workers on native and forced-int64 ASan/UBSan binaries using
+`-fork=2 -jobs=2 -max_total_time=5 -timeout=30` and strict zero-ignore flags.
+Both managers exited 0; all workers reported `oom/timeout/crash: 0/0/0`, with
+no sanitizer report or artifact. The manager log SHA-256 values are
+`18b260dbec9e74a77d6c5d65db4a28fdec63cbac4002614991890a11c29eb285` and
+`06517b4f11eac4f48f414df99d499232c62abc2c56df75ad0fd9e673de131e4a`.
+
+A broader 79-file MuSig corpus campaign used `timeout 90s fuzz_musig
+-fork=2 -jobs=2 -max_total_time=25 -timeout=180` with the same strict
+zero-ignore flags. Both outer commands exited 124 during parent-side
+worker/corpus handling; their three-line manager log SHA-256 values are
+`ee24dbb225cfcac3de8157a5b104110668fe265a699c03868b420f4f95dbdfd8` and
+`5dee7e5bd74e2ad950af0bc89c1592d87d6d5db33121ddbd2fb09cab28dd71ab`.
+There was no worker result, sanitizer diagnostic, or artifact. It is recorded
+as **inconclusive orchestration evidence**, not as a clean fuzz result or a
+production finding; the focused per-input boundary replay is the evidence
+used for this slice. No new clean-master failure or severity upgrade was
+found.
+MuSig remains wallet/application state for current Bitcoin Core, not block or
+witness validation. Existing direct-API findings remain below High/Critical:
+no invalid-block or invalid-witness acceptance, consensus divergence, key
+compromise, signature forgery, or remote memory/concurrency failure was shown.
+The nonce/retry-counter distinction remains unchanged: a value without
+standalone cryptographic meaning is not Critical merely because it is live.
+No l0rinc commit was added because `origin/master == l0rinc/master` and the
+existing clean-master controls remain authoritative. No fuzz, sanitizer,
+compiler, or test process remains running.
