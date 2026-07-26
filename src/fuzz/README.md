@@ -37270,3 +37270,63 @@ demonstrated. The PR29 cleanup and PR30 follow-up do not mask a High/Critical
 master finding. Future changes to group conversion or recoverable-signature
 loading must preserve this PR ordering and state whether they change or only
 retest the existing master-relative findings.
+
+## 2026-07-26 Final-tree Core-facing deterministic replay
+
+After the PR29/PR30 reconciliation, the final tree was checked out at
+`4f1e9317` and rebased on `origin/master`/`l0rinc/master` at
+`d2d04864ef9b056151603a3ced7980958b058028`. This is a caller-boundary
+replay record, not a new production fix. It was run against the final source
+tree so that the existing findings and the fork-commit comparison are not
+silently hidden by a later local change.
+
+The native build used Clang 22.1.7 with ASan/UBSan, `-DSECP256K1_ASM=OFF`,
+all optional modules, and `-DSECP256K1_FUZZ_USE_LIBFUZZER=ON`. The second
+build used the same sanitizer configuration with the test-only
+`-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` 10x26 backend. Every
+tracked corpus input was replayed individually with one fuzz iteration and
+strict abort-on-sanitizer settings. The six targets covered 220 inputs per
+backend (63 API, 20 EllSwift, 20 x-only tweak, 81 MuSig, 18 recovery, and
+18 Schnorr). Every input exited 0 on both backends; neither run produced an
+assertion, sanitizer diagnostic, crash, timeout, OOM, or promoted artifact.
+
+The binary and complete replay-log hashes are included to make this result
+reproducible and to detect accidental mixing of the two arithmetic builds:
+
+    target          native binary                                                        native log
+    api_roundtrip   f646716030a495bd390c5baecc7e23b10a33c9a359289e29d4adde33faa865dd  0d9164abbacbf2dec358f3a360d29eef58ca0d3bcef3b366b08aa6e0478d9269
+    ellswift        4f89687ebe954c3ea5108511b6d578689e99189bbe24e32bf44ea295d512d1b0  fcf3de1c510bb87089d7de657006303f3d59ca6c3588db2e915df09b0ebde4bf
+    xonly_tweak     e1a88535a2fb9d304367ba03c5f9211335e0ea1834c6e3af8147564d63011549  9b8eecdc0fd9f6563e296a181e8846f45bf66dfc637fa2a32b602840c00020c
+    musig           1d96f922c4f14b324709d8968a92104b1fd733f88d20e8aee7ec461dc41be027  eaa3b1abaeb18836c42699d15b69d6bf55f6857196e6b66afedbe9a9dc785bee
+    recovery        588f40698dd25be63f5cd00a22a78ce0e32a191ec76a18d5a12b4beecd715d52  55f869f106d05cfe5a3c1de622b69b80a5e67876fba2e4488ec3d6f557cc116e
+    schnorrsig      34639c8342a54d537b74e33daff997e22ae939aa387a53e213b203796f93247d  4cc05a1b240ab6c2db8fec033c07e291aebfe62fb5332f7ded21bf01be705745
+
+    target          forced-int64 binary                                                  forced-int64 log
+    api_roundtrip   e53013f338277cf1753baec76c14514f177eea5585cd19b0360792001061af02  6326d2ac45c0c17c3ca4d519597b3f8c4636a995645a253a19ef4e6aa4ec00fc
+    ellswift        7d4c937283026ad1e5bfbfff4bf74bbf3a09a019ccf465ab2e8cc317b3a831ee  721bf4bddc5a5eadebf86c1a7de744c972ca638dafb148be13c413b2d6b5ca26
+    xonly_tweak     324bbde7807227592bc91e7e7652607555b2bc2410d9bcc019d84008a6a218d6  b127ff3dd0a778d5f19c2ef3c7a61edca0c71f440c012a1c59b7017e0d08cb19
+    musig           1c62ac862946ad1763a13d23dc03ebc2769da4084b8e7323eb257beb477fc721  8f1e6aac9ab0beb800115556f8f67e18de0d7cef7a1fcc31cbf1f3d918f7614c
+    recovery        343d370e3070b058849ba7f9b74988ac36064f3938169583f5d97e6e4397fc93  7c44c0bffd1aefe2282c69b9534955f6f960f6990b1e1e1a2cf10af20448d2f6
+    schnorrsig      6e4732af3ddd45b28ecd3f6cea0d67d120dbdf1e0c3afad609a89c364d335baa  cf0ec73e3d52279d869105fa4d47e7c2ab188ac8ad13970b1398c4d9b9e342ac
+
+The read-only Bitcoin Core caller audit was repeated alongside the replay.
+The ECDSA and Taproot/Tapscript paths parse their wire public keys or x-only
+keys and check the relevant library return values before verification. Core
+charges Tapscript signature operation weight in its interpreter, rather than
+delegating sigop accounting to this library. EllSwift is used by the BIP324
+transport path with fixed-size peer messages, while MuSig is wallet and
+application state. There are no current Core production calls to standalone
+ECDH or `secp256k1_ec_pubkey_combine`; unchecked serialization sites are
+successful-object output conversions, not malformed block or witness input
+admission paths.
+
+Accordingly, the master-relative severity is unchanged: the existing opaque
+state issues remain Low/Medium for direct API robustness and Informational/
+Low for current Bitcoin Core reachability. This replay found no invalid-block
+or witness acceptance, consensus divergence, sigop undercount, signature
+forgery, key compromise, or remotely reachable memory/concurrency failure.
+It therefore supplies no High/Critical finding and no evidence that a minor
+fork or local fix masked one. No production mutation, production fix, or
+deterministic regression test is claimed by this docs-only record. Future
+oracle changes at these boundaries must rerun both backends from clean master
+and state explicitly whether any cherry-pick changes the failure surface.
