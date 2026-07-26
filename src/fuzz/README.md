@@ -33373,3 +33373,38 @@ that passes because it masks an earlier first stop must amend its commit
 message with the exact mutation, affected line, master-relative severity,
 Core input origin, and whether it preserves, changes, or masks this result.
 This differential leaves no fuzz or sanitizer process running.
+
+## 2026-07-26 MuSig worker-timeout discrimination
+
+An exploratory longer campaign was intentionally not counted as production
+evidence. It used the repaired native ASan/UBSan `fuzz_musig` binary with the
+current 79-file corpus, `-fork=2 -jobs=2 -max_total_time=45 -timeout=120`,
+and a 100-second outer timeout. The target completed the earlier
+`api_roundtrip`, `context`, and `ecmult_multi` jobs without artifacts, but the
+outer timeout expired while MuSig was in libFuzzer's post-worker corpus merge.
+A retry with `-jobs=1` showed the same parent-side timeout behavior. No
+sanitizer diagnostic, crash artifact, or assertion failure was produced, and
+the campaign was terminated before it could be mistaken for a complete
+matrix. This is a worker/merge-duration issue, not a production finding.
+
+The corpus was then replayed one file at a time in a fresh private copy with:
+
+    fuzz_musig -runs=1 -timeout=5 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 <input>
+
+All 79/79 inputs returned 0, including the 16-signer, long key-aggregation,
+long nonce-aggregation, long partial-signature, nonce cleanup, opaque-state,
+and zero-nonce-state inputs. There were no artifacts or ASan/UBSan reports.
+The fuzzer source hash was `70e5af7b51898c8a95a2b780425698f18400e5f10a511c5aee39c91197828f82`,
+the native binary hash was
+`6e43c78299b3cc5cdd74d80269ba63acbc893e084b19e1ee137fa28a5416d32c`, and the
+per-input log manifest was
+`feb473b69309a4f066e86583bf47ee0ae7f70533d07ddc577c59c6513f04e2e3`.
+
+This adds negative oracle evidence only. It does not change any existing
+MuSig finding or severity: MuSig remains wallet/application state in current
+Bitcoin Core, not block or witness validation, and no invalid-block acceptance,
+invalid-witness acceptance, consensus divergence, key compromise, signature
+forgery, or remote memory/concurrency failure was shown. Future multi-worker
+campaigns must either give corpus merge enough wall-clock budget or use an
+isolated per-worker corpus and must report a merge timeout separately from a
+production failure. No fuzz or sanitizer process remains running.
