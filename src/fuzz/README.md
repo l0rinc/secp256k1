@@ -37012,40 +37012,68 @@ regression test is claimed from this replay. Future MuSig changes must rerun
 the exact state-machine corpus under sanitizer and state whether they preserve,
 change, or mask the Core wallet boundary finding.
 
-## 2026-07-26 Silent Payments worker revalidation and sanitizer gap
+## 2026-07-26 Silent Payments worker revalidation and build correction
 
-The repaired ASan/UBSan build does not contain `fuzz_silentpayments`; an
-attempted launch exited 127 before reading a corpus input. This is a build
-configuration gap, not a fuzzing failure or production finding. The normal
-current build `/mnt/my_storage/secp256k1-build-next/bin/fuzz_silentpayments`
-was therefore run separately with the existing 14-file
-`src/fuzz/corpora/silentpayments` corpus:
+The earlier normal-build replay recorded here is **superseded and not current
+master evidence**. It used `/mnt/my_storage/secp256k1-build-next/bin/fuzz_silentpayments`,
+but `ninja -d explain -n fuzz_silentpayments` showed that its object was stale:
+the object timestamp was 14:01:12, before source commit `6d1c2c48` at 14:01:39.
+The old worker-log hashes `074a7f33233a6f3de77d40ff139d828c0b51c78f52e0ea1f1eb88f8e49bd5e8b`
+and `59b3709c5270ed1def14d4f492c405cf523fd6e37470ee98ec7248729c256fee` identify
+that stale run only and must not be cited as proof for this HEAD.
 
-    bin/fuzz_silentpayments -jobs=2 -workers=2 -max_total_time=30 \
-      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
-      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
-      -print_final_stats=1 corpus
+The fresh native configuration initially exposed a harness-only link defect:
+`src/fuzz/silentpayments.c` included `int128.h` declarations through
+`field_impl.h` but omitted `int128_impl.h`. The other internal arithmetic
+fuzzers already include that implementation header. Adding the missing include
+does not change production code or oracle semantics; it makes the current
+native wide-multiply fuzzer target buildable. A separate Clang configuration
+then used:
 
-Both normal-build jobs loaded 14 seeds (515 bytes), exited 0, and completed
-183 and 185 executions. Each reached coverage 3700; neither reported an
-assertion, crash, timeout, OOM, or artifact. The worker-log SHA-256 values,
-in job order, were
-`074a7f33233a6f3de77d40ff139d828c0b51c78f52e0ea1f1eb88f8e49bd5e8b` and
-`59b3709c5270ed1def14d4f492c405cf523fd6e37470ee98ec7248729c256fee`.
-The copied corpus grew to 147 mutation units and was discarded; no generated
-unit was promoted to the tracked corpus.
+    cmake -S /tmp/secp256k1-oracles-next \
+      -B /tmp/secp256k1-oracles-clang-silent -G Ninja \
+      -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
+      -DSECP256K1_ASM=OFF -DSECP256K1_BUILD_TESTS=ON \
+      -DSECP256K1_BUILD_FUZZ=ON -DSECP256K1_FUZZ_USE_LIBFUZZER=ON \
+      -DSECP256K1_ENABLE_MODULE_SILENTPAYMENTS=ON \
+      -DSECP256K1_ENABLE_MODULE_ECDH=ON \
+      -DSECP256K1_ENABLE_MODULE_ELLSWIFT=ON \
+      -DSECP256K1_ENABLE_MODULE_EXTRAKEYS=ON \
+      -DSECP256K1_ENABLE_MODULE_MUSIG=ON \
+      -DSECP256K1_ENABLE_MODULE_RECOVERY=ON \
+      -DSECP256K1_ENABLE_MODULE_SCHNORRSIG=ON
+    cmake --build /tmp/secp256k1-oracles-clang-silent \
+      --target fuzz_silentpayments -j4
 
-This is normal-build coverage and state-transition evidence only, not an
-ASan/UBSan memory-safety proof. It found no new production bug, invalid
-witness or block acceptance, sigop undercount, consensus divergence,
-signature forgery, key compromise, or remote memory/concurrency failure.
-The existing Silent Payments opaque-state and label-width findings retain
-their recorded direct-API Low/Medium ratings; the surveyed Bitcoin Core
-branch has no direct Silent Payments caller that raises them to a consensus
-issue. A sanitizer-enabled optional-module build remains required before
-closing this audit gap. Future Silent Payments changes must rerun this exact
-corpus under sanitizer and identify any real Core caller before assigning
-High/Critical severity or claiming a production fix.
+The resulting fuzzer and shared library SHA-256 values were
+`45af9598e62625f68c87b5428728e5d0e91129b28475ac75e720e12c3fd3da53` and
+`8c67e52d9518769aa03c2b70d48ecc5aee29cd7392ddbf4d9f4b0556acaa535a`.
+The repaired ASan/UBSan binary replayed the existing 14-file corpus (515
+bytes) with two workers. Both jobs loaded all 14 seeds, exited 0 after 15
+executions, reached coverage 8469, and reported no assertion, ASan/UBSan
+diagnostic, crash, timeout, OOM, or memory-failure artifact. Their worker-log
+SHA-256 values were
+`4bc98557b80c3d9c2e7ced9f8cfb346de5bc037aa99a93e4897b22dd3eab3779` and
+`330de33a17c2055d9ef472d8b6411a5ea87aeab6f3d11b6cfa12aa748fd79ebb`.
+
+The `recipient-group-limit` seed emitted only libFuzzer slow-unit reports,
+not failure artifacts. Its slow-unit SHA-256 was
+`875cc7e59148404f5f1c718d97ae1b3b726ff9b8536f7fa74cc6775902761462`,
+matching the tracked seed. A strict single-input replay with `-runs=1`
+exited 0 after 30.454 seconds, with peak RSS 1632 MiB and no sanitizer or
+assertion diagnostic. The copied corpus and slow-unit files were discarded;
+no generated unit was promoted.
+
+This is the first current-HEAD ASan/UBSan revalidation for this optional
+module. It found no new production bug, invalid witness or block acceptance,
+sigop undercount, consensus divergence, signature forgery, key compromise, or
+remote memory/concurrency failure. The high RSS/latency stress case is not a
+current Bitcoin Core reachability finding: the surveyed Core branch has no
+Silent Payments caller. Existing opaque-state and label-width findings retain
+their direct-API Low/Medium master-relative ratings. No High/Critical severity
+or production fix is justified; future Silent Payments changes must rerun this
+exact corpus under sanitizer and identify a real Core caller before escalation.
 
 ## 2026-07-26 Group arithmetic sanitizer worker revalidation
 

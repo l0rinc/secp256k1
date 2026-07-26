@@ -10,6 +10,7 @@
 
 #include "../hash_impl.h"
 #include "sha256_reference.h"
+#include "../int128_impl.h"
 #include "../field_impl.h"
 
 static const unsigned char secp256k1_fuzz_silentpayments_field_p_plus_one[32] = {
