@@ -37509,3 +37509,47 @@ justified. No production mutation, fix, deterministic regression, cherry-pick,
 or nonce-erasure claim is made. Any future PSBT/MuSig change that makes this
 replay pass or fail differently must state whether it preserves, changes, or
 masks the existing master-relative finding.
+
+## 2026-07-27 Bitcoin Core `VerifyScript` caller replay
+
+The direct validation-facing Core fuzzer was replayed from a private copy of
+the official `script_flags` corpus. Core was at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; its ASan/UBSan dispatcher
+`build_fuzz/bin/fuzz` had SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+source worktree's existing `blockencodings_tests.cpp` change and fuzz logs
+were untouched. The initial corpus contained 2,171 files and 39,654,526
+bytes; the sorted filename inventory hash was
+`006e92261683af3032681c65e63ee6b76fa788902c9870e9cfb1971e6ede7ba4`.
+
+The exact campaign used two fork workers and two jobs:
+
+    FUZZ=script_flags ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    build_fuzz/bin/fuzz /tmp/core-script-flags-seed -fork=2 -jobs=2 \
+    -max_total_time=30 -timeout=180 -rss_limit_mb=0 \
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+    -verbosity=0 -print_final_stats=1 \
+    -artifact_prefix=/tmp/core-script-flags-artifacts/
+
+Both jobs exited zero after about 30-31 seconds. The final reports reached
+6,650 coverage points and 48,320 features; every `oom/timeout/crash` counter
+was `0/0/0`. No sanitizer or assertion diagnostic appeared and the artifact
+directory was empty. The complete replay log hash was
+`49549c3bcc71710bb75c7a3b003bc501c9745d96a134cc877742cb3ad084734d`.
+The temporary corpus and artifacts were removed afterward.
+
+Unlike the separate `script_interpreter` target, which only exercises
+sighash computation and `CastToBool`, `script_flags` deserializes
+witness-bearing transactions, constructs Core's `TransactionSignatureChecker`,
+and calls `VerifyScript`. It therefore reaches the Core ECDSA and Schnorr
+verification adapters, including malformed signatures and witness/script
+state, but it still does not prove that an invalid block is accepted or that
+sigop accounting is wrong. This is negative current-Core caller evidence, not
+a secp256k1 production finding: no invalid-witness acceptance, consensus
+divergence, signature forgery, key compromise, or remotely severe memory/
+concurrency failure was demonstrated. Existing direct API and wallet findings
+retain their prior severity, with no High/Critical upgrade. No production
+mutation, fix, deterministic regression, cherry-pick, or nonce-erasure claim
+is made; future checker or library changes must state whether they preserve,
+change, or mask the master-relative result.
