@@ -13,6 +13,10 @@
 static size_t secp256k1_fuzz_ellswift_sha256_compression_calls = 0;
 static int secp256k1_fuzz_ellswift_force_zero_u = 0;
 static int secp256k1_fuzz_ellswift_zero_u_forced = 0;
+static const unsigned char *secp256k1_fuzz_ellswift_expected_create_block;
+static const unsigned char *secp256k1_fuzz_ellswift_expected_encode_pubkey;
+static int secp256k1_fuzz_ellswift_saw_create_block;
+static int secp256k1_fuzz_ellswift_saw_encode_pubkey;
 
 static const unsigned char secp256k1_fuzz_ellswift_field_p_plus_one[32] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -42,6 +46,23 @@ static void secp256k1_fuzz_ellswift_sha256_compression(uint32_t *state, const un
         secp256k1_fuzz_ellswift_zero_u_forced = 1;
         memset(state, 0, 8 * sizeof(*state));
     }
+}
+
+static void secp256k1_fuzz_ellswift_encoding_sha256_compression(uint32_t *state, const unsigned char *blocks64, size_t n_blocks) {
+    size_t i;
+
+    for (i = 0; i < n_blocks; i++) {
+        const unsigned char *block = blocks64 + 64 * i;
+        if (secp256k1_fuzz_ellswift_expected_create_block != NULL
+            && memcmp(block, secp256k1_fuzz_ellswift_expected_create_block, 64) == 0) {
+            secp256k1_fuzz_ellswift_saw_create_block = 1;
+        }
+        if (secp256k1_fuzz_ellswift_expected_encode_pubkey != NULL
+            && memcmp(block, secp256k1_fuzz_ellswift_expected_encode_pubkey, 33) == 0) {
+            secp256k1_fuzz_ellswift_saw_encode_pubkey = 1;
+        }
+    }
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
 }
 
 static void secp256k1_fuzz_ellswift_illegal_callback(const char *message, void *data) {
@@ -766,6 +787,39 @@ static void secp256k1_fuzz_check_ellswift_ctx_hash(secp256k1_context *ctx, const
     secp256k1_context_set_sha256_compression(ctx, NULL);
 }
 
+static void secp256k1_fuzz_check_ellswift_encoding_ctx_hash(secp256k1_context *ctx, const unsigned char *input, size_t size, const secp256k1_pubkey *pubkey, const unsigned char *seckey32, const unsigned char *auxrnd32, const unsigned char *expected_create64, const unsigned char *rnd32, const unsigned char *expected_encode64) {
+    static const unsigned char trigger[] = "EllSwift custom SHA context\n";
+    unsigned char expected_create_block[64] = {0};
+    unsigned char expected_encode_pubkey[33];
+    unsigned char custom_create64[64];
+    unsigned char custom_encode64[64];
+    size_t expected_encode_pubkey_len = sizeof(expected_encode_pubkey);
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected_encode_pubkey, &expected_encode_pubkey_len, pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(expected_encode_pubkey_len == sizeof(expected_encode_pubkey));
+    memcpy(expected_create_block, seckey32, 32);
+    secp256k1_fuzz_ellswift_expected_create_block = expected_create_block;
+    secp256k1_fuzz_ellswift_expected_encode_pubkey = expected_encode_pubkey;
+    secp256k1_fuzz_ellswift_saw_create_block = 0;
+    secp256k1_fuzz_ellswift_saw_encode_pubkey = 0;
+    secp256k1_context_set_sha256_compression(ctx, secp256k1_fuzz_ellswift_encoding_sha256_compression);
+    FUZZ_CHECK(secp256k1_ellswift_create(ctx, custom_create64, seckey32, auxrnd32) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ellswift_saw_create_block == 1);
+    FUZZ_CHECK(memcmp(custom_create64, expected_create64, sizeof(custom_create64)) == 0);
+
+    secp256k1_fuzz_ellswift_saw_encode_pubkey = 0;
+    FUZZ_CHECK(secp256k1_ellswift_encode(ctx, custom_encode64, pubkey, rnd32) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_ellswift_saw_encode_pubkey == 1);
+    FUZZ_CHECK(memcmp(custom_encode64, expected_encode64, sizeof(custom_encode64)) == 0);
+    secp256k1_context_set_sha256_compression(ctx, NULL);
+    secp256k1_fuzz_ellswift_expected_create_block = NULL;
+    secp256k1_fuzz_ellswift_expected_encode_pubkey = NULL;
+}
+
 static void secp256k1_fuzz_check_ellswift_static_context(const secp256k1_context *ctx, const unsigned char *ell_a64, const unsigned char *ell_b64, const unsigned char *seckey32, const unsigned char *rnd32, const secp256k1_pubkey *pubkey) {
     unsigned char dynamic_x32[32];
     unsigned char static_x32[32];
@@ -893,6 +947,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ellswift_overflow_secret(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_invalid_secret_callback_x(ctx, ell_a64, ell_b64);
     secp256k1_fuzz_check_ellswift_ctx_hash(ctx, ell_a64, ell_b64, seckey_a32, prefix64);
+    secp256k1_fuzz_check_ellswift_encoding_ctx_hash(ctx, input, size, &pubkey_a, seckey_a32, auxrnd_a32, ell_a64, rnd32, ell_encoded_a64);
 
     if (size == sizeof(inverse_degenerate_trigger) - 1 && memcmp(input, inverse_degenerate_trigger, sizeof(inverse_degenerate_trigger) - 1) == 0) {
         secp256k1_fuzz_check_ellswift_inverse_degenerate();

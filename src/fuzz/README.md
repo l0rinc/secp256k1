@@ -35109,3 +35109,60 @@ oracle. If a later context-routing change makes the existing seed pass without
 invoking the caller callback, retain the per-stage callback assertions and
 amend that change's notes with whether the modeled condition was fixed or only
 masked. No clean-master bug should be claimed without that causal distinction.
+
+## 2026-07-26 EllSwift encoding caller-context hash oracle
+
+The EllSwift fuzzer now has an exact trigger,
+`src/fuzz/corpora/ellswift/custom-sha-context`, containing
+`EllSwift custom SHA context`. It compares the output of `ellswift_create` and
+`ellswift_encode` under the normal SHA implementation and a valid identity
+compression callback. It also checks stage-specific callback evidence: the
+`create` path must submit the expected `seckey32 || zero32` block, and the
+`encode` path must submit the expected compressed public-key block to the
+caller callback. An aggregate callback count is insufficient here because the
+encoder continues through a SHA-backed ElligatorSwift PRNG after its initial
+input writes.
+
+The causal proof used a disposable worktree based at the clean audit commit
+`6d1c2c48`. In `src/modules/ellswift/main_impl.h`, both hash-context selections
+in `secp256k1_ellswift_encode` were mutated from
+`secp256k1_get_hash_context(ctx)` to
+`secp256k1_get_hash_context(secp256k1_context_static)`. The native Clang
+ASan/UBSan and forced-int64/10x26 Clang ASan/UBSan mutation builds produced:
+
+    fixed custom-sha-context seed: exit 0
+    mutated custom-sha-context seed: exit 134 (missing encode block callback)
+    mutated pre-existing corpus, 19 files excluding that seed: exit 0
+
+The intentional `FUZZ_CHECK` abort was the only mutation failure; neither
+backend emitted a sanitizer diagnostic. Both fixed-backend exact replays and
+both `tests -t=ellswift` unit suites exited 0. The previous corpus already
+checked EllSwift round trips, XDH custom-context routing, and a `create`
+zero-state barrier, but it did not assert the caller callback at the initial
+`encode` compression boundary. Default and static SHA implementations produce
+the same bytes, so normal round-trip tests could not expose that modeled
+misrouting.
+
+This is **Informational oracle hardening**, not a clean-master production bug.
+The modeled defect would be **Low direct-API integration correctness** for a
+caller installing a hardware or specialized SHA compression callback, but the
+surveyed Bitcoin Core path uses the standard implementation for BIP324
+transport and does not turn this into invalid-block or invalid-witness
+acceptance, consensus divergence, signature forgery, key compromise, or a
+remote memory/concurrency failure. It is not High/Critical and is unrelated to
+nonce or retry-counter clearing. The production mutation was discarded.
+
+The marker intentionally describes the current SHA buffering contract: the
+64-byte public-key write compresses immediately, while the later 32-byte
+randomizer write is consumed by a later caller-context compression. If a
+future implementation changes buffering while preserving caller-context
+routing, update this oracle and its notes rather than treating the internal
+block-shape change as a production finding. `origin/master` and `l0rinc/master`
+remain identical at `d2d04864ef9b056151603a3ced7980958b058028`; no fork commit
+masks or fixes this result.
+
+After the commit, native and forced-int64/10x26 Clang ASan/UBSan builds
+replayed both the new EllSwift and Silent Payments corpus directories with
+`-fork=2 -jobs=2 -max_total_time=20`. All four target/backend commands exited
+0; every worker reported `oom/timeout/crash=0/0/0`. LibFuzzer-generated
+untracked corpus files and the one artifact were removed after the run.
