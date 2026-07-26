@@ -647,6 +647,31 @@ static int secp256k1_fuzz_core_tapscript_schnorr_verify(const secp256k1_context 
     return secp256k1_schnorrsig_verify(ctx, sig, msg32, 32, &xonly);
 }
 
+/* Model EvalChecksigTapscript's outer sequencing from Bitcoin Core. An empty
+ * signature is a non-aborting failed check and therefore must not reach the
+ * Schnorr parser. A nonempty signature consumes validation weight before the
+ * key-size dispatch, and a 32-byte key invokes the inner checker. Other
+ * nonempty key sizes are upgradeable and pass through when the discourage flag
+ * is not set. Return 1 for continued script execution and 0 for script abort;
+ * success_out is the signature-check result when execution continues. */
+static int secp256k1_fuzz_core_tapscript_eval(const secp256k1_context *ctx, const unsigned char *sig, size_t siglen, const unsigned char *pubkey, size_t pubkeylen, const unsigned char *msg32, int validation_weight_available, int *success_out) {
+    int success = siglen != 0;
+
+    if (success && !validation_weight_available) {
+        return 0;
+    }
+    if (pubkeylen == 0) {
+        return 0;
+    }
+    if (pubkeylen == 32) {
+        if (success && !secp256k1_fuzz_core_tapscript_schnorr_verify(ctx, sig, siglen, pubkey, msg32)) {
+            return 0;
+        }
+    }
+    *success_out = success;
+    return 1;
+}
+
 static void secp256k1_fuzz_check_core_tapscript_schnorr_composition(const secp256k1_context *ctx, const unsigned char *input, size_t size, const unsigned char *sig64, const unsigned char *xonly32, const unsigned char *msg32) {
     static const unsigned char trigger[] = "core-tapscript-schnorr-composition\n";
     static const unsigned char field_p[32] = {
@@ -658,9 +683,12 @@ static void secp256k1_fuzz_check_core_tapscript_schnorr_composition(const secp25
     static const unsigned char invalid_hash_types[] = { 0x00, 0x04, 0x80, 0x84 };
     const secp256k1_context *contexts[2];
     unsigned char sig65[65];
+    unsigned char invalid_sig64[64];
+    unsigned char unknown_pubkey[33] = { 0 };
     unsigned char serialized_xonly[32];
     unsigned char zero_xonly[sizeof(secp256k1_xonly_pubkey)] = { 0 };
     secp256k1_xonly_pubkey parsed_xonly;
+    int success;
     int reference;
     size_t i;
 
@@ -672,6 +700,8 @@ static void secp256k1_fuzz_check_core_tapscript_schnorr_composition(const secp25
     contexts[1] = secp256k1_context_static;
     memcpy(sig65, sig64, sizeof(sig64[0]) * 64);
     sig65[64] = 0x01;
+    memcpy(invalid_sig64, sig64, sizeof(invalid_sig64));
+    memset(invalid_sig64 + 32, 0xFF, 32);
 
     reference = secp256k1_fuzz_schnorrsig_verify_reference(ctx, sig64, msg32, 32, xonly32);
     FUZZ_CHECK(reference == 1);
@@ -700,6 +730,23 @@ static void secp256k1_fuzz_check_core_tapscript_schnorr_composition(const secp25
         sig65[64] = invalid_hash_types[i];
         FUZZ_CHECK(secp256k1_fuzz_core_tapscript_schnorr_verify(ctx, sig65, sizeof(sig65), xonly32, msg32) == 0);
     }
+
+    /* The outer Tapscript rule is intentionally different from calling the
+     * library verifier directly: an empty signature does not parse its key,
+     * while a nonempty signature does. This distinction is consensus-visible
+     * for malformed 32-byte witness keys. */
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, NULL, 0, xonly32, 32, msg32, 1, &success) == 1);
+    FUZZ_CHECK(success == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, NULL, 0, field_p, 32, msg32, 1, &success) == 1);
+    FUZZ_CHECK(success == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, NULL, 0, NULL, 0, msg32, 1, &success) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, sig64, 64, NULL, 0, msg32, 1, &success) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, invalid_sig64, sizeof(invalid_sig64), xonly32, 32, msg32, 1, &success) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, sig64, 64, xonly32, 32, msg32, 0, &success) == 0);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, sig64, 64, unknown_pubkey, sizeof(unknown_pubkey), msg32, 1, &success) == 1);
+    FUZZ_CHECK(success == 1);
+    FUZZ_CHECK(secp256k1_fuzz_core_tapscript_eval(ctx, NULL, 0, unknown_pubkey, sizeof(unknown_pubkey), msg32, 1, &success) == 1);
+    FUZZ_CHECK(success == 0);
 }
 
 /* Model Bitcoin Core's CKey::SignSchnorr composition after it has computed

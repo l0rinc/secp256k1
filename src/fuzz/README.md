@@ -35537,3 +35537,58 @@ transitions. Generated corpus copies were removed. Future recovery changes
 must preserve the clean-master recid/`r+n` controls and state whether a fix or
 cherry-pick preserves, changes, or masks the master-relative behavior in the
 same commit.
+
+## 2026-07-26 Core Tapscript outer-signature sequencing oracle
+
+The existing `core-tapscript-schnorr-composition` seed now also models the
+outer `EvalChecksigTapscript` sequence from the surveyed Bitcoin Core branch,
+after `SignatureHashSchnorr` has produced its 32-byte message. The oracle
+distinguishes the consensus-visible states that an inner library verifier
+alone cannot express:
+
+* an empty signature continues script execution with `success == false` and
+  does not parse the 32-byte key, even when that key is a field-overflow;
+* a nonempty malformed 64-byte signature aborts execution with a 32-byte key;
+* nonempty signatures consume validation weight before key dispatch, so an
+  exhausted budget aborts even for an otherwise valid signature;
+* a zero-length pubkey aborts, while a non-32-byte pubkey is treated as an
+  upgradeable key version when the discourage flag is absent; and
+* a nonempty signature with a 33-byte upgradeable key continues with
+  `success == true`, while the corresponding empty signature remains a
+  non-aborting failed check.
+
+This is a fuzzer-side Core contract model, not a new production finding. The
+production path is `EvalChecksigTapscript` in Bitcoin Core's
+`src/script/interpreter.cpp:357-385`, followed by
+`GenericTransactionSignatureChecker::CheckSchnorrSignature` at
+`src/script/interpreter.cpp:1727-1751`. The library still supplies the
+independent BIP340 point-equation and x-only parsing oracle for the 32-byte
+nonempty path. The exact tracked corpus remains 18 inputs; all 19 executions
+(18 files plus a disposable empty input) passed in each backend. Native
+5x52 and forced-int64/10x26 Clang ASan/UBSan replay log hashes were
+`dbcd817b66ccf9eca3ca88fdfa08ec304946ebba4382ff3e1a9d409a2caa98a0` and
+`ea680be7760efd99add6c641448731a240b5419b0274da6a06f2574441d3f6b5`.
+
+The same source and corpus copies ran with two fork workers and two jobs per
+backend using `-max_total_time=15 -timeout=30` and all zero-ignore flags.
+Both jobs in both backends exited 0, every worker reported
+`oom/timeout/crash: 0/0/0`, and no artifact was produced. The private native
+and forced-int64 corpora grew only through passing mutations (171 and 99
+inputs at shutdown). The final manager log hashes were
+`19ee3d71fc19861f76c825c7f5adb365b00585d934dd25943efbd054290fee69` and
+`9ad117ca6edebaa7f4a7884246a59889c52ff437b6ee9153a9f1e9bfef3ec5f7`.
+The module tests also passed with `tests -i=1 -j=2 -t=schnorrsig` in both
+builds.
+
+No production mutation, deterministic regression test, severity upgrade, or
+new consensus issue was found. This strengthens detection of a future Core
+adapter or verifier change that turns malformed witness combinations into a
+different script result; it does not prove invalid-block acceptance today.
+The existing direct-API Schnorr findings remain Low-to-Medium hygiene or
+opaque-state issues, and the surveyed Bitcoin Core path shows no invalid
+block/witness acceptance, consensus divergence, signature forgery, key
+compromise, remote severe memory/concurrency failure, or witness-sigop
+consequence. High/Critical is therefore not justified. This oracle involves
+no nonce-clearing claim. `origin/master` and `l0rinc/master` are still the
+same `d2d04864ef9b056151603a3ced7980958b058028`, so no fork commit was
+cherry-picked and no masking interaction exists to amend.
