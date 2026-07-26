@@ -36252,3 +36252,63 @@ rerun this exact seed and the clean-origin control, and must say in the commit
 message whether they preserve, alter, or mask the `9989133d` interaction.
 An incidental fix that makes this follow-up call pass must not lower the
 severity of any independent master finding.
+
+## 2026-07-26 Latest Core-master recheck of repeated MuSig participants
+
+The Core comparison was repeated after fetching the latest upstream master,
+`origin/master=e34b8d5a7dcd45e4faa3bb5fdeae64bf049037f6`. A detached worktree
+at that exact commit was built from `/mnt/my_storage/bitcoin-origin-latest`
+into `/mnt/my_storage/bitcoin-origin-latest-build` with wallet support enabled,
+tests and fuzz binaries disabled, and the resulting `bin/bitcoind` was used
+for the probe. This is an exact latest-source and latest-binary replay, not an
+inference from the older comparison checkout.
+
+The maintained Core checkout remains at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` and was not modified. The relevant
+MuSig/PSBT/signing files are byte-identical between that checkout and the new
+upstream commit: `src/psbt.h`, `src/musig.cpp`, and `src/script/sign.cpp` have
+no diff. The only difference among the compared key/public-key files is an
+unrelated `CExtKey::SetSeed` size assertion in `src/key.cpp`. The latest source
+still has the production identity loss at `src/psbt.h:314-318` and
+`src/psbt.h:882-897`, where participant vectors preserve duplicate `CPubKey`
+entries but nonce and partial-signature maps are keyed by one `CPubKey`. The
+signing path still skips a second nonce at `src/script/sign.cpp:365-370` and
+requires map sizes to equal the participant count at
+`src/script/sign.cpp:205-207` and `src/musig.cpp:262-276`.
+
+The exact fixed-input command was:
+
+    PYTHONPATH=/mnt/my_storage/bitcoin-origin-latest/test/functional timeout 300s python3 /mnt/my_storage/core-duplicate-musig-probe-latest.py
+
+The probe uses the same BIP390-permitted repeated-key descriptor as the prior
+entry, `tr(musig(key,key))`, with both wallets importing the identical key
+expression. Both imports succeeded. Both wallets derived and funded the same
+regtest address
+`bcrt1pyt5nv0rtgcwpje23w53t6cxdxz0llf2kav5f43ktuweqdsz6cfmsyh60zp`. Against
+the exact latest binary, both `walletprocesspsbt` calls returned
+`complete=false`; the combined PSBT contained two identical participant
+pubkeys, one `musig2_pubnonce`, zero `musig2_partial_sigs`, and
+`finalizepsbt` returned `complete=false`. The probe exited 0 after asserting
+that duplicate descriptor acceptance did not produce a complete signature.
+No source mutation was used, and the node was stopped cleanly.
+
+This reiterates a **Medium Core wallet/application finding**: a descriptor in
+the accepted BIP390 domain can receive funds at a key-path address and then
+fail to produce a spendable MuSig signature. It is not a secp256k1 production
+defect, invalid-block or invalid-witness acceptance, consensus divergence,
+signature forgery, key compromise, or severe remote memory/concurrency bug.
+Under the master-relative rubric it is therefore not High/Critical. The
+strongest closure proof is a deterministic Core two-wallet PSBT regression
+test that preserves duplicate participant positions, or an explicitly
+documented domain restriction with tests proving the restriction is intended;
+changing the secp fuzzer or rejecting the descriptor silently is not a proof.
+
+The existing tests cover descriptor parsing/expansion and distinct-participant
+MuSig signing, but do not combine two equal participant keys with PSBT nonce
+and partial-signature collection. The l0rinc `8f97284e018e09bd2419339941bbb422aae32ecd`
+nonce-session change prevents duplicate nonce-session creation but supplies no
+participant index and does not mask this finding. No newer l0rinc PR head than
+PR28 was available when the fork was fetched. Any future Core or fork change
+that makes the probe pass must state whether it adds index identity, changes
+the supported BIP390 domain, or merely masks a later stage; it must not reduce
+the severity of an independently reproducible master failure.
