@@ -34378,3 +34378,69 @@ or invalid-witness acceptance has been proven. No l0rinc commit was added by
 this pass because the refs are identical, and no production fix or
 deterministic regression test is claimed. No fuzz, sanitizer, compiler, or
 test process remains running.
+
+## 2026-07-26 WNAF Length-Boundary Oracle
+
+The scalar target previously compared the generic WNAF helper against an
+independent byte-level model for windows 2 through 31, but only at lengths 129
+and 256. The new `scalar/wnaf-length-boundaries` trigger adds lengths
+`0, 1, 2, 31, 32, 33, 63, 64, 65, 127, 128, 129, 191, 192, 193, 255, 256`.
+For each length it checks both a scalar with only the top permitted bit set
+and a carry-safe all-ones scalar. The latter leaves one high zero bit because
+signed-window recoding can create a carry; feeding an exact-width all-ones
+value whose carry escapes `len` violates the helper's existing VERIFY
+precondition and is intentionally excluded. The 256-bit case uses `n - 1`.
+
+The trigger is 30 bytes with SHA-256
+`f0d464d623b9e09dedc8bd5cc60f189b28a5ef702db4ab1672e6c8f5d485594b`.
+`src/fuzz/scalar.c` after this change is
+`6dd32e857d391677503a63c21e44b1279bde646b7574c22f5f78e809863dd305`.
+The clean native and forced-int64 fuzzer binaries are respectively
+`a8b33600d054418e44e904e1c1953ea40d95694e16538c86c0964e794c783ec5` and
+`9bb496f14f57d1d878f476d201c84f1aa2078cccce6f6dc1000469d49b6bce41`.
+The trigger replay passed in 125/169 ms; the full ten-file corpus (349 bytes)
+also passed on both backends. The fixed WNAF unit slice
+`tests -t=wnaf -i=1` passed on both backends.
+
+The same ten tracked seeds (349 bytes) were then copied into disposable
+private corpora and run with `-fork=2 -jobs=2 -max_total_time=60`, the same
+ASan/UBSan settings, `-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0`,
+and a 180-second outer deadline. Both native and forced-int64 managers and
+all workers exited 0; every reported `oom/timeout/crash` counter was
+`0/0/0`, and neither artifact directory contained a file. The private
+corpora grew only through ordinary libFuzzer discoveries (796 native and
+712 forced-int64 inputs), so generated inputs were not promoted into the
+tracked corpus. The complete campaign log hashes are native
+`29db5fe8b73efb64f214ba1dbce58a5f1185b221cde76ac2a590445e873fd047` and
+forced-int64
+`b4b91d5106564f8827c322b85f6abbd1a6c0daebfa6bde0441fcde900710ea76`.
+
+The oracle differential proof used a disposable production mutation in
+`src/ecmult_impl.h`: only when `len == 193 && bit == 192`, the final-window
+clamp was changed from `now = len - bit` to `now = len - bit - 1`. This models
+a one-bit partial-window regression and reaches `get_bits_*` with a zero
+count. The new trigger aborted at the production count precondition on native
+and forced-int64 builds (log SHA-256
+`8770668f89a51b6efefebbc43a9b9fa7ce67a561e438fb2d4e586374d8941f34` and
+`853354d28d772e4ae6683ae26104ce13f4130e5a8c522f14069d3cbdb7455c86`). The
+frozen old nine-file corpus, whose sorted filename/size manifest is
+`a7853cc6d7b867f97a36ba23a96d6c52db6d04ef2bb53cb6a0228af6990be335`, passed under
+the same mutation on both backends (log SHA-256
+`5787a983cbfb603aecb637e67a704387cfdd0ec48f85e150f1bcd4fb2df7e0aa` and
+`c4810a49b1145bb62930fe7cee2673d3f836396eeb108b2a94bcb0bc87d19c22`). The
+mutation was removed and the restored clean replay passed again (trigger log
+SHA-256 `0f32ab297cbcb614b4e13a87a422dc1ec84f5604a2e6dfeb21eadc6388b8205b`
+and `176af1f7842a8c5141db70dc494ef1c770dc22f8f03eb3bffe6721258ed43adf`).
+
+This is **Informational/Low oracle hardening**, not a new clean-master
+production finding. Current Bitcoin Core does not supply attacker-controlled
+WNAF lengths; its configured production windows are bounded and the consensus
+callers do not pass block or witness bytes into this internal helper. The
+existing generic-WNAF width UB remains separately rated Low latent internal
+safety on unmodified master, with no demonstrated invalid-block or
+invalid-witness acceptance, consensus divergence, key compromise, signature
+forgery, or remote memory/concurrency failure. No production source changed in
+this commit and no severity upgrade is justified. Any later fix or cherry-pick
+that changes this first stop must preserve the trigger or minimal mutation and
+amend its notes with whether it preserves, changes, or masks the master
+baseline. No fuzz, sanitizer, compiler, or test process remains running.

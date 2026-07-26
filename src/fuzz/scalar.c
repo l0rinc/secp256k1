@@ -650,6 +650,49 @@ static void secp256k1_fuzz_scalar_check_wnaf_reference(const secp256k1_scalar *n
     }
 }
 
+static void secp256k1_fuzz_scalar_check_wnaf_len_boundaries(const unsigned char *input, size_t size) {
+    static const unsigned int lengths[] = {
+        0, 1, 2, 31, 32, 33, 63, 64, 65,
+        127, 128, 129, 191, 192, 193, 255, 256
+    };
+    static const unsigned char trigger[] = "scalar wnaf length boundaries\n";
+    unsigned char number32[32];
+    secp256k1_scalar number;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+        unsigned int len = lengths[i];
+        unsigned int bit;
+
+        memset(number32, 0, sizeof(number32));
+        if (len == 256) {
+            memcpy(number32, secp256k1_fuzz_scalar_order_minus_one, sizeof(number32));
+        } else if (len != 0) {
+            number32[31 - ((len - 1) >> 3)] = (unsigned char)(1u << ((len - 1) & 7u));
+        }
+        secp256k1_scalar_set_b32(&number, number32, NULL);
+        secp256k1_fuzz_scalar_check_wnaf_reference(&number, number32, (int)len, 31);
+
+        if (len == 256) {
+            memcpy(number32, secp256k1_fuzz_scalar_order_minus_one, sizeof(number32));
+        } else {
+            memset(number32, 0, sizeof(number32));
+            /* Leave one high zero bit for the carry introduced by signed-window
+             * recoding. The helper's VERIFY contract requires that carry to fit
+             * within len. */
+            for (bit = 0; bit + 1 < len; bit++) {
+                number32[31 - (bit >> 3)] |= (unsigned char)(1u << (bit & 7u));
+            }
+        }
+        secp256k1_scalar_set_b32(&number, number32, NULL);
+        secp256k1_fuzz_scalar_check_wnaf_reference(&number, number32, (int)len, 31);
+    }
+}
+
 static void secp256k1_fuzz_scalar_check_wnaf(const secp256k1_scalar *number) {
     secp256k1_scalar reconstructed;
     secp256k1_scalar two;
@@ -1087,6 +1130,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_derive(a32, sizeof(a32), input, size, 31);
     secp256k1_fuzz_derive(b32, sizeof(b32), input, size, 37);
     secp256k1_fuzz_scalar_check_pair(a32, b32, input, size, 41);
+    secp256k1_fuzz_scalar_check_wnaf_len_boundaries(input, size);
     secp256k1_scalar_set_b32(&wnaf_boundary, a32, NULL);
     secp256k1_fuzz_scalar_check_bits_boundaries(&wnaf_boundary, a32);
     secp256k1_scalar_set_int(&wnaf_boundary, 0);
