@@ -33408,3 +33408,80 @@ forgery, or remote memory/concurrency failure was shown. Future multi-worker
 campaigns must either give corpus merge enough wall-clock budget or use an
 isolated per-worker corpus and must report a merge timeout separately from a
 production failure. No fuzz or sanitizer process remains running.
+
+## 2026-07-26 Fresh rebased native and 10x26 worker replay
+
+This entry records a fresh verification pass after the latest ref refresh and
+rebase. `origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; the repaired audit branch was
+`74b01b3f2e8f4a9b7f05124818414756ddc2048d`. The 15 target translation-unit
+manifest (excluding the shared callback helper) is
+`82b78bd7f39e40e9907face6a775960d275c9e4ed3dd8a3ec67666d5483813bd`.
+The tracked corpus is 350 files and 13,986 bytes. Its path/size manifest is
+`7a1dbf3a80021807c46d6d690b29e583f19458dab80189d6cde2257acf757d28`, and its
+path/content manifest is
+`550a3e3007c023d18ae06049bcdb788d55235f52ae26ec3f3b231c61c7366b09`.
+
+Clang 22.1.7 Debug builds used assembly OFF, all optional public modules,
+ASan/UBSan, and libFuzzer. The native fuzzer binary manifest is
+`940da0a63351706bb6150460a65f8f195f48158e05b1ac8ba88a2f0647c37ebb`; the
+forced-int64/10x26 manifest is
+`2a0c5bd9b70a99571015239e8eaeb6364b4ecda3ae4e629eecd4db83124138c6`.
+Every tracked input was replayed independently with
+
+    -runs=1 -handle_abrt=0 -timeout=30 -rss_limit_mb=0 -print_funcs=0 <input>
+
+The native and forced-int64 replays both completed 350/350 with exit 0, no
+sanitizer or assertion diagnostic, and no artifact. Their result manifests
+are both `0e686cda3a010f5370d894d45994c53bf077a639dd47051bb67d6e40e4c2a3e4`.
+The native full `tests -i=1` and `noverify_tests -i=1` runs passed in 163.997
+and 66.842 seconds; their log hashes are
+`8d0bd7fb5db3de6967e2d0df8ff0dd48caef1e3f640166268efd7dcd1f48b0a2` and
+`24f67c7222d740849d1753ffa04458e6985037514c8f699a06503d2380606b2b`.
+The forced-int64 module matrix passed in 86.804 and 51.511 seconds; its log
+hashes are `2a50806fa1f8c5a94a6fd802dd13679196bf0933d80472536f0b43c1f23620e4`
+and `6f075952865c4a1226c151f2a32a33ec683bea2fd6ba9bbbf8c4a68dbf3adf4c`.
+That matrix covered general/context, hash, scalar, field, group, ecmult,
+ec, ECDH, ECDSA, recovery, extrakeys, Schnorr, MuSig, EllSwift, Silent
+Payments, and utility tests.
+
+The same private corpus copies ran with
+
+    -fork=2 -jobs=2 -max_total_time=12 -timeout=45 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1
+
+All 15 native target managers returned 0, with no artifact or diagnostic;
+the status manifest is
+`2430a1ed2d7931e4f8f99feb5c4e9d75807d301ffce21bc398fa89a52435686c` and the
+worker-log manifest is
+`0cbc69239be23f12309e83ead0d4d7ddae3c843a34614d3f89b25fc6752e318d`.
+Fourteen forced-int64 managers returned 0 with no artifact or diagnostic;
+the status manifest is
+`2c9436b9717a5fb71ebb4726a806c4e41934c74b0d4829960867924ea2542075` and the
+worker-log manifest is
+`0440add1aaefcde79d2b2ec0ca6c14590467536ad10b72932b11e97ec5f9d1f9`.
+The only nonzero forced-int64 status was MuSig, `124` from the outer 150
+second timeout while libFuzzer waited in parent-side worker/corpus merge. Its
+log was 18 bytes, contained no sanitizer, assertion, timeout-in-target, OOM,
+or crash diagnostic, and produced no artifact. The independent forced-int64
+MuSig corpus replay completed all 79/79 MuSig inputs successfully. A second
+`-workers=2 -jobs=2` MuSig campaign reproduced the same harness timeout
+(`124`) with an empty log and no artifact. This is harness orchestration
+evidence, not a production failure; it must not be converted into a MuSig
+severity finding or confused with the clean per-input result.
+
+This pass found no new clean-master production bug and adds no production fix
+or regression test. It does not reduce or mask the existing findings: their
+authoritative evidence remains the clean-master corpus or minimal production
+mutation recorded in the owning commit and earlier ledger entries. Against
+the current Bitcoin Core caller graph, no new invalid-block or invalid-witness
+acceptance, consensus divergence, key compromise/signature forgery, or remote
+memory/concurrency failure was demonstrated. No witness sigop consequence was
+shown, and no nonce or retry value without standalone cryptographic meaning is
+being treated as Critical merely because it remains live. A later cherry-pick,
+optimization, or minor fix must preserve the clean-master first-stop controls
+and amend its own commit message with the exact seed/mutation, first assertion
+or stack, Core caller/input origin, master-relative severity, strongest proof,
+verifier commands, and whether it preserves, changes, or masks the result.
+No fuzz, sanitizer, compiler, or test process remains running.
