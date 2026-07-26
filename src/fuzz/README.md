@@ -37468,3 +37468,44 @@ witness acceptance, sigop undercount, consensus divergence, signature
 forgery, key compromise, or severe remote memory/concurrency failure was
 demonstrated. This is a verification-only commit: no production mutation,
 fix, regression test, cherry-pick, or nonce-erasure claim is made.
+
+## 2026-07-27 Bitcoin Core PSBT consumer replay
+
+The maintained Bitcoin Core checkout was replayed through its `FUZZ=psbt`
+dispatcher using a private copy of the official PSBT corpus. Core was at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; the dispatcher binary was
+`build_fuzz/bin/fuzz` with SHA-256
+`63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`. The
+source worktree's existing `blockencodings_tests.cpp` modification and fuzz
+logs were not touched. The initial corpus contained 6,134 files and
+29,241,189 bytes; the sorted filename inventory hash was
+`1fbec7cde6e93cd4791d7f5b24fa57d9e129efa9329b5dcca214661d5009c211`.
+
+The exact controls were two fork workers and two jobs:
+
+    FUZZ=psbt ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    build_fuzz/bin/fuzz /tmp/core-psbt-seed -fork=2 -jobs=2 \
+    -max_total_time=30 -timeout=180 -rss_limit_mb=0 \
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+    -verbosity=0 -print_final_stats=1 \
+    -artifact_prefix=/tmp/core-psbt-artifacts/
+
+Both jobs exited zero after about 33 seconds, reaching 18,075 coverage points
+and 91,987 features at their last reported iteration. Every reported
+`oom/timeout/crash` counter was `0/0/0`; no sanitizer or assertion diagnostic
+appeared and the artifact directory remained empty. The complete replay log
+hash was `388d521da437f5feef8e332cdbe7e59a4a205cb7a6c0dc5c8d85f7ad76940a94`.
+The temporary corpus and artifacts were removed after the replay.
+
+This is negative Core-consumer evidence, not a secp256k1 production finding.
+The target exercises PSBT decoding, serialization stability, metadata merging,
+analysis, finalization, and extraction. Those are wallet/application state
+transitions; the target does not turn malformed PSBT data into an accepted
+block or witness and does not own consensus sigop accounting. Existing PSBT
+x-only metadata and repeated-participant MuSig observations therefore retain
+their prior direct/Core wallet severity, and no High/Critical rating is
+justified. No production mutation, fix, deterministic regression, cherry-pick,
+or nonce-erasure claim is made. Any future PSBT/MuSig change that makes this
+replay pass or fail differently must state whether it preserves, changes, or
+masks the existing master-relative finding.
