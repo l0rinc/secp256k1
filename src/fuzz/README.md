@@ -34503,3 +34503,72 @@ against current Bitcoin Core; the relevant direct ECDH path is optional and
 the Core BIP324 path uses EllSwift, not attacker-controlled block or witness
 inputs. No High/Critical severity is justified and no production fix is
 claimed. No fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 Bitcoin Core Caller-Graph Severity Recheck
+
+The caller inventory was rechecked against the Bitcoin Core checkout at
+`00c4bb06ae` on branch `codex/btc-fuzz-oracles`. That checkout had unrelated
+local changes; it was read only. The secp audit branch still has
+`origin/master == l0rinc/master == d2d04864ef9b056151603a3ced7980958b058028`.
+
+### Consensus boundaries
+
+Core's ECDSA consensus adapter is
+`src/script/interpreter.cpp:1702-1723`. It constructs a `CPubKey` from the
+script bytes, rejects a syntactically invalid key, removes the sighash byte,
+and checks the return from `CPubKey::Verify`. `src/pubkey.cpp:283-298` then
+parses the serialized point with `secp256k1_ec_pubkey_parse` before calling
+the lax DER compatibility parser and ECDSA verification. Taproot and
+Tapscript use `src/script/interpreter.cpp:1727-1751` and
+`src/pubkey.cpp:236-242`; those paths parse the 32-byte x-only key before
+Schnorr verification. Thus the opaque `(x,y)=(1,1)`, noncanonical-storage,
+odd-Y x-only, corrupted MuSig cache, and magic-preserving session witnesses
+cannot be constructed by ordinary block or witness bytes in this caller
+graph. They remain real direct-library state-boundary findings, but not
+invalid-block acceptance findings.
+
+The library also does not count tapscript sigops. Core charges the validation
+weight at `src/script/interpreter.cpp:367-374`, before invoking the secp
+Schnorr checker at lines 377-381. A hypothetical witness-sigop discrepancy
+would be High/Critical only after a complete Core reproduction showed that an
+invalid witness or block is accepted; no such reproduction exists here.
+
+### Non-consensus boundaries
+
+* `src/key.cpp:317-343` reaches EllSwift for BIP324. The peer supplies a
+  fixed-size 64-byte transport encoding through `src/net.cpp:1148-1153`; it
+  does not enter script or block validation. The zero-`u`, callback, and
+  cleanup findings are therefore Low-to-Medium transport/direct-API hygiene,
+  with no demonstrated handshake compromise or remote crash.
+* `src/musig.cpp:16-337` is wallet/application signing state. MuSig cache,
+  nonce, session, and partial-signature findings are Low-to-Medium for Core's
+  application boundary. The secret nonce is cryptographically meaningful, but
+  this audit found no reuse, disclosure, or signature forgery. A retry counter
+  without standalone cryptographic meaning is not Critical merely because it
+  is uncleared.
+* The Core production tree contains no call to `secp256k1_ecdh` or
+  `secp256k1_ec_pubkey_combine`; their origin/master unchecked opaque-load
+  sites are `src/modules/ecdh/main_impl.h:48` and
+  `src/secp256k1.c:803-806`. They are direct-library API findings, not Core
+  block/witness paths. Silent Payments likewise has no Core production caller
+  in the surveyed checkout.
+* WNAF length/digit, scalar shift, scratch-size, and maximum-magnitude field
+  states are internal helper domains. Core's normal scalar split uses the
+  fixed shift 384, its configured windows are bounded, and no peer-supplied
+  block or witness was shown to manufacture the opaque states used by these
+  witnesses. They remain Low latent internal safety for WNAF/shift, Medium
+  latent field correctness, and Medium direct API / lower Core reachability
+  for scratch arithmetic.
+
+This recheck changes no finding or severity. The strongest evidence remains
+the earlier clean-master replay plus the minimal production mutation or
+deterministic regression recorded in each finding's own commit. No new
+production bug, invalid-block or invalid-witness acceptance, consensus
+divergence, key compromise, signature forgery, remote memory/concurrency
+failure, or witness-sigop consequence was found. No l0rinc commit was added:
+the fork and master refs are identical and the relevant caller contracts are
+already covered. Any later fix or cherry-pick that makes a follow-up pass must
+amend its commit message with whether it preserves, changes, or masks the
+clean-master witness, plus the exact Core input origin, first assertion,
+master-relative severity, and verifier commands. No fuzz, sanitizer,
+compiler, or test process remains running.
