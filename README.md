@@ -2968,6 +2968,141 @@ the dedicated unit suite could not be executed in that build. No production
 behavior changed and no deterministic production regression test was added.
 No fuzz, sanitizer, or mutation process remains running.
 
+### 2026-07-26 xonly_tweak clean-master revalidation
+
+This pass revalidated the existing x-only and Taproot findings against the
+unmodified production tree at `d2d04864ef9b056151603a3ced7980958b058028`,
+which was also `origin/master` and `l0rinc/master` at the time of the run.
+The authoritative audit branch was `codex/fuzz-oracles` at
+`5476ec04f3a4f15d63277b5429228d7ad43add9f`. A disposable worktree kept
+production at the clean commit while using the branch's current
+`fuzz_xonly_tweak` oracle. Its clean production hashes were:
+
+    src/modules/extrakeys/main_impl.h  6c002046bda20ffb8767cac1c6800dd3b8e9be9e648772a1498539159a4b4937
+    src/secp256k1.c                    7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb
+    src/fuzz/xonly_tweak.c              f7910e0c16f3c682acd0892fe7de9a1df6d4d216084161a9da42993a624ed870
+
+The corpus was the existing 20-file, 712-byte corpus. Its sorted
+`SHA256  filename` manifest hash was
+`ebcd81a8158792f77bfc7ac916b160c77a1e695f2973e6b5b0a959854f8ac074`; the
+raw concatenation of files in sorted filename order hashed to
+`56917a008a32bad71bbd104099120ff275c3e6c67f0140ad5cbbf12e6f6f8f22`.
+The native and forced-int64 builds used Clang 22.1.7, ASan/UBSan, assembly
+disabled, all modules enabled, and
+`SECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL`. The second build used
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`.
+
+#### Clean-master stop ledger
+
+The initial uninstrumented corpus replay stopped at the first sentinel
+assertion. A temporary diagnostic in `fuzz.h`, removed before fixed-branch
+verification, printed the exact assertion location. The following stops were
+then isolated by masking only the already-recorded helper above the stop;
+after all listed masks, all 20 inputs passed on both arithmetic backends.
+
+1. `tweak-input-output-overlap` first stopped at `xonly_tweak.c:696`.
+   The fuzzer places valid tweak bytes in overlapping windows of the
+   `secp256k1_pubkey` object. Clean master clears the public key at
+   `src/secp256k1.c:728` before the helper consumes `tweak32` at line 729,
+   so the call returns the result for a zero tweak instead of the supplied
+   tweak. The same seed's later keypair loop exercises the corresponding
+   `secp256k1_keypair_xonly_tweak_add` clear-before-read ordering. This is the
+   supported In/Out alias finding fixed by `5a6468ea`; the separate
+   Out-only `xonly_pubkey_tweak_add` alias oracle remains correctly retracted
+   by `4e19c3d4`.
+
+2. The unconditional invalid-keypair oracle stopped at
+   `xonly_tweak.c:1215`. It passes an all-zero opaque keypair, a `0xA5`
+   x-only output, and parity sentinel `7`; clean master returns failure,
+   clears the x-only output, and invokes the illegal callback, but leaves
+   `pk_parity` at `7`. The same missing parity initialization appears in the
+   partial-keypair projection at line 1164. This is the fixed-output/parity
+   part of `27cc01dc`, not a key-recovery or signature-forgery path.
+
+3. The invalid full-pubkey conversion stopped at `xonly_tweak.c:1320`, with
+   `:1321` as the following parity check. A zero opaque `secp256k1_pubkey`
+   and `0xA5` output cause clean master to return failure and call the illegal
+   callback without clearing the x-only output or parity. This is the
+   `secp256k1_xonly_pubkey_from_pubkey` portion of `27cc01dc`.
+
+4. The mismatched-keypair oracle stopped at `xonly_tweak.c:1118`.
+   It replaces the public half of a valid keypair with the public half of a
+   different valid keypair. Clean master validates the halves independently,
+   then lets `keypair_xonly_tweak_add` proceed and report success instead of
+   rejecting the false secret/public relationship. The production invariant
+   is fixed by `18eff0b7`; its static-context fallback follow-up is
+   `d3c88265`. The follow-up preserves Bitcoin Core's static-context use and
+   does not mask the clean-master mismatch trigger.
+
+5. The exact `pubkey-from-pubkey-null` seed stopped at `xonly_tweak.c:1345`.
+   With a valid output pointer prefilled with `0xA5`, a NULL source causes
+   clean master to invoke the illegal callback and return failure while
+   preserving stale output (and then stale parity at line 1346). This is a
+   distinct NULL-input instance of the fixed-output contract in `27cc01dc`.
+
+6. The odd opaque x-only barrier stopped at `xonly_tweak.c:976`. The fuzzer
+   copies a curve-valid odd-Y full public key into the opaque x-only type;
+   clean master accepts it in serialization. `5d58e62c` adds the even-Y
+   invariant at the shared x-only loader, so all x-only consumers reject the
+   corrupted representation consistently.
+
+7. The unconditional NULL-tweak barrier stopped at `xonly_tweak.c:1039`.
+   Clean master calls the illegal callback and returns failure from
+   `keypair_xonly_tweak_add` but leaves a valid keypair intact, contrary to
+   the documented invalid-on-any-zero-return contract. `02477da1` clears it
+   before rejecting the NULL tweak. This is stale state, not cryptographic
+   nonce material; a nonce or retry counter with no standalone cryptographic
+   meaning would not receive a Critical rating for failing to clear.
+
+#### Bitcoin Core reachability and severity
+
+The direct consensus path is `src/script/interpreter.cpp:1913-1924`:
+`VerifyTaprootCommitment` constructs x-only keys from the control block and
+script program, computes the Merkle root, and calls
+`XOnlyPubKey::CheckTapTweak` at `src/pubkey.cpp:257-262`. That method parses
+the serialized internal key before calling
+`secp256k1_xonly_pubkey_tweak_add_check`. The clean-master Core control-block
+seeds (`core-taproot-control-composition`, `core-taproot-control-max-depth`,
+and `core-tapleaf-compactsize-boundaries`) passed once the unrelated
+opaque-API checks were isolated. No invalid block or witness was accepted,
+and no consensus divergence, signature forgery, key disclosure, or remote
+memory-safety failure was demonstrated.
+
+The master-relative ratings are therefore: Low for the public/keypair tweak
+aliasing; Low to Medium for stale fixed outputs and NULL-tweak invalidation;
+Medium for corrupted opaque x-only and mismatched keypair state at the direct
+library boundary; and Low in the Bitcoin Core caller because Core uses
+separate tweak storage, checks failure returns, constructs keypairs through
+`keypair_create`, and re-verifies Schnorr signatures in
+`src/key.cpp:426-439`. The BIP32 callers also keep the tweak in a separate
+buffer (`src/key.cpp:295-307` and `src/pubkey.cpp:345-356`). None is High or
+Critical on master. A High/Critical
+Taproot result would require proof that an invalid block reaches
+`VerifyTaprootCommitment` and is accepted; this run produced no such proof.
+
+#### Repaired-branch proof
+
+The repaired native and forced-int64 binaries were respectively
+`2393489a015410d6b3133755e369a2686f6edc0b45b1c1b0da8be3228034d0ad` and
+`db09a0a731c93a2f0848995f951c2a7e37e95cf88c318200871f7a9edd5f4cf5`.
+Each replayed all 20 corpus files and exited 0. The focused
+`extrakeys -i=1` suite passed in both VERIFY and no-VERIFY modes on both
+backends. Two fork workers per backend ran with
+`-fork=2 -jobs=2 -max_total_time=15`; both managers exited 0, reported
+`oom/timeout/crash: 0/0/0`, and produced no artifacts.
+
+No additional l0rinc pull-request commit was cherry-picked for this pass:
+the relevant supported alias, output-cleanup, opaque-parity, keypair-state,
+and NULL-tweak fixes are already represented by the commits named above.
+The l0rinc PR #15 duplicate keypair-alias change was not layered over the
+clean-master replay, and the retracted Out-only x-only alias remains excluded.
+This preserves the clean-master trigger order instead of allowing a later
+minor fix to hide a more serious hypothetical consensus failure.
+
+The temporary diagnostic and masks were removed. `git diff --check` passed;
+the authoritative worktree is clean and no fuzz, sanitizer, or worker process
+remains running.
+
 ## Wallet crypter failed-rekey state oracle audit (2026-07-24)
 
 Source commit: `93ffdf4ed742cbc7682b78e72923f50123e73312` (`wallet: invalidate
