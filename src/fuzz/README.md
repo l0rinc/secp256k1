@@ -32437,3 +32437,145 @@ explicit built-in callbacks, or ECDH output ownership must preserve this
 masking order and amend its commit message with the master baseline, exact
 input, first assertion, Core caller/input origin, severity, test gap, verifier
 commands, and whether it preserves, changes, or masks the trigger.
+
+## 2026-07-26 Complete clean-master EllSwift/BIP324 first-stop differential
+
+This pass revalidated the current `fuzz_ellswift` oracle against an exact clean
+master snapshot. `origin/master` and `l0rinc/master` are both
+`d2d04864ef9b056151603a3ced7980958b058028`; the audit branch is a descendant,
+so no rebase or new fork cherry-pick was needed. The earlier l0rinc PR
+reconciliation remains in force. No fork fix was applied to the clean tree.
+
+The disposable source had clean production
+`src/modules/ellswift/main_impl.h` hash
+`8deffa7b37a0602be2b87d0378419410e6cc9683ebcf3fb033d2eed56c4f8416` and
+overlaid only the current fuzzer, shared fuzz header, CMake fuzz wiring, and
+the tracked EllSwift corpus. The harness hashes were
+`20c746ada0051d972528565e762a3ad9be27b0bf6c11dc91680da07a6dc2ac06` and
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`.
+The corpus contains 19 files and 792 bytes; its sorted filename/size manifest
+hash is `c91f6e9b581642be91b2df924d5c33e372d856f0f99cfa18492d72a23022784`,
+and its sorted filename/content hash is
+`5ba1e109eb23d5de9fd435f0c31302ad6b9822adeafa7c82c339fd508b8dc9a7`.
+
+Clang 22.1.7 ASan/UBSan builds used assembly disabled, all optional public
+modules enabled, the baseline-only
+`-DSECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL` compatibility definition,
+and both native 5x52 and forced-int64/10x26 field arithmetic. The clean
+fuzzer binary hashes were `a7bb033acb08b2f33634b3d352294b082727a45b4781e5b6ca01422b833fc38c`
+and `aece0ceb6c6ace17fd7d9107a87618312ab73d0f26501f7f71906b492b2bb32f`.
+
+### Unmodified-master first stop
+
+The exact command was:
+
+    fuzz_ellswift -runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0 -print_funcs=0 src/fuzz/corpora/ellswift
+
+Both arithmetic variants exited 134 on the complete 19-file corpus. The
+representative logs are `84cd885ddd3e1fa709a02777a6c6635a1453d20cf2fa2b764e9aed3281f15a11`
+and `f855c375ebf40d69957384bc120c808b8e06b5e3745a0a0fb226a494d57595f8`.
+Every input first reached clean-master
+`src/modules/ellswift/main_impl.h:362`, but this was not 19 natural hash
+failures. The current harness intentionally calls
+`secp256k1_fuzz_check_ellswift_zero_u_barrier`: a context SHA compression
+callback replaces the third digest state with zero while creating an encoding
+for scalar one. Clean master reaches
+`VERIFY_CHECK(!secp256k1_fe_normalizes_to_zero_var(&u))` before it can apply
+the required u=0-to-u=1 correction. This is the existing `8e3ef067` finding.
+
+The exact precondition is a caller-controlled/custom SHA compression mutation,
+not a default SHA result and not a peer-controlled BIP324 wire value. The
+postcondition on repaired master is a nonzero encoding that decodes to the
+original public key after the forced zero digest. The normal unit suite and
+existing corpus did not hit it because ordinary SHA output does not make this
+relation reachable and no prior test forced the context compression callback.
+Severity is **Low / informational hardening for Bitcoin Core**, though it is a
+real direct-library contract issue under the demonstrated callback mutation.
+It is not invalid-block or invalid-witness acceptance, key compromise, or a
+consensus failure. The fuzzer's assertion is the strongest deterministic proof
+of the already-recorded production fix; this pass adds no production change.
+
+### Causal masks and reiteration of existing findings
+
+To prevent the first known failure from hiding later transitions, disposable
+harness-only `if (0)` gates were applied and removed in this order. No clean
+production byte, corpus byte, or library result was changed by a gate.
+
+1. After the zero-u barrier was gated, all seeds stopped at
+   `src/fuzz/ellswift.c:531`: a sentinel-filled 64-byte `ellswift_encode`
+   output remained nonzero after an invalid public-key/randomizer precondition.
+   This is the existing `27cc01dc` fixed-output contract, **Low/Medium direct
+   API fail-open state** and **Low for Core**. Core constructs validated keys,
+   checks the return, and does not expose this malformed in-memory state from
+   a block, witness, or BIP324 wire message.
+
+2. With the failure-cleanup helper gated, the direct built-in callback probes
+   reached `util.h:430` and produced an ASan/UBSan NULL read. The probe calls
+   the exported BIP324/prefix callback with NULL output, X, encoding, or
+   prefix data. This is the existing `aa035c03` built-in callback guard,
+   **Medium direct-API memory-safety/availability** but **Low/Nice-to-have for
+   Core** because Core supplies complete fixed-size values and does not let a
+   peer choose a NULL pointer. No remote crash or persistent BIP324 DoS was
+   demonstrated.
+
+3. With only the built-in callback helper masked, the public XDH NULL-input
+   helper stopped at `src/fuzz/ellswift.c:654`: clean master returned failure
+   while leaving a prefilled 32-byte output unchanged. This is the separate
+   `80d62acd` precondition/output-cleanup contract, **Low/Medium direct API
+   fail-closed hygiene** and **Low for Core**. The direct callback dereference
+   and this stale-output condition are separate findings; masking one must not
+   be used to claim the other was fixed or absent.
+
+After those four existing master stops were isolated, all 19 inputs exited 0
+on both clean-master arithmetic variants. No additional clean-master
+production failure, BIP324 transcript mismatch, party-selection error,
+invalid-secret result, inverse inconsistency, static-context error, or
+sanitizer finding remained. The negative result is conditional on the listed
+masks and must not be read as evidence that unmodified master passed its
+recorded barriers.
+
+### Repaired branch proof and Core severity
+
+The repaired branch binaries were
+`6ce99f5dcb73148ad30927c4aea2cd65c02864976ce49f85eedff2f2667b252d` and
+`08c5ddfa5405363511656509e4a83d50064600583a5c6ddbe7098494aab9913b8`.
+The exact 19-file replay exited 0 with log hashes
+`54e5130bdae9dc251cb97c6a882563a2e76b052d19308ddac827c41c3dd13f63` and
+`647bc292c23010b986f91cb190e386c29681ddc48338bbcba0f4aa58b519b123`.
+Focused EllSwift tests passed in verified and no-verify builds for both
+backends. Their test-log hashes were, respectively,
+`233d6c94e504d134c8102ec669f9eee6a571da54a3ff9c2f94599926b85c5a2a`,
+`37da92bb868a3bf1756a02557331899b382d7b49b3055900d419db6606f6a082`,
+`d06983acc2b7650ce7372f5faf055ce06974339b982562375e642411cea1acc5`, and
+`c20e719cefbffea578c6e173b366c81cb230079198ee1858c36f331ac6a034d1`.
+
+Copied-corpus `-fork=2 -jobs=2 -max_total_time=15` ASan/UBSan campaigns
+exited 0 on both backends with `oom/timeout/crash: 0/0/0`, zero artifact
+files, and worker log hashes
+`babc5e6bb3a16183020f22892f0c0b0a38c825fb7e9cf2bebbad0d2b64798db1` and
+`68195eaf49b8eeb5a46fa33ede95f975c19054fff09279e434eb3a0cc11bdb86`.
+Generated worker corpus files were removed after inspection. No fuzz,
+sanitizer, compiler, or test process remains running.
+
+The relevant Bitcoin Core path is
+`BIP324Cipher::Initialize -> CKey::ComputeBIP324ECDHSecret ->
+secp256k1_ellswift_xdh`. A remote peer controls the 64-byte serialized
+EllSwift value, so a future clean-master failure that demonstrably causes a
+remote crash, persistent handshake denial of service, unauthenticated key
+agreement, or transport-integrity failure must be rated from that concrete
+impact and could be security-significant. This pass demonstrated none of
+those effects. None of the four first stops can be triggered by an invalid
+block or witness, and none permits invalid-block acceptance or consensus
+divergence. They remain below High/Critical for Core. No cryptographic nonce
+erasure issue is involved; an uncleared value without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+This is a documentation-only revalidation. The production fixes and
+deterministic tests for the four conditions already exist in the cited
+commits; no new production bug or regression test is claimed. Any future
+EllSwift, BIP324, callback, optimization, or l0rinc cherry-pick must preserve
+these exact clean-master and minimal-mutation baselines, amend its commit
+message with the first assertion and Core input origin, and state whether it
+preserves, changes, or masks each earlier trigger. A minor fix that makes a
+follow-up replay green must not downgrade the corresponding unmodified-master
+severity without rerunning its original witness.
