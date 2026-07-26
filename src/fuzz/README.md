@@ -36387,3 +36387,75 @@ change must rerun the exact affected seed, the clean-master control, and the
 appropriate two-worker matrix, then say in its commit message whether the
 change preserves, alters, or masks the master-relative result. No production
 fix or bug claim is justified by this clean replay alone.
+
+## 2026-07-26 Primitive arithmetic and ECDH corpus recheck
+
+The remaining tracked primitive corpora were replayed from the same clean
+master base, `d2d04864ef9b056151603a3ced7980958b058028`, on native 5x52 and
+forced-int64/10x26 Clang ASan/UBSan builds. The targets were `hash` (10
+inputs), `scalar` (10), `field` (21), `group` (23), `ecmult_const` (11), and
+`ecdh` (9), for 84 inputs per backend. Each input used `-runs=1`,
+`-timeout=180`, `-rss_limit_mb=0`, `-handle_abrt=0`,
+`-ignore_ooms=0 -ignore_timeouts=0 -ignore_crashes=0`,
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1`,
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`.
+
+All 168 independent executions exited 0. Neither backend produced an ASan,
+UBSan, callback, assertion, OOM, timeout, crash, or artifact diagnostic. The
+native and forced-int64 result manifests are both
+`9b123f9feede46c67c666d16dd887d3844e346bb9ceb84cc86818a932ed0db4d`.
+Per-target log hashes were:
+
+    target          native log                                        forced-int64 log
+    hash            6a6c108acb016ce15d57f3c8d95448aa1f640262ca3bb627510b75c2a7273a4c  07c422ec48191e1da8ce5513ddd7af5a83a31668457d214adf9ee091f2afee01
+    scalar          ba90ba2d54c39657945919914ebc2e276361d7723391871ddc36a7dbb0fea372  2b5d74e6454b144bff23ef38d12ec01c66b031a16fc7da03568f59c7cfb119de
+    field           20be0c9a1f3930066c6ec29c048534e0b7cbd43f96de8253a6f672d86bdc4961  9634e934457e434b9ec96621397f358929d5c811b222cd57edb832574198888c
+    group           e2ea39660a3749995fad02b89ec393cc97f0caf24281fb7de0b54dcdc7fc4874  ddc877d273230f7cf02a3e7551564a037f31d130359fd4ec55a48a121345055b
+    ecmult_const    c93781baf4d51420e61b115115becc623d26e47cc67bbe758e01f0f171cdf713  f58ed7c705683ebc7be381662a076a3dde3c355eb00b89048d6ab1f3ff485747
+    ecdh            eb0c97a8511b1a95174f35027bc57c125c7051fa2b06f79cdd89687b3ec211c8  10e05330508cc683984293aa59e74ecc7b2f68a0d9d152e49528d3a3a6082b30
+
+The `group` and `ecdh` corpora were additionally run with two fork workers
+and two jobs using:
+
+    -fork=2 -jobs=2 -max_total_time=20 -timeout=180 -rss_limit_mb=0
+    -ignore_ooms=0 -ignore_timeouts=0 -ignore_crashes=0 -handle_abrt=0
+    -print_final_stats=1 -verbosity=0
+
+All eight worker processes and four managers exited 0. Every worker reported
+`oom/timeout/crash: 0/0/0`; the native group workers ran for 25-26 seconds,
+native ECDH for 20-21 seconds, forced-int64 group for 21 seconds, and
+forced-int64 ECDH for 21-22 seconds. Manager/worker log hashes, in target
+order and then backend order, are:
+
+    native group:       f81691b888d3be9c5c3bb823f88528f26f608f6f613ff9868426fd0a8c807472  2a85e38ebc6d87153f5a2e979ebc344ee4a56eed7ba10cdedf43d5e66c47a07  04d9d2b0b259c9c6664e56bad304cac48f823239106586804ac96a6e9d1f17e5
+    native ecdh:        2660383b9fdb28fd537e0b1858e7463d5aae9dfd1b5af4d1011c52c03e5d9727  113c10ca35a370642bc22a4f559c4af2512744ede24eb9dc5f9c00288c332e0b  be9fd2bbf332494c8f36c6f8c06629b2aac2d3a7ff3ed99aaaa5b35a831285ac
+    int64 group:        5367e076b8bc485e5684f8833328d6e4a43b17782c1528982f5ffd29d820e987  b7e9a1d3a449c756de1e91319892338d60805aba73ff56d8c4730493f6e7d1e3  71c3ef76481b3eb648724b79177146c7f2ce00124614f205f9631438b4d1e5d4
+    int64 ecdh:         f42bc7e75ad48d2646092194d18c2510a6bf16f74b77676939c4b3dd231347d9  d65896d74cdaa2d79ff2f94987f9ddf330228130bc1819d9cb69989c9bda2fca  c1dde82933f57b5e764cc5af1a1c713e17ece114f0e5dabfbda9b6d4cefc2234
+
+The worker fuzzing generated private exploratory inputs and increased the
+temporary corpora, but none was promoted to `src/fuzz/corpora`; all generated
+files were removed after verifying that only the original 23 `group` and 9
+`ecdh` files remained. The initial wrapper attempt returned shell 127 before
+launching a binary because its build variable was unset; its `/bin/fuzz_*`
+diagnostic is excluded from the result and was corrected before the recorded
+replay.
+
+This is negative oracle evidence only. The internal field/scalar/group,
+`ecmult_const`, and standalone ECDH states do not demonstrate invalid-block or
+invalid-witness acceptance, witness-sigop undercount leading to acceptance,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency failure. Core's BIP324 path reaches EllSwift XDH rather
+than the standalone `secp256k1_ecdh` entry point; malformed opaque states in
+this direct API remain lower-severity API findings absent a concrete Core
+trigger. Existing arithmetic and ECDH findings therefore retain their
+master-relative Low-to-Medium ratings, and the repeated-participant MuSig
+problem remains the separate **Medium wallet/application** finding.
+
+No source mutation was needed because no candidate failure occurred. The
+existing clean-master and minimal-production-mutation controls remain the
+strongest evidence for earlier findings. No production fix or regression
+test is justified by this pass. Future primitive changes must rerun the exact
+affected seed and, where relevant, the two-worker matrix, then amend the
+commit message with the Core caller, master-relative severity, first failing
+assertion or stack, and whether the change preserves, changes, or masks the
+baseline.
