@@ -35412,3 +35412,57 @@ equal to `origin/master`. If the public API is later deliberately documented
 to support output/message overlap, reintroduce the independent oracle and
 regression then, with the clean-master reproduction and Core reachability
 re-evaluated against that new contract.
+
+## 2026-07-26 Ecmult planner and scratch-boundary recheck
+
+The internal multi-multiplication planner and scratch allocator were rechecked
+after the no-op rebase onto clean `origin/master` and `l0rinc/master`, both at
+`d2d04864ef9b056151603a3ced7980958b058028`. The review covered
+`secp256k1_ecmult_multi_batch_size_helper`, the Pippenger and Strauss batch
+selection, `2*n_points + 2` scratch-entry accounting, scratch checkpoints,
+callback offsets, and the empty, single-batch, repeated-batch, filtered-point,
+allocation-failure, and window-1261/4421 controls already present in
+`src/fuzz/ecmult_multi.c`.
+
+The exact tracked corpus contains 29 inputs totaling 1028 bytes. One-input
+replays of all 29 inputs passed in both native 5x52 and forced-int64/10x26
+Clang ASan/UBSan builds. The complete `ecmult` unit module also passed with
+`-i=1`: native in 68.856 seconds and forced-int64 in 75.384 seconds. The
+forced-int64 run emitted only the existing low-iteration notices for the
+probabilistic constant tests. No sanitizer report, assertion, crash, timeout,
+or retained process occurred.
+
+### Candidate triage and master-relative severity
+
+No new production mutation survived triage. The tempting `SIZE_MAX - 1` /
+`SIZE_MAX` callback-failure candidate is already rejected by
+`8f150439`: on clean master, replacing the count with `2` produces the same
+partial-output failure before any count-specific scratch behavior is reached.
+Adding another huge-count seed or callback oracle would therefore rediscover
+the existing `ecmult_multi` failure-output finding rather than prove a new
+overflow or batch-sizing defect. The current helper fuzzer independently
+checks the capped ceil-division result, including `SIZE_MAX`, while the
+end-to-end controls exercise batch boundaries and rollback with valid finite
+inputs.
+
+The unchecked arithmetic in the private Pippenger scratch-size helper is not
+reachable with an attacker-controlled count through the surveyed Bitcoin Core
+caller graph: `src/musig.cpp` supplies a locally constructed vector and uses
+`ecmult_multi_var(..., NULL, ...)`, while scratch-backed dispatch caps each
+batch at `ECMULT_MAX_POINTS_PER_BATCH`. No invalid block or witness can supply
+the impossible allocation state. Severity therefore remains unchanged: the
+existing clean-master scratch-wrap issue is **Medium internal memory safety**
+and the callback-failure stale-output issue is **Low internal correctness**;
+neither is High/Critical without invalid-block or invalid-witness acceptance,
+consensus divergence, signature forgery, key compromise, or remotely severe
+memory/concurrency impact. This review involves no cryptographically meaningful
+nonce, so no nonce-clearing severity claim is implied.
+
+No l0rinc commit was cherry-picked: its master ref is identical to
+`origin/master`, and the relevant fork fixes and duplicate candidate are
+already recorded. No production source, deterministic regression test, or
+corpus input was added by this pass. Future changes to batch sizing,
+allocation order, callback routing, or fork fixes must replay the clean-master
+scratch-wrap and callback-failure controls and state whether they preserve,
+change, or mask each existing finding, with the exact Core caller and verifier
+commands documented in the same commit.
