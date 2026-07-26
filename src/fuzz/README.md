@@ -35814,3 +35814,151 @@ to KeyAgg coefficient selection, callback routing, opaque loaders, nonce
 consumption, or Core's MuSig adapter must rerun the 80-input matrix and state
 whether each existing finding is preserved, changed, or masked in the same
 commit message.
+
+## 2026-07-26 MuSig 32-participant KeyAgg boundary oracle
+
+The MuSig fuzzer now has a gated 32-participant public-KeyAgg transcript. The
+exact trigger is the 27-byte corpus witness `wide-keyagg-reference`, whose
+SHA-256 is `f3c9d9ecf1a36b52209bd19b4d76f92c6f71be9fb5f89cd867bf30a8ccfe314d`.
+It constructs deterministic secret scalars 1 through 32, serializes the
+compressed public keys, recomputes the KeyAgg list hash and every coefficient
+with the fuzzer's standalone tagged-SHA/reference path, and forms the weighted
+sum through the public tweak/combine APIs. It then compares that independent
+full-point result and x-only result against cached and uncached
+`secp256k1_musig_pubkey_agg` results and verifies the cached list hash. The
+existing 16-participant state-machine fixtures remain unchanged; this witness
+specifically extends list/callback breadth without claiming to model a full
+32-signer MuSig session.
+
+The trigger and all 79 pre-existing tracked corpus inputs, plus one disposable
+empty input, were replayed one time each with `-timeout=60`. All 81 inputs
+returned zero in native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds.
+The complete replay log hashes are
+`587382fc4fdc504fdf126f4c152aa6a3d85476e25b2efce948b5e9be63f82918` and
+`e8865d153357e47a3306daf5df077e7e3a99bb7b11dc80bc680fd33a35091ace`.
+The standalone trigger also returned zero in both builds; its log hashes are
+`98e1ca675974f209eea553f4330ef86410b60ddbce78e3643a0ad295fe79f5d9` and
+`81291320e1d74a9934b4a709705a5382f618dbb35a2bae5c04eb718c21418726`.
+
+`tests -i=1 -j=2 -t=musig` passed in both configurations. Private copies of
+the 80-seed corpus were run with `-fork=2 -jobs=2 -max_total_time=20
+-timeout=60 -rss_limit_mb=0`, all OOM/timeout/crash ignore flags disabled,
+and `-handle_abrt=0`. Both managers exited zero with
+`oom/timeout/crash=0/0/0` and zero artifacts. Native workers ran for about
+110 seconds and forced-int64 workers for about 190 seconds because the fixed
+MuSig state machine is expensive; neither duration was a timeout diagnostic.
+Worker log hashes are
+`a41cf5ae23ba3dbd030f8d23c2608c0b7d7b5845c5b3f0281208281664ad86c9` and
+`77663e28d43303cddd78fbac88e4e7ed73bbdf0df610ae63e80d836d5ad89a4d`.
+
+The complete deterministic test suites also passed with `tests -i=1 -j=2`:
+native took 97.446 seconds with log hash
+`2c73e1ddcaf80cd5fea6a8762228afccdcfca240561a1f73a3d860bebe50c1fd`, and
+forced-int64 took 141.065 seconds with log hash
+`5964a49bfb819efdc0051179f684552343329b066771906864d0bc60ab35dd5c`.
+Only the suite's documented million-iteration SHA and ecmult constant tests
+were skipped because the run used `-i=1`.
+
+### Core caller, severity, and masking
+
+Bitcoin Core can reach the wider list through `src/musig.cpp:16-40`, which
+parses a caller-supplied `std::vector<CPubKey>` before invoking public KeyAgg.
+Descriptor construction uses this path at `src/script/descriptor.cpp:663-701`;
+PSBT participant lists are parsed at `src/psbt.h:216-245` under Core's 100 MB
+PSBT input limit (`src/psbt.h:91-93`). Signing then re-aggregates and checks
+participant maps at `src/musig.cpp:174-176` and `254-264`, so duplicate keys
+cannot silently create a distinct map entry. These are wallet, descriptor,
+and PSBT application paths, not block or witness validation.
+
+This found no production bug: no assertion, sanitizer failure, invalid-block
+or invalid-witness acceptance, consensus divergence, signature forgery, or
+severe remote memory/concurrency failure occurred. The new oracle is therefore
+**Informational/Low coverage evidence for current Core**, while the existing
+clean-master opaque-state observations remain at most **Medium for a direct
+library caller** and **Low-to-Medium on the surveyed Core signing path**. A
+High/Critical rating is not justified without proof that a master-branch caller
+can turn the condition into invalid-block acceptance, consensus divergence,
+key compromise, forgery, or severe remotely reachable memory/concurrency
+failure. This is unrelated to witness sigop accounting, and it makes no nonce
+clearing claim: a value without standalone cryptographic meaning is not
+Critical merely because it is uncleared.
+
+The pre-existing unit/corpus set did not catch this boundary because its
+largest explicit KeyAgg transcript had 16 participants; the new deterministic
+witness proves the additional path executes and remains consistent on clean
+master. No production mutation or deterministic production regression is
+justified. `origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; PR #27 is already present in
+`3eafe49b`, and no l0rinc change masks this oracle. Any later KeyAgg, callback,
+allocation, or Core adapter change must state in its commit message whether it
+preserves, changes, or masks this clean-master result and rerun the 81-input
+KeyAgg matrix. Changes that also touch the public nonce aggregation boundary
+must rerun the combined 82-input matrix below.
+
+## 2026-07-26 MuSig 32-participant nonce aggregation boundary oracle
+
+The same MuSig fuzzer now has a second gated 32-participant public aggregation
+transcript. The exact trigger is the 29-byte corpus witness
+`wide-nonce-aggregation-reference`, whose SHA-256 is
+`23f7bebb69c71d1270a7511b0717626005e96a2a694aa3e156b7c24bafd9723c`.
+It constructs 32 distinct public nonces: component zero uses deterministic
+secret scalars 1 through 32 and component one uses 33 through 64. Each pair is
+serialized and parsed through the public MuSig nonce codec. The expected sum of
+each component is independently computed with `secp256k1_ec_pubkey_combine`,
+then compared with the serialized result of `secp256k1_musig_nonce_agg` over
+the 32-entry pointer list. This is a distinct-list arithmetic oracle, not a
+32-signer nonce-generation or signing-session model.
+
+The two new witnesses, all 79 pre-existing tracked inputs, and one disposable
+empty input were replayed one time each with `-runs=1 -timeout=120`. All 82
+inputs returned zero in native 5x52 and forced-int64/10x26 Clang ASan/UBSan
+builds. The replay log hashes are
+`4070a5c340ea0ad549e4f8f785cb3b793a6f68884dee6195260493ce9015a886` and
+`e2adcee808e93e96b886bd9a9e0598160a102c3d69856841ec1a463e26f4b096`.
+The standalone nonce trigger also returned zero; its log hashes are
+`8ca9d5ad6e88eff7771386a88b3d4da046bc7596aace8ff2336cebe2f4e8807d` and
+`45cde2e67480b8e514a6805c575f53dfeee19ac551ac9e1cb4a7c8071fe71973`.
+
+`tests -i=1 -j=2 -t=musig` passed in both configurations, with log hashes
+`c6ab7db10ac1adcef8cde2e4ea109eb171ddb342af33cea90778f5abe7419b44` and
+`fc0fdbd02b33de403df23d16e0f3cdd7e13c6446379698414d0a8b17100f52af`.
+Private copies of the 81-seed corpus were run with
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=120 -rss_limit_mb=0`, every
+OOM/timeout/crash ignore flag disabled, and `-handle_abrt=0`. Both managers
+exited zero with `oom/timeout/crash=0/0/0` and zero artifacts. Native workers
+ran for about 111-112 seconds and forced-int64 workers for about 192-195
+seconds; these are fixed-corpus execution times, not timeout diagnostics. The
+worker log hashes are
+`b0c1536b51568fc8c91f9c07f1f3168fae2e8869186155bb337d5c5669f31aba` and
+`efe313d452b06705a1307b53473c43e2e6a5b3579f2258af8e5af155daa3159b`.
+
+### Core caller and severity
+
+Bitcoin Core reaches nonce aggregation from `src/musig.cpp:209-212` and the
+corresponding aggregate-signature path in `src/musig.cpp:254-330`, after
+parsing participant public nonces from application maps. The surrounding
+workflow begins with the same local public-key vector at `src/musig.cpp:16-40`
+and is used by descriptor/signing code, not block or witness validation. Core
+also requires the public-nonce and partial-signature map cardinalities to
+match the participant vector before aggregation, so this boundary cannot be
+supplied by an invalid block or witness.
+
+No production bug was demonstrated: there was no assertion, sanitizer failure,
+invalid-block or invalid-witness acceptance, consensus divergence, signature
+forgery, or severe remote memory/concurrency failure. This is therefore
+**Informational/Low coverage evidence for current Core**; direct-library
+opaque-state concerns remain at most **Medium**, and the surveyed Core signing
+path remains **Low-to-Medium**. High/Critical requires proof of invalid-block
+acceptance, consensus divergence, key compromise, forgery, or severe remotely
+reachable memory/concurrency impact. No nonce-clearing issue is claimed, and
+no severity follows merely from a value being present or uncleared.
+
+The former corpus had only a 16-entry repeated-nonce loop stress case and
+small cancellation cases, so it did not independently prove a larger distinct
+nonce list. No production mutation or deterministic production regression is
+justified. `origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; PR #27 remains present in
+`3eafe49b`, and no l0rinc change masks this oracle. Future nonce aggregation,
+nonce codec, ecmult, or Core adapter changes must state whether they preserve,
+change, or mask this clean-master result and rerun the 82-input matrix in the
+same commit's notes.

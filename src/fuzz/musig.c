@@ -13,6 +13,7 @@
 #if defined(ENABLE_MODULE_EXTRAKEYS) && defined(ENABLE_MODULE_MUSIG)
 #include "pubkey_reference.h"
 #define SECP256K1_FUZZ_MUSIG_MAX_SIGNERS 16
+#define SECP256K1_FUZZ_MUSIG_MAX_KEYAGG_SIGNERS 32
 typedef int (*secp256k1_fuzz_musig_partial_sig_agg_fn)(const secp256k1_context *, unsigned char *, const secp256k1_musig_session *, const secp256k1_musig_partial_sig * const*, size_t);
 typedef int (*secp256k1_fuzz_musig_partial_sig_verify_fn)(const secp256k1_context *, const secp256k1_musig_partial_sig *, const secp256k1_musig_pubnonce *, const secp256k1_pubkey *, const secp256k1_musig_keyagg_cache *, const secp256k1_musig_session *);
 typedef int (*secp256k1_fuzz_musig_nonce_process_fn)(const secp256k1_context *, secp256k1_musig_session *, const secp256k1_musig_aggnonce *, const unsigned char *, const secp256k1_musig_keyagg_cache *);
@@ -326,7 +327,7 @@ static void secp256k1_fuzz_musig_tagged_hash_reference(unsigned char out32[32], 
 static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_context *ctx, unsigned char coefficient32[32], const secp256k1_pubkey * const* pubkeys, size_t n_pubkeys, size_t target_index) {
     static const unsigned char keyagg_list_tag[] = "KeyAgg list";
     static const unsigned char keyagg_coef_tag[] = "KeyAgg coefficient";
-    unsigned char serialized[SECP256K1_FUZZ_MUSIG_MAX_SIGNERS * 33];
+    unsigned char serialized[SECP256K1_FUZZ_MUSIG_MAX_KEYAGG_SIGNERS * 33];
     unsigned char pks_hash[32];
     unsigned char coefficient_input[65];
     unsigned char coefficient_hash[32];
@@ -335,7 +336,7 @@ static void secp256k1_fuzz_musig_keyagg_coefficient_reference(const secp256k1_co
     size_t i;
 
     FUZZ_CHECK(n_pubkeys > 0);
-    FUZZ_CHECK(n_pubkeys <= SECP256K1_FUZZ_MUSIG_MAX_SIGNERS);
+    FUZZ_CHECK(n_pubkeys <= SECP256K1_FUZZ_MUSIG_MAX_KEYAGG_SIGNERS);
     FUZZ_CHECK(target_index < n_pubkeys);
     for (i = 0; i < n_pubkeys; i++) {
         serialized_len = 33;
@@ -1107,6 +1108,118 @@ static void secp256k1_fuzz_check_musig_sixteen_keyagg_reference(const secp256k1_
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
     FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly_no_cache, &expected_xonly) == 0);
     FUZZ_CHECK(memcmp(cache.data + 132, keyagg_hash, sizeof(keyagg_hash)) == 0);
+}
+
+/* Exercise a signer count beyond the state-machine fixtures and the Core
+ * examples. The public KeyAgg API has no sixteen-signer limit, so keep this
+ * transcript independent while probing a wider callback/list boundary. */
+static void secp256k1_fuzz_check_musig_wide_keyagg_reference(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "wide MuSig key aggregation\n";
+    static const unsigned char keyagg_list_tag[] = "KeyAgg list";
+    enum { N_PUBKEYS = 32 };
+    unsigned char seckeys[N_PUBKEYS][32] = { { 0 } };
+    unsigned char serialized[N_PUBKEYS * 33];
+    unsigned char keyagg_hash[32];
+    unsigned char coefficient[32];
+    secp256k1_pubkey pubkeys[N_PUBKEYS];
+    secp256k1_pubkey scaled[N_PUBKEYS];
+    secp256k1_pubkey expected_full;
+    secp256k1_pubkey actual_full;
+    secp256k1_xonly_pubkey expected_xonly;
+    secp256k1_xonly_pubkey actual_xonly;
+    secp256k1_xonly_pubkey actual_xonly_no_cache;
+    secp256k1_musig_keyagg_cache cache;
+    const secp256k1_pubkey *pubkey_ptrs[N_PUBKEYS];
+    const secp256k1_pubkey *terms[N_PUBKEYS];
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < N_PUBKEYS; i++) {
+        size_t serialized_len = 33;
+        seckeys[i][31] = (unsigned char)(i + 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkeys[i], seckeys[i]) == 1);
+        pubkey_ptrs[i] = &pubkeys[i];
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized + 33 * i, &serialized_len, &pubkeys[i], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+    }
+
+    secp256k1_fuzz_musig_tagged_hash_reference(keyagg_hash, keyagg_list_tag, sizeof(keyagg_list_tag) - 1, serialized, sizeof(serialized));
+    for (i = 0; i < N_PUBKEYS; i++) {
+        secp256k1_fuzz_musig_keyagg_coefficient_reference(ctx, coefficient, pubkey_ptrs, N_PUBKEYS, i);
+        FUZZ_CHECK(memcmp(coefficient, secp256k1_fuzz_scalar_zero, sizeof(coefficient)) != 0);
+        scaled[i] = pubkeys[i];
+        if (memcmp(coefficient, secp256k1_fuzz_scalar_one, sizeof(coefficient)) != 0) {
+            FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &scaled[i], coefficient) == 1);
+        }
+        terms[i] = &scaled[i];
+    }
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected_full, terms, N_PUBKEYS) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &expected_xonly, NULL, &expected_full) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly, &cache, pubkey_ptrs, N_PUBKEYS) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_agg(ctx, &actual_xonly_no_cache, NULL, pubkey_ptrs, N_PUBKEYS) == 1);
+    FUZZ_CHECK(secp256k1_musig_pubkey_get(ctx, &actual_full, &cache) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_cmp(ctx, &actual_full, &expected_full) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly, &expected_xonly) == 0);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &actual_xonly_no_cache, &expected_xonly) == 0);
+    FUZZ_CHECK(memcmp(cache.data + 132, keyagg_hash, sizeof(keyagg_hash)) == 0);
+}
+
+/* Exercise public nonce aggregation with a distinct list beyond the
+ * state-machine fixtures. Keep the expected component sums on the public
+ * point-combine path so this does not inherit the MuSig nonce loop. */
+static void secp256k1_fuzz_check_musig_wide_nonce_agg_reference(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "wide MuSig nonce aggregation\n";
+    enum { N_PUBNONCES = 32 };
+    unsigned char seckey[32] = { 0 };
+    unsigned char serialized[66];
+    unsigned char expected66[66];
+    unsigned char actual66[66];
+    secp256k1_pubkey points[N_PUBNONCES][2];
+    secp256k1_pubkey expected[2];
+    secp256k1_musig_pubnonce pubnonces[N_PUBNONCES];
+    secp256k1_musig_aggnonce aggnonce;
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[N_PUBNONCES];
+    const secp256k1_pubkey *terms[N_PUBNONCES];
+    size_t i;
+    size_t j;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    for (i = 0; i < N_PUBNONCES; i++) {
+        size_t serialized_len;
+        seckey[31] = (unsigned char)(i + 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &points[i][0], seckey) == 1);
+        seckey[31] = (unsigned char)(i + 33);
+        FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &points[i][1], seckey) == 1);
+        serialized_len = 33;
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized, &serialized_len, &points[i][0], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+        serialized_len = 33;
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, serialized + 33, &serialized_len, &points[i][1], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+        FUZZ_CHECK(secp256k1_musig_pubnonce_parse(ctx, &pubnonces[i], serialized) == 1);
+        pubnonce_ptrs[i] = &pubnonces[i];
+    }
+
+    for (j = 0; j < 2; j++) {
+        size_t serialized_len = 33;
+        for (i = 0; i < N_PUBNONCES; i++) {
+            terms[i] = &points[i][j];
+        }
+        FUZZ_CHECK(secp256k1_ec_pubkey_combine(ctx, &expected[j], terms, N_PUBNONCES) == 1);
+        FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, expected66 + 33 * j, &serialized_len, &expected[j], SECP256K1_EC_COMPRESSED) == 1);
+        FUZZ_CHECK(serialized_len == 33);
+    }
+
+    FUZZ_CHECK(secp256k1_musig_nonce_agg(ctx, &aggnonce, pubnonce_ptrs, N_PUBNONCES) == 1);
+    FUZZ_CHECK(secp256k1_musig_aggnonce_serialize(ctx, actual66, &aggnonce) == 1);
+    FUZZ_CHECK(memcmp(actual66, expected66, sizeof(actual66)) == 0);
 }
 
 /* Exercise the first-distinct-key rule with valid duplicate public keys. The
@@ -4571,6 +4684,8 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
         secp256k1_fuzz_check_musig_eight_keyagg_reference(ctx);
     }
     secp256k1_fuzz_check_musig_sixteen_keyagg_reference(ctx, input, size);
+    secp256k1_fuzz_check_musig_wide_keyagg_reference(ctx, input, size);
+    secp256k1_fuzz_check_musig_wide_nonce_agg_reference(ctx, input, size);
     secp256k1_fuzz_check_musig_duplicate_keyagg_reference(ctx, input, size);
     if (size == sizeof("MuSig static key aggregation\n") - 1
         && memcmp(input, "MuSig static key aggregation\n", sizeof("MuSig static key aggregation\n") - 1) == 0) {
