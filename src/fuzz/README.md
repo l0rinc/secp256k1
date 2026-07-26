@@ -33994,6 +33994,66 @@ Core caller/input origin, master-relative severity, first assertion, and
 verifier commands. No fuzz, sanitizer, compiler, or test process remains
 running.
 
+## 2026-07-26 ECDH and Silent Payments worker revalidation
+
+The standalone ECDH and Silent Payments targets were rechecked after the
+hash/context pass. This is negative evidence, not a new clean-master
+production finding. The fuzzer source hashes are `src/fuzz/ecdh.c`
+`034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79` and
+`src/fuzz/silentpayments.c`
+`2050405be8f94d77b4fa86d77fb70a649c39eaa15d13df8004a712aa2cfdc4d1`.
+`origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`.
+
+Fresh private copies of the tracked 9-input ECDH and 11-input Silent Payments
+corpora ran in native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds with:
+
+    -fork=2 -jobs=2 -max_total_time=60 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+All four managers and all eight fork workers exited 0. Every observed
+`oom/timeout/crash` counter was `0/0/0`; no sanitizer or assertion diagnostic
+was produced. ECDH artifact directories were empty. Silent Payments emitted
+one identical libFuzzer `slow-unit` per backend for
+`Silent Payments recipient group limit` (38 bytes, SHA-256
+`875cc7e59148404f5f1c718d97ae1b3b726ff9b8536f7fa74cc6775902761462`). Its
+fixed replay took 4.939 seconds native and 8.384 seconds forced-int64, below
+the 180-second timeout; it is not a crash, timeout, or memory-safety finding.
+The private passing corpora ended at 576 / 344 ECDH files and 221 / 112
+Silent Payments files in native / forced-int64 order.
+
+Fixed replays ran exactly 9/9 ECDH and 11/11 Silent Payments inputs once per
+backend with `-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0`; all
+returned 0 with no diagnostic. Replay log hashes are:
+
+| target / backend | replay log |
+| --- | --- |
+| `ecdh` / native | `9b1ad779ef722c7570112d590082483848ded4edcae726921a259a1c428f55b3` |
+| `ecdh` / forced-int64 | `149f0c8ec455f1c652e1753bb9a25e32af91fdb5356d4a3fe1288edcd689d1ce` |
+| `silentpayments` / native | `bbc214a0d24ca841a3fe9459dd704829b68406513099ad8982cff7b23517bc58` |
+| `silentpayments` / forced-int64 | `b440209f58c60c7cc710be09dbc90d52a9b6a4a32e0026ed13218edfa48cf5bf` |
+
+The standalone ECDH boundary remains Low-to-Medium direct API validation and
+cleanup; current Bitcoin Core's BIP324 path uses EllSwift through
+`CKey::ComputeBIP324ECDHSecret`, not this standalone ECDH entry point. The
+current Bitcoin Core checkout has no Silent Payments caller, so its existing
+opaque-state and output-tweak findings are wallet/application correctness,
+not block or witness validation. No invalid-block or invalid-witness
+acceptance, consensus divergence, key compromise, signature forgery, remote
+memory/concurrency failure, or witness-sigop consequence was demonstrated.
+High/Critical is not justified. No cryptographically meaningful nonce-erasure
+issue is involved.
+
+No l0rinc commit was cherry-picked because the refs remain identical and the
+existing ECDH/Silent Payments matrices already preserve the clean-master
+first stops. This pass adds no production fix or deterministic regression
+test. A later wallet/transport integration, callback, performance change,
+fix, or cherry-pick must state whether it preserves, changes, or masks the
+original result, with the exact Core caller/input origin, master-relative
+severity, first assertion, and verifier commands. No fuzz, sanitizer,
+compiler, or test process remains running.
+
 ## 2026-07-26 Hash and context lifecycle worker revalidation
 
 Hash finalization and context lifecycle/callback ownership were rechecked
