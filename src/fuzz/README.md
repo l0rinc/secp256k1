@@ -32317,3 +32317,123 @@ input or mutation, first assertion/stack, Core input origin, master-relative
 severity, test gap, verifier commands, and whether it preserves, changes, or
 masks each earlier finding. No fuzz, sanitizer, compiler, or test process
 remains running.
+
+## 2026-07-26 Current-master ECDH explicit-callback revalidation
+
+This pass reiterates the existing ECDH fixed-output cleanup finding from
+`03c5f6e2` against freshly fetched `origin/master` and `l0rinc/master`, both
+`d2d04864ef9b056151603a3ced7980958b058028`. The audit branch was already a
+descendant of that master, so no rebase was required. The clean disposable
+checkout kept production at that exact commit and overlaid only the current
+fuzzer sources, corpora, and fuzzer CMake wiring; no audit production fix was
+copied into the clean tree.
+
+### Corpus and source identity
+
+The ECDH corpus has nine files and 283 bytes. The exact witness is
+`src/fuzz/corpora/ecdh/explicit-builtin-invalid-scalar`, 38 bytes, SHA256
+`f1c1b3420c86f206f279651910e6515572533154960687f627ddfb7e5b31802c`.
+The sorted filename/size manifest SHA256 is
+`2c73102405b309935533dc1c3c0195afda3f0f30031ff99bbabc9f47c994ad38`; the
+sorted filename/content processing manifest SHA256 is
+`f356537b89ad0876f3228b65cd3d1c2d37814a48d09314bd6981f5875b02d4ad`.
+
+```
+clean origin/master src/modules/ecdh/main_impl.h 3cf3b168e8048cd7b03c9b4d56d072214ef859a31bc970e5a16c2cbeba8fc4eb
+fixed audit src/modules/ecdh/main_impl.h          87c496b84d0229aa7775d5563e656112b87757008d49f9833aca46641051383e
+audit src/fuzz/ecdh.c                             034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79
+audit src/fuzz/fuzz.h                              484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05
+```
+
+The clean-master command, under Clang 22.1.7 ASan/UBSan native and forced-
+int64/10x26 builds, was:
+
+    fuzz_ecdh -runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0 -print_funcs=0 src/fuzz/corpora/ecdh/explicit-builtin-invalid-scalar
+
+The unmodified clean-master witness exited 134 in both configurations. Native
+and forced-int64 focused log SHA256 values were
+`3b690c166c13528b1b26a42fcc4dd598c91be2a71417e48f2010c883933849fc` and
+`0336b8149da1aca73ab2f59bec83387c439812efb42defd10bfcfdb3a6c697c6`.
+The complete nine-file clean-master replay also exited 134; its log hashes
+were `9f1d7cc61e16729edc005d39faba3957c6461076ea19eb59903e6ea457ebbd82`
+and `45e519954eabc2145762f5d1076d7c406e82ead834b0af04e3f873ff36a5d7fa`.
+
+### First stop and masking order
+
+The first clean-master stop is an earlier member of the same cleanup family:
+`secp256k1_ecdh(..., order + 1, hashfp = NULL, ...)` returns 0 after hashing
+the scalar-one fallback point but leaves its fixed 32-byte output nonzero.
+The unmodified backtrace reaches the masked-output equation at
+`src/fuzz/ecdh.c:471`; a diagnostic-only `FUZZ_CHECK` wrapper identifies the
+cleanup assertion at line 347. This is a causal mask, not evidence that the
+explicit callback path is safe.
+
+For isolation, the disposable clean harness changed only that line-347
+assertion from `memcmp(default_output, zero32, sizeof(default_output)) == 0`
+to `FUZZ_CHECK(1)`. No production line, corpus byte, or library result was
+changed. The same witness then stopped at line 352, after
+`secp256k1_ecdh_hash_function_default` was passed explicitly. Native and
+forced-int64 isolated log hashes were
+`4c7a65c328a90f3cf8eb88f540fcdc6ba79fb1b6f857194e25139d4d013a32e7` and
+`c9af10a0105667e94e611f2b3607a1e67c69b460482672bba780e6cf7102c682`.
+The master-relative order is therefore default callback cleanup first,
+explicit library-owned callback cleanup second. `03c5f6e2` covers both with
+`known_hashfp` while preserving custom callback output semantics.
+
+### Repaired control and verification
+
+The repaired branch recognizes NULL, exported SHA256, and exported default
+callbacks, then applies `secp256k1_memczero(output, 32, overflow || !ret)`;
+custom callbacks retain their own output-size and failure contract. The fixed
+native and forced-int64 fuzzer binary hashes were
+`513ce4d1970d85f864da2fa7c06ab5080d0ff9e5a543076145c7cbb4c43b50c5` and
+`1457cef08cb83e2b6231aabb7a4189c4cf5dfcce279b6eea5915b02ad7a19225`.
+The focused witness and all nine corpus files exited 0; fixed corpus log
+hashes were `9884dd1033d867c5fffee9c1f26bf0a68b233ebf97d5941e40b223f1b1421627`
+and `ac416aea929aeb07f747eebb9a1d1d19183ec26bb3fa9539eb88a78eddcbf0be`.
+
+Native and forced-int64 `tests -t=ecdh -i=1` and
+`noverify_tests -t=ecdh -i=1` all exited 0. The test log hashes, in native
+tests/noverify then forced-int64 tests/noverify order, were
+`b0c60b8caf86f4f977f3e1c66c2acc799e4e23cde330417d9728481bedf284a4`,
+`67b19d04163855e7f4dbfeef93257f2f7aa2fb0558ffb197a7c08ed1a2427159`,
+`7bae12d1b89e8a33c806f5899a97ca1067655025a23b49d93d409c83d2c20551`, and
+`d3e649abbfb29810de3bc864e8622977a5d84c18e2e3fa015495736d3e0684a4`.
+The forced-int64 test binary hashes were
+`52dc717ec8d63b7c43d7557d9569eb17eb0e275844a8e7dc9a7771659e7b8480` and
+`02574a2052fc7c1eb57225bd317e7c8ec0c7a960653b0fc001f00a02a2f389e0`.
+
+Copied-corpus `-fork=2 -jobs=2 -max_total_time=15` campaigns exited 0 in
+both backends with empty artifact directories and
+`oom/timeout/crash: 0/0/0`. Worker log hashes were
+`56778219f690644201b45753c01604eaacbc70c9f874feab958a47229192343d` and
+`d78d695f87adde24d29c3b69954a185fa59ee7bb37d5ceacdada4fe93a4edd1e`.
+The fixed fuzzer binary contains ASan and UBSan runtime symbols. No
+sanitizer report, assertion, timeout, OOM, crash artifact, or process remains.
+
+### Core reachability and severity
+
+This is **Low / fail-closed API hygiene on master**, reiterating the existing
+`03c5f6e2` production fix rather than creating a new one. The output is a
+32-byte ECDH digest, but the rejected scalar is caller-provided, the API is
+`WARN_UNUSED_RESULT`, and a compliant caller must not consume output after
+return 0. Ignoring the failure can retain a previous or fallback-point digest,
+which is a real direct-API state hazard, but no key compromise is shown.
+
+The Bitcoin Core call-site inventory found no production use of standalone
+`secp256k1_ecdh`. Core's peer-facing BIP324 path is
+`BIP324Cipher::Initialize -> CKey::ComputeBIP324ECDHSecret ->
+secp256k1_ellswift_xdh`, not this entry point. This condition cannot be
+triggered by an invalid block or witness, does not alter consensus or witness
+acceptance, and is not High/Critical on the master branch. Any higher rating
+requires a concrete Core caller that ignores the return or a remotely
+reachable consequence. This is unrelated to clearing a nonce without
+standalone cryptographic meaning.
+
+The branch already contains the deterministic ECDH regression and focused
+corpus from `03c5f6e2`; this documentation commit adds no production mutation
+or replacement test. Any future cherry-pick touching default callback cleanup,
+explicit built-in callbacks, or ECDH output ownership must preserve this
+masking order and amend its commit message with the master baseline, exact
+input, first assertion, Core caller/input origin, severity, test gap, verifier
+commands, and whether it preserves, changes, or masks the trigger.
