@@ -37401,3 +37401,39 @@ signature forgery, key compromise, or remotely severe memory/concurrency
 failure was demonstrated. No cryptographically meaningful nonce-erasure
 finding is involved. The current artifact does not mask or alter any
 master-relative production finding, and no l0rinc commit was cherry-picked.
+
+## 2026-07-27 Core caller boundary replay
+
+After the all-target worker matrix, the current `86b4b96a` tree was checked
+again against `origin/master` and `l0rinc/master` at
+`d2d04864ef9b056151603a3ced7980958b058028`. The read-only Bitcoin Core
+worktree was not modified. Its existing `test_bitcoin` binary passed
+`--run_test=psbt_tests --log_level=test_suite` (4 cases) and
+`--run_test=script_tests --log_level=test_suite` (21 cases), with no errors.
+
+The exact current-head caller seeds were replayed one at a time from the
+tracked `recovery` and `ellswift` directories. Recovery completed 19 runs on
+both native 5x52 and forced-int64/10x26 ASan/UBSan builds; EllSwift completed
+21 runs on both backends. Every replay exited 0 with strict
+`-timeout=180 -rss_limit_mb=0 -ignore_crashes=0 -ignore_ooms=0
+-ignore_timeouts=0`; no sanitizer diagnostic, assertion, crash, timeout, OOM,
+or newly generated artifact appeared. The recovery set includes the Core
+compact-signature composition, all header boundaries, Core signing, and
+malformed opaque-state seeds. The EllSwift set includes BIP324 wire decoding,
+the built-in BIP324 hash path, invalid-secret cleanup, and the existing
+transport alias/reference cases.
+
+This is a negative caller-boundary result, not a new production finding.
+`CPubKey::RecoverCompact` still maps its message-signature header before
+library recovery, and `CKey::ComputeBIP324ECDHSecret` still receives
+always-decodable 64-byte EllSwift wire data; neither path is used to validate
+blocks, witnesses, sigop counts, or consensus state. The previously recorded
+compact-header alias and malformed opaque-recovery observations therefore
+remain **Informational/Low for Bitcoin Core** (at most Low/Medium for direct
+API state robustness), while the known internal scratch and stale-output
+findings retain their earlier ratings. No invalid-block or witness acceptance,
+sigop undercount, consensus divergence, signature forgery, key compromise, or
+remote severe memory/concurrency failure was demonstrated. No nonce with
+standalone cryptographic meaning was found to require erasure, and no
+potential fix was cherry-picked or allowed to mask a master-relative failure
+in this replay.
