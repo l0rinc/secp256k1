@@ -32930,3 +32930,91 @@ this ledger with the exact clean-master seed or mutation, first assertion or
 stack, Core caller/input origin, master-relative severity, strongest proof,
 verifier commands, and an explicit preserve/change/mask classification. No
 fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 Public API inventory and context negative revalidation
+
+After the MuSig pass, the exported API inventory was repeated against every
+current `src/fuzz/*.c` target. All callable public functions declared in the
+enabled headers are reached directly or through a target's production
+composition, except `secp256k1_selftest`. That exception is intentional and
+does not leave an untested state transition: `secp256k1_context_preallocated_create`
+calls `secp256k1_selftest()` at `src/secp256k1.c:124`, and the context fuzzer
+constructs heap and preallocated contexts across every supported flag matrix.
+The exported self-test has no caller-visible output or return value; adding a
+second direct call would add cost but no independent postcondition. No new
+fuzzer assertion was added for this reason.
+
+The current context harness was then revalidated from audit `HEAD 73861253`
+with `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The exact identity values were:
+
+```
+src/fuzz/context.c  2a6600270e4b1d3a8b27d42ff8f3c440e3d497a0f27468771334b7bb4fd609e9
+src/secp256k1.c     25830160566736d3c9ee58a52df32031146643179599680696f452be070a43b2
+src/hash_impl.h     9040d926e994f0b088accdb62ac31e41e00e847c8da91e241bd5de4c5e9fdcc6
+```
+
+The context corpus contains 13 files and 722 bytes. Its sorted filename
+manifest SHA-256 is
+`4a7f30fdc903bcc0f5624e3b23183f6b8117fdfd7088223c1a826dbce814eea1`.
+Clang 22.1.7 ASan/UBSan binaries were rebuilt for native 5x52 and
+forced-int64/10x26 arithmetic. Their hashes are
+`715f052b0389c1e35da8f51966ef3009b1168f56402c853e747c039e732345e9` and
+`ff6804df040ef8113c85a0b445f0788d291d92c3a42ac36e0f256538d5864166`.
+
+Each tracked input was replayed independently with:
+
+    fuzz_context -runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0 -print_funcs=0 <input>
+
+Both backends completed 13/13 with zero failures. Replay log SHA-256 values
+were native
+`3bb4b5f9b4a561d31538ee16626c57c0f7221537c1be62228c7d2634220d4e19` and
+forced-int64
+`ff574b2609e9989d6d6bd106bda76ce979c3a9e54c78dc59d8cb9287a0541d99`.
+
+Private corpus copies ran the following two-worker campaign:
+
+    fuzz_context -fork=2 -jobs=2 -max_total_time=30 -timeout=180 -rss_limit_mb=0 \
+      -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 -artifact_prefix=<isolated>/artifacts/ <private-corpus>
+
+Both managers and all four workers exited 0. Native reached coverage 2826;
+forced-int64 reached 4760. Every worker reported
+`oom/timeout/crash: 0/0/0`; native and forced-int64 private corpora ended at
+244 and 202 files respectively, with zero artifact files. Campaign log
+hashes were native
+`2430fd24b63d14927b7e8fcaea77ee4e88dc9ed021c8de3a95290ff293ae7c4a` and
+forced-int64
+`ed4b05b14b5d7c6a763cf562d0bedfb893995e22fdcb38d8f47eee9e8ee68ca5`.
+
+The forced-int64 ASan/UBSan deterministic slices also passed:
+
+    bin/tests -i=1 -t=all_proper_context_tests -t=all_static_context_tests \
+      -t=deprecated_context_flags_test -t=hash -t=ec -t=ecdsa -t=schnorrsig
+    bin/noverify_tests -i=1 -t=all_proper_context_tests -t=all_static_context_tests \
+      -t=deprecated_context_flags_test -t=hash -t=ec -t=ecdsa -t=schnorrsig
+
+Their log hashes were `a80b2243ac2b03ad2b9f43da069b39de43d0c2f78c4ea47bb91d4fd096074e2d`
+and `904cded7ba329ebfc5e0f1e9f5b9b4e47774fa5d8a7ff23fee2849100cc8e878`.
+
+This is **Informational/Low negative oracle evidence**, not a new production
+bug or fix. The existing clean-master context findings remain separate:
+oversized tagged-SHA lengths are Medium for a direct malformed pointer/length
+caller but Low for Bitcoin Core; invalid preallocation is Low direct API
+availability; and stale fixed-size signing output is Low/Medium direct state
+hygiene and Low for Core. Bitcoin Core validates fixed-size block, witness,
+key, and signature inputs before these context APIs; no invalid-block or
+invalid-witness acceptance, consensus divergence, key compromise, or remote
+memory/concurrency failure was demonstrated. High/Critical severity is not
+justified. No nonce or retry buffer with standalone cryptographic meaning is
+being cleared here.
+
+No l0rinc commit was cherry-picked because the refs are identical and the
+existing context mutation and clean-master differential records already
+cover the production transitions. A later change that adds a direct self-test
+call, alters context construction order, or makes a prior seed green must
+state whether it preserves, changes, or masks the transitive self-test and
+each clean-master first stop, and amend its commit message with the exact
+helper/seed, Core caller and input origin, master-relative severity, strongest
+proof, and verifier commands. No fuzz, sanitizer, compiler, or test process
+remains running.
