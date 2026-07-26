@@ -32790,3 +32790,56 @@ master-relative severities. No l0rinc commit or minor fix masked this replay,
 and no nonce or nonce-erasure issue is involved. A later change that makes a
 follow-up seed green must preserve this negative evidence and state whether it
 preserves, changes, or masks the exact scanner failure condition.
+
+## 2026-07-26 Direct API current-worker revalidation
+
+The repaired direct API target was re-run after the rebase and after the
+clean-master differential recorded above. This is negative evidence on the
+fixed branch, not a claim that unmodified master passed its earlier first
+stops. The corpus remains 63 files and 2933 bytes with filename manifest
+`06df09d6853d275cb1b6ce8a3379dbf13f6bb42b2c4cf58fdb257d0ed7739fbf`.
+
+The current harness hash is
+`f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5`;
+the public header and repaired production source hashes are
+`282294562b7b438ed4416069c277d955fdb7e6a7be7a9648b4b186d474444a75` and
+`25830160566736d3c9ee58a52df32031146643179599680696f452be070a43b2`.
+Clang 22.1.7 ASan/UBSan libFuzzer binaries used assembly OFF, all optional
+modules, and native and test-only forced-int64/10x26 arithmetic. Their hashes
+were native
+`6f0320c936e11c7761bfc4c1e81b5cbc4613b3fae4f29ba7a2e48aaa9f1aba63` and
+forced-int64 `cbd83acf89b2de0595f349b2018119da81df8bc6b550d1beaf1b2c07494976c0`.
+
+Each backend ran copied corpus files with:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=120 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1
+
+Every worker loaded the 63 tracked seeds. Native reached coverage 6042 and
+forced-int64 reached 6043; all observed `oom/timeout/crash` counters were
+`0/0/0`, both managers and workers exited 0, and the artifact directories were
+empty. The private corpus copies ended at 289 native and 196 forced-int64
+files. Campaign log hashes were native
+`92df25ad3a733a33d03bbe51eb574d2c62e68879ae8280b2eaee9eb0447a27ea` and
+forced-int64 `73c1ae24bbc06dae87a5a4062fa12512cecbe39aebcffef878aa00d695301ef6`.
+No fuzz, sanitizer, compiler, or test process remained running.
+
+No new production condition was exposed. The existing clean-master classes
+remain the ledger: direct DER/RFC6979/parser/callback/opaque-state failure
+contracts are Low to Medium at the direct API, with lower practical Core
+severity where Bitcoin Core supplies validated objects and checks return
+values; the RFC6979 maximum-counter loop is a direct API availability issue;
+and no invalid-block or witness acceptance path was demonstrated. The API
+target reaches Bitcoin Core signing, parsing, tweaking, sorting, and ECDSA
+codec callers, but this pass found no key compromise, consensus divergence,
+remote memory/concurrency impact, or witness sigop consequence. It therefore
+does not justify High/Critical severity. A retry counter or buffer without
+standalone cryptographic meaning is not a Critical erasure issue.
+
+No l0rinc commit or minor repair masked this campaign. The previously recorded
+clean-master witnesses and production fixes remain authoritative; any later
+cherry-pick or follow-up that makes a seed green must state whether it
+preserves, changes, or masks the original first stop and amend its commit
+message with the exact seed/mutation, Core input origin, master-relative
+severity, strongest proof, and verifier commands.
