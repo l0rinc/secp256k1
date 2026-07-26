@@ -32731,3 +32731,62 @@ Core input origin, master-relative severity, strongest proof, and verifier
 commands. A minor later fix making a follow-up replay green must not be used
 to downgrade a severe master finding without replaying its original clean
 master witness.
+
+## 2026-07-26 Silent Payments post-rebase worker revalidation
+
+The current rebased branch was rechecked against `origin/master` and
+`l0rinc/master`, both still `d2d04864ef9b056151603a3ced7980958b058028`.
+This is a negative revalidation of the existing nine-file Silent Payments
+oracle set, not a new production finding. The tracked corpus is 316 bytes and
+its sorted filename manifest is
+`3f7d84f159f3746add305fa0fff2bd68a9b768ca681f58772c848dd8fb6d2c9a`.
+
+The current source hashes were `silentpayments.c`
+`4c247052bc5db5bef0b9b73695e69fc1631f9b69f8f06d9978d200c5cf91dd48`,
+`main_impl.h`
+`972ca0fe29d612dd42ac6817ce639a7561448c796def26fe514afaaa101b6d66`, and
+`secp256k1_silentpayments.h`
+`d3a7e404123cd57e9b53a9de959fafbec5bb9b43b185b1060bdc0793ae756de0`.
+Clang 22.1.7 ASan/UBSan binaries were built with assembly disabled, once with
+the native wide multiply and once with test-only forced-int64/10x26 arithmetic.
+The exact nine-file replay used:
+
+    bin/fuzz_silentpayments -runs=1 -handle_abrt=0 -timeout=180 -print_funcs=0 <corpus-files>
+
+All nine inputs passed on both backends. Fresh private-corpus campaigns used
+`-fork=2 -jobs=2 -max_total_time=30 -timeout=180 -rss_limit_mb=0
+-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0`.
+Both managers and workers exited 0; every observed
+`oom/timeout/crash` counter was `0/0/0`; and both artifact directories were
+empty. The private corpora ended with 167 native and 90 forced-int64 files.
+Replay log hashes were native
+`4945cd73a765d4f1fd4e5e42c7027869adec0fff54e8078df2ce6f85e9df6e89` and
+forced-int64 `d09dc1be6f941e86f9ead26e7a94eac3505342f965fff0341f7e5c08b2ab2d15`;
+campaign log hashes were native
+`1688a78d72c79d94a67a0ef5ab3dbd213ac73d13b03ab45427e555a11f2f5042` and
+forced-int64 `840c59eb3dc70aa4993ca105da5e8f466b6ba91668362dc5415b60e67d672e2f`.
+No fuzz, sanitizer, compiler, or test process remained running.
+
+The remaining scanner question was whether a rare failure after one found
+output should require clearing every `found_outputs` slot. The public contract
+publishes usable results only when the function returns 1 and sets
+`n_found_outputs` only at successful completion; it initializes that count to
+zero before validation. The mid-scan failures are the statistically
+unreachable hash-to-scalar rejection or a malicious label/key tweak overlap,
+not ordinary malformed transaction bytes. A caller that checks the documented
+return value cannot consume the partially written slots. No production
+postcondition was added because the header does not promise failure-time
+clearing and a mutation forcing that branch would prove only an unrequested
+cleanup policy. If a future API revision promises transactional output
+clearing, add that promise and a dedicated mutation before rating it.
+
+This rejected candidate is **Informational/Low oracle hardening**, not a
+master-branch bug. Bitcoin Core uses the scanner in the wallet-side BIP352
+path, not block or witness validation; no invalid-block acceptance, consensus
+divergence, key compromise, memory-safety impact, or concurrency failure was
+shown. The prior opaque-state validation, multi-label, group-limit, and
+independent BIP0352 reference findings remain at their recorded
+master-relative severities. No l0rinc commit or minor fix masked this replay,
+and no nonce or nonce-erasure issue is involved. A later change that makes a
+follow-up seed green must preserve this negative evidence and state whether it
+preserves, changes, or masks the exact scanner failure condition.
