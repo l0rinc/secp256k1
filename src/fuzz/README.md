@@ -34278,3 +34278,103 @@ issue is involved. No l0rinc commit was cherry-picked because the refs remain
 identical. No production fix or deterministic regression test was added by
 this negative pass. No fuzz, sanitizer, compiler, or test process remains
 running.
+
+## 2026-07-26 Remaining module boundary campaign
+
+The remaining API/module state machines were rechecked after the field pass.
+The current branch is `f6b86444c93dc18fc341cc7480ea87655235f054`, and
+`origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The fuzzer source hashes are:
+
+| target | source SHA-256 |
+| --- | --- |
+| `api_roundtrip` | `f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5` |
+| `schnorrsig` | `47c871312162705d4355265bf682d4e195dcb64a3d13bb253a71a68552ce822b` |
+| `ellswift` | `20c746ada0051d972528565e762a3ad9be27b0bf6c11dc91680da07a6dc2ac06` |
+| `scalar` | `174a0800d90ed2b7ca38ada2c084510e458ad3a584ca953f8d41c7181152d9be` |
+| `musig` | `70e5af7b51898c8a95a2b780425698f18400e5f10a511c5aee39c91197828f82` |
+
+Fresh private copies of the 63-input API corpus, 18-input Schnorr corpus,
+19-input EllSwift corpus, and 9-input scalar corpus ran in native 5x52 and
+forced-int64/10x26 Clang ASan/UBSan libFuzzer builds with:
+
+    -fork=2 -jobs=2 -max_total_time=90 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+All eight managers and their fork workers exited 0. The private corpora ended
+at 278 / 126 API files, 234 / 111 Schnorr files, 156 / 61 EllSwift files,
+and 356 / 262 scalar files, in native / forced-int64 order. These were
+passing additions only. Every observed `oom/timeout/crash` counter was
+`0/0/0`, all eight artifact directories were empty, and the aggregate log
+hashes are:
+
+| target / backend | campaign log |
+| --- | --- |
+| `api_roundtrip` / native | `cfbf2cb4944664e09cfc0953b2494226a48946bdd2b474c2ed90aa0b804b7c1c` |
+| `api_roundtrip` / forced-int64 | `eda4808151145b0e14e7c2983743c8aa0a56ceed566df73924f5e61c22185e30` |
+| `schnorrsig` / native | `88e6f4097e577c8d086bf84faef181853ffd05d8c58139077afb59de51f1ae31` |
+| `schnorrsig` / forced-int64 | `6eee3f8dd211f7e4d4c241206677454e55437aa4d6c7e3a6d9d989cdd2e654cb` |
+| `ellswift` / native | `421b26fd085685a31ace385bc4aa95b636c3b0896d7ac5786904cada176f91ec` |
+| `ellswift` / forced-int64 | `fb187b2d0118db5226457dffabf0c0e89757e1d037ba7b3edb0a4ae7a9ddc61c` |
+| `scalar` / native | `81c85b2ecd5c13d504085a8f21828f0adc8181906a4af23ccc2afb90447d73c2` |
+| `scalar` / forced-int64 | `a31229d2fd563fc5b14a817700b2522bdfadcab3c2f195d8907c4b0df06c587a` |
+
+The tracked seeds were replayed once per backend without the fuzzer worker
+orchestrator: API 64/64, Schnorr 19/19, EllSwift 20/20, and scalar 10/10
+executions completed with no diagnostic. Replay log hashes are:
+
+| target / backend | replay log |
+| --- | --- |
+| `api_roundtrip` / native | `77c1346780171e0c38f29ff0713bf66090918ea887029fcbd36849bac8bbbf8e` |
+| `api_roundtrip` / forced-int64 | `1e050adc6f3ae868c3a443723b7dc3b561db7704d9f00ae1a862152303a2c391` |
+| `schnorrsig` / native | `d2a87acf74bc885b5fa7354bb0daad38d478c7bfbc09c6f7d5fcbd1fe41fd7bd` |
+| `schnorrsig` / forced-int64 | `f06d3230533117949786bdafeb55913be068b617c4370e68082cca1d52802920` |
+| `ellswift` / native | `b82403cea22bc1c7ec856160568b317777fd225238c23e421929d9704e24efdc` |
+| `ellswift` / forced-int64 | `dd995b7c2a47a52ad231446b42c20fd102f72f9cd71a01d61570732c0296f217` |
+| `scalar` / native | `6755af41734f6a1b430ee4542a25db93dd625a6f93ce90278d642e117c456e5c` |
+| `scalar` / forced-int64 | `913ff7ac480d8b8554925712d9f1b569682225eaa19d24127cd59d18dba93388` |
+
+MuSig was run separately because its long state-machine inputs make the
+libFuzzer parent-side merge much slower. The 79-input, 2998-byte corpus ran
+with `-fork=2 -jobs=2 -max_total_time=30 -timeout=120` and the same sanitizer
+settings, under a 210-second outer deadline. Native workers exited at 108/109 seconds and forced-int64
+workers at 187/188 seconds; every worker exited 0, both campaign logs reported
+`oom/timeout/crash: 0/0/0`, both private corpora remained at 79 files, and no
+artifact was created. The aggregate log hashes are native
+`1b74385bec9056dbcd7814d4729a46cd4a7cf3d8701223429665de37b9a98c39` and
+forced-int64
+`f2200c1fcfc050809da3c85731f1f57a90685306b570f4cc7f82c50acd8a8428`.
+Independent one-input replay then passed 79/79 on each backend with a
+15-second process bound per input. No per-input log contained a sanitizer,
+assertion, `FUZZ_CHECK`, error, or summary diagnostic; the sorted log-manifest
+hashes are native
+`e7236c69b112186a4e8c5bf65172d1ed50d702a0b29f8a1221328f1785f71649` and
+forced-int64
+`1bad4423085b2125d87140285f4074175e7140197b6d63da44f9b9cce2f6565b`.
+
+The deterministic module tests also passed at `-i=1` on both backends for
+`ecdsa`, `scalar`, `schnorrsig`, `musig`, and `ellswift`. The EllSwift path
+includes l0rinc PR27 (`fe361c7f`), cherry-picked as `3eafe49b`; the existing
+clean-master control and commit note prove that denominator-square reuse
+preserves, rather than masks, the prior zero-`u` first stop. No new
+production mismatch, invalid-block or invalid-witness acceptance, consensus
+divergence, key compromise, signature forgery, remote memory/concurrency
+failure, or witness-sigop consequence was found.
+
+Existing findings are reiterated against current Bitcoin Core: opaque public
+key, MuSig cache/session, and partial-signature state failures remain **Medium
+direct-API/opaque-state integrity** and **Low-to-Medium for current Core**,
+whose consensus callers parse serialized keys/signatures and whose MuSig use
+is wallet/application state rather than block or witness validation. EllSwift
+zero-`u` and callback cleanup remain **Low-to-Medium transport/direct-API
+hygiene** on Core's BIP324 path, with no demonstrated handshake compromise or
+remote crash. Scalar WNAF and oversized-shift cases remain **Low latent
+internal safety**. MuSig secret nonces are cryptographically meaningful, but
+this pass found no nonce reuse, disclosure, or signature forgery; a retry
+counter without standalone cryptographic meaning is not Critical merely
+because it is uncleared. High/Critical is still unjustified: no invalid-block
+or invalid-witness acceptance has been proven. No l0rinc commit was added by
+this pass because the refs are identical, and no production fix or
+deterministic regression test is claimed. No fuzz, sanitizer, compiler, or
+test process remains running.
