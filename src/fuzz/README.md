@@ -33993,3 +33993,59 @@ state whether it preserves, changes, or masks each finding, with the exact
 Core caller/input origin, master-relative severity, first assertion, and
 verifier commands. No fuzz, sanitizer, compiler, or test process remains
 running.
+
+## 2026-07-26 Group and x-only key-boundary worker revalidation
+
+The SEC1/group and Taproot x-only boundaries were rechecked after the
+ecmult_multi pass with the current repaired branch. This is negative evidence
+and preservation of the existing clean-master findings, not a new production
+bug. `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The fuzzer source hashes are
+`src/fuzz/group.c`
+`c8b122ad7a011834abd7ef3a23d9ab57e006a5be903c17783f66dfdc059aa98b3` and
+`src/fuzz/xonly_tweak.c`
+`f7910e0c16f3c682acd0892fe7de9a1df6d4d216084161a9da42993a624ed870`.
+
+Fresh private copies of the 23-input group corpus and 20-input x-only corpus
+ran in native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds with:
+
+    -fork=2 -jobs=2 -max_total_time=90 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+All four managers and all eight workers exited 0. Independent inspection of
+the private copies found no sanitizer, assertion, timeout, OOM, crash, or
+artifact file. LibFuzzer generated additional passing inputs only in those
+private copies: group grew to 1090 native and 948 forced-int64 inputs, while
+x-only grew to 64 native and 59 forced-int64 inputs. The fixed controls then
+ran exactly 23/23 group and 20/20 x-only inputs once per backend with
+`-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0`; all four returned 0
+with no diagnostic. Replay log hashes are:
+
+| target / backend | replay log |
+| --- | --- |
+| `group` / native | `72e2ddfb86936ab14d9cbab67e661fc890538c5ddff259e27a3369b15482d275` |
+| `group` / forced-int64 | `13965c66af0daee32ef6185bf851ed6e93e91cd04a8ee3e4e445eef481d8bcb3` |
+| `xonly_tweak` / native | `2fb70b5c9b644225b490fe0ef456837e9a74782e39cba75165763b277424b62c` |
+| `xonly_tweak` / forced-int64 | `edef2486710182aca52dd6a68ed920244db0ad533e520140f1691f973151cfbb` |
+
+The clean-master opaque-public-key rejection finding remains **Medium** at
+the direct API/opaque-state boundary and **Low-to-Medium for current Bitcoin
+Core**: Core parses `CPubKey` bytes before passing them onward, and no block
+or witness path constructs the `(1,1)` off-curve object. The x-only even-Y
+state is an **Informational internal invariant** on current master; Core's
+Taproot inputs arrive through validated x-only parsing. No invalid-block or
+invalid-witness acceptance, consensus divergence, key compromise, signature
+forgery, remote memory/concurrency failure, or witness-sigop consequence was
+demonstrated. High/Critical is not justified. No cryptographically meaningful
+nonce-erasure issue is involved.
+
+No l0rinc commit was cherry-picked because the refs remain identical and the
+existing group/x-only mutation matrices already provide the causal controls.
+This pass adds no production fix or deterministic regression test. A later
+key-loader, x-only normalization, Taproot adapter, optimization, or
+cherry-pick that changes a follow-up result must replay the unmodified-master
+first stops and state whether it preserves, changes, or masks them, with the
+exact Core caller/input origin, master-relative severity, first assertion, and
+verifier commands. No fuzz, sanitizer, compiler, or test process remains
+running.
