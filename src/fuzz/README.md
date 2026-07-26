@@ -36544,3 +36544,70 @@ justified by this negative run. Future changes to wide multiplication or its
 callers must rerun the exact 360-seed manifest and the three worker matrices,
 then state in the commit message whether they preserve, alter, or mask this
 master-relative result.
+
+## 2026-07-26 Bitcoin Core compact-header alias acceptance
+
+The latest Bitcoin Core source ref used for this check is
+`e34b8d5a7dcd45e4faa3bb5fdeae64bf049037f6`; its built daemon reported
+`v31.99.0-b08815bbb523`. The relevant production code in
+`src/pubkey.cpp:300-317` computes
+
+    recid = (vchSig[0] - 27) & 3;
+    fComp = ((vchSig[0] - 27) & 4) != 0;
+
+without first requiring the compact header to be in Bitcoin Core's documented
+canonical range 27 through 34. `verifymessage` decodes the Base64 value and
+passes it directly to `CPubKey::RecoverCompact` from
+`src/common/signmessage.cpp:40-52`.
+
+The behavior was reproduced against that exact build on regtest. A second
+fresh-node replay used only root-level `verifymessage` RPC calls, with no
+wallet loaded, and reproduced the same alias matrix; this rules out wallet
+state as part of the acceptance. The fixed message was
+`compact-header canonicalization probe 2026-07-26`, the P2PKH
+address was
+`n1U196rWWHYbN3BFGBgoYGMcWoSHVEbuuX`, and the valid 65-byte compact
+signature was:
+
+    ICSnngud7H2grR8yL4Yh8GF9gb3N5xXj8Bzp/w8tBx3PFDKO9HQdG/VbOc8FjgxiNyrdi6MSCCxKfa8KJfS4SU8=
+
+Its first byte is 32. Keeping the remaining 64 bytes unchanged and replacing
+only that byte produced these `verifymessage` results:
+
+    header 16  24  32  40  48  56  64  -> true
+    header 33  36                       -> false
+
+Thus headers outside 27..34 that preserve the masked recid/compression bits
+are accepted as alternate encodings of the same recovered key and message.
+This is a deterministic wrapper-level canonicalization/malleability finding,
+not an ECDSA forgery: the attacker still needs a valid signature, and the
+mutation changes no signature scalar or recovered public key.
+
+### Core severity and oracle boundary
+
+Master-relative severity is **Informational/Low, Core wallet/message API**.
+Bitcoin Core reaches this code for `signmessage`/`verifymessage`, but not for
+block validation, witness validation, sigop accounting, or consensus-critical
+authorization. The replay demonstrated no invalid-block or invalid-witness
+acceptance, consensus divergence, signature forgery, key compromise, or remote
+memory/concurrency fault. It therefore is not High/Critical under the audit
+rubric. It is also not a secp256k1 production defect: the library API receives
+the recovery id as a separate value and has no contract for Core's one-byte
+header encoding.
+
+The earlier `8808eb61` recovery oracle intentionally covers only the eight
+documented headers 27 through 34 and therefore passes both before and after a
+Core canonical-header check. This note keeps the wrapper finding separate so
+a later Core fix cannot make a follow-up secp replay appear to have discovered
+it. No l0rinc commit changes this result; the secp clean-master refs remain
+`origin/master == l0rinc/master == d2d04864`.
+
+The strongest fix proof belongs in Bitcoin Core: add a deterministic
+`verifymessage` regression that accepts 27..34 and rejects the exact alias
+headers above, then review legacy-compatibility impact before changing
+`RecoverCompact`. A Core-side range check was not applied in this secp branch,
+and no production fix or secp deterministic regression test is claimed here.
+Any future Core or fork change must state whether it rejects aliases, preserves
+them deliberately for compatibility, or only changes a later message path;
+the exact replay should be rerun so a non-serious follow-up fix does not mask
+the original master behavior.
