@@ -33486,6 +33486,75 @@ or stack, Core caller/input origin, master-relative severity, strongest proof,
 verifier commands, and whether it preserves, changes, or masks the result.
 No fuzz, sanitizer, compiler, or test process remains running.
 
+## 2026-07-26 Reiterated forced-10x26 field normalization finding
+
+The current-master field differential was replayed after the rebase to ensure
+that a backend change or later cherry-pick has not hidden the existing
+magnitude-32 defect. The clean references are
+`origin/master == l0rinc/master == d2d04864ef9b056151603a3ced7980958b058028`.
+The focused `magnitude32-normalize` input is 57 bytes with SHA-256
+`158829afa5615d0664c06a9230d6b8ae822dd94f7251d8d1e9c6f17d5892d8cf`.
+The `zero-predicate-false-positive` control is 54 bytes with SHA-256
+`dbf16239f943e537fa6f6d2673bb2cea1920bd0f0206e3f2af7320f385371379`.
+
+Each input was run independently with
+
+    -runs=1 -timeout=10 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 <input>
+
+The exact result matrix was:
+
+| input | clean 5x52 | clean 10x26 | fixed 5x52 | fixed 10x26 |
+| --- | ---: | ---: | ---: | ---: |
+| `magnitude32-normalize` | 0 | 134 | 0 | 0 |
+| `zero-predicate-false-positive` | 0 | 134 | 0 | 0 |
+
+The clean 10x26 `magnitude32-normalize` failure reaches the independent
+normalized-byte check at `src/fuzz/field.c:72`; the repaired build returns 0.
+The native 5x52 result is a useful backend control, not evidence that the
+10x26 implementation is safe. The clean 10x26 zero-predicate input also
+returns 134, but it reaches the same earlier magnitude-32 check in this
+harness, so this replay does **not** claim a second independent zero-predicate
+failure. The separate `f34ff1ba` zero-predicate proof remains authoritative.
+
+The clean/fixed binary hashes in matrix order were
+`19e1302b0065e6f253fc0d7c7b665b2b9862a0f0f718e7537ed1a7871fee9184`,
+`85a0fbda9e10757fee1840ea275a0e07c777bf0a68d5bedafff2d27016a3d942`,
+`bad6543684dbd645a3d46b5cab0f90d4e3998fd4707388da6daca04b1137cff5`, and
+`ca5ccf0bfe5d84a45dd135384817bc608a91ab1bf1a39bb19226e282e39c6800`.
+The source hashes were `2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`
+for `src/fuzz/field.c` and
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05` for
+`src/fuzz/fuzz.h`. The per-input log hashes, in the same clean-5x52,
+clean-10x26, fixed-5x52, fixed-10x26 order, were
+
+* `magnitude32-normalize`: `0d8a02e0d5eb14f054aabd119a60f08d02d786ac6befd3908b846f6cfb3c5653`,
+  `3edc03e991cfdd941096f4ee18f38f45fbbf30cb92d3497815852fcc056065ea`,
+  `90d4c43648370cee1fbc5c61d712348576fd5ed8addf04f561e958312baee7ef`,
+  `83816f807afc27c2219e22eaab1adcba2b9a496b73a36d727458e861c4da7171`.
+* `zero-predicate-false-positive`: `9c70c99c07c5936d7365216b21c34fa4b73377117de95dcacc6176f871affe77`,
+  `e6dcbbf2e0361a0ee67fbacb2298ad1b9c71f567fa0c013c692e8e052148c24f`,
+  `866c152a78688ea3684a1bb2b0e17d0d570488f3ea2aa5a12257c7c0949cfa41`,
+  `581f5fed311c4a01f5ec6ec835a75bbcd7ff5b9bed30230be56f312215c31f6c`.
+
+This remains **Medium latent internal field correctness on unmodified
+master** and below High/Critical for current Bitcoin Core. Ordinary Core
+consensus builds select the 5x52/int128 backend; supported fallback platforms
+may select 10x26, but no peer-supplied block or witness has been shown to
+drive this exact maximum-magnitude opaque field representation. No
+invalid-block acceptance, invalid-witness acceptance, consensus divergence,
+key compromise, signature forgery, memory-safety failure, remote availability
+failure, or witness-sigop consequence was demonstrated. A higher rating
+requires a Core caller-level reproduction, especially one showing that an
+invalid block is accepted or that honest nodes diverge.
+
+The production repair is `6e5e385c`/`84549065`; the zero-predicate repair is
+`f34ff1ba`. This replay adds no new production change or regression test. Any
+later backend optimization, fork cherry-pick, or minor fix must preserve the
+clean 10x26 failure, state the exact first-stop order, and amend its own commit
+message with whether it preserves, changes, or masks this master finding and
+the Core input-origin/severity analysis. No fuzz, sanitizer, compiler, or
+test process remains running.
+
 ## 2026-07-26 Reiterated opaque-public-key master finding
 
 The existing invalid opaque-public-key finding was replayed again after the
