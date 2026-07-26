@@ -36142,3 +36142,57 @@ for an already stored session; it does not provide index identity for repeated
 participants and does not mask this finding. A future Core fix must retain the
 duplicate-participant BIP327/BIP390 semantics and add a deterministic two-wallet
 PSBT regression test before this finding can be closed.
+
+## 2026-07-26 l0rinc PR28 in-place group-addition reconciliation
+
+The newly fetched l0rinc PR28 head was reviewed and cherry-picked as two
+buildable commits: `52061c6b` (`d0c8b9f4` here) adds exhaustive in-place
+`secp256k1_gej_add_ge_var` and `secp256k1_gej_add_zinv_var` cases, and
+`833eaaa2` (`b1717faf` here) removes the redundant local `u1` copies after
+the implementation has finished reading `a->x`. The clean-master base for
+the pull is `d2d04864ef9b056151603a3ced7980958b058028`.
+
+This is a behavior-preserving aliasing optimization, not a clean-master
+production bug. The existing group fuzzer already performs the relevant
+output/input alias checks at `src/fuzz/group.c:476` and `:655`, so adding
+another named seed would duplicate an existing oracle rather than improve
+its first-stop coverage. The PR's exhaustive test is the stronger breadth
+check: it covers every pair in the configured exhaustive group, including
+the output object aliased to the Jacobian input for both variable affine
+addition paths. The commit messages record this relationship so a later
+optimization cannot make the same boundary look newly discovered.
+
+Both Clang ASan/UBSan builds rebuilt `tests` and `fuzz_group`. The exhaustive
+test command was:
+
+    ./bin/tests -i=1 -j=2 -t=ecmult
+
+It exited successfully in native 5x52 and forced-int64/10x26; the complete
+log hashes are `63d8405bc720f34c7a7134ba14b8ca74a62d815e02fd9416474216f47cb61bac`
+and `6d252cd8efe755e09ba9c13944606ad725ea9ef908b4e4a1ab7bf09acf96206c`.
+The strict worker replay used two fork workers and two jobs per backend:
+
+    -fork=2 -jobs=2 -max_total_time=45 -timeout=180 -rss_limit_mb=0
+    -ignore_ooms=0 -ignore_timeouts=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+All four workers exited 0 with `oom/timeout/crash=0/0/0`, no sanitizer or
+assertion diagnostic, and no artifact. Native worker log hashes were
+`0bf365a43913f7ae3889b75a9b2c1d241f803f47fb545dea12ebef41414999b5` and
+`9c50abd7e2a540c9ad95a9c6d2a7b9d06f9a2299d099a22a24c1f8bf96dab13c`; forced-
+int64 hashes were `b65bc2a58f829549b2c5e79f102dda4c0e8438770af2c21338ced858468ce034`
+and `76232222f27e7db75b3aac5b2a8f937be36a45af88b5d0567b1f7cdd546d94db`.
+The private passing corpora grew from 23 seeds to 930 native and 842
+forced-int64 inputs; no generated input was promoted to the tracked corpus.
+
+The formulas are internal group arithmetic. Bitcoin Core reaches them only
+after parsing and validating serialized public keys; no invalid block or
+witness supplies the exhaustive opaque state. No invalid-block or
+invalid-witness acceptance, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure was demonstrated.
+The PR is therefore **Informational/Low coverage evidence** for current
+Core, not High/Critical, and it does not change the existing master-relative
+opaque-state findings. No cryptographically meaningful nonce or retry-counter
+clearing issue is implicated. A future group optimization or cherry-pick must
+rerun this exhaustive alias test and the existing fuzzer checks, and state
+whether it preserves, changes, or masks the original master result.
