@@ -37114,3 +37114,37 @@ justify High/Critical severity or a new production fix. Future field changes
 must rerun these exact seeds under sanitizer and show the public ECDSA,
 Schnorr, x-only, or Taproot consequence before escalating an arithmetic
 assertion.
+
+## 2026-07-26 ECDH sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_ecdh` replayed the existing 9-file
+`src/fuzz/corpora/ecdh` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_ecdh -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 9 seeds (283 bytes), exited 0, and completed 431 and 433
+executions. Each reached coverage 2461; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`316f5fbc87d27af835f656dbcb927f504b1d52fb0dfa9a97e3630ba265d95ded` and
+`c2ad7deef01091b1ff3c57559b017bce627e42b0462efb20dca14769c27bd45d`.
+The copied corpus grew to 94 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of ECDH symmetry, invalid scalar
+and callback-point handling, built-in/default hash behavior, cleanup, and
+static-context barriers. It found no new production bug, invalid witness or
+block acceptance, sigop undercount, consensus divergence, signature forgery,
+key compromise, or remote memory/concurrency failure. The surveyed Bitcoin
+Core branch has no standalone `secp256k1_ecdh` caller; its BIP324 transport
+path uses EllSwift, covered separately above. Existing ECDH findings remain
+direct-API Low/Medium robustness ratings, with no High/Critical escalation or
+production fix justified by this replay. Future ECDH changes must rerun these
+seeds under sanitizer and identify a real caller consequence before severity
+is raised.
