@@ -37176,3 +37176,97 @@ direct-API Low/Medium robustness ratings, with no High/Critical escalation or
 production fix justified by this replay. Future ECDH changes must rerun these
 seeds under sanitizer and identify a real caller consequence before severity
 is raised.
+
+## 2026-07-26 l0rinc PR29/PR30 reconciliation and group/recovery replay
+
+The fork PR refs were refreshed from `https://github.com/l0rinc/secp256k1`.
+PR29 is `ff010bd9` with its companion test `1fcddf60`; PR30 is
+`68375d54`. PR29 was imported as `6c1991b2` (the finite
+Jacobian-to-affine transition test) and `8475aa27` (the duplicate infinity
+assignment cleanup). The test was applied at the current `test_ge` transition
+point, after the branch's existing group changes, so it verifies that a finite
+conversion overwrites a destination previously initialized to infinity.
+The cleanup is behavior-preserving: infinity returns through the early path,
+and finite conversion ends in `secp256k1_ge_set_xy`, which sets the finite
+state. This is not a new production bug and has no network-controlled Core
+caller, invalid-block consequence, consensus consequence, or High/Critical
+severity.
+
+PR30 describes the same malformed opaque recoverable-signature state already
+fixed and recorded by `ec34c404`, with fixed-output cleanup from `27cc01dc`.
+The current branch validates both scalar components and `recid <= 3` in the
+shared loader, rejects the state in serialization/conversion/recovery, and
+clears fixed outputs. The recovery fuzzer independently mutates `r`, `s`, and
+`recid`, checks the illegal callback once per rejection, and checks all output
+postconditions. PR30's additional API-level test and exhaustive-test return
+check are therefore duplicate coverage, not an unintegrated repair. Its final
+source also changes the order of a local `s` copy and removes a redundant
+post-loader `VERIFY_CHECK`; neither changes a valid public result. We did not
+cherry-pick PR30 because replacing the existing stronger state/output tests
+would obscure the branch's earlier repair and its master-relative proof.
+
+The authoritative refs remain `origin/master` and `l0rinc/master` at
+`d2d04864ef9b056151603a3ced7980958b058028`. The fresh Clang 22.1.7
+ASan/UBSan build used `-DSECP256K1_ASM=OFF`, all optional modules, and
+`-DSECP256K1_FUZZ_USE_LIBFUZZER=ON`. The target hashes were:
+
+    fuzz_group:    67795c1fb500e50e942fed3dc975a47713e1b4f832aa9207d667fe8a13ccb71f
+    fuzz_recovery: a6491add6838b8a17680b0d0f96df02699dc79a22c10cc3eb818fcf63402f1fa
+    libsecp256k1:  849c4aaa6ed7848ce9b30d4f3b21c726899ff10f96a182d9c716d111424b5a98
+
+The deterministic command
+`tests -i=1 -j=2 -t=ge -t=gej_rescale_alias -t=recovery` passed under
+ASan/UBSan with seed `f446df1a485dce74190c01c1b02e59d5`. Strict replays of
+the tracked group and recovery corpora also passed: group loaded 23 files
+(837 bytes), completed 24 runs, and reached coverage 5137; recovery loaded
+18 files (821 bytes), completed 19 runs, and reached coverage 7724. Replaying
+private copies produced the same clean result.
+
+The isolated two-worker commands used `-fork=2 -jobs=2 -max_total_time=15`
+with `-timeout=180`, unlimited RSS, and all crash/timeout/OOM failures
+non-ignored. Every manager and worker exited 0. Group worker final coverage
+was 5138 for both workers; the worker logs were
+`95eeccf122155a1396b30e01ab89e0312e9b342c6625bc5c786da9fda65e0152` and
+`f9c56eed340e20b9b8331ce735962ae0bc8bf0ca6323a92f8e20227a4448bfbf`, and
+the manager log was
+`78d39bd7cc13b8e275de2dae3cc64b76ba6f2b0d34ba0c2d768df1acec9e9cdc`.
+Recovery worker final coverage was 7724 and 7727; the worker logs were
+`2dedb6950f8a1316f1cbb09ccd215eb28781ddde017f092992983cc06ade59ac` and
+`5179fe446d0ae3616c08bab78caadb556a8b20ffd7f4b4e8f521c60c866e4104`, and
+the manager log was
+`b4ae48b8b88a3d5b8fbc32324032d7d5b80210aa4effe2218af35f37d0577955`.
+The private worker copies grew only disposable mutation units (95 group,
+28 recovery); no artifact was promoted to the tracked corpus.
+
+The same controls were repeated with the test-only forced-`int64`/10x26
+backend. Its target hashes were:
+
+    fuzz_group:    c40e9afd61581711588d574b833da07abdf7dbabfa8dba6b80b0f002530808cc
+    fuzz_recovery: 168bc3e19b6ef2aa20eced31d4adc08ddc34ab60cb2f5902eb49651be8230952
+    libsecp256k1:  f32beb49d4b2687329ea7181ad824397d1c1f507c2d6ca827e0863e664c7c633
+
+The deterministic suite passed with seed
+`b2d7da3cd82904f9e9d07cac19719f74`. Strict group and recovery replays again
+loaded 23 and 18 files and completed 24 and 19 runs, reaching coverage 7554
+and 10354 respectively. The isolated two-worker group logs were
+`63cef22fdc59b49b2e33223375f0c42190984859e46827d2fe6c71f04ee13211`,
+`9e46224d434451b8515c86fc77e6c8bc1fff460316697f26cf4148a66f92ac3e`, and
+manager `01447ce00a75baf021cc468c4018c33c8b18b4bdc300f7387561b6f8e37694ac`;
+final worker coverage was 7554 and 7555. The recovery logs were
+`157ffba0922d2f71e9e70b700efa567ad6d822d0c19e755b2c372d509277ef42`,
+`f11ba43e35a99bd25194c049f8970a9187e0607ce011bd704f16f97136997203`, and
+manager `5f3a9095878fadaaec1aa6833b0c8933d01b5850bf8f95fe06ab4b13898fa780`;
+both workers reached 10354. All four jobs exited 0 with no sanitizer,
+assertion, crash, timeout, OOM, or artifact.
+
+Severity remains **Low/Medium direct API state robustness** for malformed
+opaque recovery objects and **Informational/Low for Bitcoin Core**. Core's
+`CPubKey::RecoverCompact` parses compact wire data before recovery, and
+`CKey::SignCompact` creates the opaque object from a valid signer. This is a
+message-signature wallet path, not block or witness validation. No invalid
+block or witness acceptance, sigop undercount, consensus divergence,
+signature forgery, key compromise, or remote memory/concurrency failure was
+demonstrated. The PR29 cleanup and PR30 follow-up do not mask a High/Critical
+master finding. Future changes to group conversion or recoverable-signature
+loading must preserve this PR ordering and state whether they change or only
+retest the existing master-relative findings.
