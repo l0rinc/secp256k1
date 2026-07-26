@@ -32843,3 +32843,90 @@ cherry-pick or follow-up that makes a seed green must state whether it
 preserves, changes, or masks the original first stop and amend its commit
 message with the exact seed/mutation, Core input origin, master-relative
 severity, strongest proof, and verifier commands.
+
+## 2026-07-26 Focused MuSig semantic-state revalidation
+
+This pass continued from the rebased audit branch at `ed1a3265`, with
+`origin/master == l0rinc/master == d2d04864ef9b056151603a3ced7980958b058028`.
+It inspected the remaining high-state MuSig transitions against the existing
+oracle inventory before adding a new assertion. The reviewed boundaries were
+partial-signature aggregation and verification, session/cache semantic
+relationships, nonce-generation retry behavior, infinity and cancellation
+transitions, and optional-output/failure ordering. The existing corpus already
+contains dedicated probes for each of those state classes; no independent
+contract was found that could be asserted without either duplicating an
+existing probe or changing a documented API rule.
+
+The exact current source hashes were:
+
+```
+src/fuzz/musig.c                  70e5af7b51898c8a95a2b780425698f18400e5f10a511c5aee39c91197828f82
+src/modules/musig/session_impl.h 529e4577e6246c3c9a71f9c8879f83218e16628be067ecf1744a506fa5d19ff7
+src/modules/musig/keyagg_impl.h  12f85c7def5a07376ec0b6caa06d7e8eaebea770f0d30e96f02e562f5e1dddfe
+include/secp256k1_musig.h        64245ddead6dd74cd7f35ae6c7361b76d867e971d042207920529e9971d045b5
+```
+
+The corpus contained 79 files and 2998 bytes. Its sorted filename manifest
+SHA-256 was
+`bc59ad334e2d9d87b1bd7250ea9f82e9190f418e3c40529a4dba31016ec791af`.
+Native 5x52 and forced-int64/10x26 Clang 22.1.7 ASan/UBSan binaries were
+rebuilt from this exact source. Their hashes were
+`bff58a83cfbc636c7d49540c57d73dd809227aa7798966fbfaa81227f66c792e` and
+`140a410268e52b748239d07619693e90a55eb887eec14bc73ccb404d348e68c0`.
+
+Each tracked input was replayed independently with:
+
+    fuzz_musig -runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0 -print_funcs=0 <input>
+
+Both backends completed 79/79 inputs with zero failures. The replay log
+SHA-256 values were native
+`ba7e3db38ff7301ebf40eb1617f8fe0b983ab312ea7df6eae00bbdc2f4986a61` and
+forced-int64
+`4cd95efad52a5fcc737d911fc69af4c618e095b3de7bb2763960b3add8d821e3`.
+
+Private copies then ran the exact multi-worker campaign:
+
+    fuzz_musig -fork=2 -jobs=2 -max_total_time=30 -timeout=180 -rss_limit_mb=0 \
+      -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 -artifact_prefix=<isolated>/artifacts/ <private-corpus>
+
+Both managers and all four workers exited 0. Native reported coverage 4340
+and 12866 features; forced-int64 reported coverage 6386 and 21538 features.
+Each backend reported `oom/timeout/crash: 0/0/0`, retained 79 corpus files,
+and produced no artifact. Campaign log hashes were native
+`8b729ac8392194264e0000e7a4d4cf1db19db493cfd02f1927e0916f34c90248` and
+forced-int64
+`066d8de1b74fc6f1a8e1d850f774fd653bd840db90aea1ce7ed51bb8d1968a8e`.
+The focused forced-int64 `tests -t=musig` and `noverify_tests -t=musig`
+commands also exited 0; their log hashes were
+`52fdb961c539718dde47d22c2aa238bc299e2f8b9f2f5b9144f1015aa2c52961` and
+`fa09db6500ac41713a5351505aa9172eaa58c6e3b8073c7221ee7a5c568deb45`.
+
+### Contract decisions and severity
+
+Zero is a parseable partial-signature scalar. `musig_partial_sig_agg` is
+documented to aggregate inputs without verifying their equations; asserting
+that every accepted partial signature is valid would be an overbroad oracle.
+The matching validity contract is `musig_partial_sig_verify`, which the
+existing independent point-equation and binding probes exercise. Likewise,
+the serialized session does not carry the aggregate nonce or key list needed
+to reconstruct caller identity; its field-range, parity, point, cache, and
+equation barriers are already covered. Failed random-nonce generation preserves
+`session_secrand32` for a corrected retry as documented. Clearing that buffer
+on failure would change the API contract, and a retry input without standalone
+cryptographic meaning is not a Critical erasure finding.
+
+This is **Informational/Low oracle revalidation**, not a new clean-master
+production bug or fix. MuSig is used by Bitcoin Core's wallet/application
+signing path, not block or witness validation. No invalid-block acceptance,
+invalid-witness acceptance, consensus divergence, key compromise, or remote
+memory/concurrency impact was demonstrated, so High/Critical severity is not
+justified. The earlier clean-master MuSig findings retain their recorded
+Low/Medium classifications; none is upgraded merely because a later minor
+cleanup could mask its first stop. No l0rinc commit was cherry-picked because
+the refs are identical and the cleanup series is already reconciled. Any
+future commit that changes these transitions must amend its own message and
+this ledger with the exact clean-master seed or mutation, first assertion or
+stack, Core caller/input origin, master-relative severity, strongest proof,
+verifier commands, and an explicit preserve/change/mask classification. No
+fuzz, sanitizer, compiler, or test process remains running.
