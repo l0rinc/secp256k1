@@ -23,7 +23,7 @@ Targets:
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, duplicate-key and all-identical-key signing round trips, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
-- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, independent BIP0352 input-hash, shared-secret output-tweak, and label-tweak derivation including the `uint32_t` maximum, one-, two-, and three-label labeled-spend lookup, label parse/serialize round trips, summary scanning with one through four recipients, and the 2323-recipient group-limit boundary. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
+- `fuzz_silentpayments`: Silent Payments sender/recipient output agreement, independent BIP0352 input-hash, shared-secret output-tweak, and label-tweak derivation including the `uint32_t` maximum, invalid-label failure cleanup, one-, two-, and three-label labeled-spend lookup, label parse/serialize round trips, summary scanning with one through four recipients, and the 2323-recipient group-limit boundary. It also keeps the illegal-argument callback observable instead of allowing expected malformed-state tests to terminate the process
 
 Standalone corpus replay:
 
@@ -34884,3 +34884,72 @@ invalid-block or invalid-witness acceptance, consensus divergence, key
 compromise, signature forgery, or remote memory/concurrency failure was shown.
 No l0rinc commit was added because the fork and master refs remain identical.
 No fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 Silent Payments label failure-cleanup oracle
+
+The label creator already documents two valid API failure classes for
+`secp256k1_silentpayments_recipient_label_create`: an invalid scan secret key
+and a hash output that is not a valid scalar. The production implementation
+initializes `label`, derives the candidate label, and then clears both the
+opaque label and `label_tweak32` when the combined return value is zero. The
+existing unit tests checked only the return value for malformed scan keys; they
+did not assert that caller buffers could not retain a usable-looking failed
+result.
+
+The new exact-trigger oracle is
+`Silent Payments label failure cleanup\n`, stored as
+`silentpayments/label-invalid-input-cleanup`. It pre-fills both outputs with
+different nonzero patterns and exercises both invalid scan-key classes: all
+zero and the exact group order. For each call it requires return value 0 and
+requires all 68 label bytes and all 32 tweak bytes to be zero. This is a
+failure-state postcondition, not an assumption that a failed call is a valid
+label. The seed is 38 bytes and has SHA-256
+`88560c323877296b53fde2245e5e9fe9b4e22b32d176efd4ec53e6b0171f4f62`.
+
+Clean restored replays used ASan/UBSan, `-runs=1`, strict zero-ignore flags,
+and one isolated seed directory on native 5x52 and forced-int64/10x26. Both
+executed two units and exited 0. The native and forced-int64 log SHA-256
+values are respectively
+`81ea25d4f7c5b41ef6362f1773abe2545a13505a17d20cef2f147d4c45426831` and
+`a90542385d51243728db2f93f736a9a1c0d197fe6e4d6d199e310307bc804d90`.
+The restored source line is present in source hash
+`a92e6fcaafc3ca12128529b38f3a840181fa81a02187e4ed921fb2e21bde5d3f`; the
+restored shared-library hashes are
+`000bb4d6b1e5af457656ca00bcafa7776e9143d1c199a75e43d7caf3d0eb55b5` and
+`1df813075287dec87a3ca2006994ce9215ce50b5215eccf223335a1bda3bb3f8`.
+The restored `tests -i=1 -j=2 -t=silentpayments` suites also exited 0 on both
+backends; their log SHA-256 values are
+`970b4f1e671e288366b90217790d07ae56d3dddd4a5e97616b2a97d79855250e` and
+`0392bb0f07f475dee97913199bbeec991bdc6313243b5882edb0c02f4027008b`.
+
+### Differential mutation proof
+
+The disposable production mutation changed only
+`secp256k1_memczero(label, sizeof(*label), !ret)` to a zero flag, modeling a
+failure path that forgets to clear the opaque label. The mutated source hash
+was `2d58cf660425f490068d5d12d9250bbf9951f59384e0a6da4f75c58dc6d3fc32`.
+The corresponding native and forced-int64 shared-library hashes were
+`7b7dd65349bd3f6f59a65dbc68c90d7ad9d31618307d7094dbae63343247e877` and
+`454ce7a221fee5f6bffa64229e35de09eff3d46db3a5005259e3a70d424a47f0`.
+The exact seed aborted both sanitizer runs at the new `FUZZ_CHECK` with
+`SIGABRT`/exit 134 before any corpus artifact or sanitizer diagnostic. The
+native and forced-int64 mutation log hashes are
+`0af06c3520eccf687faafcc1a69c93196da9069eca695341cf1143cdeb5ad826` and
+`7324c4fa58a674ffb0068192d36e51930f1d841836b15e15086cb37807b72e6e`.
+The mutation was removed and the clean shared libraries were rebuilt before
+this commit; no production behavior is changed.
+
+### Finding and severity
+
+This is **oracle hardening, not a clean-master production bug**. The current
+master implementation passes the strongest deterministic proof. The
+master-relative impact of the modeled defect would be **Low direct-API
+failure-state robustness**: a caller that ignores return values could retain
+stale opaque bytes, but the API already reports failure and the label is not a
+consensus object. The surveyed Bitcoin Core checkout has no Silent Payments
+production caller, and this path cannot accept an invalid block or witness,
+create consensus divergence, forge a signature, compromise a key, or cause a
+remote memory/concurrency failure. It is therefore not High/Critical; no nonce
+or retry-counter clearing issue is involved. `origin/master` remains
+`d2d04864ef9b056151603a3ced7980958b058028`, equal to `l0rinc/master`, and no
+l0rinc change masks this result.

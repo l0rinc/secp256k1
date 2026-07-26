@@ -87,6 +87,39 @@ static void secp256k1_fuzz_silentpayments_check_label_integer_maximum(
     FUZZ_CHECK(memcmp(actual_ser, expected_ser, sizeof(actual_ser)) == 0);
 }
 
+static void secp256k1_fuzz_silentpayments_check_label_failure_cleanup(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size
+) {
+    static const unsigned char trigger[] = "Silent Payments label failure cleanup\n";
+    static const unsigned char zero_scan_key[32] = { 0 };
+    const unsigned char *invalid_scan_keys[] = {
+        zero_scan_key,
+        secp256k1_fuzz_scalar_order
+    };
+    unsigned char label_tweak[32];
+    unsigned char zero_tweak[sizeof(label_tweak)] = { 0 };
+    unsigned char zero_label[sizeof(secp256k1_silentpayments_label)] = { 0 };
+    secp256k1_silentpayments_label label;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* Both invalid scan-key classes are valid API inputs and must leave no
+     * apparently usable label or derived tweak behind on failure. */
+    for (i = 0; i < sizeof(invalid_scan_keys) / sizeof(invalid_scan_keys[0]); i++) {
+        memset(&label, 0xA5, sizeof(label));
+        memset(label_tweak, 0x5A, sizeof(label_tweak));
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_label_create(ctx, &label,
+            label_tweak, invalid_scan_keys[i], UINT32_MAX) == 0);
+        FUZZ_CHECK(memcmp(&label, zero_label, sizeof(label)) == 0);
+        FUZZ_CHECK(memcmp(label_tweak, zero_tweak, sizeof(label_tweak)) == 0);
+    }
+}
+
 static void secp256k1_fuzz_silentpayments_check_input_hash_reference(
     const secp256k1_context *ctx,
     const unsigned char *input,
@@ -864,6 +897,7 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     FUZZ_CHECK(memcmp(label_ser, parsed_label_ser, sizeof(label_ser)) == 0);
     secp256k1_fuzz_silentpayments_check_label_integer_maximum(ctx, input, size,
         scan_seckey);
+    secp256k1_fuzz_silentpayments_check_label_failure_cleanup(ctx, input, size);
 
     have_label = secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(ctx, &labeled_spend_pubkey, &spend_pubkey, &label);
     n_recipients = have_label ? 2 : 1;
