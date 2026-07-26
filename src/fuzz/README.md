@@ -36611,3 +36611,68 @@ Any future Core or fork change must state whether it rejects aliases, preserves
 them deliberately for compatibility, or only changes a later message path;
 the exact replay should be rerun so a non-serious follow-up fix does not mask
 the original master behavior.
+
+## 2026-07-26 Bitcoin Core PSBT invalid x-only metadata boundary
+
+The latest Bitcoin Core source ref used for this check is
+`e34b8d5a7dcd45e4faa3bb5fdeae64bf049037f6`; its built daemon reported
+`v31.99.0-b08815bbb523`. The PSBT parser constructs `XOnlyPubKey` values for
+the input Taproot script-signature, Taproot BIP32-derivation, and Taproot
+internal-key fields at `src/psbt.h:794-853`, and for the corresponding output
+fields at `src/psbt.h:1140-1191`, without calling `IsFullyValid()` on the
+32-byte value. This differs from nearby full-key and global-xpub parsing,
+which does validate the parsed public key. BIP371 describes these keydata and
+value fields as x-only public keys:
+https://github.com/bitcoin/bips/blob/master/bip-0371.mediawiki
+
+The malformed control used the 32-byte value
+`0000000000000000000000000000000000000000000000000000000000000005`.
+The secp256k1 x-only parser reports this value as off-curve (`false`); the
+control value ending in `01` is on-curve (`true`). A minimal, correctly
+encoded PSBT with one null outpoint, one empty output, and this x-only value
+was accepted by `decodepsbt` for all five fields. The exact raw PSBT sizes
+and SHA-256 values were:
+
+    input taproot internal key       106  f76c90bfe41d369c1f31b25235c9bf1502a2f3a4fc6e4ee0ff256b4f39524a2c
+    input taproot script signature   202  556360ed9dec956998adb648dddce566a51745e99e9a505109b46d76880d8b9b
+    input taproot BIP32 derivation   111  639c344688e31da1ead1d76930eeb564fbf9965a5ac005d2c44b70ddee9a266a
+    output taproot internal key      106  1b200c8e4d36805175ba470e7876c8cfe40a07a425a1da83a3994a97d581f413
+    output taproot BIP32 derivation  111  2bfc724d4b8cd536a6bb577cbbbf10c9a624b13b526c641b34e51db46552e02a
+
+`analyzepsbt`, `finalizepsbt`, duplicate and cross-field `combinepsbt`, and
+`walletprocesspsbt` all returned normally and preserved or safely ignored the
+metadata. No assertion, crash, sanitizer diagnostic, invalid witness, or
+signature was produced. A stronger owner/signing control used a real Core
+descriptor wallet and its Taproot output
+`51201788cacd224f01b7410bea093c2a8338d3283c9610f3696512c395948856a7b1`.
+Without the optional internal-key field, and with the wallet's actual
+internal key `9f18b2bc1c4d2b983aaa023a6f378521c9fa3fbb99fe3eb3d9dc6459d7e70b9e`,
+`walletprocesspsbt` signed the owned input completely. With the off-curve
+`x=5` field it returned `complete=false` and emitted no signature. The same
+safe refusal occurred with an unrelated but valid `x=1`, so the observed
+signing effect is conflicting/untrusted PSBT metadata, not an off-curve
+specific exploit.
+
+### Classification and masking boundary
+
+This is **Informational/Low Core PSBT parser and wallet-availability
+robustness**, not a secp256k1 production defect. A caller must supply the
+PSBT, and the current owner control does not let malformed metadata authorize
+a spend. The path does not reach block or witness acceptance, sigop
+accounting, consensus divergence, signature forgery, key compromise, or
+remote memory/concurrency failure. It is therefore not High/Critical under
+the master-relative audit rubric. The current fuzz harness also deliberately
+normalizes an invalid output internal key to zero when no Taproot tree exists
+(`src/test/fuzz/psbt.cpp:109-111`), so treating every invalid output x-only
+value as a production failure would create a stale oracle.
+
+No secp production fix or deterministic secp regression test is claimed. The
+strongest closure proof belongs in Core: add deterministic PSBT tests for
+each field that either reject off-curve values where the field is required to
+be a usable public key, or explicitly document their informational/tolerant
+semantics and assert that signing/finalization never treats them as
+authorization. Any stricter parser change needs a compatibility review. A
+future Core or fork fix must record whether it changes parsing only, changes
+wallet signing behavior, or merely masks this availability boundary; the
+five hashes and the owned Taproot signing control should be rerun before
+assigning a higher severity.
