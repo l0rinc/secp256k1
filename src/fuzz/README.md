@@ -37012,6 +37012,41 @@ regression test is claimed from this replay. Future MuSig changes must rerun
 the exact state-machine corpus under sanitizer and state whether they preserve,
 change, or mask the Core wallet boundary finding.
 
+## 2026-07-26 Silent Payments worker revalidation and sanitizer gap
+
+The repaired ASan/UBSan build does not contain `fuzz_silentpayments`; an
+attempted launch exited 127 before reading a corpus input. This is a build
+configuration gap, not a fuzzing failure or production finding. The normal
+current build `/mnt/my_storage/secp256k1-build-next/bin/fuzz_silentpayments`
+was therefore run separately with the existing 14-file
+`src/fuzz/corpora/silentpayments` corpus:
+
+    bin/fuzz_silentpayments -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -print_final_stats=1 corpus
+
+Both normal-build jobs loaded 14 seeds (515 bytes), exited 0, and completed
+183 and 185 executions. Each reached coverage 3700; neither reported an
+assertion, crash, timeout, OOM, or artifact. The worker-log SHA-256 values,
+in job order, were
+`074a7f33233a6f3de77d40ff139d828c0b51c78f52e0ea1f1eb88f8e49bd5e8b` and
+`59b3709c5270ed1def14d4f492c405cf523fd6e37470ee98ec7248729c256fee`.
+The copied corpus grew to 147 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is normal-build coverage and state-transition evidence only, not an
+ASan/UBSan memory-safety proof. It found no new production bug, invalid
+witness or block acceptance, sigop undercount, consensus divergence,
+signature forgery, key compromise, or remote memory/concurrency failure.
+The existing Silent Payments opaque-state and label-width findings retain
+their recorded direct-API Low/Medium ratings; the surveyed Bitcoin Core
+branch has no direct Silent Payments caller that raises them to a consensus
+issue. A sanitizer-enabled optional-module build remains required before
+closing this audit gap. Future Silent Payments changes must rerun this exact
+corpus under sanitizer and identify any real Core caller before assigning
+High/Critical severity or claiming a production fix.
+
 ## 2026-07-26 Group arithmetic sanitizer worker revalidation
 
 The repaired ASan/UBSan build
