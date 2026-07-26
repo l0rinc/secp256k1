@@ -15450,3 +15450,46 @@ The configured fuzz-only build has no `test_bitcoin` target, so the dedicated
 unit suite was unavailable. No production behavior changed, no production
 bug is asserted, and no deterministic regression test was required. No fuzz,
 sanitizer, or mutation process remains running.
+
+## 2026-07-26 MuSig full-corpus worker replay
+
+The complete tracked MuSig corpus was replayed after the nonce input/output
+contract audit. The source corpus contains 79 files; the sorted per-file
+SHA-256 manifest is `8090baa7f98c64a87dcdf28bb07ebd4e2c879a6f7b4af794f0cdda1be8c6fe62`.
+The isolated copies used for the runs were
+`/mnt/my_storage/secp256k1-musig-boundary-corpus-native-20260726-audit2` and
+`/mnt/my_storage/secp256k1-musig-boundary-corpus-int64-20260726-audit2`.
+
+Both Clang ASan/UBSan binaries used two libFuzzer workers with:
+
+    -fork=2 -jobs=2 -runs=1 -timeout=180
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+The native `fuzz_musig` binary SHA-256 is
+`a6062c01f7d7fa203a5b2ebc2582da871fa71c90eab926ea8bad0f053719889c`.
+Both jobs processed all 79 seeds and exited 0 with
+`oom/timeout/crash: 0/0/0`. The manager log SHA-256 is
+`1a26d86d3ba1424d96bdbd6e227aa4b16d51600e90dd07e7e1c9035fcbe1a18b`; the
+worker logs are `9ac68361d47b627fbfea5df2f41578b5aab7c4299ff04f85b735e703f17f19c3`
+and `0ca032c1e9c92eff0f287cc2b0905926adb326a802ff8a253b834606abef30cd`.
+
+The forced-int64/10x26 `fuzz_musig` binary SHA-256 is
+`fbf053146a7d520707a29a27b47fdb070764f5a23c14be2ff772a1a3c3cb2f87`.
+Both jobs likewise processed all 79 seeds and exited 0 with no sanitizer,
+assertion, OOM, timeout, crash, or artifact. The manager log SHA-256 is
+`21d08f3efbdfbc2b6d2aa0734b5c98adbea718c36540ea2dd4dc712695bbc157`; the
+worker logs are `7e165ad87aa2dc54736885acf606c92571c9bac14630efe84a70d7f909876c25`
+and `82a67e1de458197fd8dde361fd41b7e46ad0294fd29532fed31e3d92ea9551fe`.
+
+This is negative evidence only. The audit found no new clean-master failure,
+production bug, consensus divergence, invalid-block or invalid-witness
+acceptance, signature forgery, key compromise, or remote memory/concurrency
+failure. MuSig is wallet/application state in the surveyed Bitcoin Core
+callers, not block or witness validation. The master-relative severity of the
+existing direct-API oracle findings is unchanged; a nonce or retry counter
+without standalone cryptographic meaning is not Critical merely because it is
+not cleared. The first concurrent launch attempt that lacked one disposable
+artifact directory was discarded as a startup error and is not part of this
+evidence. `origin/master == l0rinc/master == d2d04864`, and no rebase or
+cherry-pick changed the clean-master baseline.
