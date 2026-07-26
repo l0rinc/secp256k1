@@ -32151,3 +32151,169 @@ must preserve this clean-master baseline, or amend its commit message and
 this section with the exact change explaining whether it preserves, changes,
 or masks each shift and WNAF trigger. No fuzz, sanitizer, compiler, or test
 process remains running.
+
+## 2026-07-26 l0rinc MuSig Cleanup-Series Reconciliation
+
+The separate l0rinc `musig-cleanup-failures` branch was checked after the
+scalar pass so that its output-cleanup commits are not rediscovered under new
+local hashes. The branch head is `bb02b1e0` and its twelve behavior-bearing
+commits are listed below. `origin/master` and `l0rinc/master` both resolve to
+`d2d04864ef9b056151603a3ced7980958b058028`; the audit branch is a descendant
+of that baseline. No direct cherry-pick was made because each applicable
+production contract is already represented here by a stronger local fix and
+fuzzer proof. Applying the old series literally would duplicate hunks or
+change the order in which an existing first stop is observed.
+
+### Commit mapping and preserved discovery order
+
+```
+l0rinc commit  subject                                      local equivalent
+2deca993       test invalid-seckey nonce output              e52006a5
+0a02b6b7       clear partial-sign stack secrets              e76ed994
+a3b14a78       clear serialized partial sig output           432d5695
+52370921       clear parsed sig on NULL input                e2fd2fee
+b8b6e736       clear keyagg cache on agg failure             a8d180a3
+4ad2f35b       clear nonce output for invalid seckey         e52006a5
+9146dd19       clear parsed pubnonce on failure              6b6cbf46
+dc630147       clear parsed aggnonce on failure               961533d4
+620ff7bc       clear aggnonce on aggregation failure         03e28bd1
+331a8c88       clear session on nonce-process failure         a5124da2
+27fcf285       clear partial sig on signing failure           a8d180a3
+bb02b1e0       clear final sig on aggregation failure         5fca864d
+```
+
+The mapping is behavior-based, not a claim that the hashes are ancestors.
+The local commits also retain independent assertions that the l0rinc series
+does not provide on its own: malformed opaque points are rejected before use,
+invalid aggregate-cache and NULL-input ordering is covered separately,
+successful multi-signer equations are checked independently of the production
+verifier, and consumed secret nonces are zeroed on every tested failure path.
+The public `pubnonce` and `aggnonce` objects contain protocol points, not a
+cryptographic secret nonce. Their stale-output cleanup is Low API/state
+hygiene, not Critical erasure merely because the bytes are uncleared. The
+secret `secnonce`, loaded signing scalar, and MuSig session transcript are
+different contracts and retain their stronger cleanup assertions.
+
+The ordering interactions were preserved explicitly:
+
+* Applying `4ad2f35b` or `e52006a5` before the invalid-secret test can make the
+  public-nonce assertion green while hiding whether the secret nonce was
+  invalidated. The local oracle checks both output objects and keeps the
+  reduced-order zero-nonce proof separate.
+* Applying `a8d180a3` before `27fcf285` can mask a stale partial-signature
+  output. The local partial-sign failure, invalid keypair, invalid cache, and
+  consumed-secnonce cases remain distinct.
+* Applying `a5124da2` before the cache-specific and NULL-input replays can make
+  a later session-transition test pass without proving the original failure
+  ordering. The local corpus keeps those transitions as separate seeds.
+* Applying `432d5695` before parser tests can make a serializer buffer look
+  safe while leaving the parsed opaque signature contract untested. The parse,
+  serialize, and final-signature buffers are checked independently.
+* `e76ed994` is a production stack-cleanup proof for secret scalar lifetime,
+  not a direct memory-disclosure proof. A normal fuzzer cannot inspect a
+  returned stack frame; a future claim of disclosure needs an explicit read or
+  instrumentation result.
+
+### Clean-master finding classification
+
+The unmodified-master behaviors represented by this series are stale
+caller-owned state after a failed MuSig API call: parse failures could leave a
+previous public nonce, aggregate nonce, or partial signature object intact;
+aggregation and nonce-processing failures could leave previous aggregate or
+session state intact; and partial signing could leave a previous output or
+loaded scalar lifetime unhandled on later illegal-argument paths. Existing
+tests mostly checked the return value and illegal callback, not the complete
+output postcondition after a poisoned prior success. The local commits proved
+each meaningful branch with a deterministic test or a minimal production
+mutation before the repair was retained.
+
+Severity is against that clean master, before any l0rinc or audit fix:
+
+* Failed public-nonce and aggregate-nonce output cleanup is **Low** API
+  fail-closed hygiene. A caller must ignore a zero return to reuse it, and the
+  public nonce has no standalone cryptographic meaning.
+* Failed partial-signature, key-aggregation-cache, and final-signature output
+  cleanup is **Low to Medium** stale protocol-state hygiene. The objects are
+  cryptographically meaningful to a MuSig application, but no signature
+  forgery, key recovery, memory disclosure, or remotely reachable crash was
+  demonstrated from the stale bytes alone.
+* Clearing loaded `sk` and `k` scalars on post-load illegal paths is **Medium
+  memory hygiene** because the values are key- or nonce-derived. The proof does
+  not establish a read primitive, and a nonce or retry counter without
+  standalone cryptographic meaning must not be inflated to Critical.
+* Reduced-order zero nonce generation remains a separate **Low / latent
+  correctness** finding. It is reachable as a deterministic exhaustive-test
+  model condition, not with practical normal-order SHA256 probability.
+
+Bitcoin Core uses MuSig through its wallet/application signing path in
+`src/musig.cpp`; Bitcoin Core consensus block and witness validation does not
+construct these MuSig opaque objects. None of these clean-master conditions
+accepted an invalid block or witness, changed a consensus decision, exposed a
+private key, or demonstrated a peer-triggered memory/concurrency failure.
+They therefore do not qualify as High or Critical on the master branch. A
+future MuSig result must be re-rated if a concrete Core caller can feed the
+state from a block, witness, or remotely controlled input, but that path is
+not present in this proof.
+
+### Fresh repaired replay
+
+The current repaired source at audit `HEAD bc00cf7f` was replayed without a
+production mutation. The complete corpus has 79 files and 2998 bytes. The
+sorted filename-and-size manifest SHA256 is
+`725999039f7487b06e0c752a9821b1ebc47106feed8cb7575ae9635a54059c42`; the
+sorted filename/content processing manifest SHA256 is
+`1eb641ac7a5d32549ed9e53e95621e9858b714a1a8c004468980df34ef7fe5b8`.
+Current source hashes were:
+
+```
+src/fuzz/musig.c                         70e5af7b51898c8a95a2b780425698f18400e5f10a511c5aee39c91197828f82
+src/modules/musig/session_impl.h        529e4577e6246c3c9a71f9c8879f83218e16628be067ecf1744a506fa5d19ff7
+src/modules/musig/keyagg_impl.h          12f85c7def5a07376ec0b6caa06d7e8eaebea770f0d30e96f02e562f5e1dddfe
+src/modules/musig/tests_impl.h           d90b9190f080ace7c65bfa646c64e843503438239563718e76c706da5cd816bd
+src/modules/musig/tests_exhaustive_impl.h b3677fe6e359182f36aeb42c72ceef1f7cb2e3f9631997813e26c254504d5a00
+```
+
+Both builds used Clang 22.1.7 with
+`-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` and linked
+ASan/UBSan. The native 5x52 binary SHA256 is
+`3cc8bc44611e717a4297a48cb2a8625455af31267e044eab3bb93cef370d5ff1`.
+The forced-int64/10x26 binary SHA256 is
+`233e2e78f3802284bcb1d8d413e8a6145db9904dbe40d0509b2e8d3536e5bee3`.
+
+The exact deterministic command for each backend was:
+
+    fuzz_musig -runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0 -print_funcs=0 src/fuzz/corpora/musig
+
+Both runs loaded all 79 files plus the empty input and exited 0. The native
+run completed 80 executions in 96 seconds with log SHA256
+`c541da8c5b4914b1d189967559af388f9c7e13e8f14e8e1c7184babd4975b74b`.
+The forced-int64 run completed 80 executions in 166 seconds with log SHA256
+`33bf9dac60bc3a09b3884056b17445d6cb84963a0b3ef5041c797d027294a53b`.
+Neither log contained an ASan, UBSan, assertion, timeout, or crash
+diagnostic.
+
+The copied-corpus worker command was:
+
+    fuzz_musig -fork=2 -jobs=2 -max_total_time=30 -timeout=180 -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0 -verbosity=0 -artifact_prefix=<isolated>/ -print_final_stats=1 src/fuzz/corpora/musig
+
+Native and forced-int64 parents both exited 0, reported two workers, and
+reported `oom/timeout/crash: 0/0/0`; their artifact directories were empty.
+Worker log SHA256 values are
+`2d40fd49190e2a75fa9984dc11eed819e46a0a16b47addafa30e2046365a7cba`
+and
+`d9fd70d8e27cfd326f286bf499a0c348b67ddb8a9e6d6ed70aac159a9619753c`.
+The deterministic `tests -t=musig` and `noverify_tests -t=musig` commands
+also exited 0 on forced-int64 ASan/UBSan; their log hashes are
+`65c57b2f23026c6a06d4cbc7015c078d99e6d9b875d3f502704b62d93e680050` and
+`4cf7204b611d77be9b1ae3e59562f4bf4f2c4e2e1a4ad0b50a7eada2424fd18c`.
+
+This is a reconciliation and repaired-replay record, not a new production
+bug claim or a new fix. The clean-master mutation proofs and deterministic
+regressions remain owned by their local equivalent commits. Any later
+cherry-pick, optimization, or cleanup that changes MuSig output ordering,
+opaque-state validation, scalar cleanup, or Core's caller contract must amend
+the same commit message and this ledger with the clean-master baseline, exact
+input or mutation, first assertion/stack, Core input origin, master-relative
+severity, test gap, verifier commands, and whether it preserves, changes, or
+masks each earlier finding. No fuzz, sanitizer, compiler, or test process
+remains running.
