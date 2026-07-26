@@ -35501,3 +35501,39 @@ cherry-pick was added. The master and fork refs remain identical. A future
 codec change must preserve the clean-master controls for invalid opaque state,
 failed-output cleanup, and documented alias boundaries, and record whether a
 new fix preserves, changes, or masks each existing finding in the same commit.
+
+## 2026-07-26 Recoverable ECDSA and Core compact-signature recheck
+
+The recoverable-signature boundary was rechecked against clean
+`origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. Disposable copies of the tracked
+17-file, 782-byte `recovery` corpus passed 18 executions per backend, including
+the implicit empty input. Native 5x52 and forced-int64/10x26 Clang ASan/UBSan
+replays exited 0 with no sanitizer, assertion, crash, timeout, or OOM
+diagnostic; final coverage/features were 3148/5700 and 5110/10308. The full
+`tests -i=1 -t=recovery` module also exited 0 in 0.808 and 1.334 seconds.
+
+The pass exercised independent recovery equations, `recid` 0..3 and the
+`r+n < p` boundary, invalid x coordinates, zero `r`/`s`, high-S normalization,
+message reduction modulo the group order, output cleanup after failed recovery,
+compact parse/serialize/convert round trips, nonce retry failures, and the
+Bitcoin Core `CPubKey::RecoverCompact` header/compressed-output composition.
+No new production mutation or deterministic regression was justified.
+
+This remains a direct API/wallet-message boundary. Bitcoin Core's compact
+recovery adapter is used for message-signature recovery, not block or witness
+validation; the consensus paths verify parsed ECDSA/Schnorr signatures instead.
+No invalid-block or invalid-witness acceptance, consensus divergence, signature
+forgery, key compromise, remote memory/concurrency failure, or witness-sigop
+consequence was demonstrated. Existing malformed recoverable opaque-state and
+failed-output observations remain **Low-to-Medium direct-API hygiene**, not
+High/Critical on master. This pass makes no nonce-clearing claim: a value with
+no standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+No l0rinc commit was cherry-picked because the refs are identical and the
+existing recovery repairs and fork reconciliation already cover these
+transitions. Generated corpus copies were removed. Future recovery changes
+must preserve the clean-master recid/`r+n` controls and state whether a fix or
+cherry-pick preserves, changes, or masks the master-relative behavior in the
+same commit.
