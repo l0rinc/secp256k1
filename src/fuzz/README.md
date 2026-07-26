@@ -37011,3 +37011,37 @@ consequence. Existing master-relative severity ratings are unchanged, with
 no High/Critical rating or production fix justified by this replay. Future
 group changes must rerun these exact seeds under sanitizer and retain the
 caller-path proof before escalating an internal assertion.
+
+## 2026-07-26 Field arithmetic sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_field` replayed the existing 21-file
+`src/fuzz/corpora/field` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_field -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 21 seeds (742 bytes), exited 0, and completed 426
+executions. Each reached coverage 1504; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`3646750263cc0b3f26503809715456af0ee4cecb0bc81f9ea9690336bfc6be92` and
+`7ecee1aade5e24698df1ec3eb966c8b3deab5785416c568977096f3809e4f8f9`.
+The copied corpus grew to 70 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of field normalization, maximum
+magnitude, zero predicates, inversion, square-root, serialization, aliasing,
+and independent reference comparisons. It found no new production bug,
+invalid witness or block acceptance, sigop undercount, consensus divergence,
+signature forgery, key compromise, or remote memory/concurrency failure.
+The existing magnitude/zero-predicate findings retain their recorded
+master-relative Low/Medium internal robustness ratings; this replay does not
+justify High/Critical severity or a new production fix. Future field changes
+must rerun these exact seeds under sanitizer and show the public ECDSA,
+Schnorr, x-only, or Taproot consequence before escalating an arithmetic
+assertion.
