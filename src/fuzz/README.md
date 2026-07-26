@@ -35230,3 +35230,150 @@ No fuzz corpus was added for this finding because a corpus cannot
 meaningfully encode 2^32 invalid callback attempts. The deterministic test
 is the stronger verifier. The production mutation was discarded after the
 causal run; the temporary proof worktree is not part of this commit.
+
+## 2026-07-26 Extended master-relative worker sweep
+
+The audit branch remains based on the fetched clean master
+`d2d04864ef9b056151603a3ced7980958b058028`; `origin/master` and
+`l0rinc/master` are identical and are ancestors of this branch. After the
+stateful corpus replays, both Clang ASan/UBSan backends were exercised with
+two libFuzzer workers and two jobs using:
+
+    -fork=2 -jobs=2 -timeout=180 -ignore_timeouts=0 -ignore_ooms=0
+    -ignore_crashes=0 -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+The native 5x52 and forced-int64/10x26 builds ran 60-second campaigns for
+`api_roundtrip`, `ellswift`, `schnorrsig`, `musig`, `ecmult_multi`, and
+`ecmult_const`. They ran 30-second campaigns for `recovery` and `ecdh`.
+Every attributable worker exited 0 and reported
+`oom/timeout/crash=0/0/0`. The campaigns reached, respectively, about
+11.5k/21.0k features for the API target, 8.6k/17.3k for EllSwift,
+8.8k/17.2k for Schnorr, 13.8k/22.5k for MuSig, 12.7k/25.0k for
+`ecmult_multi`, 7.6k/14.0k for `ecmult_const`, 7.3k/15.2k for recovery,
+and 5.3k/11.6k for ECDH (native/forced-int64; worker variation explains
+small differences). The previously recorded Silent Payments and context
+two-worker replays also remained clean.
+
+The same two-worker matrix then ran 45-second campaigns for the low-level
+`field`, `scalar`, `group`, and `hash` targets, one target at a time per
+build directory so the worker logs stayed attributable. Every worker again
+exited 0 with `oom/timeout/crash=0/0/0), reaching about 4.1k/2.3k features
+for field, 13.5k/5.7k for scalar, 9.2k/5.2k for group, and 1.4k/1.4k for
+hash (native/forced-int64). These runs exercised field magnitude and
+normalization boundaries, scalar order/shift/WNAF boundaries, group
+infinity/cancellation/storage and batch-conversion paths, and independent
+SHA/HMAC/RFC6979 references without a cross-backend mismatch.
+
+The Taproot-facing `xonly_tweak` target was also run for 45 seconds per
+backend with the same worker flags. All four workers exited 0 with
+`oom/timeout/crash=0/0/0), reaching about 14.2k/7.7k features
+(native/forced-int64). Its compact-size control-block composition, x-only
+parity, tweak-order and zero/order boundaries, opaque keypair consistency,
+and independent x-only parsing model remained consistent. This is negative
+evidence for the surveyed Bitcoin Core Taproot caller, not proof of a
+consensus property beyond the exercised corpus and models.
+
+The context target then ran the 60-second version of the same matrix. All
+native and forced-int64 workers exited 0 with
+`oom/timeout/crash=0/0/0`, reaching about 6.2k/12.2k features
+(native/forced-int64). Preallocated create/clone/destroy, callback routing,
+SHA backend replacement and rejection, static-context barriers, randomized
+and NULL-seed reset transitions, and secret-operation equivalence all
+remained consistent. No context lifecycle or callback-state defect was
+reproduced on clean master.
+
+Recovery and ECDH were finally rerun one target at a time in each build
+directory because the project worker wrapper uses fixed `fuzz-0.log` and
+`fuzz-1.log` names. An earlier concurrent smoke run had clean exit status but
+interleaved those disposable logs and is excluded from the evidence above.
+All libFuzzer-generated untracked corpus files and worker logs were removed
+after each campaign; no generated input is being presented as a finding.
+
+This sweep found no new production defect and adds no severity change. The
+existing recovery and public-codec observations remain direct-API robustness
+issues; the surveyed Bitcoin Core calls do not turn them into invalid-block or
+invalid-witness acceptance. ECDH has no direct surveyed Bitcoin Core
+production caller, while EllSwift is used for BIP324 transport and the
+Schnorr verifier is used by Taproot script validation. The x-only/Taproot
+composition campaign likewise showed no malformed control-block acceptance.
+These campaigns showed no signature forgery, consensus divergence, or
+acceptance of an invalid witness. `ecmult_multi` and `ecmult_const` exercised allocation, infinity,
+scalar, and affine-equivalence boundaries without a memory or concurrency
+failure. Therefore no result is High/Critical under the master-relative
+rating rule: there is no proof of invalid-block acceptance, consensus
+divergence, key compromise, signature forgery, or remotely triggerable severe
+memory/concurrency failure. These runs also say nothing about nonce clearing;
+the nonce/retry counter is not being assigned cryptographic meaning here.
+
+No production mutation survived triage and no deterministic regression test
+was required for this negative campaign. If a future change makes one of
+these worker runs fail, replay the exact corpus input on this branch and
+clean master first, then document whether a l0rinc/fork change fixed the
+condition, masked it, or merely moved the failure boundary.
+
+## 2026-07-26 External-default-callback backend replay
+
+The callback-heavy public and module surfaces were rechecked with
+`SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS=ON`, Clang 22.1.7, `SECP256K1_ASM=OFF`,
+all optional modules enabled, and separate native and forced-int64 builds.
+Direct fuzz targets linked successfully. API, context, hash, scalar, field,
+group, `ecmult_const`, ECDH, EllSwift, x-only, recovery, and Schnorr corpus
+replays exited 0 on both backends; the isolated int64 `ecmult_multi` replay
+also exited 0 with `oom/timeout/crash=0/0/0` after a 52-second fork shutdown.
+The first 45-second wrapper result for that target was a false outer timeout:
+both workers had already exited 0 after about 39 seconds, but the parent was
+still collecting fork/merge state.
+
+MuSig's two-worker wrapper exceeded a 120-second outer bound on both backends
+while no worker failure or diagnostic was emitted. This is the same
+worker/merge-duration class recorded above, not a production hang. A fresh
+one-input-at-a-time replay covered all 79 MuSig seeds on each backend with
+`-runs=1 -timeout=5`; every seed returned 0, including the 16-signer,
+long-aggregation, opaque-state, cleanup, and zero-nonce cases. Silent Payments
+had the same result for its 11 ordinary seeds. Its intentional
+`recipient-group-limit` seed, which constructs 2,323 recipients, completed
+with status 0 in 8.872 seconds native and 9.902 seconds forced-int64 under a
+120-second bound. No sanitizer report, assertion, crash artifact, or
+cross-backend mismatch was observed.
+
+The combined CMake build with `SECP256K1_BUILD_FUZZ=ON`,
+`SECP256K1_FUZZ_USE_LIBFUZZER=ON`, and `SECP256K1_BUILD_CTIME_TESTS=ON`
+stopped only at `ctime_tests`: the fuzz option adds
+`-fsanitize=fuzzer-no-link` to the shared `secp256k1` target, while that
+non-fuzz executable does not link the fuzzer runtime and does not include the
+external callback object. Building the fuzz targets directly succeeded. This
+is a low-severity build-configuration limitation, not a library runtime
+finding; no CMake change is included in this audit commit.
+
+This matrix adds negative oracle evidence only. External callback misuse and
+opaque application state remain Low-to-Medium direct-API concerns, with no
+demonstrated Bitcoin Core invalid-block or invalid-witness acceptance,
+consensus divergence, signature forgery, key compromise, or remotely severe
+memory/concurrency failure. No High/Critical rating is justified, and no
+nonce or retry-counter clearing claim is being made. Generated corpus files,
+worker logs, and all replay processes were removed after verification.
+
+## 2026-07-26 Targeted concurrent fork stress replay
+
+A follow-up smoke matrix used isolated run directories and the exact command
+shape below for `api_roundtrip`, `ecmult_multi`, `musig`, and
+`silentpayments` on both native and forced-int64 builds:
+
+    timeout 90s fuzz_target -fork=2 -jobs=2 -max_total_time=15 -timeout=8
+    -rss_limit_mb=2048 -print_final_stats=1 corpus-directory
+
+The native API and Silent Payments runs, and the forced-int64 API run,
+completed with exit 0. The native and forced-int64 `ecmult_multi` and MuSig
+runs, plus forced-int64 Silent Payments under all eight concurrent commands,
+reached the outer 90-second bound during libFuzzer fork/merge shutdown. Their
+per-worker logs contain only `libFuzzer: run interrupted; exiting`, zero
+executed units, and no crash, OOM, timeout, sanitizer, or assertion
+diagnostic. No process remained after the wrapper exited.
+
+Because those workers did not execute corpus units before the outer bound,
+this is excluded from coverage evidence and is not a production hang finding.
+The authoritative evidence remains the one-input-at-a-time and longer
+single-target replays recorded above. The result adds no production bug and
+no severity change. It is retained to prevent a future audit from treating a
+shared fork/merge scheduling timeout as a code failure or rediscovering the
+same inconclusive run.
