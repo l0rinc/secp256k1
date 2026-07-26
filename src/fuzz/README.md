@@ -681,13 +681,12 @@ domain construction, sanitizer-only issue, or already-covered behavior.
 The entries below preserve the severities recorded against their historical
 clean-master snapshots. For current decisions, the authoritative upstream
 baseline is `origin/master` at
-`8c3e6e6d992456d3b9228305ae84a6703273cf70`, which includes `e217ead`
-(`field: serialize elements by word`). Historical replay references to
-`11dad6d06c0ea8fd6d9d423d32bddd18b70b8b53` remain evidence for the earlier
-master state; `l0rinc/master` still points there as of 2026-07-18. A later
-minor fix must not be allowed to hide a more serious master failure. Every
-production finding has a focused corpus and a mutation or deterministic proof
-documented in its commit message.
+`d2d04864ef9b056151603a3ced7980958b058028`; `l0rinc/master` resolves to the
+same commit. Historical replay references to older master states remain
+evidence for those earlier conditions, but a later minor fix must not be
+allowed to hide a more serious failure that existed on the baseline being
+reviewed. Every production finding has a focused corpus and a mutation or
+deterministic proof documented in its commit message.
 
 - **Informational / low fuzzer-infrastructure:** before the shared callback
   source was added, configuring CMake with
@@ -35962,3 +35961,68 @@ justified. `origin/master` and `l0rinc/master` remain identical at
 nonce codec, ecmult, or Core adapter changes must state whether they preserve,
 change, or mask this clean-master result and rerun the 82-input matrix in the
 same commit's notes.
+
+## 2026-07-26 Core compact-recovery header boundary oracle
+
+The recovery fuzzer now has a dedicated Bitcoin Core compact-signature header
+boundary witness. The exact 39-byte trigger is
+`core-recover-compact-header-boundaries`, with SHA-256
+`60907340c7656b42a68d42294fdb420be0bcb3c68d2767d787290df4c1e7f3aa`. It
+replays the valid standard header range 27 through 34 against a deterministic
+`r=s=x(G), z=0` compact signature. The independent expected model checks
+recovery ids 0 and 1 as `G` and `-G`, checks both compressed-bit projections,
+and requires recovery ids 2 and 3 to reject because `r+n` is not a field
+coordinate. The same eight cases run through both the static and mutable
+secp256k1 contexts. This fills the prior Core-shaped gap: the existing
+composition witness covered only recid 0, while the general recovery fixtures
+did not assert the header-to-output mapping as a single Core adapter contract.
+
+After restoring the production tree, the new witness and the 17 prior tracked
+recovery inputs plus one disposable empty input passed 19/19 executions in
+both Clang ASan/UBSan configurations. The post-restore trigger log hashes are
+`c143ecd13de4ae999bd0bf0b2f9ee9430ccfb009b5715e612f2dabd5f165f6fc` (native
+5x52) and `d96c82221a779220db18c92927127d6d1ed80e69a719c1e3d84285c6011def50`
+(forced-int64/10x26). The complete replay hashes are
+`c3224833858836da75c2745dfef550fe567355e82df3ff6b2ff1ead5e5599a1c` and
+`ac036e14f2c063676ef92f8f2c59ec430a8048687d039e5f781e644ecd732b34`. The
+module tests `tests -i=1 -j=2 -t=recovery` passed with log hashes
+`c93d4fe1fb05cd3e02e12adff7cf986c6abdd96d62d033d61d102f86fa1d119c` and
+`1068ff7f6893d1e44d54cf21b93817de94599ec817a428e6608a0a67cdf97ae5`.
+
+The strict worker campaign used `-fork=2 -jobs=2 -max_total_time=20
+-timeout=120 -rss_limit_mb=0`, all OOM/timeout/crash ignore flags disabled,
+and `-handle_abrt=0`. Both managers exited 0; each worker ran 18 fixed corpus
+inputs, with no OOM, timeout, crash, or artifact. Manager log hashes are
+`4f386630eeabe891ecb29811a9e43dabfe0ccb7a2713a7ecf3636c1f1d525814` and
+`2f7812c0fcb55cbefdee8916c7fa21547089b1bc6c7772137e4022b8f3733616`.
+
+### Mutation proof, Core reachability, and severity
+
+For an isolated oracle proof, production `src/modules/recovery/main_impl.h`
+was temporarily mutated from `if (recid & 2)` to `if (recid & 1)`. With
+`-runs=1 -timeout=5 -handle_abrt=0`, the new trigger aborted with status 134
+in both backends; mutation log hashes were
+`12e960fac5918ec44004158312b97a448efee03f700db539fcf8857d08bdd022` and
+`998f12a5ed26e2a5847f12a87caa56d74dba2ee799444d5dbb1f1b418f69f2c9`.
+The selector was restored before the post-restore replay and no production
+mutation is committed.
+
+Bitcoin Core reaches this boundary through `CPubKey::RecoverCompact` in
+`src/pubkey.cpp:300-317`, called by message-signature verification in
+`src/common/signmessage.cpp:46-50`. It is a wallet/message-signature path,
+not block or witness validation. No invalid-block or invalid-witness
+acceptance, consensus divergence, signature forgery, key compromise, or
+remote severe memory/concurrency failure was demonstrated. The result is
+therefore **Informational/Low Core adapter coverage**, not a production bug
+or High/Critical finding. The existing malformed opaque recoverable-signature
+state issue remains a separate direct-API Low-to-Medium finding; this oracle
+does not change that severity and makes no nonce-clearing claim. A value with
+no standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+`origin/master` and `l0rinc/master` remain identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; no fork commit masks this
+boundary. Future changes to recovery-id decoding, `r+n` handling, compact
+serialization, or Core's message adapter must state whether they preserve,
+change, or mask this master-relative oracle and rerun the 19-input matrix in
+the same commit's notes.

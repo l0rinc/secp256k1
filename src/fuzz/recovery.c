@@ -190,6 +190,98 @@ static void secp256k1_fuzz_check_core_recover_compact(const secp256k1_context *c
     }
 }
 
+/* Exercise every standard Bitcoin compact-signature header. The existing Core
+ * composition witness covers the recid-0 happy path; this boundary keeps the
+ * recid-1 negated-point result and the recid-2/3 r+n rejection paths visible. */
+static void secp256k1_fuzz_check_core_recover_compact_header_boundaries(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
+    static const unsigned char trigger[] = "core recover compact header boundaries\n";
+    static const unsigned char compact[64] = {
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+        0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+        0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+        0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98
+    };
+    static const unsigned char expected_uncompressed[2][65] = {
+        {
+            SECP256K1_TAG_PUBKEY_UNCOMPRESSED,
+            0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+            0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+            0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+            0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+            0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65,
+            0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
+            0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+            0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8
+        },
+        {
+            SECP256K1_TAG_PUBKEY_UNCOMPRESSED,
+            0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+            0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+            0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+            0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+            0xB7, 0xC5, 0x25, 0x88, 0xD9, 0x5C, 0x3B, 0x9A,
+            0xA2, 0x5B, 0x04, 0x03, 0xF1, 0xEE, 0xF7, 0x57,
+            0x02, 0xE8, 0x4B, 0xB7, 0x59, 0x7A, 0xAB, 0xE6,
+            0x63, 0xB8, 0x2F, 0x6F, 0x04, 0xEF, 0x27, 0x77
+        }
+    };
+    static const unsigned char headers[8] = { 27, 28, 29, 30, 31, 32, 33, 34 };
+    const secp256k1_context *contexts[2];
+    unsigned char wire[65];
+    unsigned char serialized[65];
+    unsigned char zero_pubkey[sizeof(secp256k1_pubkey)] = { 0 };
+    secp256k1_ecdsa_recoverable_signature sig;
+    secp256k1_pubkey recovered_pubkey;
+    size_t i;
+    size_t j;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    contexts[0] = secp256k1_context_static;
+    contexts[1] = ctx;
+    for (i = 0; i < sizeof(headers); i++) {
+        int recid;
+        int compressed;
+
+        wire[0] = headers[i];
+        memcpy(wire + 1, compact, sizeof(compact));
+        /* These are the exact integer promotions in CPubKey::RecoverCompact. */
+        recid = (wire[0] - 27) & 3;
+        compressed = ((wire[0] - 27) & 4) != 0;
+        FUZZ_CHECK(recid >= 0 && recid <= 3);
+
+        for (j = 0; j < sizeof(contexts) / sizeof(contexts[0]); j++) {
+            size_t serialized_len = sizeof(serialized);
+            unsigned int flags = compressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED;
+
+            FUZZ_CHECK(secp256k1_ecdsa_recoverable_signature_parse_compact(contexts[j], &sig, wire + 1, recid) == 1);
+            memset(&recovered_pubkey, 0xA5, sizeof(recovered_pubkey));
+            if (recid >= 2) {
+                FUZZ_CHECK(secp256k1_ecdsa_recover(contexts[j], &recovered_pubkey, &sig, secp256k1_fuzz_scalar_zero) == 0);
+                FUZZ_CHECK(memcmp(&recovered_pubkey, zero_pubkey, sizeof(recovered_pubkey)) == 0);
+                continue;
+            }
+
+            FUZZ_CHECK(secp256k1_ecdsa_recover(contexts[j], &recovered_pubkey, &sig, secp256k1_fuzz_scalar_zero) == 1);
+            FUZZ_CHECK(secp256k1_ec_pubkey_serialize(contexts[j], serialized, &serialized_len, &recovered_pubkey, flags) == 1);
+            if (compressed) {
+                FUZZ_CHECK(serialized_len == 33);
+                FUZZ_CHECK(serialized[0] == (unsigned char)(SECP256K1_TAG_PUBKEY_EVEN + recid));
+                FUZZ_CHECK(memcmp(serialized + 1, expected_uncompressed[recid] + 1, 32) == 0);
+            } else {
+                FUZZ_CHECK(serialized_len == sizeof(expected_uncompressed[recid]));
+                FUZZ_CHECK(memcmp(serialized, expected_uncompressed[recid], serialized_len) == 0);
+            }
+        }
+    }
+}
+
 /* Match Bitcoin Core's CKey::SignCompact composition. Core signs with its
  * mutable signing context, serializes through the static context, and adds
  * the compressed-key bit to the recovery header. The expected compact bytes
@@ -1136,6 +1228,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
     secp256k1_fuzz_check_recovery_generator_vector(ctx, input, size);
     secp256k1_fuzz_check_core_recover_compact(ctx, input, size);
+    secp256k1_fuzz_check_core_recover_compact_header_boundaries(ctx, input, size);
     secp256k1_fuzz_check_core_sign_compact(ctx, input, size);
     secp256k1_fuzz_check_static_context_recovery(ctx, input, size);
     secp256k1_fuzz_check_sign_recoverable_input_output_alias(ctx, input, size);
