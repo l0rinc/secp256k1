@@ -36977,3 +36977,37 @@ an invalid-spend or consensus proof. No production fix or deterministic secp
 regression test is claimed from this replay. Future MuSig changes must rerun
 the exact state-machine corpus under sanitizer and state whether they preserve,
 change, or mask the Core wallet boundary finding.
+
+## 2026-07-26 Group arithmetic sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_group` replayed the existing 23-file
+`src/fuzz/corpora/group` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_group -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 23 seeds (837 bytes), exited 0, and completed 903 and 904
+executions. Each reached coverage 2583; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`b95ca6a2b4cab48f8f30417802ebc8c1cbcef38f54cc1b1ce36c694af30f6dd4` and
+`37ebfcb2984af4388cd99d38046e7fa16ffce30c4797788c7afe508fa2ddad31`.
+The copied corpus grew to 154 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of group addition/doubling,
+cancellation, infinity, batch conversion, Jacobian normalization, and
+opaque public-key state. It found no new production bug, invalid witness or
+block acceptance, sigop undercount, consensus divergence, signature forgery,
+key compromise, or remote memory/concurrency failure. These are internal
+arithmetic contracts; an internal mismatch is not a Core vulnerability
+without a reproducible public-parser, signing, verification, or Taproot
+consequence. Existing master-relative severity ratings are unchanged, with
+no High/Critical rating or production fix justified by this replay. Future
+group changes must rerun these exact seeds under sanitizer and retain the
+caller-path proof before escalating an internal assertion.
