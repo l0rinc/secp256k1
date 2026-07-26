@@ -35447,10 +35447,12 @@ inputs.
 
 The unchecked arithmetic in the private Pippenger scratch-size helper is not
 reachable with an attacker-controlled count through the surveyed Bitcoin Core
-caller graph: `src/musig.cpp` supplies a locally constructed vector and uses
-`ecmult_multi_var(..., NULL, ...)`, while scratch-backed dispatch caps each
-batch at `ECMULT_MAX_POINTS_PER_BATCH`. No invalid block or witness can supply
-the impossible allocation state. Severity therefore remains unchanged: the
+caller graph: Core's `src/musig.cpp:36` passes a locally constructed vector to
+the public MuSig aggregation API, and the library's
+`src/modules/musig/keyagg_impl.h:206-212` passes that count to
+`ecmult_multi_var(..., NULL, ...)`; scratch-backed dispatch caps each batch at
+`ECMULT_MAX_POINTS_PER_BATCH`. No invalid block or witness can supply the
+impossible allocation state. Severity therefore remains unchanged: the
 existing clean-master scratch-wrap issue is **Medium internal memory safety**
 and the callback-failure stale-output issue is **Low internal correctness**;
 neither is High/Critical without invalid-block or invalid-witness acceptance,
@@ -35466,6 +35468,50 @@ allocation order, callback routing, or fork fixes must replay the clean-master
 scratch-wrap and callback-failure controls and state whether they preserve,
 change, or mask each existing finding, with the exact Core caller and verifier
 commands documented in the same commit.
+
+## 2026-07-26 Ecmult calibrated corpus and worker recheck
+
+The prior ecmult replay was repeated after the later oracle commits without any
+changes to `src/ecmult_impl.h`, `src/scratch_impl.h`, or
+`src/fuzz/ecmult_multi.c`. The tracked corpus still has 29 inputs totaling
+1028 bytes. A first replay used `-timeout=5` and stopped at the deliberately
+expensive `pippenger-window-1261` input; this was a harness timeout, not a
+failure. With `-runs=1 -timeout=60`, that input completed in 7.402 seconds in
+native 5x52 and 11.780 seconds in forced-int64/10x26. The calibrated replay
+then covered those 29 files plus one disposable empty input: all 30 returned
+zero in both Clang ASan/UBSan builds. Replay log hashes were
+`88375e40ff9b59886c18c5a2d8a555eaf417c2463fb87fd573e5b4c2399423a6` and
+`6f6819ec0a01bbcf449f132ef2ff22cf62411195ef0030bafdb7b46f23cd872e`.
+
+The complete unit module passed with `tests -i=1 -j=2 -t=ecmult`: native
+completed in 65.955 seconds and forced-int64 in 70.434 seconds. The test log
+hashes were
+`9486a61790bb7b4c170124c518f1e9f87dfb2f66cf0f8f874069a691849009bf` and
+`9c4ed14e9614b7f6a45fd2ea7251745a6b213e5a4454cde186f08a2559369eb1`.
+
+The same tracked corpus was copied to private directories and run with
+`-fork=2 -jobs=2 -max_total_time=15 -timeout=60 -rss_limit_mb=0`, all
+OOM/timeout/crash ignore flags disabled, and `-handle_abrt=0`. Both campaigns
+exited zero with `oom/timeout/crash=0/0/0` and zero artifacts. The native
+private corpus ended at 34 files and the forced-int64 corpus at 29; the
+manager log hashes were
+`087dea9b420ab4d07912e76d49ac1c5627291152513ee14e9d48fbf4ade0cd55` and
+`0a9e8f694b1636dcb17b690e5ff528fd5967f99630bb27e67fb3968d7a2b2954`.
+
+This remains negative oracle evidence. No new production mutation, assertion,
+sanitizer failure, deterministic regression, or severity upgrade was found.
+The five-second stop does not establish a timeout bug because the same input
+passes under the contractually appropriate 60-second per-input limit. The
+existing clean-master scratch-wrap issue remains **Medium internal memory
+safety**, and callback-failure stale output remains **Low internal correctness**
+for the surveyed Core path; neither is High/Critical without invalid-block or
+invalid-witness acceptance, consensus divergence, signature forgery, key
+compromise, or remotely severe memory/concurrency impact. No nonce-clearing
+claim is involved. The current `origin/master` and `l0rinc/master` refs remain
+identical at `d2d04864ef9b056151603a3ced7980958b058028`; no fork fix masks this
+recheck. Future changes to ecmult sizing, callback routing, scratch accounting,
+or the l0rinc optimization must rerun the 30-input matrix and explicitly state
+whether each existing finding is preserved, changed, or masked.
 
 ## 2026-07-26 Public codec worker recheck
 
