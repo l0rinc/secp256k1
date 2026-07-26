@@ -172,6 +172,52 @@ static void secp256k1_fuzz_check_ellswift_bip324_hash_reference(const secp256k1_
     secp256k1_fuzz_check_ellswift_bip324_hash_reference_party(ctx, ell_a64, ell_b64, seckey32, 0);
 }
 
+/* Reference the pre-optimization fraction predicate. Keeping the second
+ * square here deliberately avoids calling the optimized helper's wrapper. */
+static int secp256k1_fuzz_ellswift_x_frac_on_curve_reference(const secp256k1_fe *xn, const secp256k1_fe *xd) {
+    secp256k1_fe r;
+    secp256k1_fe t;
+
+    secp256k1_fe_mul(&r, xd, xn);
+    secp256k1_fe_sqr(&t, xn);
+    secp256k1_fe_mul(&r, &r, &t);
+    secp256k1_fe_sqr(&t, xd);
+    secp256k1_fe_sqr(&t, &t);
+    secp256k1_fe_mul_int(&t, SECP256K1_B);
+    secp256k1_fe_add(&r, &t);
+    return secp256k1_fe_is_square_var(&r);
+}
+
+static void secp256k1_fuzz_check_ellswift_denominator_square(const unsigned char *input, size_t size) {
+    unsigned char xn32[32];
+    unsigned char xd32[32];
+    secp256k1_fe xn;
+    secp256k1_fe xd;
+    secp256k1_fe xd2;
+    size_t i;
+
+    /* Exercise both zero/one and fuzz-derived field values while preserving
+     * the nonzero-denominator precondition of the group helper. */
+    for (i = 0; i < 4; i++) {
+        secp256k1_fuzz_derive(xn32, sizeof(xn32), input, size, 257u + (unsigned int)(2 * i));
+        secp256k1_fuzz_derive(xd32, sizeof(xd32), input, size, 258u + (unsigned int)(2 * i));
+        if (i == 0) {
+            memset(xn32, 0, sizeof(xn32));
+            memcpy(xd32, secp256k1_fuzz_scalar_one, sizeof(xd32));
+        }
+        secp256k1_fe_set_b32_mod(&xn, xn32);
+        secp256k1_fe_set_b32_mod(&xd, xd32);
+        secp256k1_fe_normalize_var(&xn);
+        secp256k1_fe_normalize_var(&xd);
+        if (secp256k1_fe_normalizes_to_zero_var(&xd)) {
+            xd = secp256k1_fe_one;
+        }
+        secp256k1_fe_sqr(&xd2, &xd);
+        FUZZ_CHECK(secp256k1_fuzz_ellswift_x_frac_on_curve_reference(&xn, &xd)
+                   == secp256k1_ge_x_frac_on_curve_xd2_var(&xn, &xd, &xd2));
+    }
+}
+
 static void secp256k1_fuzz_check_ellswift_decodes_to_pubkey(const secp256k1_context *ctx, const unsigned char *ell64, const secp256k1_pubkey *pubkey) {
     secp256k1_pubkey decoded;
 
@@ -902,6 +948,7 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
 
     secp256k1_fuzz_check_ellswift_bip324_decode_vector(ctx, input, size);
     secp256k1_fuzz_check_ellswift_modulo_alias(ctx);
+    secp256k1_fuzz_check_ellswift_denominator_square(input, size);
     secp256k1_fuzz_check_ellswift_bip324_wire_alias(ctx, input, size);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_a, seckey_a32) == 1);
     FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey_b, seckey_b32) == 1);

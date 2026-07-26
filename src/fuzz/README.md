@@ -35653,3 +35653,59 @@ for this boundary, and there is no fix/masking interaction to amend. Any
 future Taproot commitment or leaf-version fix must state whether it preserves,
 changes, or masks this master-relative oracle and must include the exact
 corpus condition and Core caller impact in its commit message.
+
+## 2026-07-26 EllSwift denominator-square optimization oracle
+
+The `ellswift` fuzzer now carries an independent reference for the latest
+ElligatorSwift decode optimization from l0rinc PR #27, imported as
+`3eafe49b` (`fe361c7f`). The production path computes `(g+s)^2` while forming
+the x3 candidate, then reuses that square when checking the x2 fraction. The
+new fuzzer reference deliberately reproduces the pre-optimization formula
+with its own two-square sequence and compares it with
+`secp256k1_ge_x_frac_on_curve_xd2_var` for four field pairs on every input:
+zero numerator/one denominator plus three fuzz-derived, reduced and normalized
+nonzero-denominator pairs. It does not compare the optimized helper with
+`secp256k1_ge_x_frac_on_curve_var`, because the latter now delegates to the
+optimized helper and would not be independent.
+
+The relevant implementation is
+`src/modules/ellswift/main_impl.h:86-123` and the optimized group predicate is
+`src/group_impl.h:958-978`. Bitcoin Core reaches this through the BIP324
+transport path `CKey::ComputeBIP324ECDHSecret` at
+`src/key.cpp:327-343`, where the peer supplies the remote 64-byte EllSwift
+encoding. This is not a block or witness-validation caller. A mismatch would
+be a BIP324 transport/key-agreement correctness issue; the current master
+evidence does not show invalid-block or invalid-witness acceptance, consensus
+divergence, key compromise, or a remote severe memory/concurrency failure.
+The master-relative rating remains **Low/informational transport hardening**,
+not High/Critical. The earlier clean-master zero-`u` observation and its
+production repair remain separately recorded; this optimization oracle found
+no new production bug and no deterministic regression test is justified.
+
+Native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds passed the 20
+tracked EllSwift corpus files plus one disposable empty input. Replay log
+hashes were
+`1529674ca7753aa87fff3a8fd5c022ef967788459ccbf538fff4b1f22526f849` and
+`dd50b84651c952d9e715873dce7be642a9b3ad8244aecb68221c0618bc9b686d`.
+Both `tests -i=1 -j=2 -t=ellswift` and
+`noverify_tests -i=1 -j=2 -t=ellswift` passed in both configurations.
+
+The same tracked corpus was run with two fork workers and two jobs per
+backend using `-fork=2 -jobs=2 -max_total_time=15 -timeout=30
+-rss_limit_mb=0`, all timeout/OOM/crash ignore flags disabled, and
+`-handle_abrt=0`. Both campaigns exited 0 with
+`oom/timeout/crash: 0/0/0` and zero artifacts. Private corpora contained 124
+native and 47 forced-int64 files at shutdown; manager log hashes were
+`89edd33deb8f5aadd91cbae194a9430c5f7f7b1d44333824adfbb0be71f6df13` and
+`3a74bae6398b54bdd0389365c862435855bb14f881df88898b1cd535c0c1c81e`.
+
+No production mutation, invalid-block/witness consequence, signature
+forgery, or nonce-clearing issue was demonstrated. The nonce/retry principle
+still applies: a value without standalone cryptographic meaning is not
+Critical merely because it is uncleared. `origin/master` and `l0rinc/master`
+remain identical at `d2d04864ef9b056151603a3ced7980958b058028`; PR #27 is
+already present in `3eafe49b`, this oracle preserves its documented behavior,
+and no new cherry-pick or masking interaction exists to amend. Future changes
+to the denominator-square path must retain this independent pre-optimization
+check and state whether they preserve, change, or mask the clean-master
+behavior in the same commit message.
