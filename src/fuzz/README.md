@@ -35755,3 +35755,62 @@ and no new cherry-pick or masking interaction exists to amend. Future changes
 to the denominator-square path must retain this independent pre-optimization
 check and state whether they preserve, change, or mask the clean-master
 behavior in the same commit message.
+
+## 2026-07-26 MuSig calibrated state-machine recheck
+
+The existing MuSig state-machine and independent equation oracles were
+replayed after the later audit commits without changes to the MuSig production
+implementation or `src/fuzz/musig.c`. The tracked corpus contains 79 files and
+2998 bytes, including the long key-aggregation, nonce-aggregation,
+partial-signature, duplicate-key, cancellation, opaque-state, cleanup, and
+invalid-input witnesses. Each backend also ran one disposable empty input.
+With `-runs=1 -timeout=60`, all 80 inputs returned zero in native 5x52 and
+forced-int64/10x26 Clang ASan/UBSan builds. The replay log hashes were
+`6ec0936e9e5455ba221dc05637ff4fd51d14f7e545cf886f6bd0e580049eb5ab` and
+`f0472cf837b4994919ec0f95d8f055581014087a5abb8ea13fdd94c4b295a365`.
+
+The complete module tests also passed in both configurations with
+`tests -i=1 -j=2 -t=musig`; the native and forced-int64 log hashes were
+`e8a5f99b3e2e83f8c4c4426bd23855d51fa548f13524db1581d67e1d04e5410c` and
+`6234a53d45b14bdf6997a62a31f0942dea93f37f59b7a5729838a2e5138b94a7`.
+
+The same 79 tracked inputs were copied to private corpora and run with
+`-fork=2 -jobs=2 -max_total_time=20 -timeout=60 -rss_limit_mb=0`, all
+OOM/timeout/crash ignore flags disabled, and `-handle_abrt=0`. Both campaigns
+exited zero with `oom/timeout/crash=0/0/0` and zero artifacts. The native
+workers reported 108-110 seconds of fixed-corpus execution and the
+forced-int64 workers 187-190 seconds; these are the long state-machine
+campaign's worker/merge timings, not timeout diagnostics. Both jobs started
+with 79 seeds and retained 79 corpus files. Manager log hashes were
+`021365466c1e104afe1390d4b9c4a2f27e00354bf056832b36ec05efbbb9a9c2` and
+`8e80616535ddcabd0a5e96d624389e93c99e549be715701c7d00d1c2f6aa20ad`.
+
+### Core caller and severity
+
+Bitcoin Core parses each `CPubKey` into a local `secp256k1_pubkey` vector before
+calling `secp256k1_musig_pubkey_agg` through `src/musig.cpp:16-40`. The result
+is used by descriptor construction (`src/script/descriptor.cpp:663-701`) and
+MuSig signing (`src/musig.cpp:132-240`, `src/script/sign.cpp:117-180`), not by
+block or witness validation. The library then runs the callback from
+`src/modules/musig/keyagg_impl.h:169-234` with Core's locally sized vector and
+no scratch space. Core checks failed aggregation, nonce, and partial-signature
+results and does not feed these opaque application objects into consensus
+acceptance.
+
+This is negative evidence only. No production mutation, deterministic
+regression, sanitizer failure, signature-equation mismatch, invalid-block or
+invalid-witness acceptance, consensus divergence, key compromise, signature
+forgery, or remotely severe memory/concurrency failure was demonstrated. The
+existing clean-master opaque-state observations remain **Medium direct-API
+state correctness** at most and **Low-to-Medium for the surveyed Core signing
+path**; High/Critical is not justified. This is unrelated to witness sigop
+accounting, and no nonce or retry-counter clearing claim is made: a value
+without standalone cryptographic meaning is not Critical merely because it is
+uncleared.
+
+No l0rinc commit masks this recheck: `origin/master` and `l0rinc/master` are
+still identical at `d2d04864ef9b056151603a3ced7980958b058028`. Future changes
+to KeyAgg coefficient selection, callback routing, opaque loaders, nonce
+consumption, or Core's MuSig adapter must rerun the 80-input matrix and state
+whether each existing finding is preserved, changed, or masked in the same
+commit message.
