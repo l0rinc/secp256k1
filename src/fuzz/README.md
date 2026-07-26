@@ -36807,3 +36807,35 @@ this run does not justify a High/Critical rating or a production fix. Future
 changes to Schnorr parsing, x-only handling, or Taproot caller composition
 must rerun the exact corpus under sanitizer and state whether they preserve,
 change, or mask these oracle results.
+
+## 2026-07-26 X-only tweak sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_xonly_tweak` replayed the existing
+20-file `src/fuzz/corpora/xonly_tweak` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_xonly_tweak -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 20 seeds (712 bytes), exited 0, and completed 49 executions.
+Each reached coverage 2932; neither reported an assertion, ASan/UBSan
+diagnostic, crash, timeout, OOM, or artifact. The worker-log SHA-256 values,
+in job order, were
+`8639dc8f62b7e4c41bc78c9fee93c2fe1cef1ec872cccf0e86d52f137c17e484` and
+`b306ed70d886b64b7813971bd460bdab75fed5b28da2ce9d26232895d383882b`.
+The copied corpus grew to 45 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of x-only parse, parity, tweak,
+keypair, and Taproot composition contracts used by Bitcoin Core. It found no
+new production bug, invalid witness or block acceptance, sigop undercount,
+consensus divergence, signature forgery, key compromise, or remote
+memory/concurrency failure. Existing master-relative findings and severity
+ratings are unchanged; this run does not justify a High/Critical rating or a
+production fix. Future changes to x-only normalization or tweak handling must
+rerun these exact seeds under sanitizer and state whether they preserve,
+change, or mask the recorded Core boundary evidence.
