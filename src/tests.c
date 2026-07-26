@@ -4150,6 +4150,13 @@ static void test_ge(void) {
         }
     }
 
+    {
+        secp256k1_ge ge_tmp = ge[0];
+        secp256k1_gej gej_tmp = gej[1];
+        secp256k1_ge_set_gej_var(&ge_tmp, &gej_tmp);
+        CHECK(secp256k1_ge_eq_var(&ge_tmp, &ge[1]));
+    }
+
     /* Generate random zf, and zfi2 = 1/zf^2, zfi3 = 1/zf^3 */
     testutil_random_fe_non_zero_test(&zf);
     testutil_random_fe_magnitude(&zf, 8);
