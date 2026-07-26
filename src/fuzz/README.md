@@ -37330,3 +37330,74 @@ fork or local fix masked one. No production mutation, production fix, or
 deterministic regression test is claimed by this docs-only record. Future
 oracle changes at these boundaries must rerun both backends from clean master
 and state explicitly whether any cherry-pick changes the failure surface.
+
+## 2026-07-27 All-target current-HEAD worker matrix
+
+The rebased audit branch was checked at `6577fb4c7e8d05ef3f6d445b639571e09b34ed76`.
+Both `origin/master` and `l0rinc/master` were still
+`d2d04864ef9b056151603a3ced7980958b058028`; no fork commit was pending. The
+native and forced-int64/10x26 builds were fresh Clang 22.1.7 ASan/UBSan Debug
+builds with `-DSECP256K1_ASM=OFF`, all optional modules, and
+`-DSECP256K1_FUZZ_USE_LIBFUZZER=ON`. The production and ecmult-fuzzer source
+hashes were `663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0`
+and `aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`.
+
+All 15 tracked corpora were copied to disposable directories:
+`api_roundtrip` 63, `context` 13, `ecdh` 9, `ecmult_const` 11,
+`ecmult_multi` 29, `ellswift` 20, `field` 21, `group` 23, `hash` 10,
+`musig` 81, `recovery` 18, `scalar` 10, `schnorrsig` 18,
+`silentpayments` 14, and `xonly_tweak` 20, for 360 inputs per backend. Each
+target used two managers and two workers with:
+
+    -fork=2 -jobs=2 -max_total_time=15 -timeout=180 -rss_limit_mb=0
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1
+
+All 30 manager logs recorded two jobs exiting 0. Every logged
+`oom/timeout/crash` counter was `0/0/0`; no ASan/UBSan diagnostic, assertion,
+crash, or production failure appeared. The sorted 60-line binary/log manifest
+hash is `a040ce8a2677d412b193f23d59cc335b2432e9cf84c89d050c33bbaccefe61e3`.
+The 360-entry tracked-corpus inventory hash is
+`d6a4c8049e1b0b62f4238905891d2870069ea168528b78a406835fe60e4cffad`.
+
+The concurrent campaign did emit 11 disposable libFuzzer artifacts. These are
+performance signals from intentionally expensive harness fixtures, not
+production failures. The only `artifact-timeout` was the 22-byte input
+`pippenger window 1261\n` (content SHA-256
+`4fc6f788771c52d6cf80186f9dd6763a35acb0d37c4e3912d5974a63fc5aeda9`) in the
+forced-int64 `ecmult_multi` worker. The isolated fixed-input replay exited 0
+in 34.334 seconds on native 5x52 and 70.298 seconds on forced-int64, both below
+the 180-second contract. This is the already documented 1,261-point Pippenger
+window-boundary oracle; the all-target timeout was CPU contention, not an
+ecmult or scratch timeout.
+
+The remaining slow-unit inputs also passed isolated `-runs=1` replays with
+the same strict sanitizer and timeout controls. Their conditions and elapsed
+times were:
+
+    condition                                      backend/target              seconds
+    Silent Payments recipient group limit          native/int64 silentpayments 31.14 / 84.73
+    core taproot control max depth                 int64 xonly_tweak             2.67
+    sixteen MuSig sign roundtrip                   int64 musig                  46.13
+    partial-sign-opaque-state-cleanup              int64 musig                  21.54
+    magic-preserving MuSig session semantic state  int64 musig                  24.75
+    opaque MuSig partial signature scalar state    int64 musig                  24.27
+    musig noncanonical nonce storage               int64 musig                  19.54
+    musig xonly tweak zero and parity signing      int64 musig                  21.30
+    long MuSig nonce aggregation                   int64 musig                  24.44
+
+The isolated command was `bin/fuzz_<target> -runs=1 -timeout=180` with
+unlimited RSS, all crash/timeout/OOM failures non-ignored, and abort-on-ASan/
+UBSan settings. No artifact replay returned nonzero or produced a diagnostic.
+
+This run adds no production mutation, deterministic regression, or severity
+upgrade. The existing `efa8b464`/`d7e3b49` scratch-wrap finding remains
+**Medium internal memory safety** and **Low for current Bitcoin Core** because
+Core's MuSig caller supplies a local vector and the relevant scratch-backed
+path is not fed by invalid block or witness bytes. `12b2e3cb` remains **Low
+internal output-state correctness**; Core checks the ecmult return value. No
+invalid-block or witness acceptance, sigop undercount, consensus divergence,
+signature forgery, key compromise, or remotely severe memory/concurrency
+failure was demonstrated. No cryptographically meaningful nonce-erasure
+finding is involved. The current artifact does not mask or alter any
+master-relative production finding, and no l0rinc commit was cherry-picked.
