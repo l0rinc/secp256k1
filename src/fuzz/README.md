@@ -33485,3 +33485,65 @@ and amend its own commit message with the exact seed/mutation, first assertion
 or stack, Core caller/input origin, master-relative severity, strongest proof,
 verifier commands, and whether it preserves, changes, or masks the result.
 No fuzz, sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 Reiterated opaque-public-key master finding
+
+The existing invalid opaque-public-key finding was replayed again after the
+rebase, against unmodified `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. This is a preservation check: a
+later loader repair, fork commit, or unrelated cleanup must not be allowed to
+make the current master baseline disappear from the audit record.
+
+The `group` target was run one input at a time with
+
+    -runs=1 -timeout=10 -rss_limit_mb=0 -handle_abrt=0 -verbosity=0 <input>
+
+The two independent inputs were `off-curve-opaque-pubkey` (32 bytes,
+SHA-256 `42f21aa7d5a7243b5e16e32518435fb0cc55c9e331e1fccd025021ba68509dc7`)
+and `invalid-pubkey-tweak-mul` (32 bytes, SHA-256
+`42567301ee31b92ee19770c2178930b6810447e5d20590c7502de13b0a4a8c55`). Both
+construct a canonical storage representation of the off-curve point
+`(x,y)=(1,1)`. In the clean native build, both inputs exited `134`; the
+forced-int64 build produced the same result. The first relevant oracle is the
+opaque loader barrier at `src/fuzz/group.c:124` for the off-curve input and
+the tweak-multiply barrier at `src/fuzz/group.c:156` for the second input.
+There was no sanitizer report because the failure is an assertion of the
+expected rejection contract, not a claimed memory-safety crash.
+
+The repaired native and forced-int64 builds returned `0` for both inputs. The
+clean/fixed binary hashes were respectively
+`6c959cd1eb1a1266d323c9146caa6d89b3ed42ab962197a40d0293ea349b4863`,
+`2e4af70a9db553b009ce5f66eaeefbdc7691acf47d9d8b125ecb2d0d0dc5a308`,
+`aeaaa32faf0122bf6de6fd0c48410fefaee77d418f720eca4022a1fbfb1fd35d`, and
+`96468728ff1556150458cad302c178280c4859c6f957ba14d55d776aa975706f`.
+The clean/fixed log hashes for `off-curve-opaque-pubkey` were
+`622a030abf76f74d8bacc6367287beabfcedb1e4465991e8b5029d67ec27537e`,
+`ea2104ce85cfd194cfa3ecb937714d21b331729fd9b6fe589871d66fe884b06c`,
+`6beafb401184a4a64c23330fd66f0f0e5a9b6dca58dc70dcd2c090afed59d2c7`, and
+`da4367a9d6bd565666aceb2769789130ec93ded8601cfc75ba86b23e8821cadd`.
+The corresponding `invalid-pubkey-tweak-mul` log hashes were
+`0204d1de8a37f843806ac92a7d236f262159c765ee493a8cee709bce8801ccb5`,
+`e5b1cbe3f0d413b424a3bf1ae6e886a59bb3c81b5afbc87f9fdfb9f70cf519b7`,
+`ab104c1544bf18e4cc69152865966c69f0927d90e4e9e1bfd05546269c609083`, and
+`d178e8b2e9a04b29aaa84fdaa7ec86e11c79fb52bac250783d13bfa31696d4f8`.
+
+This reiterates the `f106aaa5`/`91b9d762` production repair proof. On master,
+an in-memory `secp256k1_pubkey` that was directly constructed or corrupted
+can cross serialization and group-operation boundaries instead of being
+rejected, especially when the caller installs a non-aborting illegal
+callback. It is **Medium** direct-API/opaque-state integrity. It is
+**Low-to-Medium for current Bitcoin Core**: Core's `CPubKey` and MuSig
+adapters parse serialized public-key bytes with `secp256k1_ec_pubkey_parse`
+before passing the opaque object onward, and no block or witness path creates
+the `(1,1)` object. No invalid-block acceptance, invalid-witness acceptance,
+consensus divergence, key compromise, signature forgery, remote memory or
+concurrency failure, or witness-sigop consequence was demonstrated. This
+therefore remains below High/Critical. It is unrelated to nonce erasure; no
+nonce with standalone cryptographic meaning is involved.
+
+The clean-master corpus inputs, first-stop assertions, loader mutations, and
+Core call-site classification remain authoritative. Any later change that
+makes these replays pass must state in its own amended commit message whether
+it preserves, changes, or masks this master finding, including the exact
+precondition, postcondition, first failure, severity, and verifier commands.
+No fuzz, sanitizer, compiler, or test process remains running.
