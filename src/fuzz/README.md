@@ -36942,3 +36942,38 @@ remain unchanged; no High/Critical rating or production fix follows from
 this worker replay. Future allocator or scratch changes must rerun these
 exact seeds under sanitizer and identify both the first failure and the real
 Core caller path before assigning severity.
+
+## 2026-07-26 MuSig sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_musig` replayed the existing 81-file
+`src/fuzz/corpora/musig` state-machine corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_musig -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 81 seeds (3054 bytes), exited 0, and completed 82
+executions. Each reached coverage 4166 and added zero mutation units;
+neither reported an assertion, ASan/UBSan diagnostic, crash, timeout, OOM,
+or artifact. The worker-log SHA-256 values, in job order, were
+`3a5c45b450c008f33a785ee1f5323e768f7cb60769671529addda3659aeca86b` and
+`32f429b2943772e8fb7e727f252eecebd397388e4ff161cb8d01bd64ed9f057b`.
+The corpus remained at 81 files and no generated unit was promoted.
+
+This is a negative sanitizer revalidation of MuSig key aggregation, nonce
+generation/processing, partial signing and verification, tweak rollback,
+serialization, cleanup, and the existing duplicate-participant Core wallet
+composition cases. The slowest seed set took 97 seconds to finish, but both
+worker processes completed normally. No new production bug, invalid witness
+or block acceptance, sigop undercount, consensus divergence, signature
+forgery, key compromise, or remote memory/concurrency failure was found. The
+existing repeated-participant finding remains a master-relative Medium
+wallet/application spend-availability issue; it is not High/Critical without
+an invalid-spend or consensus proof. No production fix or deterministic secp
+regression test is claimed from this replay. Future MuSig changes must rerun
+the exact state-machine corpus under sanitizer and state whether they preserve,
+change, or mask the Core wallet boundary finding.
