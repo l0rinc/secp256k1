@@ -33994,6 +33994,70 @@ Core caller/input origin, master-relative severity, first assertion, and
 verifier commands. No fuzz, sanitizer, compiler, or test process remains
 running.
 
+## 2026-07-26 Arithmetic and recovery worker revalidation
+
+The remaining backend-sensitive arithmetic and recovery boundaries were
+rechecked after the key-boundary pass. This is negative evidence, not a new
+clean-master production finding. `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The fuzzer source hashes are
+`field.c` `2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`,
+`scalar.c` `174a0800d90ed2b7ca38ada2c084510e458ad3a584ca953f8d41c7181152d9be`,
+`ecmult_const.c`
+`7b0bcbb7da144048fce0773eca8bfe3a970f3553c7ae02f811e5f047419e33bf`, and
+`recovery.c` `ecdfb380801c2c20be6079d968166f2c5b5528b1f185d8160982f2855d234ae0`.
+
+Fresh private copies of the tracked corpora (`field` 21 files / 742 bytes,
+`scalar` 9 / 319, `ecmult_const` 11 / 406, and `recovery` 17 / 782) ran in
+native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds with:
+
+    -fork=2 -jobs=2 -max_total_time=60 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -verbosity=0 -print_final_stats=1 -use_value_profile=1
+
+All eight manager invocations and their sixteen fork workers exited 0. Every
+observed `oom/timeout/crash` counter was `0/0/0`; private artifact directories
+were empty and no sanitizer or assertion diagnostic appeared. The private
+corpora grew only with passing inputs: native ended at 259 / 236 / 195 / 298
+files and forced-int64 at 264 / 163 / 120 / 174 files, in the target order
+`field`, `scalar`, `ecmult_const`, `recovery`.
+
+Each tracked input was then replayed once per backend with
+`-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0`. The exact counts were
+21/21, 9/9, 11/11, and 17/17, all exit 0 with no diagnostic. Replay log
+hashes are:
+
+| target / backend | replay log |
+| --- | --- |
+| `field` / native | `0f080e8c1ed6f64197a795c07fe6bf084cc19e816e148badd3887ba33ce45c04` |
+| `field` / forced-int64 | `a1283954b97e67f4499d68ab4648aa21e4bb2cffa6421993c5ee0b36d0c37a75` |
+| `scalar` / native | `2f82986b6fd36d0fe6e375820ca53fd36ef1cfe7b4552d1a69b035cf7b2ae425` |
+| `scalar` / forced-int64 | `9fddf6fbf0b3ae6527b9cec97499a33e42cbf4a7bfbb98ccea00bc5f9545e830` |
+| `ecmult_const` / native | `923efe6b627c8019067548bf7f52b24551910dc6b4ca79191ff31872772dc340` |
+| `ecmult_const` / forced-int64 | `d2076512a9a7d05a0926b80f7074e85de8cd0897846d05f07325da71711a58bd` |
+| `recovery` / native | `4a283e46c3c26b2a85ddd06e67a00546603122832e900ea6118b1c75de2c7fc3` |
+| `recovery` / forced-int64 | `07b9a25319a0ae2b8739f6c7ae072e92a91812eccd18d9bcfb0aabb28d57b4fb` |
+
+The existing 10x26 magnitude-32 normalization and zero-predicate findings
+remain **Medium latent internal field correctness**; the scalar WNAF and
+large-shift undefined-behavior cases remain **Low/latent internal safety**.
+Ordinary Bitcoin Core consensus callers use bounded, validated values and do
+not expose these exact opaque maximum-magnitude states through block or
+witness bytes. Recovery and malformed-signature classes remain direct-API
+Low-to-Medium hygiene/validation issues where Core checks parsing and verify
+return values. No invalid-block or invalid-witness acceptance, consensus
+divergence, key compromise, signature forgery, remote memory/concurrency
+failure, or witness-sigop consequence was demonstrated. High/Critical is not
+justified, and no cryptographically meaningful nonce-erasure issue is involved.
+
+No l0rinc commit was cherry-picked because the refs remain identical and the
+existing field, scalar, ecmult, and recovery matrices already preserve the
+clean-master first stops. This pass adds no production fix or deterministic
+regression test. Any later backend change, optimization, fix, or cherry-pick
+must replay the clean 10x26 controls and amend its commit message with whether
+it preserves, changes, or masks the original failure, the exact Core
+caller/input origin, master-relative severity, first assertion, and verifier
+commands. No fuzz, sanitizer, compiler, or test process remains running.
+
 ## 2026-07-26 Group and x-only key-boundary worker revalidation
 
 The SEC1/group and Taproot x-only boundaries were rechecked after the
