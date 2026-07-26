@@ -107,6 +107,76 @@ static void secp256k1_fuzz_silentpayments_check_input_hash_reference(
         sizeof(expected_hash)) == 0);
 }
 
+static void secp256k1_fuzz_silentpayments_check_output_tweak_reference(
+    const secp256k1_context *ctx,
+    const unsigned char *input,
+    size_t size,
+    const unsigned char *input_seckey,
+    const secp256k1_pubkey *scan_pubkey,
+    const secp256k1_pubkey *spend_pubkey,
+    const secp256k1_pubkey *labeled_spend_pubkey,
+    size_t n_recipients,
+    const secp256k1_silentpayments_prevouts_summary *prevouts_summary,
+    const secp256k1_xonly_pubkey *generated_outputs
+) {
+    static const unsigned char trigger[] = "Silent Payments output tweak reference\n";
+    static const unsigned char tag[] = "BIP0352/SharedSecret";
+    unsigned char scaled_input_seckey[32];
+    unsigned char shared_secret[33];
+    unsigned char shared_pubkey_ser[33];
+    unsigned char expected_tweak[32];
+    unsigned char k_serialized[4];
+    secp256k1_pubkey shared_pubkey;
+    secp256k1_pubkey expected_pubkey;
+    secp256k1_xonly_pubkey expected_output;
+    size_t shared_pubkey_serlen = sizeof(shared_pubkey_ser);
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    /* For the one-input round trip, input_seckey * input_hash is the scalar
+     * that the sender and scanner use against the recipient scan key. Derive
+     * that point through the public API, then keep the BIP0352 output hash
+     * entirely outside the production Silent Payments helper. */
+    memcpy(scaled_input_seckey, input_seckey, sizeof(scaled_input_seckey));
+    FUZZ_CHECK(secp256k1_ec_seckey_tweak_mul(ctx, scaled_input_seckey,
+        prevouts_summary->data + 69) == 1);
+    shared_pubkey = *scan_pubkey;
+    FUZZ_CHECK(secp256k1_ec_pubkey_tweak_mul(ctx, &shared_pubkey,
+        scaled_input_seckey) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_serialize(ctx, shared_pubkey_ser,
+        &shared_pubkey_serlen, &shared_pubkey, SECP256K1_EC_COMPRESSED) == 1);
+    FUZZ_CHECK(shared_pubkey_serlen == sizeof(shared_pubkey_ser));
+    memcpy(shared_secret, shared_pubkey_ser, sizeof(shared_secret));
+
+    for (i = 0; i < n_recipients; i++) {
+        const secp256k1_pubkey *recipient_spend_pubkey =
+            i == 0 ? spend_pubkey : labeled_spend_pubkey;
+
+        k_serialized[0] = (unsigned char)(i >> 24);
+        k_serialized[1] = (unsigned char)(i >> 16);
+        k_serialized[2] = (unsigned char)(i >> 8);
+        k_serialized[3] = (unsigned char)i;
+        secp256k1_fuzz_silentpayments_tagged_hash_reference(expected_tweak,
+            tag, sizeof(tag) - 1, shared_secret, sizeof(shared_secret),
+            k_serialized, sizeof(k_serialized));
+        expected_pubkey = *recipient_spend_pubkey;
+        FUZZ_CHECK(secp256k1_ec_pubkey_tweak_add(ctx, &expected_pubkey,
+            expected_tweak) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &expected_output,
+            NULL, &expected_pubkey) == 1);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &expected_output,
+            &generated_outputs[i]) == 0);
+    }
+
+    memset(scaled_input_seckey, 0, sizeof(scaled_input_seckey));
+    memset(shared_secret, 0, sizeof(shared_secret));
+    memset(expected_tweak, 0, sizeof(expected_tweak));
+    memset(k_serialized, 0, sizeof(k_serialized));
+}
+
 typedef struct {
     const void *self;
     unsigned int calls;
@@ -762,6 +832,10 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
         &prevouts_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
     secp256k1_fuzz_silentpayments_check_input_hash_reference(ctx, input, size,
         outpoint, &input_pubkey, &prevouts_summary);
+    secp256k1_fuzz_silentpayments_check_output_tweak_reference(ctx, input, size,
+        input_seckey, &scan_pubkey, &spend_pubkey,
+        have_label ? &labeled_spend_pubkey : NULL, n_recipients,
+        &prevouts_summary, generated_outputs);
 
     label_cache.self = &label_cache;
     label_cache.entries_used = 0;
