@@ -31979,3 +31979,175 @@ baseline, source hashes, corpus/mutation, preconditions, postconditions,
 failure and assertion, Bitcoin Core caller/input origin, master-relative
 severity, existing-test gap, verifier commands/results, and whether it
 preserves, changes, or masks each original condition.
+
+## 2026-07-26 Scalar Clean-Master Differential Reiteration
+
+This pass re-ran the scalar oracle against the current clean baseline to
+reiterate, rather than silently reclassify, the two existing production
+findings fixed by `9fe2ece4` (`scalar: guard rounded multiply shifts above
+product width`) and `826308a4` (`ecmult: make generic WNAF arithmetic
+width-safe`). The exact refs were `origin/master`
+`d2d04864ef9b056151603a3ced7980958b058028` and `l0rinc/master` at the same
+commit. `origin/master` is an ancestor of this audit branch; no rebase or
+new scalar cherry-pick was needed. The clean worktree received only the
+current fuzzer/CMake overlay and corpus. Its production scalar and ecmult
+sources remained at clean master.
+
+### Corpus and source identity
+
+The frozen corpus contains 9 files and 319 bytes:
+
+    cadd-bit-carry-boundaries          58
+    cadd-bit-zero-order-boundary       36
+    get-bits-boundaries                32
+    high-boundary                      21
+    inverse-independent-reference      37
+    mul-shift-over-512                 39
+    split-lambda-independent-reference 42
+    wnaf-independent-reference        27
+    zero-one-boundaries                27
+
+The sorted filename SHA-256 is
+`bc28289f7ebb5055731149b9343d4ab08d12e367e51596b0d08b3e4a85516bf6`.
+The sorted filename-plus-size SHA-256 is
+`a7853cc6d7b867f97a36ba23a96d6c52db6d04ef2bb53cb6a0228af6990be335`.
+The sorted filename-plus-content SHA-256 manifest is
+`9fa3b032f0acae6b5aa9d7ad80438337817a4f0504ef2e48e3125fd675c51e89`.
+
+The source SHA-256 values used for the comparison are:
+
+    path                    clean master                                      repaired branch
+    src/ecmult.h            1e87f35efb7e7e5b6ea1d6ec22bbaeab33ccd4eacc41a9092ee518ece9237ced 74257027af15dfcc4bb5b1388caaaa82da035dc6b3f8ab396f691e03370b542f
+    src/ecmult_impl.h       ce70d26cb987c9bb2a2477389459437fc2831546c9c14404b58cf7ed07f32cc1 663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0
+    src/scalar_4x64_impl.h  92bc1023ee0e53cbd955a779b2f70d8b29bdc51ca02b61f23dda7054455264de fd094854ed4d3a752384ee164fddc991313244abdc95f5e21c14c30ba321fdd8
+    src/scalar_8x32_impl.h  19ad58cb2a3699c979ee2baf072586302ff2b3a7cfe59c7bd91c5c01120e8727 b37d6b65c1335fb014d58e4cdc0530232a30801f9ec583b2d037a8a44def093f
+    src/scalar_impl.h       6ba654bd4edc0349d1d7f1dfc25ba2d73dd9f2ecdca8078e384bf7b7837d663f ae851f0cad62f0ec7c8152118c3297bd855bd3680f8570895e59653d0efeaae9
+    src/tests.c             1905df0c67672e1ca24b3614cd818401549001a2ae07a72daa885d606aef8aaa a3bf3ad5599ad8777fab3c4f4551bece7c6a1e99eddb4ee48d5417b9749d1964
+    src/fuzz/scalar.c       current fuzzer overlay                              174a0800d90ed2b7ca38ada2c084510e458ad3a584ca953f8d41c7181152d9be
+
+### Clean-master findings
+
+The scalar target exercises reduced scalars, zero and order boundaries,
+independent base-2^16 products and modular reduction, inverses, GLV splits,
+generic and fixed WNAF, bit extraction, cadd-bit carry boundaries, and every
+documented rounded-shift boundary. Its full target forces the WNAF boundary
+scalar `0x7fffffff` on every input and checks shifts
+`256,257,287,288,319,320,383,384,447,448,479,480,511,512,513,514` and
+`UINT_MAX`.
+
+The first clean-master condition is the existing rounded-shift memory read.
+The exact corpus witness is
+`src/fuzz/corpora/scalar/mul-shift-over-512`, 39 bytes, SHA-256
+`b9575c7fbb38c7ddf114b9c89c8a80c7989b440b0a98d92e0290f5575e5924b7`, with
+the ASCII bytes `scalar multiply shift 513 and UINT_MAX\n`. A disposable
+standalone probe invoked the production helper with `shift == UINT_MAX`
+before the expensive remainder of the oracle. On clean master, GDB stopped
+at the rounding read in `src/scalar_4x64_impl.h:910` in the native backend and
+at `src/scalar_8x32_impl.h:707` in the forced-int64 backend. The indexes are
+`67108863` into `uint64_t l[8]` and `134217727` into `uint32_t l[16]`,
+respectively. The native and forced-int64 ASan probe logs have SHA-256
+`4ba399758e93ba757925c7d4220e83810cd6e7a097ac4afa1b45757c6aa61370` and
+`ede8a942fc6b2e8b527dcdee3e70e5ec65ee8f730e1abbf09c0b8c657fa61b74`.
+The backend-specific GDB traces are
+`3b5060f525916ed08a075b8c6840adf65d48e0e7a0c65203ee2447799c6c7d78` and
+`6dea7b14741a900e2483d807a7ae9bee427c4c1cdfc090108a5c634536096749`.
+The earlier `9fe2ece4` proof separately captures the same expression at the
+shift-513 boundary as reads of `l[8]` and `l[16]` under ASan.
+
+The second clean-master condition is the existing generic WNAF signed
+overflow. The target's forced `0x7fffffff` scalar reaches
+`src/ecmult_impl.h:201` with `w == 31`, `word == 2147483647`, and `carry == 1`.
+UBSan reports `left shift of 1 by 31 places cannot be represented in type
+'int'` at that line in both backend probes. The native GDB trace SHA-256 is
+`5b1f39da00bf428bc4039ce611859d713290d35f83e498ea2dd19f377949fcf2`; the
+forced-int64 trace is
+`7cb552f41430ddf34187d44c57edab70abae23df32d47c4e6aa92a527a8a9e51`.
+This is a direct clean-master reproduction, not a hypothetical production
+mutation. The fixed `826308a4` code uses `int64_t` intermediates and checks
+that the resulting digit fits the output `int`.
+
+For causal isolation, a disposable clean-master harness gate skipped only
+`shift > 512` and `w == 31`; it did not change production code. With those
+two known domains gated, all 9 corpus inputs passed in both ASan/UBSan
+backends. The sorted per-input log-manifest SHA-256 values were
+`765f711491ffb560e1fbc6b3b9b9c2a1587ddf45decd64adb9fa3f0a143c2d16`
+(native) and
+`1d31364c1c97a1feac5e87cc4de1c689fb4dccb68381e727398fab8c5946ef9a`
+(forced-int64). This establishes that no additional scalar first stop was
+hidden behind either known clean-master condition.
+
+### Repaired replay and verification
+
+The repaired branch replayed all 9 inputs independently without gates in
+native and forced-int64 Clang 22.1.7 ASan/UBSan builds. Every run exited 0;
+the sorted per-input replay log-manifest SHA-256 values were
+`9203dd086487a7ab085b883dbd791357a80480103c1d3e6e2d1f8f93a1e6576b`
+(native) and
+`e1688644c37a8764b6eb6efd99f94fec5ad93588081d5c3d54b29fbd31f3f28e`
+(forced-int64). The repaired binaries were
+`a4fb33eb121c5bd68d2a8d77c807b88c5f7906fb846e718ad0ba0c5fd245f2a5` and
+`f05a5c6093376ae4adc8c3a0d7a50321fd4c143e4009a0f8cb7d1527974fa3f9`.
+
+The two-backend worker campaigns used:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=120 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+    -artifact_prefix=<isolated-artifacts>/ -print_final_stats=1
+
+Both parent campaigns exited 0. Every worker reported
+`oom/timeout/crash: 0/0/0`, and the artifact directories were empty. Parent
+log SHA-256 values are
+`7fc76dba1509083085a5bbb304aac7ce239b87d5478ea9b6691db94271fe4a6f`
+(native) and
+`6e6a22bfd791278d3226f07b16d02f25f937b7e691ae23b2aaa9e2f38de02707`
+(forced-int64).
+
+The deterministic verifier slices passed in both `tests` and
+`noverify_tests`, native and forced-int64:
+
+    -i=16 -t=scalar_tests
+
+The additional one-iteration slice covering `inverse_tests`, `wnaf`,
+`ecmult_near_split_bound`, and `ecmult_constants` also passed in both
+variants and backends. The existing scalar unit test now directly checks
+rounded shifts 513 and `UINT_MAX`; before `9fe2ece4`, current in-tree code
+only called this helper with the constant 384 and the tests did not exercise
+the larger documented domain. Before `826308a4`, WNAF tests covered smaller
+windows and did not execute the accepted `w == 31`, `0x7fffffff` boundary.
+
+### Bitcoin Core severity and existing findings
+
+Scalar results feed Bitcoin Core's ECDSA and Schnorr signing and verification
+adapters, but these two specific clean-master triggers are internal helper
+domains. `secp256k1_scalar_split_lambda` is the current in-tree caller of
+`scalar_mul_shift_var`, and it passes the constant shift 384 at
+`src/scalar_impl.h:166-167`. Current production configurations use WNAF
+windows below 31; the fuzzer deliberately exercises the wider documented
+helper contract. No public Core caller was shown to control either value.
+
+Both findings are therefore **Low / latent internal safety or undefined
+behavior** on unmodified master, not High or Critical. A clean-master scalar
+failure that is reachable from invalid block or witness data and changes
+signature or consensus acceptance would require High/Critical review, but
+neither trigger is reachable through that current Core boundary in this
+proof. No invalid block or witness was accepted, no consensus divergence,
+key compromise, remote crash, or attacker-controlled read was demonstrated.
+
+The separate `11fcdaed` split-scalar cleanup is Low to Medium secret-state
+hygiene: the fuzzer verifies arithmetic but cannot prove stack erasure
+without instrumentation. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared. The
+existing branch-wide ledger remains unchanged: Medium for the documented
+reachable or feature-conditional memory/state findings, Low for caller-
+limited API and availability findings, and no High/Critical finding without
+actual Core consensus, key-compromise, or remotely reachable resource proof.
+
+No production source was changed by this pass. The two existing fixes remain
+the strongest proof: they reproduce the clean-master behavior, add focused
+deterministic coverage, and pass the repaired fuzzer and unit verifiers. The
+clean-master gates, probes, temporary source overlays, builds, corpora, logs,
+and artifacts are disposable evidence only. A later scalar or l0rinc change
+must preserve this clean-master baseline, or amend its commit message and
+this section with the exact change explaining whether it preserves, changes,
+or masks each shift and WNAF trigger. No fuzz, sanitizer, compiler, or test
+process remains running.
