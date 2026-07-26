@@ -34676,3 +34676,67 @@ canonical-storage repair. Any later fix or cherry-pick touching these loaders
 must amend its commit message with the exact `p + 1` mutation, first-stop
 ordering, whether it preserves/changes/masks the two controls, Core caller
 reachability, master-relative severity, and verifier commands.
+
+## 2026-07-26 Public codec and context revalidation
+
+After the Silent Payments loader repair, the remaining public object codecs
+and callback/lifecycle boundaries were reviewed together. ECDSA and recovery
+loaders reject overflowing opaque scalars and invalid recovery IDs; parsers,
+serializers, and verification paths clear or reject failed state. Extrakeys
+enforces canonical public-key storage, even-Y x-only state, and keypair
+secret/public consistency. Schnorr verification checks scalar bounds through
+the same loaders. The only remaining direct `ge_from_storage` uses are
+internal precomputation or test/fuzzer code; no additional public opaque
+loader bypass was found. `keypair_sec` and `keypair_pub` intentionally
+expose their raw opaque halves without validating a complete keypair, and that
+behavior is explicitly tested and is not a finding.
+
+The existing corpora were replayed on the current `65a6a285` source with
+Clang ASan/UBSan, libFuzzer, native 5x52 arithmetic, and forced-int64/10x26
+arithmetic. The four targets and tracked seed counts were:
+
+    fuzz_api_roundtrip  63  manifest 994d5f57fd53fce17cbc445caa5d80f406506134ed90eba7e3a9ee20a4fed1c0
+    fuzz_recovery       17  manifest 844b0d36c31d47d24a30d0e5701343eec6444ff4befe49ef167ac3a4a2091321
+    fuzz_context        13  manifest 6ab0ea61138c332b359b17f8b48d87cde6c3905af68190fb77e87dd203318de5
+    fuzz_schnorrsig     18  manifest 2b561e251febbd32c673d74a011406b5439ea771ad7fa073839398c90fd2c868
+
+The strict worker command was run from private corpus copies, so exploration
+could not modify the tracked tree:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=180
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+All eight `(target, backend)` campaigns exited 0. Every manager and worker
+reported `oom/timeout/crash: 0/0/0`; no sanitizer report, assertion failure,
+or artifact was produced. The strict log SHA-256 values were:
+
+    native  api_roundtrip acb9a92ba49b263fcf711083f48b729b71ce0d15f8888927e3414611994e2f47
+    int64   api_roundtrip 06f1a033ce23a62aa6d329806c86da9f704ccabe788a565065dae9996b88af9a
+    native  recovery      2776fb683fb493350df74358705a5051be9a8d489cb110c4c298f72bc77410ac
+    int64   recovery      472240c38518c92bde20f6a53f658f1d46a36e2524a051def125f7f0755f9487
+    native  context       7d668012f79998b2dea5bc8c53f6bb89a6ca6cb21df48c3a026db5f23dee50e6
+    int64   context       859f90635d09e69511fe7e8103d1cb5aa20a4b2fd44af75f1721ce96616a507e
+    native  schnorrsig    008b02fcded6520f32f615e18110aa86f0b179b39e6e1359972d3e15b20ae6c7
+    int64   schnorrsig    64b1fb016471c1d348ea63e177ee46c3027e0e79870407b2c3e3bf6c256040e4
+
+The deterministic unit command also passed on both arithmetic builds:
+
+    tests -i=1 -j=2 -t=general -t=ecdsa -t=recovery -t=extrakeys \
+      -t=schnorrsig -t=musig -t=silentpayments
+
+The native and forced-int64 unit log SHA-256 values were
+`19f76b599327510e6f9f92cab356c049b31c48dd2946e4cb2ea66f72d7f8882b` and
+`87534f6abff8a7e6618e8f4a6fad2e3c2de33a3eb8861df14c84e96998b6b25d`.
+
+This is negative evidence, not a new production finding: no clean-master
+codec or lifecycle bug was reproduced. For the surveyed Bitcoin Core caller
+graph, the ECDSA and Schnorr consensus adapters parse serialized keys before
+calling these APIs, and no invalid block/witness acceptance, consensus
+divergence, key compromise, signature forgery, remote memory/concurrency
+failure, or witness-sigop consequence was shown. No severity is assigned to
+this pass beyond retaining the previously documented direct-library findings.
+No l0rinc commit was added because the fork and master refs are identical and
+none supplies a missing codec or lifecycle contract. Any future change that
+makes these corpora pass or fail differently must record whether it preserves,
+changes, or masks the existing clean-master controls.
