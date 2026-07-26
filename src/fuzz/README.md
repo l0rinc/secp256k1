@@ -36076,3 +36076,69 @@ nonce or retry counter whose bytes have no standalone cryptographic meaning.
 `d2d04864ef9b056151603a3ced7980958b058028`; no fork change masks this
 recheck. Generated mutation corpora were removed after the run, and no fuzz,
 sanitizer, compiler, or test process remains running.
+
+## 2026-07-26 Core BIP390 repeated-participant signing finding
+
+The library's duplicate-key MuSig oracles already establish that libsecp256k1
+accepts and processes repeated participants at its vector-based API boundary.
+The Core wrapper has a separate identity/cardinality failure for the same
+supported descriptor domain. BIP327 says repeated individual public keys are
+handled by KeyAgg, and BIP390 explicitly says participant public keys may be
+repeated. BIP373 nevertheless identifies each nonce and partial signature by
+one compressed participant public key, while Core stores those contributions
+in `std::map<CPubKey, ...>`.
+
+### Reproducer and proof
+
+The disposable integration probe was run against Core checkout
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` (branch
+`codex/btc-fuzz-oracles`) using the built `bitcoind`; the checked-out Core
+`origin/master` is `11ebbd907217a037d2c0c9be0395091e1d6395e1`. There is no
+diff in the relevant `src/musig.cpp`, `src/script/sign.cpp`, or `src/psbt.h`
+logic between those objects, so this behavior is still present on the current
+Core master source. The exact fixed descriptor condition is:
+
+    tr(musig(tprv8ZgxMBicQKsPf26VaDQHrKhxrwNpVCTDfwvXUWRoLfVEDvv7zdX4UqgrPgedhYj2Adbr4XNv2s1XtemowxunG6SrNmkfLmuHgp28DtWXa4W/86h/1h/0h/0/*,tprv8ZgxMBicQKsPf26VaDQHrKhxrwNpVCTDfwvXUWRoLfVEDvv7zdX4UqgrPgedhYj2Adbr4XNv2s1XtemowxunG6SrNmkfLmuHgp28DtWXa4W/86h/1h/0h/0/*))
+
+Command:
+
+    PYTHONPATH=/mnt/my_storage/bitcoin/test/functional python3 /mnt/my_storage/core-duplicate-musig-probe.py
+
+The probe creates two regtest descriptor wallets, imports the same descriptor
+into both, derives the same address `bcrt1pyt5nv0rtgcwpje23w53t6cxdxz0llf2kav5f43ktuweqdsz6cfmsyh60zp`, funds it, and processes the PSBT through both wallets. Both imports succeed;
+both `walletprocesspsbt` calls return `complete=false`; the combined PSBT
+contains two identical participant keys, exactly one `musig2_pubnonce`, zero
+`musig2_partial_sigs`, and `finalizepsbt` returns `complete=false`. The
+fixed-input run exited 0 after asserting this failure. No source mutation was
+used. The node was stopped through RPC and no process remains.
+
+The production mechanism is direct: `src/psbt.h:316-318` stores nonce and
+partial-signature records in maps keyed by `CPubKey`, so the two identical
+PSBT participant identifiers cannot coexist. `src/script/sign.cpp:365-370`
+skips the second nonce because `pubnonces.contains(part_pk)` is already true,
+while `src/musig.cpp:174-176` and `src/script/sign.cpp:205-207` require map
+sizes to equal the participant-vector size. The participant vector itself
+preserves both entries at `src/psbt.h:227-244`, making the mismatch explicit.
+
+### Severity and masking boundary
+
+This is a **Medium Core wallet/application finding**: a user can import a
+descriptor that the current BIP390 domain permits, receive funds at its
+key-path address, and then be unable to complete a spend. It is not a
+secp256k1 production defect, invalid-block or invalid-witness acceptance,
+consensus divergence, signature forgery, key compromise, or remote memory/
+concurrency issue, so it is not High/Critical under the master-relative
+consensus severity rubric. The proper fix belongs in Core's index-addressed
+MuSig/PSBT contribution representation, or in an explicitly documented
+compatibility change; simply rejecting repeated descriptors would contradict
+the current BIP390 domain and must not be silently treated as a fix.
+
+The existing descriptor tests cover parsing/expansion, and the wallet MuSig
+tests use distinct participant keys; neither creates two same-key PSBT
+contributors. The secp fuzzer's repeated-key library oracles therefore did
+not and should not claim to reproduce this Core map bug. The l0rinc commit
+`8f97284e018e09bd2419339941bbb422aae32ecd` only prevents regenerating a nonce
+for an already stored session; it does not provide index identity for repeated
+participants and does not mask this finding. A future Core fix must retain the
+duplicate-participant BIP327/BIP390 semantics and add a deterministic two-wallet
+PSBT regression test before this finding can be closed.
