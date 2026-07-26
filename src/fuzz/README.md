@@ -34953,3 +34953,66 @@ remote memory/concurrency failure. It is therefore not High/Critical; no nonce
 or retry-counter clearing issue is involved. `origin/master` remains
 `d2d04864ef9b056151603a3ced7980958b058028`, equal to `l0rinc/master`, and no
 l0rinc change masks this result.
+
+## 2026-07-26 Full current-master corpus worker sweep
+
+After the label failure-cleanup oracle was added, every enabled fuzz target was
+rebuilt from the current clean-master descendant and replayed against its full
+checked-in corpus. Native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds
+were each run with the same command shape (target-specific timeouts were
+240-360 seconds):
+
+    timeout <240-360s> env ASAN_OPTIONS='abort_on_error=1:detect_leaks=0:allocator_may_return_null=1' UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' fuzz_TARGET -runs=1 -workers=2 -jobs=2 -print_final_stats=1 <all corpus files>
+
+The target unit counts were: `api_roundtrip=63`, `context=13`, `hash=10`,
+`scalar=10`, `field=21`, `group=23`, `ecmult_const=11`, `ecmult_multi=29`,
+`ecdh=9`, `ellswift=19`, `xonly_tweak=20`, `recovery=17`, `schnorrsig=18`,
+`silentpayments=13`, and `musig=79`. Each backend executed 355 distinct
+checked-in units and reported 710 worker executions. All 30 target/backend runs
+exited 0 with no sanitizer diagnostic, assertion failure, crash artifact, or
+timeout.
+
+The native log SHA-256 values, in target order, are:
+
+    api_roundtrip c4cc150980c90b6f8b9a443bd9c1672a38056ca4d204a947b7cc05e62875c6e6
+    context d52bce32e884f6dd805861a82e528bf855d7111e42112ca80184a5d745d68228
+    hash 1382cd12d41eabef68e5eb7dbf068f134eea0cfd55db633bf168bdecd913c465
+    scalar ca9dd07b3b9a83d9fabec532d186c8162a4785e52bcb073a7b3f6746e5461e92
+    field e1b86cd6aff9bc2d2cd2db4a9b8c49ff6bafadba5bbc2b7f454ae688749837d2
+    group 3bc62482306379ca4436e6598e312889fd228caf03c76c57d16d0e35611ba2b0
+    ecmult_const ab37409bd94caaa59e88f8b147f2956e1c908a5c7460ff72fbcbfdfa9af96ce8
+    ecmult_multi 72c87af00d9b90f9af34e4e4eb2dd4d01b3b66b65fe0d7db9fe5bc322f686134
+    ecdh 5f1fc2037f96c1b05ebdab21246a66a550b3321716c6a01eccb95c6b1a003951
+    ellswift b8ebf392a62a242a30230a678f25f0b37767314a79bf51b286c1200ce1a107e4
+    xonly_tweak d5e9bc31432e264079b5dfbb55d2ef74f8d37e354e0459a9eac12ca9ff02aee9
+    recovery f87e5687fb1bd97ee884d4d43af830e541d8abbbf63692ba3808dd3ec17c4167
+    schnorrsig 1ab422220413c9bd2e52004d048c5b6a8777a7976c3d0330cf4a5c457f00fd20
+    silentpayments 09dfdabc50ccc33d500f2a37ec1405093ab36e806e035b9c90616bf5f06feb44
+    musig 5eddb80075e3ae0ddef49821308bf4e121f4487c9666d810cd76e4a6c156f65e
+
+The forced-int64 log SHA-256 values are:
+
+    api_roundtrip 3a73d4aeb1a534e56ac88e910e8e65748c5595bbf00a32f7db8fb8ebd1c1805c
+    context 1212d224ac5a5f35a37f7d3960250c638b3361f019f25c98f445be7e3a5d3a95
+    hash 593b5ac4d601e85335375eb5d2e6e81253cb30ea817a96d7c1f5f01bc564a173
+    scalar 96f0791441acb69d56abdd8c618723d4d0622554cd35edf3adf709a606272a11
+    field 7a2aa1b4c787d88444d20e2dda0e47d81a75dbb8000a2960c97a41d4ce11d449
+    group 127a4b16713408edb14753175d66c352e11ceed2bff4781312cc6bfcaab3208e
+    ecmult_const d72af243704e53eb32c9fae636886f66ef291472401f7dc0f57ad5a326130f81
+    ecmult_multi 8e6deda930f65a3b6f6de1bab35b68c626cb87b1af8d5f8b5ee95074d8bb678
+    ecdh 3a6e298f34fc4b0c94193b48cda6458a21f59f656d75ba5999127659ff8f233f
+    ellswift 402387c9a5349a89ed3143e10c6fec430146ce9de29db1650a52fbd20e2b3cc9
+    xonly_tweak 09ec24adf65b558f62a93b8a54e122da3866127f938fdee7e57b7d5a5b8d6a5f
+    recovery ae3f1447b0c1b335a5273c3e71e718a6c84760af54b349567675711b09f1b491
+    schnorrsig 7faad0de0cbfaaa6b2255162c83c962459060c5da14b1bfa1dc012a9c024a588
+    silentpayments 4eb0c054563f6876b4313ae66d9966486cd510c13f978be41c07c88a3e74ba59
+    musig e39cf1e8ce3d559bbd7f570762d4833a65c23537085e5cd0c7c112ad7ac02d47
+
+This is negative evidence only. No new clean-master failure, production bug,
+or severity upgrade was found. The consensus ECDSA/Schnorr callers remain
+covered by serialized parsing and return-value checks; ECDH and Silent Payments
+remain transport or wallet/application boundaries in the surveyed Bitcoin Core
+checkout. No invalid-block or invalid-witness acceptance, consensus divergence,
+key compromise, signature forgery, or remote memory/concurrency failure was
+shown. The label cleanup oracle also passed in both workers and both backends.
+No l0rinc commit was added because the fork and master refs remain identical.
