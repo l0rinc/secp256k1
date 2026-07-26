@@ -34740,3 +34740,72 @@ No l0rinc commit was added because the fork and master refs are identical and
 none supplies a missing codec or lifecycle contract. Any future change that
 makes these corpora pass or fail differently must record whether it preserves,
 changes, or masks the existing clean-master controls.
+
+## 2026-07-26 Silent Payments label-batch index width
+
+The private Silent Payments label-batch helper returned an `int` even though
+the public scanner accepts `size_t n_tx_outputs` and later indexes
+`tx_outputs[found_idx]`. Its successful path narrowed `j_start + i / 2` to
+`int`; a valid caller with more than `INT_MAX` outputs could therefore turn a
+matching label index into a negative or unrelated index before the public
+scanner dereferenced it. The no-match sentinel was also `-1`, so the repair
+uses `size_t` throughout and reserves `SIZE_MAX` for no match.
+
+### Deterministic proof and clean-master control
+
+The regression is `test_recipient_scan_label_index_width` in
+`src/modules/silentpayments/tests_impl.h`. It supplies one valid two-point
+Jacobian batch, a lookup callback that returns a valid tweak, and
+`j_start = (size_t)INT_MAX + 1`; it requires the exact `size_t` index and a
+non-NULL callback result. This tests the private arithmetic directly, without
+constructing an invalid short `tx_outputs` array or pretending that a fuzzer
+can allocate billions of public-key pointers.
+
+For the clean-master control, the only production change was reverted to the
+old `int` return type, cast, and `-1` sentinel while the regression remained.
+The test failed at the boundary on both sanitizer arithmetic builds. Native
+and forced-int64 control log SHA-256 values were respectively
+`96445180a96f390c14f577d6b70166ba1609c02072b3832cacb9c122b90fac11` and
+`eb3f5908272496b666d7d47452c04d8a80546a7a13fa48928f730a42d4a0b2d6`.
+The repaired `tests -i=1 -j=2 -t=silentpayments` runs exited 0 with log
+SHA-256 values `41aaa0f7bc6f41af1b24618b700cc01497abbdffae87b7684b854883418ab982`
+and `926f37162324806a785bbb6105cdd7f16f6c6e960fd4e9c8e50ab4384a273f8b`.
+
+The repaired native and forced-int64 fuzz binaries also replayed all 12
+tracked Silent Payments seeds with two workers each using:
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=180
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -rss_limit_mb=0 -handle_abrt=0 -print_final_stats=1
+
+Both managers and workers exited 0; every worker reported
+`oom/timeout/crash: 0/0/0`, with no sanitizer report or corpus artifact. The
+native and forced-int64 manager log SHA-256 values were
+`f0928c009ae91654f6b34676701a167d8483b7cc18392e5b3cd677a2eca7e475` and
+`66095c39df45bd91310bf2866bd292c0bcbd9360b9f1edaa0b3d7090d5de2c6e`.
+
+### Severity and caller reachability
+
+Master-relative severity is **Low direct-API robustness**: reaching the bad
+index requires a correctly allocated array larger than `INT_MAX` and a scan
+that processes that many entries, so the dominant practical cost is already
+extreme memory and CPU use. It is nevertheless a real signed-width bug in an
+unbounded `size_t` API, and the repaired helper removes the latent
+out-of-bounds/wrong-index behavior without imposing an arbitrary public count
+limit.
+
+The surveyed Bitcoin Core checkout has no Silent Payments production caller.
+Even a future transaction-facing caller would be bounded far below `INT_MAX`
+by the 4,000,000 block-weight limit and the minimum serialized transaction
+output size. This is therefore **Informational for current Core**, with no
+invalid-block or invalid-witness acceptance, consensus divergence, key
+compromise, signature forgery, remote crash, or witness-sigop consequence.
+It is not High/Critical, and it is unrelated to cryptographic nonce clearing.
+
+The existing ordinary tests missed this because all vector and scanner cases
+use small output arrays and never exercised the private index conversion.
+No l0rinc commit was cherry-picked: `origin/master`, `l0rinc/master`, and the
+audit base remain `d2d04864`, and no fork change supplied this repair. Any
+later cherry-pick or fix that changes this helper must amend its commit notes
+with whether it preserves, changes, or masks the `INT_MAX + 1` control and
+must retain the exact Core reachability, severity, and verifier commands.

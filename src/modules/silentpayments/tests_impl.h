@@ -100,6 +100,14 @@ struct labels_cache {
     size_t entries_used;
     struct label_cache_entry entries[10];
 };
+
+static const unsigned char* label_lookup_any(const unsigned char* key, const void* cache_ptr) {
+    static const unsigned char label_tweak[32] = { 1 };
+    (void)key;
+    (void)cache_ptr;
+    return label_tweak;
+}
+
 struct labels_cache labels_cache;
 const unsigned char* label_lookup(const unsigned char* key, const void* cache_ptr) {
     const struct labels_cache* cache;
@@ -725,6 +733,22 @@ static void test_recipient_scan_label_precedes_direct_match(void) {
     CHECK(secp256k1_memcmp_var(found_label, cache.entries[0].label, sizeof(found_label)) == 0);
 }
 
+static void test_recipient_scan_label_index_width(void) {
+#if SIZE_MAX > INT_MAX
+    secp256k1_gej label_candidates_gej[2];
+    secp256k1_ge label_ge;
+    const unsigned char *label_tweak = NULL;
+    const size_t j_start = (size_t)INT_MAX + 1;
+
+    secp256k1_gej_set_ge(&label_candidates_gej[0], &secp256k1_ge_const_g);
+    secp256k1_gej_set_ge(&label_candidates_gej[1], &secp256k1_ge_const_g);
+    CHECK(secp256k1_silentpayments_check_label_batch(
+        &label_ge, &label_tweak, label_candidates_gej, 1, j_start,
+        label_lookup_any, NULL) == j_start);
+    CHECK(label_tweak != NULL);
+#endif
+}
+
 void run_silentpayments_test_vector_send(const struct bip352_test_vector *test) {
     static secp256k1_silentpayments_recipient recipients[MAX_OUTPUTS_PER_TEST_CASE];
     static const secp256k1_silentpayments_recipient *recipient_ptrs[MAX_OUTPUTS_PER_TEST_CASE];
@@ -986,6 +1010,7 @@ static const struct tf_test_entry tests_silentpayments[] = {
     CASE1(test_label_api),
     CASE1(test_recipient_api),
     CASE1(test_recipient_scan_label_precedes_direct_match),
+    CASE1(test_recipient_scan_label_index_width),
     CASE1(run_silentpayments_test_vectors),
     CASE1(silentpayments_sha256_tag_test),
 };
