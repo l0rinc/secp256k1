@@ -8,6 +8,7 @@
 
 #ifdef ENABLE_MODULE_SILENTPAYMENTS
 
+#include "../hash_impl.h"
 #include "sha256_reference.h"
 #include "../field_impl.h"
 
@@ -17,6 +18,15 @@ static const unsigned char secp256k1_fuzz_silentpayments_field_p_plus_one[32] = 
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
 };
+
+static size_t secp256k1_fuzz_silentpayments_sha256_compression_calls;
+
+static void secp256k1_fuzz_silentpayments_sha256_compression(
+    uint32_t *state, const unsigned char *blocks64, size_t n_blocks
+) {
+    secp256k1_fuzz_silentpayments_sha256_compression_calls += n_blocks;
+    secp256k1_sha256_transform(state, blocks64, n_blocks);
+}
 
 static void secp256k1_fuzz_silentpayments_tagged_hash_reference(
     unsigned char out32[32], const unsigned char *tag, size_t taglen,
@@ -52,6 +62,149 @@ static void secp256k1_fuzz_silentpayments_label_tweak_reference(
     secp256k1_fuzz_silentpayments_tagged_hash_reference(out32, tag,
         sizeof(tag) - 1, scan_key32, 32, m_serialized, sizeof(m_serialized));
     memset(m_serialized, 0, sizeof(m_serialized));
+}
+
+/* All Silent Payments transcripts must use the compression backend installed
+ * on the caller's context. Compare the complete public flow against a
+ * validated counting backend so routing a single hash through the static
+ * context cannot silently preserve the same result. */
+static void secp256k1_fuzz_silentpayments_check_custom_sha256_context(
+    const secp256k1_context *ctx, const unsigned char *input, size_t size
+) {
+    static const unsigned char trigger[] = "Silent Payments custom SHA context\n";
+    unsigned char one32[32] = { 0 };
+    unsigned char two32[32] = { 0 };
+    unsigned char three32[32] = { 0 };
+    unsigned char outpoint[36];
+    unsigned char reference_label_tweak[32];
+    unsigned char custom_label_tweak[32];
+    unsigned char reference_label_ser[33];
+    unsigned char custom_label_ser[33];
+    unsigned char reference_output_ser[32];
+    unsigned char custom_output_ser[32];
+    unsigned char reference_found_ser[32];
+    unsigned char custom_found_ser[32];
+    const unsigned char *seckey_ptrs[1];
+    const secp256k1_pubkey *prevout_pubkey_ptrs[1];
+    const secp256k1_silentpayments_recipient *recipient_ptrs[1];
+    const secp256k1_xonly_pubkey *reference_tx_outputs[1];
+    const secp256k1_xonly_pubkey *custom_tx_outputs[1];
+    secp256k1_context *custom_ctx;
+    secp256k1_pubkey scan_pubkey;
+    secp256k1_pubkey spend_pubkey;
+    secp256k1_pubkey input_pubkey;
+    secp256k1_silentpayments_recipient recipient;
+    secp256k1_xonly_pubkey reference_output;
+    secp256k1_xonly_pubkey custom_output;
+    secp256k1_silentpayments_label reference_label;
+    secp256k1_silentpayments_label custom_label;
+    secp256k1_silentpayments_prevouts_summary reference_summary;
+    secp256k1_silentpayments_prevouts_summary custom_summary;
+    secp256k1_silentpayments_found_output reference_found;
+    secp256k1_silentpayments_found_output custom_found;
+    secp256k1_xonly_pubkey *reference_output_ptrs[1];
+    secp256k1_xonly_pubkey *custom_output_ptrs[1];
+    secp256k1_silentpayments_found_output *reference_found_ptrs[1];
+    secp256k1_silentpayments_found_output *custom_found_ptrs[1];
+    uint32_t reference_n_found;
+    uint32_t custom_n_found;
+    size_t i;
+
+    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
+        return;
+    }
+
+    one32[31] = 1;
+    two32[31] = 2;
+    three32[31] = 3;
+    for (i = 0; i < sizeof(outpoint); i++) {
+        outpoint[i] = (unsigned char)(0x31u + 17u * i);
+    }
+
+    custom_ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    FUZZ_CHECK(custom_ctx != NULL);
+    secp256k1_context_set_sha256_compression(custom_ctx,
+        secp256k1_fuzz_silentpayments_sha256_compression);
+    secp256k1_fuzz_silentpayments_sha256_compression_calls = 0;
+
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &scan_pubkey, one32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &spend_pubkey, two32) == 1);
+    FUZZ_CHECK(secp256k1_ec_pubkey_create(ctx, &input_pubkey, three32) == 1);
+    recipient.scan_pubkey = scan_pubkey;
+    recipient.spend_pubkey = spend_pubkey;
+    recipient.index = 0;
+    recipient_ptrs[0] = &recipient;
+    seckey_ptrs[0] = three32;
+    prevout_pubkey_ptrs[0] = &input_pubkey;
+    reference_output_ptrs[0] = &reference_output;
+    custom_output_ptrs[0] = &custom_output;
+
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_label_create(ctx,
+        &reference_label, reference_label_tweak, one32, 0) == 1);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_label_create(custom_ctx,
+        &custom_label, custom_label_tweak, one32, 0) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_silentpayments_sha256_compression_calls != 0);
+    secp256k1_fuzz_silentpayments_sha256_compression_calls = 0;
+    FUZZ_CHECK(memcmp(reference_label_tweak, custom_label_tweak,
+        sizeof(reference_label_tweak)) == 0);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(ctx,
+        reference_label_ser, &reference_label) == 1);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_label_serialize(custom_ctx,
+        custom_label_ser, &custom_label) == 1);
+    FUZZ_CHECK(memcmp(reference_label_ser, custom_label_ser,
+        sizeof(reference_label_ser)) == 0);
+
+    FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(ctx,
+        reference_output_ptrs, recipient_ptrs, 1, outpoint, NULL, 0,
+        seckey_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_silentpayments_sender_create_outputs(custom_ctx,
+        custom_output_ptrs, recipient_ptrs, 1, outpoint, NULL, 0,
+        seckey_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_silentpayments_sha256_compression_calls != 0);
+    secp256k1_fuzz_silentpayments_sha256_compression_calls = 0;
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, reference_output_ser,
+        &reference_output) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(custom_ctx, custom_output_ser,
+        &custom_output) == 1);
+    FUZZ_CHECK(memcmp(reference_output_ser, custom_output_ser,
+        sizeof(reference_output_ser)) == 0);
+
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+        &reference_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(custom_ctx,
+        &custom_summary, outpoint, NULL, 0, prevout_pubkey_ptrs, 1) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_silentpayments_sha256_compression_calls != 0);
+    secp256k1_fuzz_silentpayments_sha256_compression_calls = 0;
+    FUZZ_CHECK(memcmp(reference_summary.data, custom_summary.data,
+        sizeof(reference_summary.data)) == 0);
+
+    reference_tx_outputs[0] = &reference_output;
+    custom_tx_outputs[0] = &custom_output;
+    reference_found_ptrs[0] = &reference_found;
+    custom_found_ptrs[0] = &custom_found;
+    reference_n_found = 0;
+    custom_n_found = 0;
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+        reference_found_ptrs, &reference_n_found, reference_tx_outputs, 1,
+        one32, &reference_summary, &spend_pubkey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(custom_ctx,
+        custom_found_ptrs, &custom_n_found, custom_tx_outputs, 1, one32,
+        &custom_summary, &spend_pubkey, NULL, NULL) == 1);
+    FUZZ_CHECK(secp256k1_fuzz_silentpayments_sha256_compression_calls != 0);
+    FUZZ_CHECK(reference_n_found == 1);
+    FUZZ_CHECK(custom_n_found == reference_n_found);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(ctx, reference_found_ser,
+        &reference_found.output) == 1);
+    FUZZ_CHECK(secp256k1_xonly_pubkey_serialize(custom_ctx, custom_found_ser,
+        &custom_found.output) == 1);
+    FUZZ_CHECK(memcmp(reference_found_ser, custom_found_ser,
+        sizeof(reference_found_ser)) == 0);
+    FUZZ_CHECK(memcmp(reference_found.tweak, custom_found.tweak,
+        sizeof(reference_found.tweak)) == 0);
+    FUZZ_CHECK(reference_found.found_with_label == custom_found.found_with_label);
+    FUZZ_CHECK(memcmp(&reference_found.label, &custom_found.label,
+        sizeof(reference_found.label)) == 0);
+    secp256k1_context_destroy(custom_ctx);
 }
 
 static void secp256k1_fuzz_silentpayments_check_label_integer_maximum(
@@ -868,6 +1021,7 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     int scan_cmp;
     unsigned int calls;
 
+    secp256k1_fuzz_silentpayments_check_custom_sha256_context(ctx, input, size);
     secp256k1_fuzz_valid_seckey32(ctx, scan_seckey, input, size, 211);
     secp256k1_fuzz_valid_seckey32(ctx, spend_seckey, input, size, 223);
     secp256k1_fuzz_valid_seckey32(ctx, input_seckey, input, size, 227);

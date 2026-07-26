@@ -35057,3 +35057,55 @@ mutation, clean-master failure, or l0rinc cherry-pick is claimed here; the
 purpose of the documentation and existing valid-cache oracle is to preserve
 the boundary and prevent future fuzzers from treating corrupted callback data
 as a library finding.
+
+## 2026-07-26 Silent Payments caller-context hash oracle
+
+Commit `f514f1ec` adds the checked-in trigger
+`src/fuzz/corpora/silentpayments/custom-sha-context` (the exact input is
+`Silent Payments custom SHA context`). The harness installs a validated
+counting SHA256 compression callback on a second context, then compares the
+normal and custom contexts at each BIP352 transcript boundary: label creation,
+sender output derivation, recipient prevouts-summary creation, and recipient
+scanning. Each stage must both match the reference bytes and invoke the custom
+callback. This tests routing through the caller's context rather than merely
+testing the final deterministic value, because the static and custom SHA
+implementations intentionally produce identical bytes.
+
+The causal proof used a disposable worktree at `f514f1ec`. In
+`src/modules/silentpayments/main_impl.h`, all three hash operations in
+`secp256k1_silentpayments_recipient_label_create` were mutated from
+`secp256k1_get_hash_context(ctx)` to
+`secp256k1_get_hash_context(secp256k1_context_static)`: the two writes and the
+finalize. The native Clang ASan/UBSan mutation build and the forced-int64/
+10x26 Clang ASan/UBSan mutation build both produced these results:
+
+    fixed custom-sha-context seed: exit 0
+    mutated custom-sha-context seed: exit 134 (the callback postcondition)
+    mutated pre-existing corpus, 13 files excluding that seed: exit 0
+
+The old corpus command was:
+
+    find src/fuzz/corpora/silentpayments -maxdepth 1 -type f ! -name custom-sha-context -print0 | xargs -0 fuzz_silentpayments -runs=1 -handle_abrt=0 -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -rss_limit_mb=0
+
+Both fixed-backend exact replays and both Silent Payments unit suites passed;
+the only mutation failure was the intentional `FUZZ_CHECK` abort, with no
+sanitizer diagnostic. The previous corpus did not detect this modeled defect:
+it exercised reference/round-trip behavior under the default callback, where
+the static and caller contexts are byte-for-byte equivalent, but had no
+caller-context routing postcondition. Existing generic context tests likewise
+did not execute the Silent Payments transcript stages.
+
+This remains **Informational oracle hardening**, not a production finding on
+clean master. The surveyed Bitcoin Core checkout has no Silent Payments
+production caller; the module is wallet/application-side and cannot accept an
+invalid block or witness. The modeled condition therefore has no demonstrated
+consensus divergence, signature forgery, key compromise, remote
+memory/concurrency failure, or High/Critical impact. It is unrelated to
+clearing a nonce or retry counter. The production mutation was discarded.
+
+`origin/master` and `l0rinc/master` are still identical at
+`d2d04864ef9b056151603a3ced7980958b058028`; no fork commit masks or fixes this
+oracle. If a later context-routing change makes the existing seed pass without
+invoking the caller callback, retain the per-stage callback assertions and
+amend that change's notes with whether the modeled condition was fixed or only
+masked. No clean-master bug should be claimed without that causal distinction.
