@@ -15493,3 +15493,37 @@ not cleared. The first concurrent launch attempt that lacked one disposable
 artifact directory was discarded as a startup error and is not part of this
 evidence. `origin/master == l0rinc/master == d2d04864`, and no rebase or
 cherry-pick changed the clean-master baseline.
+
+## 2026-07-26 Silent Payments and context revalidation
+
+The current audit branch remains based directly on `origin/master` and
+`l0rinc/master`, both `d2d04864`; no rebase or cherry-pick changed the
+clean-master behavior after the `ecdsa: bound custom nonce retry counter`
+commit. The complete tracked Silent Payments corpus (15 executions including
+the 14-file seed corpus) and context corpus (14 executions including the
+13-file seed corpus) passed with exit 0 in both native 5x52 and forced-int64
+10x26 ASan/UBSan builds.
+
+Silent Payments was also exercised with two independent workers per arithmetic
+backend using:
+
+    -fork=2 -jobs=2 -max_total_time=20 -timeout=180
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -rss_limit_mb=0
+    -handle_abrt=0 -print_final_stats=1
+
+All four worker jobs exited 0 with `oom/timeout/crash=0/0/0`. The corpus
+expanded only with disposable libFuzzer mutations; those untracked files and
+worker logs were removed before this note was committed. The context corpus
+replay covers preallocated and heap clones, callback ownership, custom SHA256
+routing, static-context rejection, reset semantics, and secret-operation
+equivalence.
+
+This is negative evidence, not a new production finding. The reviewed
+Silent Payments state transitions remain Informational/Low API-oracle
+hardening: the current Bitcoin Core tree has no surveyed production caller
+for this module, and these APIs are not on invalid-block or witness
+validation paths. The context checks likewise found no clean-master
+production bug, consensus divergence, invalid-block acceptance, signature
+forgery, key compromise, or remote memory/concurrency failure. No deterministic
+regression test is claimed for this replay, and no nonce-clearing severity is
+inferred merely from buffer hygiene.
