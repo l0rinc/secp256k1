@@ -36839,3 +36839,37 @@ ratings are unchanged; this run does not justify a High/Critical rating or a
 production fix. Future changes to x-only normalization or tweak handling must
 rerun these exact seeds under sanitizer and state whether they preserve,
 change, or mask the recorded Core boundary evidence.
+
+## 2026-07-26 Context lifecycle sanitizer worker revalidation
+
+The repaired ASan/UBSan build
+`/tmp/secp256k1-oracles-clang/bin/fuzz_context` replayed the existing
+13-file `src/fuzz/corpora/context` corpus with two independent workers:
+
+    ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    bin/fuzz_context -jobs=2 -workers=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -detect_leaks=0 -print_final_stats=1 corpus
+
+Both jobs loaded 13 seeds (722 bytes), exited 0, and completed 403 and 404
+executions. Each reached coverage 2849; neither reported an assertion,
+ASan/UBSan diagnostic, crash, timeout, OOM, or artifact. The worker-log
+SHA-256 values, in job order, were
+`002838e55b602ae2f8b8e6c94d11a61307f69766abf06be07c24e4316dce06a1` and
+`f0cbf6f15ea1e13631873e957764bdcb5dc3ed3cb494e2337b36ece46ad9e17f`.
+The copied corpus grew to 141 mutation units and was discarded; no generated
+unit was promoted to the tracked corpus.
+
+This is a negative sanitizer revalidation of context create/clone,
+randomization, callback, and destroy transitions. It found no new production
+bug, invalid witness or block acceptance, sigop undercount, consensus
+divergence, signature forgery, key compromise, or remote memory/concurrency
+failure. Existing direct-API findings remain master-relative Low/Medium
+robustness issues unless a caller can reach the misuse; the surveyed Bitcoin
+Core callers use valid static or explicitly managed contexts and no new Core
+consequence was demonstrated. This run therefore does not justify a
+High/Critical rating or a production fix. Future lifecycle changes must rerun
+these seeds under sanitizer and identify whether any failure is reachable
+from a real Core context owner.
