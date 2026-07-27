@@ -40884,3 +40884,140 @@ No ECDH item above is High or Critical under the caller-aware scale; that
 would require a minimized consensus-relevant Core trigger, not a direct
 library callback or sanitizer assertion. No new production fix, deterministic
 test, corpus seed, cherry-pick, or severity upgrade is claimed here.
+
+## 2026-07-27 Current-origin EllSwift first-stop and BIP324 revalidation
+
+This is a current-origin reiteration of the existing EllSwift findings, not a
+new production claim. The refs were
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The audit branch
+before this entry was `b599f028660e9e8372152c4009af123245182cdd`. A clean
+archive of current `origin/master` received only this branch's CMake fuzz
+wiring and `src/fuzz`; no production repair from the audit branch was copied.
+
+The tracked EllSwift corpus contained 20 files and 820 bytes. Its sorted
+`filename size` manifest was
+`ebf36c832e376af625f54c99b5e4f9db56b6870534612fb863c7e7a86fadb429`.
+The branch fuzzer and compatibility-header hashes were
+`22f6f7aa6d0e20f58d5802affe6b46cc20a74733a36cb16af27f2da5afa8eddb` and
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`.
+Clean current-origin `src/modules/ellswift/main_impl.h` was
+`8deffa7b37a0602be2b87d0378419410e6cc9683ebcf3fb033d2eed56c4f8416`.
+
+The branch oracle calls the denominator-square helper introduced by
+`3eafe49b`, which does not exist on this origin ref. To keep the differential
+tree production-clean, the disposable fuzzer projection used a local
+`secp256k1_fuzz_ge_x_frac_on_curve_xd2_var` reference containing the old
+two-square formula. This changed only the copied fuzzer source and did not
+change the production implementation or any repair result.
+
+### Clean first stop and masking order
+
+The unmodified current-origin GCC Debug file driver aborted all 20 inputs at
+the same production assertion. GDB on `xdh-overflow-plus-one` stopped at
+`src/modules/ellswift/main_impl.h:362` in
+`secp256k1_ellswift_xelligatorswift_var`: the fuzzer's SHA compression probe
+replaced the third PRNG digest with zero, and clean master reached the inverse
+with `u == 0`. The focused input is 65 bytes with SHA-256
+`c1b5cf782d060266b810c45ae9d8babc2afd72af973cbff3949ca9c9994ed81f`.
+The clean all-input status log hash was
+`3b9847f72eba683f1aaac197c351b0ac15c1e796ec9cdb7db17af511ab330ee3`.
+
+The disposable repair ladder was deliberately staged so a later minor fix
+could not hide an earlier master failure:
+
+1. `cc3253a4` replaced zero field `u` with one before the inverse search. The
+   forced-zero path then passed that assertion, but all 20 inputs stopped at
+   the next independent oracle. The master-relative issue is **Low API
+   correctness / informational hardening**: under a hostile custom hash
+   compression callback, non-VERIFY clean master can return an encoding that
+   decodes to a different public key. Bitcoin Core creates its local EllSwift
+   value with its own key and normal hash path; no peer-controlled block or
+   witness bytes can force this callback state. The current Core rating is
+   **Informational/Very Low**, not a consensus or key-compromise issue. The
+   existing commit's unit test and exact third-compression mutation prove the
+   production branch; this replay revalidated its first-stop order at the
+   current origin.
+
+2. `67c1b976` cleared fixed EllSwift encode/decode outputs before later
+   argument checks. The next stop was `fuzz/ellswift.c:613`: passing
+   `pubkey == NULL` to `secp256k1_ellswift_encode` returned failure while the
+   prefilled 64-byte output remained unchanged. The master-relative issue is
+   **Low fail-closed API state hygiene**. Core checks the API result and uses
+   locally constructed key material, so the current Core rating is
+   **Informational/Low**; no stale encoding was shown to cross a block or
+   witness admission boundary. The exact `0xA5` output prefill and invalid
+   argument are already covered by the existing deterministic test and commit
+   proof.
+
+3. `6caf4178` rejected missing `data` for the exported built-in prefix XDH
+   dispatch and cleared its known 32-byte output. The next stop was the
+   `secp256k1_ellswift_xdh_hash_function_prefix` path with `data == NULL`,
+   reached from `fuzz/ellswift.c:686`, before the direct callback guards were
+   staged. This is **Medium arbitrary-caller API availability** because clean
+   master dereferences the missing 64-byte prefix. Bitcoin Core's BIP324 path
+   selects the BIP324 hasher with its fixed transcript, not this optional
+   prefix callback, and its block and witness validators do not call EllSwift;
+   the current Core rating is **Informational/Very Low**.
+
+4. The EllSwift portion of `59e2a242` added NULL guards and fixed-output
+   cleanup to the exported built-in prefix and BIP324 callbacks. The previous
+   XDH dispatch guard was intentionally left in place. The next clean-master
+   stop had been a direct BIP324 callback call with `x32 == NULL` at
+   `src/modules/ellswift/main_impl.h:525`, from `fuzz/ellswift.c:700`.
+   This is **Medium arbitrary-caller callback availability** and
+   **Informational/Very Low for current Bitcoin Core**: Core does not call the
+   exported callback directly with attacker-controlled NULL pointers, and no
+   disclosure, forgery, shared-secret admission, invalid-block acceptance, or
+   invalid-witness acceptance was demonstrated.
+
+The focused direct-callback and prefix seeds include
+`builtin-null-inputs` (`b1402955acd341973fee43e62d1f83d62b777b72f9c49e548a52c6371c7e7fd3`)
+and `core-bip324-arbitrary-peer-wire`
+(`b49aa7b1f17c938676e41c21138931cd254de6bdbd7dd544f239a646acf1723f`).
+Applying all four existing production hunks made every tracked input return
+success in the repaired disposable control. The final repaired production
+implementation hash was
+`13549a682a7fef373f5c74666a7a4252143d01a8cc33fe86230a19a568d6a191`.
+
+### Sanitizer and worker proof
+
+The clean control used Clang 22.1.7 Debug ASan/UBSan, assembly disabled,
+external callbacks, all optional modules, and the non-libFuzzer file driver.
+All 20 clean inputs exited 134 at the expected zero-`u` assertion, with no
+ASan/UBSan diagnostic and no artifact. The clean fuzzer hash was
+`362aa87e983927218c61d347c2f2ac71c8211b2e08a5f1230047f2f322977b3c`; the
+local clean fuzzer wrapper is the only difference from the branch source.
+
+Fresh Clang 22.1.7 ASan/UBSan libFuzzer binaries replayed all 20 inputs
+individually in native 5x52 and forced-int64/10x26 modes. Both backends had
+zero failures, sanitizer diagnostics, and artifacts. The status-only replay
+hash was `d629ce4643bfe30dc8fb02d13082016ce631b1697f594495c6c8ca0d3828beb2`
+for both backends. The fuzzer hashes were:
+
+    native 5x52       65ded2ce1f6e88504cf68568a38065201a8e6664dce833853d1694c7a2e9e887
+    forced int64      a5171f4a3c5ca8eaf531c451b81cb7f305ae8a77327498a44dc3f789d94c40f9
+
+Private copies of the tracked corpus then ran with
+`-fork=2 -jobs=2 -max_total_time=10 -timeout=180 -rss_limit_mb=0`, with
+timeouts, OOMs, crashes, and aborts treated as failures. LibFuzzer reported
+two workers per backend; every worker's final statistic was
+`oom/timeout/crash: 0/0/0`, both managers returned zero, and both artifact
+directories were empty. The native and forced-int64 campaign log hashes were
+`3d45ba32e7a32af4d1754aad5413d12f1ad438e50b55cf619206f09c8d1e5fc9` and
+`8c6b373f5cfb47184934169bdc00070f5652c3fece3ebaa2a961d8afe4fb505`.
+
+### Caller-aware conclusion
+
+Bitcoin Core's EllSwift use is in the BIP324 transport handshake. The
+peer-controlled 64-byte EllSwift value is exercised by the raw-wire oracle,
+including both party mappings and the exact BIP324 transcript, but this path
+does not participate in Bitcoin Core block or witness validation. Therefore
+this current-origin revalidation found no invalid-block or invalid-witness
+acceptance, witness-sigop undercount, consensus divergence, signature
+forgery, key compromise, disclosure, or severe remote memory/concurrency
+consequence. No EllSwift item above is High or Critical under the
+caller-aware scale. A High/Critical claim would require a minimized
+consensus-relevant Core trigger, not a direct library callback or a
+sanitizer-only assertion. No new production fix, deterministic regression
+test, corpus seed, cherry-pick, or severity upgrade is claimed here.
