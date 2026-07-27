@@ -174,6 +174,19 @@ without it, while GCC measured 0.0376 versus 0.0412 us. This is an open
 performance lead for goal 70, not a proven compiler defect or automatic
 production fix. Goal 78 remains active with another distinct helper queued.
 
+The nineteenth hypothesis then tested `secp256k1_scalar_negate` with an
+independent byte-subtraction oracle covering 645 canonical values, zero,
+order-adjacent values, powers/complements, double negation, and aliasing
+(`digest=3a235f391877b00c`), plus a Boost `cpp_int` verifier covering 581
+values and aliases (`digest=820b82c9f494768e`). Native assembly, native
+portable C, and forced-int64 Clang/GCC optimization/LTO matrices,
+ASan/UBSan/VERIFY runs, focused tests, scalar corpus replays, mutation
+controls, and Clang AArch64 compile-only code generation all matched. The
+deliberate `N_0 + 1` to `N_0 + 2` mutation failed immediately at the first
+nonzero value in both backends and both verifiers. The compiler hypothesis
+was dismissed; no production change was made. Goal 78 remains active with
+another distinct helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

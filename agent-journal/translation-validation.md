@@ -1673,6 +1673,141 @@ compiler/architecture constant-time or overflow-sensitive helper; do not
 repeat the eighteen dismissed compiler hypotheses unless compiler, source,
 architecture, or performance evidence changes.
 
+### Cycle 2026-07-27: scalar negation translation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `e7916424`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, CMake/Ninja, `aarch64-linux-gnu-objdump`, and the existing ASan and
+recovery/no-VERIFY builds were available. No AArch64 runtime or sysroot,
+GCC AArch64, ARMv7/RISC-V runner, Alive2, CBMC, or KLEE was available.
+The scalar negation contract, both backend implementations, the existing
+fuzzer reference, tests, blame/history, and the prior conditional-negation
+translation cycles were read before selecting this distinct helper.
+
+### Hypothesis and contract
+
+The nineteenth bounded hypothesis was that compiler lowering or the native
+4x64 versus forced 8x32 representation could miscompute
+`secp256k1_scalar_negate`, mishandle zero, break in-place aliasing, or emit a
+data-dependent branch. The contract at `src/scalar.h:64` defines the result
+as the complement modulo the group order. The native implementation at
+`src/scalar_4x64_impl.h:176-197` uses a 128-bit carry accumulator and masks
+all limbs with a zero-derived `nonzero` value; the forced implementation at
+`src/scalar_8x32_impl.h:214-235` uses 32-bit limbs and a 64-bit carry
+accumulator with the same zero masking. The implementation was introduced
+with the constant-time scalar family in `1d52a8b1`. The existing fuzzer
+reference at `src/fuzz/scalar.c:199-207` was treated as a seed rather than
+the sole oracle.
+
+### Independent oracle evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/scalar-negate-harness.c` has SHA-256
+`7895c381fe35926cad7fcd479a1442fa12db714f73cdbbb380ba755d94b68c5f`. It
+computes `n-a` with an independent big-endian byte subtraction and maps
+zero to zero. It covers 645 canonical values: zero, one, `n-1`, `n-2`,
+`n/2`, every power of two and its order complement, and 128 deterministic
+values below `2^255`. Each value checks an out-of-place result, in-place
+aliasing, and double negation back to the original bytes. Clang and GCC
+native assembly, native portable C, and forced-int64 O2 runs all printed:
+
+    ok values=645 cases=645 digest=3a235f391877b00c
+
+The independent high-level verifier
+`/tmp/secp256k1-translation-78/scalar-negate-cpp-harness.cpp` has SHA-256
+`ba5598f7683491364dcfa8afdd066854ed45b669d5b27eef4104125aca363eed`. It
+uses Boost `cpp_int` for `n-a` and calls production code through the C-only
+shim `scalar-negate-c-shim.c` (SHA-256
+`2de8a124970b518db10607af389c55800d55e0fe3642dc978050336db7bd0f91`). It
+covers 581 values and checks both the normal and aliased calls. Clang and
+GCC native-assembly and forced-int64 runs all printed:
+
+    ok cpp-values=581 cpp-cases=581 digest=820b82c9f494768e
+
+The shim was needed because the internal C headers are not directly C++
+clean; this is a harness limitation, not a repository finding.
+
+### Compiler, sanitizer, and project evidence
+
+Clang and GCC built and ran the C oracle for native assembly, native
+portable C, and forced-int64 at `O0`, `O2`, `O3`, and `Os` (24 executions).
+Clang and GCC native/portable/forced `O2 -flto` builds (six executions)
+matched the same digest. Clang and GCC native-assembly, native-portable-C,
+and forced-int64 `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined`
+executions (six executions) also matched without diagnostics. The existing
+ASan and recovery/no-VERIFY binaries passed `scalar_tests`, `field_half`,
+and `field_misc` for four iterations and two jobs with fixed seed
+`123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`. All ten
+files in `src/fuzz/corpora/scalar` ran once under both sanitized scalar
+fuzzers with fixed seed `3923475549`, without diagnostics or artifacts.
+
+The six Clang/GCC O2 non-LTO `probe_negate` bodies for native assembly,
+native C, and forced-int64 had zero conditional or loop jumps. The six
+corresponding O2 LTO bodies also had zero. Representative x86 code used
+`cmove` and `setb`; this is code-generation evidence and not a proof of
+constant-time behavior.
+
+The Clang AArch64 compile-only matrix used native and forced-int64 selectors
+at `O0`, `O2`, `O3`, and `Os`, with and without VERIFY. All 16 builds
+completed, and all eight non-VERIFY probe bodies had zero conditional or
+loop branch mnemonics. The non-VERIFY object hashes were:
+
+    native: O0 cb172f0a60f0d59fe8bdd25e5ca076f6cc8a9f51ac1dba331a41bcd927568373
+            O2 d6edd7f91de56ecf7d2f0b78c61d4ad59c4468ccb3bfbd31fb70b06bc9bab630
+            O3 805aea193e8e3561c1b77ad016b4c5977b932928512fa54b159e0f3435a1949f
+            Os ca1bc60910060e7fa9cc4d87b7de78de212c16056c99c57c8c9231a84109fc40
+    forced: O0 49ac1508556066508215814c843571bc38b750f0dbe91467a6a5e23aafe6a2a1
+            O2 169ea8c2015f44da9cad0c7493a2e34b186d974ae4d3215137131f689faf9e33
+            O3 9253d0fe2d189569c9a7882491bf51d74591a418df7cdc8bf450148f1a16d609
+            Os 09d3250834bf1de052fab35013ebc81f74a40c6b94b33609cc4b8d1cc2e477a6
+
+The VERIFY hashes, in native O0/O2/O3/Os then forced O0/O2/O3/Os order,
+were:
+
+    9e7b65b6827b1a413eb0288aa60bae3e0533a735be33cd9db979fcbd3b47967a
+    aff6323af2cdbd1f4bdef9242da84d548ad80562e30c1383bbe29c12c3e3226b
+    135a98076ae10001329a6a4bdee490e2b12fd786971a906c38518e9f01e750e0
+    309393cce4aa5ca7dce87d545f6ed92ce9882bcc269a2878ae36485beaace770
+    42fa8ff9274328568215814c843571bc38b750f0dbe91467a6a5e23aafe6a2a1
+    1193bac60d62c3a8bc4c4dff4f485ea3d8407bbea84ef4d72d30966ad88687f3
+    0e75b469d75e6aa286325871ee072acb1630ed877b8d2c3c53ff50c86bf47684
+    76ca204543edaa368cfd407d264e40e564c31cb5b512e3c7fbed6e08b23d87be
+
+No AArch64 runtime, GCC AArch64, ARMv7/RISC-V build, or formal translation
+validation was possible.
+
+### Mutation controls
+
+Scratch copies of `src/` and `include/` changed the first scalar-order
+addend in `scalar_negate` from `SECP256K1_N_0 + 1` to `SECP256K1_N_0 + 2`
+in both backend implementations. Clean Clang O2 runners rejected the
+mutation immediately after the zero vector:
+
+    negate mismatch case=1
+    negate mismatch case=1
+
+The independent `cpp_int` verifier likewise rejected both mutated native and
+forced builds with `cpp negate mismatch case=1`. The controls show that the
+oracle is sensitive to the scalar-order arithmetic rather than merely
+checking the shared implementation shape.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native assembly/native C/forced-int64 paths, LTO,
+ASan/UBSan/VERIFY execution, focused tests and scalar corpus, and Clang
+AArch64 code generation. Both independent negation oracles found no residue,
+zero, aliasing, carry, or lowering mismatch, and the mutation controls failed
+in both backend implementations. No production code, regression test, or
+finding commit is justified. This does not provide AArch64 runtime
+execution, GCC AArch64, ARMv7/RISC-V, or a formal constant-time proof. The
+next queue is another compiler/architecture constant-time or
+overflow-sensitive helper; do not repeat the nineteen dismissed compiler
+hypotheses unless compiler, source, architecture, or performance evidence
+changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
