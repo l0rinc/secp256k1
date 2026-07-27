@@ -40157,3 +40157,122 @@ optimizations, so those follow-up commits do not mask this master result;
 future cherry-picks or fixes must rerun both the opaque-key first stop and the
 barrier-skipped alias witness and amend their notes if either behavior
 changes.
+
+## 2026-07-27 Current-origin scalar first-stop and shift revalidation
+
+The scalar findings were replayed against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028` recorded for
+follow-up comparison. This is a reiteration of the existing `15ff406c`
+generic-WNAF fix and `3f4b9d46` rounded-multiply-shift fix, not a new
+production change. The clean current-origin control overlaid only the scalar
+fuzzer, build files, and corpus; production source started with these hashes:
+
+    src/ecmult_impl.h          ce70d26cb987c9bb2a2477389459437fc2831546c9c14404b58cf7ed07f32cc1
+    src/scalar_4x64_impl.h     92bc1023ee0e53cbd955a779b2f70d8b29bdc51ca02b61f23dda7054455264de
+    src/scalar_8x32_impl.h     19ad58cb2a3699c979ee2baf072586302ff2b3a7cfe59c7bd91c5c01120e8727
+
+The audited `src/fuzz/scalar.c` hash was
+`6dd32e857d391677503a63c21e44b1279bde646b7574c22f5f78e809863dd305`.
+The tracked corpus contained 10 files and 349 bytes, with sorted
+`filename size` manifest
+`0ce3005b4d145506f0af17c23a459acdf452d5bda93f86e25b3b7cdc2b50755b`.
+The focused inputs were `cadd-bit-carry-boundaries` (58 bytes,
+SHA-256 `0e01c55234d2a6b402e13521c6390dd390e4426b26939984642c7a903ae1daeb`)
+and `mul-shift-over-512` (39 bytes, SHA-256
+`b9575c7fbb38c7ddf114b9c89c8a80c7989b440b0a98d92e0290f5575e5924b7`).
+
+### Clean first stop and masking order
+
+The unmodified current-origin native and forced-int64 file-driver binaries
+both terminated with signal 11 on all 10 corpus files. The representative
+ASan/UBSan replay of `cadd-bit-carry-boundaries` stopped at
+`src/ecmult_impl.h:201` with:
+
+    runtime error: left shift of 1 by 31 places cannot be represented in type 'int'
+
+The clean native and forced-int64 diagnostic logs have the same SHA-256,
+`59155b7c0353595938a05ef689aaf88f9ad150023eec8b4ac8acca7172f3bea2`.
+This is the accepted `w=31` WNAF domain: the old `int` carry/word path
+computes `word -= carry << w`. The fuzzer's independent WNAF oracle reaches
+that state on every input, so this first stop masked the later scalar shift
+oracle.
+
+A disposable control changed only the WNAF arithmetic hunks from `15ff406c`:
+the table-bound checks use `int64_t`, and the carry and intermediate word use
+`int64_t` before the final checked conversion to the output `int`. No other
+ecmult scratch, cleanup, or production change was copied. With only those
+WNAF changes, the same `cadd-bit-carry-boundaries` input reached the
+independent rounded-shift failure:
+
+    native:  src/scalar_4x64_impl.h:910:38: runtime error: index 8 out of bounds for type 'uint64_t[8]'
+    int64:   src/scalar_8x32_impl.h:707:38: runtime error: index 16 out of bounds for type 'uint32_t[16]'
+
+The WNAF-only native and forced-int64 log hashes were
+`4f4381b79f2066f115c0a5928001ee710d0c6737357503db93224ef4fa117da2` and
+`ed0570ec91eb1797374e13f0eb1d3ca17e6d22659159f9c6ceeeca0745cb026e`.
+The independent `mul-shift-over-512` input reaches the same second stop
+after the WNAF boundary is repaired. This ordering prevents a WNAF fix from
+being credited with fixing the separate out-of-bounds read.
+
+The second disposable control added only the `3f4b9d46` early return in both
+scalar backends: a shift greater than 512 returns the zero scalar before any
+fixed 512-bit product index is formed. The exact combined control then passed
+all 10 corpus files in native and forced-int64 ASan/UBSan with no diagnostic.
+The combined repaired source hashes were:
+
+    src/ecmult_impl.h          8f3ea088a5ea95354c0c0f8db4de9ea77b29e9ff792d0cbf81f3717cb8216852
+    src/scalar_4x64_impl.h     fd094854ed4d3a752384ee164fddc991313244abdc95f5e21c14c30ba321fdd8
+    src/scalar_8x32_impl.h     b37d6b65c1335fb014d58e4cdc0530232a30801f9ec583b2d037a8a44def093f
+
+The repaired file-driver binaries were not used as the production branch;
+their hashes were `20dea82d3e8f7225128bdc8d1706c14e3a6a46afc62cdbf7c83c9d0f30e1258f`
+(native) and `4375b7a99990a6ef2d3e03efe4d3fe675c924cabd6ae161472de32e213d15b2b`
+(forced-int64). The focused repaired `mul-shift-over-512` logs were empty,
+with SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+in both modes.
+
+The same combined repaired binaries ran copied corpus directories with:
+
+    -fork=2 -jobs=2 -max_total_time=8 -timeout=30 -rss_limit_mb=0
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0
+    -print_final_stats=1 -verbosity=0
+
+Both jobs exited 0; each worker reported `oom/timeout/crash: 0/0/0`, no
+ASan/UBSan diagnostic appeared, and both artifact directories were empty.
+The worker log hashes were native
+`bc2bf830aa4a72abe88a9cb437a110a5325d526555470c4ed9f2f5cf6bac7be5` and
+forced-int64
+`fa569d3886ab943e8f4afec28cbf5a789816786799d083925dd2481967b29e1c`.
+
+### Caller-aware severity
+
+`secp256k1_ecmult_wnaf` is an internal static helper. Current production
+callers use compile-time `WINDOW_A` and `WINDOW_G`; `ECMULT_WINDOW_SIZE` is
+bounded to 24, and current Bitcoin Core has no public API that lets an
+attacker supply `w=31`. `secp256k1_scalar_mul_shift_var` is likewise reached
+in production by `secp256k1_scalar_split_lambda` with the fixed shift 384 at
+`src/scalar_impl.h:166-167`. No Core block, witness, script, signature, or
+network input controls either boundary.
+
+The master-relative rating for both is therefore **Low internal
+undefined-behavior/memory-safety robustness**, and **Informational/Low for
+current Bitcoin Core**. The shift bug is a real sanitizer-reproducible
+out-of-bounds read in the documented internal `shift >= 256` domain; the WNAF
+bug is real signed-shift undefined behavior in its documented `w <= 31`
+domain. Neither is High/Critical without a demonstrated Core caller or a
+path from an invalid block or witness to consensus-relevant acceptance. No
+invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, disclosure, or
+remote memory/concurrency effect was shown. A nonce or retry counter without
+standalone cryptographic meaning is unrelated and is not a Critical erasure
+finding.
+
+Existing unit tests covered ordinary WNAF windows and the fixed shift 384 but
+did not exercise `w=31` with a carry or shifts 513, 514, and `UINT_MAX`; the
+focused commits add those deterministic boundaries. No new production fix,
+regression test, corpus seed, cherry-pick, or severity upgrade is claimed by
+this revalidation. Future scalar, ecmult, backend, or l0rinc changes must
+rerun the clean WNAF first stop, the WNAF-only shift stop, and the combined
+repair, and state whether the change preserves, changes, or masks either
+existing master finding.
