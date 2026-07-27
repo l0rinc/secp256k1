@@ -3058,6 +3058,97 @@ formal constant-time proof. The next queue is another distinct scalar or
 cross-backend compiler/architecture helper; do not repeat this predicate
 unless new source, compiler, architecture, or performance evidence changes.
 
+## Cycle 30: scalar 512-bit multiplication translation validation
+
+### Scope and hypothesis
+
+I audited `secp256k1_scalar_mul_512` in the native 4x64 implementation
+(`src/scalar_4x64_impl.h:682-850`) and the forced 8x32 implementation
+(`src/scalar_8x32_impl.h:549-635`). Its contract is to multiply two
+canonical 256-bit scalars and return the complete raw 512-bit product in
+little-endian limbs. Modular scalar multiplication and variable-time
+multiply-shift callers are at the corresponding scalar implementation
+callers (`scalar_4x64_impl.h:864,907` and `scalar_8x32_impl.h:649,700`).
+The history search found the original multiply-shift introduction at
+`ff8746d4`. The hypothesis was that carry propagation, limb ordering, or
+compiler/backend translation could produce a representation-dependent raw
+product even when higher-level modular tests pass.
+
+### Independent oracles
+
+The C harness constructed backend limbs directly from canonical big-endian
+bytes and used an independent byte-wise 32-by-32 schoolbook product with
+explicit carry normalization. It covered 646 values: zero, one, order
+boundaries, half-order, `2^255-1`, every 256-bit power of two, every
+order-minus-power boundary, and 128 deterministic values. It checked 1,612
+pairs and accepted `digest=2c24eb068441449f`.
+
+The separate C++17 bridge used `boost::multiprecision::cpp_int` to generate
+and encode its own 646-value set and the same 1,612 pair schedule. All six
+Clang++/G++ backend-selector runs accepted
+`digest=6f3d46054b0655a0`. Scratch harness hashes are:
+
+    6740916cbae07be5c2bfed8e884713e947c6de78cc1cb84837283841d10b68c4  scalar-mul512-harness.c
+    b462c16e1b0fb50a4551c568230c32b570f5ce5f61b522264ab67b4f93739fe5  scalar-mul512-c-shim.c
+    33f1642f7c3e06277631589255648929960c17f5807233a9887d426cdd87dbe4  scalar-mul512-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+The C oracle passed all 24 Clang/GCC x assembly, portable, and
+forced-int64 selector combinations at O0, O2, O3, and Os with the same
+digest. Six O2 LTO runs also matched. The C++ bridge passed all six
+Clang++/G++ O2 selector runs with the same C++ digest. GCC 16's Boost header
+diagnostic was isolated to the external scratch oracle and the G++ runs
+were repeated with `-Wno-array-bounds -Wno-stringop-overflow`.
+
+Six `-DVERIFY -DVALGRIND` Clang/GCC O1 ASan/UBSan runs, with leak detection
+and halt-on-error settings, matched without diagnostics. Native and
+forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --output-on-failure -R 'scalar|fuzz.scalar'`; each reported
+`100% tests passed, 0 tests failed out of 7`.
+
+For x86_64, the helper was emitted as a separate symbol with `-fno-inline`
+and inspected with `objdump`. All six normal helper bodies had zero
+conditional or loop jumps. Clang AArch64 compile-only commands covered
+native and forced-int64 selectors at O0/O2/O3/Os, with and without
+`-DVERIFY`; all 16 objects compiled. The normal no-inline helper bodies had
+zero conditional or loop branches at every optimization level. VERIFY
+objects retained diagnostic branches: native counts were 33/9/9/9 and
+forced-int64 counts were 129/72/72/72 in O0/O2/O3/Os order. The original
+16-object manifest hash is
+`6e144cc5429d0a42303dce4088414422ef6e8b5ae2b5b345459970f2550d4098`;
+the no-inline manifest hash is
+`47be391cbb2dfcd5d35a47afceb3ae47f413891b2a48a05187aba80a2b458867`.
+
+### Mutation controls
+
+Scratch native and forced copies changed one product term in the portable
+4x64 path (`a->d[2] * b->d[0]` to `a->d[2] * b->d[1]`) and the 8x32 path
+(`a->d[7] * b->d[0]` to `a->d[7] * b->d[1]`). Both independent runners
+rejected both mutations at pair 2:
+
+    native C:   rc=1, mul512 mismatch pair=2
+    native C++: rc=1, cpp mul512 mismatch pair=2
+    forced C:   rc=1, mul512 mismatch pair=2
+    forced C++: rc=1, cpp mul512 mismatch pair=2
+
+This proves the byte-product and `cpp_int` oracles detect a carry/product
+term error in both limb representations.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No incorrect 512-bit product, carry error, undefined
+behavior, lowering anomaly, or reachable production defect was found. No
+production code, regression test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal constant-time proof. The next queue is another distinct scalar or
+cross-backend compiler/architecture helper; do not repeat this predicate
+unless new source, compiler, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and

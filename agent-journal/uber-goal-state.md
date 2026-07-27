@@ -333,6 +333,21 @@ made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
 or formal constant-time proof. Goal 78 remains active with another distinct
 scalar or cross-backend compiler/architecture helper queued.
 
+The thirtieth hypothesis then tested `secp256k1_scalar_mul_512` across the
+native 4x64 and forced 8x32 representations with independent C and C++ raw
+512-bit-product oracles. The C schedule covered 646 values and 1,612 pairs
+(`digest=2c24eb068441449f`); the C++ schedule covered 646 values and 1,612
+pairs (`digest=6f3d46054b0655a0`). Clang/GCC O0/O2/O3/Os and LTO matrices,
+Clang++/G++ bridge runs, six ASan/UBSan/VERIFY runs, native and forced CMake
+scalar/corpus tests, and 16 Clang AArch64 compile-only objects all matched.
+Normal no-inline helper objects had no conditional or loop branches; VERIFY
+objects retained diagnostic branches. Mutating one product term failed at
+pair 2 in both C and C++ controls for both representations. The
+compiler/representation hypothesis was dismissed; no production change was
+made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
+or formal constant-time proof. Goal 78 remains active with another distinct
+scalar or cross-backend compiler/architecture helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
