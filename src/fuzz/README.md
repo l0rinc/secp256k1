@@ -38989,3 +38989,40 @@ High/Critical Schnorr result still requires a minimized invalid-witness or
 invalid-block acceptance proof, not merely a fuzzer assertion, internal state
 failure, or valid-signature rejection. The result is unrelated to clearing a
 nonce or retry counter without standalone cryptographic meaning.
+
+## 2026-07-27 Post-retraction backend and deterministic test revalidation
+
+After the unsupported pure output/input alias oracles were removed, the three
+affected public targets were rebuilt from this branch and replayed from private
+corpus copies. The current tracked corpus counts were `api_roundtrip` 62,
+`recovery` 17, and `xonly_tweak` 20. Native, forced-int64/10x26, and x86_64
+assembly Clang ASan/UBSan binaries all used
+`-runs=1 -handle_abrt=0 -timeout=180 -rss_limit_mb=0` with
+`-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0`. All nine manager runs
+exited 0; no assertion, sanitizer diagnostic, timeout, OOM, crash artifact, or
+source-corpus mutation was observed. The replay log hashes, in target order
+`api_roundtrip`, `recovery`, `xonly_tweak`, were:
+
+    native  5e5fa0ea1455f9ec637afd0368c13cd5f3617c33e442945d1cdd5c0301d01e1b
+            e5c1b1890792fa17f771cdf86c4026d5b2dfe364a23e5fc928470fcb0abbd9cf
+            5e64113b622a99799cd4cd95ff8a683e196cb13e84bd080134cd99223d4a7fc3
+    int64   e0d3b4370268a09ac94a87565acc8eb086bf34e8636139b422bbfd0834a0fbcf
+            608fba561e21c5bda5da1be0dc384fec3a66fe0ef8804360478850b0a309c0c7
+            e8cbc9d033857371ed7d36ca14c93eaa87439dd3c33b3525709852e8f8ff7a69
+    asm     235e4f3dd21943f4dcde7a310d2c0ae94ef97ca179661df54686110d26c53de3
+            54e396b9609aad1e0087601b7e15b3ac5a40d98f2c272688cff27d3b97a948a1
+            40e589ebbe576caa88bc4a4122cdc05cef2dc269b35a1a1be9a399e4e8c6a8c6
+
+The corresponding `tests -j=2` runs also exited 0: native in 209.979 seconds,
+x86_64 assembly in 209.229 seconds, and forced-int64 in 301.870 seconds. The
+remote controls remain `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`, and the audit branch remains
+directly based on that master. This is negative revalidation evidence, not a
+new production bug or regression test. The removed aliases remain unsupported
+`Out` plus `In` overlap, so no severity upgrade or Core consequence follows;
+current Core still supplies separate storage. There was no invalid-block or
+invalid-witness acceptance, sigop discrepancy, consensus divergence, key
+compromise, or severe memory/concurrency failure. A nonce or retry counter with
+no standalone cryptographic meaning is not Critical merely because it is not
+cleared. No l0rinc commit masks this result, and no cherry-pick or production
+fix is warranted by this pass.
