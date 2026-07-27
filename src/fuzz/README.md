@@ -42164,3 +42164,33 @@ High/Critical rating or production fix follows. A nonce or retry counter with
 no standalone cryptographic meaning is not Critical merely because it is
 uncleared. No fork repair masked a master failure, and no source, corpus,
 deterministic regression, or cherry-pick change is claimed by this replay.
+
+## 2026-07-27 Silent Payments oracle skip narrowing
+
+The mixed-input Silent Payments subtest had a broad early return: an expected
+sender-side no-output result (for example, a zero summed input secret or a
+documented output-tweak failure) skipped all later checks in the same fuzz
+iteration. This was an oracle reachability defect, not a production finding.
+The harness now skips only that independent positive-construction model when
+the sender returns 0. If sender construction succeeds, the recipient summary
+creation is asserted to succeed before scanning, so an unexpected summary
+failure cannot be silently accepted. Later malformed-label, malformed-summary,
+and failure-cleanup checks therefore still execute for the same seed.
+
+After rebuilding the changed target, the complete 14-file, 515-byte corpus was
+run through two concurrent direct file-driver workers on both the native and
+forced-int64/10x26 Clang ASan/UBSan builds. All four workers returned 0; each
+worker log was empty with SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, and no
+sanitizer diagnostic, assertion, timeout, OOM, or artifact was produced. No
+source drift was present in the binaries: the native target hash was
+`dba54f0ec82be27772bf72fb9a466eb45be5f323e16ba115a2b583145e4f6b11` and the
+forced-int64 target hash was
+`e9def15444ba60e3e226646a373fe99b15ce7da5914ec1e510b7137831adb488`. No
+production code, deterministic regression, severity rating, or cherry-pick is
+claimed by this harness-only change. The result is **Informational oracle
+hardening**: it improves reachability of existing checks and does not imply
+invalid-block or invalid-witness acceptance, a witness-sigop undercount,
+consensus divergence, forgery, key compromise, disclosure, or a severe remote
+memory/concurrency effect. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared.

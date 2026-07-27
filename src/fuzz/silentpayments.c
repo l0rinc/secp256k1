@@ -1344,29 +1344,28 @@ static void secp256k1_fuzz_silentpayments_check_roundtrip(
     mixed_tx_output_ptrs[0] = &mixed_output;
     mixed_found_output_ptrs[0] = &mixed_found_output;
     recipients[0].index = 0;
-    /* A valid input-key set can still sum to infinity, which is a documented
-     * no-output case. Skip that degenerate fuzzer domain rather than treating
-     * an expected API failure as an oracle violation. */
-    if (!secp256k1_silentpayments_sender_create_outputs(ctx,
+    /* A valid mixed input set can sum to infinity, or output construction can
+     * hit its documented no-output failure. Skip only this independent model
+     * when the sender reports that condition so later malformed-state checks
+     * still run for the same seed. A successful sender must still produce a
+     * valid matching recipient summary. */
+    if (secp256k1_silentpayments_sender_create_outputs(ctx,
         mixed_output_ptrs, recipient_ptrs, 1, outpoint,
-        mixed_keypair_ptrs, 1, mixed_seckey_ptrs, 1)) {
-        return;
+        mixed_keypair_ptrs, 1, mixed_seckey_ptrs, 1) == 1) {
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
+            &mixed_summary, outpoint, mixed_xonly_pubkey_ptrs, 1,
+            mixed_pubkey_ptrs, 1) == 1);
+        illegal_data->calls = 0;
+        n_found = 0;
+        FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
+            mixed_found_output_ptrs, &n_found, mixed_tx_output_ptrs, 1,
+            scan_seckey, &mixed_summary, &spend_pubkey, NULL, NULL) == 1);
+        FUZZ_CHECK(illegal_data->calls == 0);
+        FUZZ_CHECK(n_found == 1);
+        FUZZ_CHECK(mixed_found_output.found_with_label == 0);
+        FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &mixed_found_output.output, &mixed_output) == 0);
+        secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &mixed_found_output, spend_seckey);
     }
-    if (!secp256k1_silentpayments_recipient_prevouts_summary_create(ctx,
-        &mixed_summary, outpoint, mixed_xonly_pubkey_ptrs, 1,
-        mixed_pubkey_ptrs, 1)) {
-        return;
-    }
-    illegal_data->calls = 0;
-    n_found = 0;
-    FUZZ_CHECK(secp256k1_silentpayments_recipient_scan_outputs(ctx,
-        mixed_found_output_ptrs, &n_found, mixed_tx_output_ptrs, 1,
-        scan_seckey, &mixed_summary, &spend_pubkey, NULL, NULL) == 1);
-    FUZZ_CHECK(illegal_data->calls == 0);
-    FUZZ_CHECK(n_found == 1);
-    FUZZ_CHECK(mixed_found_output.found_with_label == 0);
-    FUZZ_CHECK(secp256k1_xonly_pubkey_cmp(ctx, &mixed_found_output.output, &mixed_output) == 0);
-    secp256k1_fuzz_silentpayments_check_spend_tweak(ctx, &mixed_found_output, spend_seckey);
 
     /* Exercise the multi-input aggregation contract independently of the
      * one-plain/one-taproot mixed-input case above. Two ordinary inputs must
