@@ -37553,3 +37553,53 @@ retain their prior severity, with no High/Critical upgrade. No production
 mutation, fix, deterministic regression, cherry-pick, or nonce-erasure claim
 is made; future checker or library changes must state whether they preserve,
 change, or mask the master-relative result.
+
+## 2026-07-27 Extended MuSig dual-backend campaign
+
+The current audit tree `b7afe283` was rebuilt before a longer MuSig campaign;
+`origin/master` and `l0rinc/master` remained
+`d2d04864ef9b056151603a3ced7980958b058028`. Both builds used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules including
+recovery and Silent Payments, and libFuzzer. The native `fuzz_musig` binary
+hash was
+`639b976522e5b1cbccb413fa6299aba7631080a358b493c89adff303fa4f4fb7`; the
+forced-int64/10x26 binary hash was
+`f9a9644c0d4be33027be85cffc6d255dbac0d8823f38fc328929d37e831744df`.
+
+The tracked corpus had 81 files, 3,054 bytes, and sorted filename/size
+manifest hash `2feb9f9a8ac9cf75d635829c5040b754f808bd402db10dd30a3a4281f24ac04f`.
+Each backend used an isolated copy and the same controls:
+
+    bin/fuzz_musig <private-corpus> -fork=2 -jobs=2 -max_total_time=120 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 \
+      -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited 0 after 123 and 125 seconds; forced-int64 workers
+exited 0 after 192 and 193 seconds. Each worker completed its expensive
+fixed-corpus campaign with no sanitizer or assertion diagnostic, and every
+reported `oom/timeout/crash` counter was `0/0/0`. Neither artifact directory
+contained a file. Complete log hashes were
+`8ccdf03f0cb8f5eec1737eeace127acb21bd9e8657686bfe2b2a4fe687358f5a` (native)
+and `9b02751ec0b61a7be6210b2908ab2957e25f8e2351db7c811977c4f2f5c94f72`
+(forced-int64). The private corpora and artifacts were removed afterward.
+
+The matching sanitizer MuSig suites also passed:
+
+    bin/tests -i=1 -j=2 -t=musig
+
+Native and forced-int64 test logs had hashes
+`06655179ddcd15b8e1d1adc97eede0824810ff30a7bae865bc11488f7622206f` and
+`36cfb277cb4b43ceb697f67c99779f3b368a8ea63483dd32425f955a2ff3cde7`.
+
+This is extended negative evidence, not a new production bug, deterministic
+regression, or severity change. The longer campaign found no invalid-block or
+invalid-witness acceptance, sigop consequence, consensus divergence,
+signature forgery, key compromise, or severe remote memory/concurrency
+failure. Existing MuSig scratch, opaque-state, and Core wallet/application
+findings retain their master-relative ratings; no nonce or retry counter with
+no standalone cryptographic meaning is implicated. No production mutation,
+fix, cherry-pick, or test-gap claim is made. Future MuSig or arithmetic
+changes must state whether they preserve, change, or mask this dual-backend
+result and the earlier clean-master first stops.
