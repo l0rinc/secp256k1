@@ -39607,3 +39607,87 @@ or cherry-pick is claimed. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared. Future
 backend changes must state whether they preserve, change, or mask this result
 and the clean-master findings.
+
+## 2026-07-27 Clean-master Silent Payments opaque-state control replay
+
+This is a reiteration of the existing Silent Payments opaque-state findings,
+run again after rebasing the audit stack onto the current `origin/master`. The
+control used `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` for all
+production code, then copied only the branch's `src/fuzz` directory and fuzz
+target additions into a disposable archive. It did not import any audit
+production repair. The audited branch at the time of the replay was
+`1062c23939ed2f37f0e0465058b51b326c80b9cd`; `l0rinc/master` was
+`d2d04864ef9b056151603a3ced7980958b058028`. No l0rinc commit was cherry-picked
+or used to mask this control. The upstream label-batch assertion context from
+`0fa38f3d` is already present in the rebased stack and does not alter this
+master-only result.
+
+The disposable clean-master and repaired-branch builds used Clang 22.1.7,
+Debug, explicit `-O1`, `SECP256K1_ASM=OFF`, all seven optional modules, the
+non-libFuzzer file runner, and `-fsanitize=address,undefined` with
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1`
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The 14 tracked
+Silent Payments inputs were 515 bytes with sorted `filename size` manifest
+`7c00753bfc062db32ef8805b112ff2b098992f20c715de77f604355c6b7ada3b`.
+Each input was run in a separate process, with four replay workers, plus a
+separate empty-input process. The repaired branch completed all 15 processes
+with exit status 0. Clean current master returned exit status 134 for all 15
+processes; the logs contained no sanitizer diagnostic because the first stops
+were deliberate fuzzer `FUZZ_CHECK` failures.
+
+The clean-master first stops were:
+
+* `EMPTY` and every tracked input except `opaque-prevouts-state`: the fuzzer
+  copied a valid label, preserved its four-byte magic, zeroed the 64-byte
+  opaque point storage, and required
+  `secp256k1_silentpayments_recipient_label_serialize` to return 0. Clean
+  master returned 1 at the first check (unmodified harness line 1496), so an
+  invalid opaque label was serialized instead of rejected. This is the direct
+  master replay of `ebae8e82`'s label-state finding.
+* `opaque-prevouts-state`: in the unmodified control the same label check is
+  intentionally first. A disposable, fuzzer-only isolation variant skipped
+  that earlier label block, then zeroed the 64-byte point in a valid
+  `prevouts_summary` while preserving its magic and required
+  `recipient_scan_outputs` to return 0. Clean master returned 1 at the
+  unmodified summary check (line 1533), without the expected illegal-input
+  callback. This is the direct master replay of the summary-state part of
+  `ebae8e82`.
+* The same isolation variant then skipped only that zero-summary check to
+  reach the independent canonical-storage mutation. It converted field
+  `p+1` to the implementation's 64-byte storage format at `summary.data + 5`.
+  Clean master, and the pre-f826 snapshot `ebae8e82`, reached
+  `field_5x52_impl.h:29` through `ge_from_storage` and aborted with status
+  134. The current branch contains `f826e9fb`'s canonical-storage check before
+  `ge_from_bytes` and passed the complete 15-process replay, including this
+  input. Together with that commit's existing native and forced-int64
+  deterministic mutation proof, this is the causal boundary for the existing
+  `f826e9fb` repair, not a new finding. The isolation skips were never
+  committed and are documented so a later replay cannot mistake harness order
+  for production behavior.
+
+The clean current-master deterministic Silent Payments vector test passed with
+`tests -i=1 -j=1 -t=run_silentpayments_test_vectors -log=1` (log SHA-256
+`5fae02166d5ed27b5bb30c93644cd1012d9bf2c4b3cbcfc806c7563fcd873981`), and
+`noverify_tests -i=1 -log=1` passed (log SHA-256
+`d2bc0b289e42de8da61f9b171879cd183b9b2a1547bd479ac260ae34c6bccca8`). Those
+tests exercise canonical objects produced by the public constructors and do
+not mutate the opaque bytes while retaining valid magic, which is why they did
+not catch these controls. The ordinary full test run was not used as proof
+because its randomized Silent Payments vector phase exceeded the short
+control timeout; the focused vector command above completed successfully.
+
+Severity remains master-relative and caller-aware. The malformed label and
+zero-summary acceptance are Low direct-API state-validation issues; the
+noncanonical p+1 path is Medium direct-API/in-memory verification robustness
+because the old loader could enter an internal field verifier or propagate
+invalid field state. For the surveyed Bitcoin Core checkout at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, there is no production Silent
+Payments caller. The result therefore has Informational/Low current-Core
+impact, with no invalid-block or invalid-witness acceptance, witness-sigop
+consequence, consensus divergence, signature forgery, key compromise, or
+remote memory/concurrency consequence. It is not High/Critical, and it is
+unrelated to clearing a nonce or retry counter that has no standalone
+cryptographic meaning. No new production fix, regression test, cherry-pick, or
+severity upgrade is claimed by this replay; the existing `ebae8e82` and
+`f826e9fb` commits remain the fixes with the deterministic tests and mutation
+proofs.
