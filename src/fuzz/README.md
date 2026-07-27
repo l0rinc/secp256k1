@@ -42101,3 +42101,66 @@ witness-sigop count changed, and no consensus divergence, signature forgery,
 key compromise, disclosure, or severe remote memory/concurrency primitive was
 shown. This is a documentation-only commit; no production fix, deterministic
 test, corpus mutation, or cherry-pick is claimed here.
+
+## 2026-07-27 Current-origin Silent Payments follow-up revalidation
+
+The only production delta between `l0rinc/master` and current
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` is the Silent Payments
+follow-up series `0fa38f3d`, `d9ac2ee5`, and merge `0f6baf31`. Its code changes
+clarify the sender failure contract and add a `VERIFY_CHECK` that label-batch
+candidates are not infinity points; the current public path already validates
+transaction outputs and constructs candidates only when their x-only points
+differ. The `combined` summary mode remains future light-client support and is
+not a current Bitcoin Core input domain.
+
+The existing fuzzer already exercises the changed contracts: adversarial
+sender output-tweak failure, recipient pointer reordering on successful
+grouping, combined and ordinary summaries, full and partial label batches,
+duplicate/colliding identifiers, invalid opaque output/summary state, and
+label-cache failure cleanup. The deterministic module tests also retain the
+adversarial spend-key vector that makes sender output creation return 0.
+
+The tracked Silent Payments corpus is 14 files and 515 bytes with sorted
+`filename size` manifest
+`7c00753bfc062db32ef8805b112ff2b098992f20c715de77f604355c6b7ada3b`.
+The native Clang ASan/UBSan build is Debug, `SECP256K1_ASM=OFF`, all current
+non-recovery modules, and libFuzzer; its fuzzer and library hashes are
+`511b0b2ff05cf1ebc37a8b963e80f18aa40da48ebedfea2ecf252adbaf9b48e2` and
+`703c9f5144130994f0e173b7b5fe60ceb2d5a1f9dd7f420d27bfbef6ea4f817f`.
+The forced-int64/10x26 Clang ASan/UBSan build enables recovery and all current
+modules; its fuzzer and library hashes are
+`c5c66cf7de8237c1b7b8b1c7322a30cb7e37d8a28f371e76a143e06bc18b5989` and
+`1a217877d0d0766b72dc2eb815379f3875cab5f8eeee4a45444a3e75f52afe83`.
+
+Both libFuzzer managers used two workers, private corpus copies,
+`-max_total_time=30`, `-timeout=180`, `-rss_limit_mb=0`, and failure handling
+with crashes, OOMs, timeouts, and aborts enabled. Native returned 0 with log
+SHA `432473a10fe2a0c97bc79542540c0a43095dde3772e0b6889cde923a7ec0bade`;
+the only emitted artifact was the known `slow-unit-62c7e640...` performance
+snapshot for `Silent Payments recipient group limit`, not a failure artifact.
+Forced-int64 returned 0 with log SHA
+`1e0d5e29ed69639f88b6a3a06966fcc85788be99b28a586fbf961eaa1e7f2f07`; both
+workers reported `oom/timeout/crash: 0/0/0` and no sanitizer diagnostic.
+
+To remove libFuzzer performance-file ambiguity, the direct file-driver was
+also run from private copies in two concurrent workers per backend. Native
+workers 0 and 1 and forced-int64 workers 0 and 1 all returned 0; every worker
+log was empty with SHA
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, and no
+direct-driver artifact or diagnostic existed. The focused native ASan/UBSan
+module test command passed with status 0 and log SHA
+`d7479bd9fa7d97278da53d1b9fa3365ead318650e598dd079e11669951d83dc5`; it
+covered `test_recipient_sort`, `test_send_api` (168.494 seconds),
+`test_label_api`, `test_recipient_api`, both label-order/index tests, and
+`silentpayments_sha256_tag_test`.
+
+This is negative current-origin evidence, not a new finding. The assertion
+and documentation follow-up did not change valid-output behavior or expose a
+new state transition. The surveyed Bitcoin Core branch has no production
+Silent Payments caller, so the result has no invalid-block or invalid-witness
+acceptance, witness-sigop undercount, consensus divergence, forgery, key
+compromise, disclosure, or severe remote memory/concurrency consequence. No
+High/Critical rating or production fix follows. A nonce or retry counter with
+no standalone cryptographic meaning is not Critical merely because it is
+uncleared. No fork repair masked a master failure, and no source, corpus,
+deterministic regression, or cherry-pick change is claimed by this replay.
