@@ -39212,3 +39212,58 @@ test gap, Core caller, severity on unmodified master, and any follow-up
 masking order. This is a documentation-only reconciliation; no new
 production fix, deterministic regression test, or severity upgrade is
 claimed.
+
+## 2026-07-27 Post-reconciliation Silent Payments worker recheck
+
+After the latest l0rinc detached-ref reconciliation, the current audit tree
+`86831fe9a30f1c83b295ea16aa7eec108f552802` was rechecked against
+`origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The tracked
+`silentpayments` corpus still contains 14 files and 515 bytes; its sorted
+`filename size` manifest is
+`7c00753bfc062db32ef8805b112ff2b098992f20c715de77f604355c6b7ada3b`.
+
+The native 5x52 and forced-int64/10x26 Clang ASan/UBSan binaries were rebuilt
+from this worktree, then each used a private copy of the complete corpus with:
+
+    ASAN_OPTIONS='abort_on_error=1:detect_leaks=0:allocator_may_return_null=1' \
+    UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' \
+    bin/fuzz_silentpayments -fork=2 -jobs=2 -max_total_time=30 \
+      -timeout=180 -rss_limit_mb=0 -ignore_crashes=0 -ignore_ooms=0 \
+      -ignore_timeouts=0 -handle_abrt=0 -detect_leaks=0 \
+      -print_final_stats=1 <private-corpus>
+
+Both managers and all four fork workers exited 0. Each worker loaded all 14
+seeds and reported `oom/timeout/crash: 0/0/0`, with no assertion, sanitizer
+diagnostic, timeout, OOM, or artifact. The native target and library hashes
+were `d5a17b81f323d363ee52259ba0d772f20520c530085a739be5ba40da22ed6f2f`
+and `cd784a948541963d45d453476cd1fa70e4a60e2b67a872000ebd710080de86be`;
+the worker-manager log hash was
+`0e2c876ed38129c0fb25995c14ca9a9f5f303e09d38a1666a2bb8b948ed5f011`.
+The forced-int64 target and library hashes were
+`dd6da770c7d0bd06a2d0621818e7188e2a10039f0a51680c851aea1c6b0b7fed`
+and `e0a3bd0f1e159be9f6ecde94583fba3f8fb62716eeb09257e4f27a0187561bc4`;
+its worker-manager log hash was
+`16e1821916fd06559feb25cb2c22b4123a409c9ab599d51ca012f6a7506592af`.
+All private corpus copies and libFuzzer worker logs were removed after the
+replay; the tracked corpus was not modified.
+
+This is negative post-reconciliation evidence, not a new production bug or
+deterministic regression. The replay covered the existing sender/recipient
+agreement, label and summary opaque-state barriers, callback-owned label
+cache boundary, batch ordering, mixed and aggregated inputs, output mapping,
+and group-limit checks. The remaining malformed label-cache behavior is an
+invalid callback-domain or local cache-corruption condition, because the
+public contract requires a valid nonzero scalar; it is not silently promoted
+to a library finding.
+
+Bitcoin Core has no production Silent Payments caller in the surveyed branch,
+so this replay provides no invalid-block or invalid-witness acceptance,
+witness-sigop undercount, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency consequence. Existing
+master-relative internal findings therefore keep their prior Low/Medium
+ratings, and no High/Critical rating or production fix follows. A nonce or
+retry counter with no standalone cryptographic meaning is not Critical merely
+because it is uncleared. No l0rinc commit masks this result; no source,
+corpus, deterministic regression, or cherry-pick change is claimed by this
+recheck.
