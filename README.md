@@ -16152,3 +16152,81 @@ invalid-witness acceptance, witness-sigop undercount, consensus divergence,
 key compromise, remote memory corruption, or severe concurrency impact was
 demonstrated. The caller reachability makes this more relevant than a public
 retry-counter wipe, but does not justify a consensus or critical rating.
+
+## 2026-07-27 Current-origin scratch-constructor overflow revalidation
+
+The existing `e8a72397` scratch-size repair was revalidated against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The clean current
+origin `src/scratch_impl.h` SHA-256 is
+`294a55d429fa4cc9dec46ade345bbb2bfdff4055eb1cbf1ba6168a23e5e74db6`.
+The repaired audit-branch file SHA-256 is
+`6d0ac9640db7627b2997375c2ecdbcfffae4f4883f0fe08ff5ea90e74ec17540`.
+No scratch production code was changed for this replay.
+
+### Exact memory-safety proof
+
+The focused `ecmult_multi` corpus input
+`scratch-wrap-create` is 47 bytes with SHA-256
+`db72836642228acaab2fd266ee26cad512be8b64c592fefc4ea0c9ebf92d6620`. The
+overlaid fuzzer source is the current branch's existing oracle
+`aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`.
+The clean-origin source archive lacked the newer shared `checked_size_mul`
+helper, so the disposable fuzzer translation unit received only a local
+compatibility shim; the production scratch implementation and corpus bytes
+were unchanged. The shim source hash was
+`f5f67b7f539bcf8f92278a0636cbe327c005ff6dec814ded77f65b959499b63e`.
+
+The witness requests `SIZE_MAX`. Clean `secp256k1_scratch_create` computes
+`base_alloc + size` without an overflow check; on this build the addition
+wraps to a 31-byte allocation, then `memset(ret, 0, sizeof(*ret))` writes 32
+bytes. The clean native and forced-int64 ASan/UBSan fuzzer binaries were
+`69d476be4b0ba5e0b290a80690f93f32cd05258b551d3cfad72d08287f323e18` and
+`342fdbc7ddd4432c3be989cbe0c97d2266c92b71792fe88d7dc98cb93cf4b2da`;
+both exact replays reported an ASan heap-buffer-overflow on a 32-byte write.
+The captured initial report logs are
+`7a7d35add9956f2f6f4d9a0ce42630a43957a4052fa92881e73e39c4fb542c90` and
+`6b0cd92e7e91bfa928abd1d84a5f764fa5f6956b4ba030acd0f48a9d2fc31d36`.
+
+A standalone clean-origin probe called the static constructor directly with
+`SIZE_MAX`; its source, binary, and sanitizer log hashes are
+`8a2b75778f9d9024b9d1174582917ff90f15062ac094252aec5f8740b129f399`,
+`9072c66faa0049d44c58a5187cc0ee47cbba127ab70604442280a2a74acb4350`, and
+`b7a8f0ceb7b709a79ba778df2084d388635a32c21779e3f9dbd8acdc3787406a`.
+The report begins `AddressSanitizer: heap-buffer-overflow` and `WRITE of size
+32`; this independently confirms that the fuzzer stop is in production
+constructor initialization rather than a harness postcondition.
+
+The repaired native and forced-int64 fuzzer binaries were
+`e1e48c76807876454b2dcee65446a031429f9018521280bd3c66e953e411540b` and
+`63ae2fbcd5ed9b7d0ffbaac0eabb5986fe668affbe556ff88540c52bb1b8daf4`.
+The same seed exited `0` with logs
+`34ea055526eaf38b3cfd3b7dd3e9ded66a6ef706a89229eb8d28fc98d3efa82e` and
+`8c5f9fe4b9ade14bdc081cb8a712c72eec7630cf1a66cf1b7045bf7c8cc0a0a3`.
+Clean current-origin `scratch_tests` passed in both backends with log hashes
+`9c57d9a000a8b56c91df6f0da33b2eb177cc914015c8b1f06fc55ded38f4b560` and
+`e739720b48ec6f8bb0b7122cadba6b2a1b4b6ad0a8a46599f4a6d5187c810587`;
+those tests cover `scratch_alloc(SIZE_MAX)` on an existing object, not the
+constructor's `base_alloc + SIZE_MAX` addition. Repaired test logs were
+`291c8e4cc3ca628b75789154b5f51ea5b4f3721645e2d39821c36982977f4cfe` and
+`6a9785c826118e9c3b604811e26829fa0d2b781097b6f9b8a56b41a24f8f6686`.
+
+### Core boundary and severity
+
+`e8a72397` rejects `size > SIZE_MAX - base_alloc` before allocation and keeps
+the existing deterministic `SIZE_MAX` constructor regression. Any later
+allocation helper, scratch accounting, or ecmult optimization must state
+whether it preserves, changes, or masks the constructor witness; the separate
+`ecmult_multi` callback-failure output-state finding must not be credited with
+fixing this overflow.
+
+Current Bitcoin Core's surveyed MuSig aggregation calls
+`secp256k1_musig_pubkey_agg`, whose bundled library path uses
+`secp256k1_ecmult_multi_var(..., NULL, ...)` and does not construct a scratch
+object. No block, witness, or network-derived Core input was shown to supply
+`SIZE_MAX` to this static constructor. Severity is therefore **Medium for the
+direct library memory-safety contract** and **Informational/Low for current
+Bitcoin Core**, not High/Critical: no invalid-block or invalid-witness
+acceptance, witness-sigop undercount, consensus divergence, forgery, key
+compromise, or remote concurrency consequence was demonstrated. This is
+unrelated to clearing a nonce or retry counter with no standalone
+cryptographic meaning.
