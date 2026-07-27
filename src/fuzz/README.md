@@ -41961,3 +41961,66 @@ cherry-pick, or severity upgrade is claimed by this integrated revalidation.
 Future changes must preserve the per-target first-stop order and amend their
 commit notes if an optimization, minor fix, or worker timeout changes which
 oracle runs first.
+
+## 2026-07-27 x86_64 assembly backend differential
+
+The integrated sanitizer entry above used `SECP256K1_ASM=OFF`. Because
+Bitcoin Core normally uses the x86_64 assembly backend on this host, the same
+repaired corpus was replayed through both assembly configurations. The refs
+were unchanged: `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`,
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`, and audit
+`HEAD=ead0fc027436722808a00397d0c737b316a65535`. The corpus remained 357
+files and 14,239 bytes with manifest
+`dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+
+### Build configuration
+
+The first assembly attempt used Clang 22.1.7 Debug/O0 with ASan/UBSan. It
+failed before compiling the library at
+`src/scalar_4x64_impl.h:360`,
+`inline assembly requires more registers than available`. This is compiler
+register pressure caused by O0 sanitizer instrumentation, not a production
+or fuzzer result; no executable was produced and no source was changed.
+
+The supported retry used `RelWithDebInfo`, explicit `-O2`,
+`-fsanitize=address,undefined -fno-omit-frame-pointer`,
+`SECP256K1_ASM=x86_64`, recovery enabled, all optional modules, and the
+direct file-driver (`SECP256K1_FUZZ_USE_LIBFUZZER=OFF`). Its fuzzer binary
+manifest hash was
+`36bc8f3e4a750405592a052b9666b6931c39efae827408940b4a5363fd190ec2`.
+An identical `-O2` sanitizer configuration with `SECP256K1_ASM=OFF` was
+built as the control; its fuzzer manifest hash was
+`3f437cef5fdfaddcd9b1fa7626bdeb902abbb29714e8dcbff5da42ebecfab1bc`.
+
+### Full-corpus differential
+
+For each backend, every target in the following set ran in two concurrent
+processes from separate private corpus copies:
+
+    api_roundtrip context hash scalar field group ecmult_const ecmult_multi
+    ecdh ellswift xonly_tweak recovery schnorrsig silentpayments musig
+
+The file-driver command for each worker was equivalent to:
+
+    ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    timeout -s KILL 240s build-*/bin/fuzz_${target} private-corpus/*
+
+All 28 assembly-on workers returned 0. All 28 assembly-off control workers
+also returned 0. Both sorted `target-worker status log-sha256` manifests are
+`bd1e2497ce4e23c9aebd9a8229222eb4d0bee524827e5679ba47db573b0aed47`;
+the logs were empty because the direct driver emitted no diagnostics. A
+search for ASan, UBSan, runtime-error, abort, or summary diagnostics returned
+no matches in either worker tree. The direct driver produces no libFuzzer
+slow-unit artifacts, and no worker or sanitizer process remained afterward.
+
+This is backend-differential verification of the repaired branch, not a new
+clean-master finding. The assembly and portable implementations accepted the
+same 357 corpus files without divergent failure behavior. No invalid block or
+invalid witness was accepted, no witness-sigop count changed, and no
+consensus divergence, signature forgery, key compromise, disclosure, or
+remote memory/concurrency primitive was demonstrated. The caller-aware
+severity ratings and the clean-master first-stop ordering therefore remain
+unchanged. Future low-level arithmetic or assembly changes must rerun both
+backends and state whether a backend-specific failure is a production bug,
+an unsupported internal-domain construction, or only a compiler limitation.
