@@ -38056,3 +38056,60 @@ rating is justified and no existing finding is downgraded. No production
 mutation, fix, cherry-pick, or nonce-erasure claim is made. Future ecmult,
 scalar, or Core key-operation changes must state whether they preserve, change,
 or mask this result and the earlier clean-master first stops.
+
+## 2026-07-27 Silent Payments stateful dual-backend campaign
+
+The current audit tree `2f269f5b` was rebuilt before a longer
+`fuzz_silentpayments` campaign; freshly fetched `origin/master` and
+`l0rinc/master` both remained `d2d04864ef9b056151603a3ced7980958b058028`.
+Both builds used Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all
+optional modules, and libFuzzer. The native binary hash was
+`752b11af5ca7e4b277f07acfee4d05ddd559ecfc6790d18a419e0a4e378fb278`; the
+forced-int64/10x26 binary hash was
+`12a58728db20ace7aafaa7590136c33837611b041292216d541f45cf5e02555b`.
+
+The tracked corpus had 14 files, 515 bytes, and sorted filename/size manifest
+hash `97ab55c7053f48b2aabe34a7f70c295832ce5e6e4e0347a5d0ddf0c0b8d02732`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_silentpayments <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 126 and 130 seconds, with final reported
+coverage/features of 3,699/10,315 and 3,699/10,368. Forced-int64 workers
+exited zero after 132 and 133 seconds, with final reported coverage/features
+of 5,637/18,097 and 5,653/19,104. Every reported `oom/timeout/crash` counter
+was `0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`e4753b3b43dc6904c7cfd38316cb992965ad83722e5fef614163b484689e91e3` (native)
+and `9cdafda75ae02dbb85fca55f183557c23fc03461cb718be395b380ca7aee128e`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The complete Silent Payments API/vector tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=test_recipient_sort -t=test_send_api \
+      -t=test_label_api -t=test_recipient_api \
+      -t=test_recipient_scan_label_precedes_direct_match \
+      -t=test_recipient_scan_label_index_width \
+      -t=run_silentpayments_test_vectors -t=silentpayments_sha256_tag_test -log=1
+
+The native and forced-int64 test-log hashes were
+`54eb363938f2166b7f15642c342e22b61d1a60ab757a35efcbc6f5b4ffb2f64b` and
+`60e357b004ce945cfdbdca18fb43de3ffef994b33a4bbb3fd8191fc25950181c`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised input grouping, recipient sorting, labels,
+batch-index widths, output tweaks, scanner limits, duplicate/colliding
+identifiers, opaque point storage, context hashing, and failure cleanup
+without demonstrating invalid-block or invalid-witness acceptance, sigop
+impact, consensus divergence, signature forgery, key compromise, or severe
+remote memory/concurrency failure. Bitcoin Core has no current production
+Silent Payments caller, so findings here remain direct-library/API concerns,
+not current-Core or consensus vulnerabilities. No High/Critical rating is
+justified and no existing finding is downgraded. No production mutation, fix,
+cherry-pick, or nonce-erasure claim is made. Future Silent Payments or wallet
+integration changes must state whether they preserve, change, or mask this
+result and the earlier clean-master first stops.
