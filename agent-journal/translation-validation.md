@@ -751,6 +751,89 @@ the contract. The next distinct queue is another compiler/architecture
 constant-time or overflow-sensitive helper; revisit cross-target execution
 if a runner or sysroot appears.
 
+## Cycle 2026-07-27: `secp256k1_scalar_split_128` translation validation
+
+### Hypothesis and contract
+
+The eleventh bounded hypothesis was that optimization or backend selection
+could swap, truncate, or otherwise miscompile the exact low/high 128-bit
+split used by endomorphism and WNAF callers. The contract in
+`src/scalar.h:89` is `r1 + r2*2^128 = k`; for canonical `k`, `r1` contains
+the low 128 bits and `r2` the high 128 bits, each with zero upper limbs.
+The current callers in `src/ecmult_impl.h`, `src/tests.c`, and `src/fuzz/scalar.c`
+use distinct output objects. The standalone check therefore tests the
+documented value relation and input immutability, without asserting
+unsupported output aliasing.
+
+### Evidence
+
+The independent harness
+`/tmp/secp256k1-translation-78/scalar-split-128-harness.c` has SHA-256
+`3a618d39fdd991cb69d25024b963cfc75a27196e25403d64776283db4dcc2d09`.
+It derives expected serialized halves directly from the input bytes and
+reconstructs the input by concatenating `r2`'s low 128 bits with `r1`'s low
+128 bits. It tested zero, one, two, `n-1`, `n-2`, every `2^k`, every
+`n-2^k` for `0 <= k < 256`, and 128 deterministic values below `2^255`,
+645 canonical values total. Native and forced-int64 Clang and GCC builds at
+`O0`, `O2`, `O3`, and `Os` all printed exactly:
+
+    ok values=645 digest=8baa6752cf908402
+
+Clang and GCC `O2 -flto` native and forced-int64 builds printed the same
+digest. Clang `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined` native
+and forced-int64 executions also printed the same digest with no
+diagnostics.
+
+The final Clang O2 x86 probe objects had hashes native
+`ab9f7f4f028a069dd7537ec92af35979e1b9b1228ef215b5ba45a7ee8a12ab54` and
+forced-int64
+`cf173fb88b39f5fac3e1c2022d2af5877d216650f7845f904d91884b871eb8de`.
+`objdump --disassemble=probe` found zero conditional or loop jumps in both.
+The native output is direct 64-bit loads/stores plus zeroing of the upper
+limbs; the forced output is the corresponding direct 32-bit sequence.
+
+The AArch64 compile-only matrix used Clang with
+`--target=aarch64-linux-gnu`, native and forced-int64 representations, and
+`O0`, `O2`, `O3`, and `Os`. Every probe had zero `b.cond`, `cbz`, `cbnz`,
+`tbz`, or `tbnz` instructions. The O2 disassemblies are direct loads/stores
+and `stp xzr, xzr` upper-limb clearing. AArch64
+`O1 -DVERIFY -DVALGRIND -Wall -Wextra -Wno-unused-function -Werror`
+compile-only builds succeeded with zero diagnostics. Object hashes were:
+
+    native:      O0 99d9d6268f3fd1cb1a4a46c3b8ad645be2f2ccecc4ba8b9e9d5352973cba30d7
+                 O2 16a877946c7d9ea1298226ad784b765853f71d8a6d3dc3141b375a63ae5fc596
+                 O3 3a92cbd0de4fc7af8925e611ffe02bede2628ea96b43dd0545c429b611a6be73
+                 Os fcb4c2dddf20de9a67439d5ceff5a7feaa64b42105a119f92c1a84551b52c400
+                 VERIFY ebe2c1925f63d458f9e1cf3bf18b2a829ff48d6fd052bef4d6c5e8b54d9bdccb
+    forced-int64: O0 83498ffcd5f3d9edf28a8b76c8e5a7727a585fd8ef76bf17c696e2103ba28378
+                 O2 0cbebaa4bbdf9a72e049f0e95ecca8afe6eec890df2bf2991cb3186cfe0ab171
+                 O3 81b273ceef0aa01368cbcebfc11b8e6c67e4851eb11e43ab033890e13017fdb8
+                 Os ddb7ec8e89ef5171a4e15c5d6328ff6225818071ebe81c7e0260f187d1083614
+                 VERIFY dac62cb272cb47c011fa69dde0496a2f07f9b465b53d2ef783c592eda80a5224
+
+The mutation control copied `src/` to scratch and changed the first high-half
+source limb from `k->d[2]` to `k->d[1]` in the 4x64 backend, and from
+`k->d[4]` to `k->d[3]` in the 8x32 backend. The final Clang O2 harness exited
+1 in both cases at value 3 (`n-1`):
+
+    native: split mismatch case=3 ... mutated native exit=1
+    forced: split mismatch case=3 ... mutated forced exit=1
+
+This confirms the byte-level oracle detects a wrong backend limb mapping.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 scalar backends, LTO, ASan/UBSan/VERIFY/VALGRIND
+execution, and Clang AArch64 code generation. The independent oracle found
+no split, reconstruction, input-mutation, or compiler-lowering mismatch. No
+production change, regression test, or finding commit is justified. This
+does not exercise the intentionally simplified exhaustive-test scalar
+backend, provide AArch64 runtime execution, GCC AArch64, ARMv7/RISC-V, or
+prove unsupported output aliasing. The next distinct queue is another
+compiler/architecture constant-time or overflow-sensitive helper; revisit
+cross-target execution if a runner or sysroot appears.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -764,5 +847,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-ten dismissed hypotheses unless compiler, source, or architecture evidence
-changes.
+eleven dismissed hypotheses unless compiler, source, or architecture
+evidence changes.

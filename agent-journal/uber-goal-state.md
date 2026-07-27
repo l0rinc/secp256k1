@@ -81,8 +81,16 @@ and forced-int64 Clang/GCC `O0/O2/O3/Os`, LTO, sanitized execution, mutation
 controls, and AArch64 code generation. Every execution matched the same
 digest; the deliberate `> 512` to `>= 512` mutation failed at shift 512 in
 both backends. All ten bounded hypotheses were dismissed; no production
-finding or fix commit resulted. The goal remains active with another
-compiler/architecture constant-time or overflow-sensitive helper queued.
+finding or fix commit resulted. An eleventh hypothesis then tested
+`secp256k1_scalar_split_128` with an independent serialized low/high-half
+oracle across 645 canonical values, native and forced-int64 Clang/GCC
+`O0/O2/O3/Os`, LTO, sanitized execution, mutation controls, and AArch64 code
+generation. Every execution matched the same digest, all probe bodies had
+zero conditional branches, and a deliberately wrong high-half limb failed
+at `n-1` in both backends. All eleven bounded hypotheses were dismissed; no
+production finding or fix commit resulted. The goal remains active with
+another compiler/architecture constant-time or overflow-sensitive helper
+queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff
