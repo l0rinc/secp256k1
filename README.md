@@ -15822,6 +15822,61 @@ l0rinc changes must state whether they preserve, mask, or alter the exact
 callback transcript and output-state witness; this is unrelated to clearing a
 nonce or retry counter with no standalone cryptographic meaning.
 
+## 2026-07-27 Current-origin EllSwift/BIP324 first-stop revalidation
+
+The Core-facing EllSwift target was rebuilt from clean
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` production sources
+and compared with the repaired audit branch. The clean
+`src/modules/ellswift/main_impl.h` hash is
+`8deffa7b37a0602be2b87d0378419410e6cc9683ebcf3fb033d2eed56c4f8416`; the
+repaired hash is
+`63ab652c54b6ccb04319480253bc347ff61ff8424c21e5f6ec4fbf710e2114ad`. The
+tracked 20-file EllSwift corpus totals 820 bytes, with manifest SHA-256
+`ebf36c832e376af625f54c99b5e4f9db56b6870534612fb863c7e7a86fadb429`.
+
+The focused `bip324-decode-vector` seed is 48 bytes with SHA-256
+`25421d1b21bfa8e87579f9a63bc23107218cced0036f7589d1fd768fb2e81329`.
+Fresh clean native and forced-int64 Clang 22.1.7 ASan/UBSan exact replays
+both exited `134` at clean `src/modules/ellswift/main_impl.h:362`, where the
+hash-derived ElligatorSwift `u` value is asserted nonzero. Their log hashes
+are `7fc0f0d6f606319000291864eff7cdcce7f789e693f07446722ebbb642866f8e`
+and `132969767d90659d3231c6be352c0c466fabcc72ed8b7da0855c9fc1a9864ec4`.
+The repaired exact replays exited `0`; log hashes are
+`f0e2688c56a801e495eb7993acb66b2b590d6aecebbfe2f6e87ab0e360a8ef09` and
+`b03d672cc869ceb2fbfc87a19eb5541b5ea4191525a0e234e8503cca0df2b4c4`.
+
+Two-worker/two-job corpus campaigns used `-max_total_time=12`, strict
+timeout/OOM/crash handling, and private corpora. Both clean managers returned
+`1` because workers stopped at the same assertion; both repaired managers
+returned `0`, with no artifact files. Clean native/int64 campaign log hashes
+are `aee5eeac5859586061ff04556af935b4cc239816445a948d5046bebce39911f4` and
+`53c17ab848c1f1accdb60349fc810915ceae8b3c771e787de5465fe25bb5b1be`;
+repaired hashes are
+`73d34ece5a6f1a7f4e49c3c519737888d82b2088968de5ea172d2bb4df26ba42` and
+`5bee76ff53c9dfb7d5d4265bc9256f981f442b475a0eb32baecb1a02227172b8`.
+
+The clean fuzzer also has an earlier fixed-output postcondition at its
+EllSwift built-in XDH callback boundary; a worker can reach that stop before
+the `u == 0` vector depending on input scheduling. That is the separate
+`67c1b976` output-clearing repair, not a second zero-`u` bug. The exact
+production proofs remain separated so a later cleanup or callback change
+cannot mask the first clean-master failure.
+
+`e16314a9` maps zero `u` to one before ElligatorSwift inversion. Severity is
+**Low for the direct library/transport contract** and **Informational/Low for
+current Bitcoin Core**: the BIP324 route is
+`BIP324Cipher::Initialize` -> `CKey::ComputeBIP324ECDHSecret` ->
+`secp256k1_ellswift_xdh`, not block or witness validation. The zero is
+hash-derived with roughly 2^-255 probability under the built-in transcript;
+no feasible peer-controlled invalid-block trigger, consensus divergence,
+witness-sigop undercount, signature forgery, key compromise, or severe remote
+memory/concurrency impact was demonstrated. The output-cleanup stop is also a
+fail-closed API issue with valid callers supplying separate, non-NULL buffers.
+Neither finding is High/Critical. Later EllSwift, BIP324, hash, or callback
+changes must state whether they preserve, mask, or alter each first stop. This
+is unrelated to clearing a nonce or retry counter with no standalone
+cryptographic meaning.
+
 ## 2026-07-27 Current-origin impossible SHA-length revalidation
 
 The existing `ab36b78b` repair was revalidated against
