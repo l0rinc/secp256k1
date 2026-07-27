@@ -41273,3 +41273,168 @@ empty. Campaign log hashes were
 native and
 `9b95e95e27cf1b54fe930c1cd15babebb44df3da917b28916a72fa737b10b7e0` for
 forced int64. No fuzz or sanitizer process remained after the replay.
+
+## 2026-07-27 Current-origin Schnorrsig/Taproot First-stop Revalidation
+
+This pass revalidated the Schnorr/Taproot oracle against refreshed
+`origin/master` `0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` from audit commit
+`75009b382775fbbb8fdc44bac28b23e986f34546`. The comparison head
+`l0rinc/master` was `d2d04864ef9b056151603a3ced7980958b058028`; it was already
+an ancestor of origin and contributed no fork-only commit to cherry-pick. The
+current fuzzer source hash is
+`baa3a9b4ac5d98476fe8a4a3afed95737cb75107f8b9523913b95e897e7c34f2`.
+
+The clean disposable control overlaid that fuzzer, its CMake wiring, and its
+corpus on exact origin production sources. Clean-origin hashes were:
+
+    src/secp256k1.c                         7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb
+    src/modules/schnorrsig/main_impl.h     24e5cbbaaf25cfa613b42c4b0d2e146ab85188a9a262fded6cbc40024a77c440
+    src/modules/extrakeys/main_impl.h     6c002046bda20ffb8767cac1c6800dd3b8e9be9e648772a1498539159a4b4937
+
+The tracked corpus contained 18 inputs and 670 bytes: `arbitrary-signature-
+verification-equation`, `core-taproot-signing-composition`, `core-tapscript-
+schnorr-composition`, `custom-nonce-tag`, `custom-nonce-tag-boundaries`,
+`deprecated-sign-equivalence`, `empty-message-null-pointer`,
+`fixed-nonce-equation`, `generator-equation`, `infinity-rejection`,
+`nonce-reference`, `odd-nonce-rejection`, `opaque-keypair-consistency`,
+`s-order-boundary`, `sha256-impossible-lengths`, `sha256-independent-tagged`,
+`sign-precondition-cleanup`, and `sign32-custom`. The sorted filename/size
+manifest hash is
+`8a7de8922e1560f87d54694cf50bd0482c84ab4b69ee2e4e6cd671aeeeff4549`.
+
+### Clean-master first-stop ladder
+
+The first clean replay was retained as a control. With Clang 22.1.7 Debug
+ASan/UBSan, assembly disabled, external callbacks, and the file driver, every
+one of the 18 inputs reached the first direct BIP340 callback check in
+`fuzz/schnorrsig.c:390`:
+
+    secp256k1_nonce_function_bip340(NULL, msg, msglen, ...)
+
+Origin production `nonce_function_bip340_impl` did not validate the output,
+message, key, public-key, or length contract before hashing and finalizing.
+The bounded replay therefore emitted the same UBSan diagnostic from
+`src/util.h:438` (`applying non-zero offset 3 to null pointer`) and timed out
+with status 124 before the enormous SHA work could complete. Each stderr file
+was 132 bytes with hash
+`f308f9fc5cd37709fe434b7a4dcf5b43e924ddc8fa4f5789150d38c1b11b3864`; the
+18-input status log hash was
+`6a49d4be83e2ebf1e2331d3012897e297019d848562f3b85febb3db5b201b53c`, and
+the aggregate diagnostic byte count was 2376. This is a direct public
+callback failure, not evidence that a peer can supply a Bitcoin Core nonce
+callback argument.
+
+The disposable repair ladder made the causal ordering explicit:
+
+1. Applying the input-validation and output-cleanup part of `926dd6b4`
+   (`nonce: guard built-in callbacks`) advanced the first stop to the
+   impossible SHA length boundary in the same exported BIP340 callback.
+2. Applying the nonce `algolen`/`msglen` limits from `0cd51280`
+   (`hash: reject impossible SHA256 lengths`) advanced it to the invalid
+   Schnorr extra-parameters magic check at `fuzz/schnorrsig.c:379`, where a
+   prefilled `sig64` remained stale on clean master.
+3. Applying the Schnorr extra-parameters fixed-output cleanup from `27cc01dc`
+   (`api: clear fixed outputs on failures`) advanced it to the mismatched
+   opaque keypair at `fuzz/schnorrsig.c:1264`: both 96-byte halves were
+   individually valid but belonged to different keys.
+4. Applying the shared consistency loader from `bbca5a72`
+   (`extrakeys: reject inconsistent keypair state`) correctly rejected that
+   state, but exposed a separate branch-only barrier: the valid
+   `core-taproot-signing-composition` seed uses
+   `secp256k1_context_static` for `keypair_xonly_tweak_add`, and the old loader
+   required a built generator table. The valid static-context call then
+   failed at the new oracle. This is a repair interaction, not a clean-master
+   Schnorr vulnerability.
+5. Applying the no-table, fixed-256-bit fallback from `e126fb62`
+   (`extrakeys: preserve static keypair tweak compatibility`) restored the
+   valid Core-shaped static tweak while retaining strict mismatch rejection.
+6. Applying the Schnorr sign/verify impossible-message-length checks from
+   `0cd51280` advanced the next stop to `fuzz/schnorrsig.c:1307`, where the
+   oversized rejected signature output was still `0xA5`.
+7. Applying the Schnorr signing fixed-output cleanup from `27cc01dc` made all
+   18 inputs pass. The staged repair order is recorded because applying a
+   later compatibility fix can otherwise mask a branch-only failure or make
+   a clean-master first stop appear unrelated.
+
+These are reiterations and proofs of existing branch findings; this target
+did not add a new production fix. The disposable ladder used production
+mutations only to isolate first stops, then restored the repaired branch
+implementation before sanitizer and worker verification.
+
+### Bitcoin Core severity
+
+Bitcoin Core's relevant path constructs a `KeyPair` in
+`/mnt/my_storage/bitcoin/src/key.cpp:409-424`, extracts and serializes its
+x-only public key, computes the TapTweak, and calls
+`secp256k1_keypair_xonly_tweak_add(secp256k1_context_static, ...)`. Its normal
+Schnorr signing path uses `secp256k1_schnorrsig_sign32` and fixed 32-byte
+signature-hash messages; its Tapscript verification path likewise receives
+fixed-size wire-derived values after Core's own validation. Direct exported
+nonce callbacks, arbitrary variable-length Schnorr messages, and serialized
+96-byte opaque keypairs are not peer-supplied block objects.
+
+* The NULL direct nonce callback is **Medium** for an arbitrary direct API
+  caller because clean master can reach an invalid write/crash before a
+  failure return. For current Bitcoin Core it is **Informational/Low**:
+  normal signing supplies valid fixed-size inputs. Clearing a failed nonce
+  buffer is fail-closed hygiene; it is not Critical merely because a nonce or
+  retry counter is uncleared, and no nonce disclosure or reuse attack was
+  demonstrated.
+* The impossible SHA lengths are **Medium** direct-library
+  memory-safety/availability at the demonstrated incoherent pointer/length
+  boundary, with low practical exploitability. Current Core impact is
+  **Informational/Low** because its Schnorr call sites use fixed 32-byte
+  messages and do not pass attacker-controlled `size_t` lengths into this
+  boundary.
+* Invalid extra-parameters magic leaving `sig64` stale is **Low/Medium** API
+  state hygiene. Core checks signing results and does not admit a block or
+  witness based on a stale local signature; current Core impact is
+  **Informational/Low**.
+* An inconsistent opaque keypair is **Medium** at the direct library state
+  boundary. It requires local corruption, unsafe persistence, or deliberate
+  caller mutation of an opaque 96-byte object; it is not a block or peer-wire
+  encoding. Current Core impact is **Low/Informational**.
+* The static-context generator-table failure is **Medium wallet/API
+  availability** on the audit branch because Core's authorized Taproot
+  constructor can reach that valid call. It is not present on clean master,
+  and it does not affect consensus validation, invalid blocks, or witnesses.
+
+No item is High or Critical under the caller-aware scale. No replay accepted
+an invalid block or witness, undercounted witness sigops, changed consensus,
+forged a signature, disclosed key material, or established a remote
+concurrency primitive. A witness-sigop undercount would be High/Critical only
+with proof that Bitcoin Core accepts an invalid block; this target supplied no
+such proof.
+
+### Repaired sanitizer and worker proof
+
+Current-branch Clang 22.1.7 Debug ASan/UBSan file-driver builds used assembly
+off, external callbacks, all optional modules, and native plus forced-int64
+arithmetic. Both binaries passed every tracked input and `/dev/null`; all 19
+statuses were zero, both status logs shared hash
+`a37ef628d65f9fc9befccbdba4e2720af4b90b90a552e6d5f23900b7e49e1733`, and
+diagnostic bytes were zero. The binary hashes were:
+
+    native             4169baf364e9475ce2283ad372fddea3c934a45a7338f85cb5d6a9b622ed742c
+    forced int64       d435163f9716df19c7aa179d3c02fcfe25d3266315874df3fadb9b2d50e060bc
+
+The corresponding sanitized libFuzzer builds ran private copies of the
+tracked corpus with:
+
+    -fork=2 -jobs=2 -max_total_time=12 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+
+Both native and forced-int64 managers exited zero. Each had two workers and
+every worker reported `oom/timeout/crash: 0/0/0`; artifact directories were
+empty. The isolated campaign manager/worker log hashes were:
+
+    native manager       95a083c79faf69a3f3d32ebd25ef3a8ae6daf2c2b6a24cbf6cfca54210792103
+    native workers       7f88bb943e853cc1030718ed7578f4edf952b4ff66694003a37dcda9e517cc1b
+    forced-int64 manager b16178111e7c6144184915d16076b3576172c5daf722f55c68bf0cc9adb298a6
+    forced-int64 workers 59b8d34a178cceca83264be6d117dcdfa5b06c7bc18375034840bf51691a5b78
+
+The first exploratory run accidentally passed the source corpus directory as
+the libFuzzer output corpus and created 119 untracked evolved inputs. Those
+files were removed, the original 18-file corpus was verified at 670 bytes,
+and the final campaigns above used private copies. No fuzzer, sanitizer,
+compiler, or campaign process remained after verification.
