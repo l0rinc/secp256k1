@@ -38937,3 +38937,55 @@ opaque state, wallet/API cleanup, transport, and direct-library failures do
 not meet that threshold. No l0rinc commit changes this caller separation, and
 the conclusion is unrelated to clearing a nonce or retry counter without
 standalone cryptographic meaning.
+
+## 2026-07-27 Schnorr verification oracle mutation and worker replay
+
+The consensus-adjacent signing state machines were replayed again from the
+clean audit branch `b393412c6a7c904d4a9b87505ab6cba217329d22`, with freshly
+fetched `origin/master` and `l0rinc/master` both at
+`d2d04864ef9b056151603a3ced7980958b058028`. The native 5x52, forced-int64 /
+10x26, and detected x86_64 assembly builds used Clang ASan/UBSan,
+`-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer`, and libFuzzer.
+The tracked corpora were unchanged: `schnorrsig` has 18 files / 670 bytes
+with manifest `eca48eefd87ca36a9497088a19a0c37e98e04cb6eb9c0c880914819a3967aaf6`,
+and `musig` has 81 files / 3054 bytes with manifest
+`b9933623b3abad10ced226675d166553083412d61ac729cb537e5490be403ee6`.
+
+Each target/backend pair was run from a disposable corpus copy with
+
+    -fork=2 -jobs=2 -max_total_time=30 -timeout=180 -rss_limit_mb=0 \
+      -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+
+All twelve managers and workers exited 0. Every attributable worker reported
+`oom/timeout/crash: 0/0/0`; no assertion, sanitizer diagnostic, timeout,
+OOM, crash artifact, or cross-backend disagreement occurred. The clean
+Schnorr binary hashes were:
+
+    native  47b27a654daf94b22d2fbf7fe3558943ca8eb18bba969e66cf31ae92069eacfb
+    int64   5ffd3474f3269fbe70ee1905519cafae92d54331c68ef2610153e6fc0f865841
+    asm     f07db7ea111ca809c1301d2d64d2957e2ba7361190f950df6bf3118c12485355
+
+As a causal oracle check, a disposable native ASan/UBSan mutation replaced
+the final clean-master-equivalent predicate in
+`secp256k1_schnorrsig_verify`:
+
+    return !secp256k1_fe_is_odd(&r.y) &&
+           secp256k1_fe_equal(&rx, &r.x);
+
+with `return 0;`. Rebuilding `bin/fuzz_schnorrsig` and replaying the exact 18
+file corpus with `-runs=1 -handle_abrt=0 -timeout=5` aborted with status 134;
+the unmutated source was restored and rebuilt immediately afterward. This
+proves that the existing valid-signature and independent equation checks fail
+closed when the production verification result is corrupted. It is not proof
+of a clean-master vulnerability: the mutation rejects valid signatures rather
+than accepting an invalid signature, and the clean replay found no such
+acceptance.
+
+Bitcoin Core reaches this verifier through Taproot script validation and
+`XOnlyPubKey::VerifySchnorr`; the current sigop counter remains a separate
+script-structure calculation as recorded above. Therefore this pass adds no
+production bug, regression test, cherry-pick, or severity upgrade. A
+High/Critical Schnorr result still requires a minimized invalid-witness or
+invalid-block acceptance proof, not merely a fuzzer assertion, internal state
+failure, or valid-signature rejection. The result is unrelated to clearing a
+nonce or retry counter without standalone cryptographic meaning.
