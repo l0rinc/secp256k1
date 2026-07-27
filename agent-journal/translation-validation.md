@@ -656,6 +656,101 @@ the contract. The next distinct queue is another small constant-time or
 overflow-sensitive field/scalar helper; revisit cross-target execution if a
 runner or sysroot appears.
 
+## Cycle 2026-07-27: `secp256k1_scalar_mul_shift_var` translation validation
+
+### Hypothesis and contract
+
+The tenth bounded hypothesis was that compiler transformation or backend
+selection could miscompile the rounded 512-bit scalar product near limb and
+rounding boundaries, or disagree about the documented `shift > 512` zero
+case. The contract in `src/scalar.h:95-96` requires `shift >= 256`, computes
+`round((a*b) / 2**shift)` without modular reduction, and returns zero above
+512. The historical `3f4b9d46` guard prevents an out-of-bounds rounding-bit
+read at shifts above 512; this cycle validates the repaired lowering rather
+than reporting that already-fixed defect again. The existing in-tree caller
+uses the constant shift 384 in `secp256k1_scalar_split_lambda`.
+
+### Evidence
+
+The standalone harness
+`/tmp/secp256k1-translation-78/scalar-mul-shift-harness.c` has SHA-256
+`c31d80f0c502adb4de0a0c072d3d66933759615d691862cce598b26322d14930`.
+It computes the full product independently in little-endian base-256 bytes,
+extracts the shifted bits, and adds the independent rounding bit. It checks
+input immutability and serialized output for 645 canonical values: zero,
+one, two, `n-1`, `n-2`, every `2^k`, every `n-2^k` for `0 <= k < 256`, and
+128 deterministic values below `2^255`. It covers 4,355 ordered pairs,
+including every value paired with `n-1` and itself, selected boundary pairs,
+and 256 deterministic random pairs. Each pair uses 23 shifts:
+
+    256, 257, 258, 287, 288, 289, 319, 320, 321,
+    383, 384, 385, 447, 448, 449, 479, 480, 481,
+    511, 512, 513, 514, UINT_MAX
+
+Clang 22.1.7 and GCC 16.1.0, native and `-DUSE_FORCE_WIDEMUL_INT64`, at
+`O0`, `O2`, `O3`, and `Os`, all printed exactly:
+
+    ok values=645 selected=53 pairs=4355 boundary-shifts=23 digest=9c673765989f3c14
+
+Clang and GCC `O2 -flto` native and forced-int64 builds printed the same
+digest. Clang `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined` native
+and forced-int64 executions also printed the same digest with no
+diagnostics. The final x86 Clang O2 probe object hashes were native
+`e55753f5fa9ecd1cf4cce1fb130904aac69978dbc392ee956c8e7e85f9a67a32` and
+forced-int64
+`a3f341be75c2ec859d8d7494b9f209c67f258926ae0b461c3922445089a3d043`.
+Their disassemblies begin with the expected `cmp $0x201`/`jb` public-shift
+guard; the complete probes contained 12 and 24 jump mnemonics respectively,
+all from shift-dependent selection and carry/control paths, so this
+`_var` helper was not incorrectly judged against a branch-free contract.
+
+The AArch64 compile-only matrix used Clang with
+`--target=aarch64-linux-gnu`, native and forced-int64 representations, and
+`O0`, `O2`, `O3`, and `Os`. The conditional branch counts in `probe` were
+respectively native `0, 11, 13, 11` and forced-int64 `0, 23, 29, 23`; the
+optimized objects show the same `cmp w3, #0x201` guard and arithmetic
+lowering. AArch64 `O1 -DVERIFY -DVALGRIND -Wall -Wextra -Wno-unused-function
+-Werror` compile-only builds succeeded with zero diagnostics. Object hashes
+were:
+
+    native:      O0 5fbef5c6b08a3e8d3b2629d2354c01b10a356dd3b2d4b41c6720311e75ffa5f6
+                 O2 f74e12d49838d9f9ad8456c0dfe714f1cb7eec6459e31b8350d628f891634f74
+                 O3 182a8c48bd104f40596f84745429b6e5979b181735234095e4fe9cd5c3fbf284
+                 Os 7ea8619beb160c6f655623041186a21295a16b4a20a650b21be6e506a924db32
+                 VERIFY 6ae705099b1a9e921c2cc95be741752449adbca1e2cf6ce73e683707759fced9
+    forced-int64: O0 295b24377ff854e2f585f5254a95c81feb4566cfa854e50b55b68de28165eba4
+                 O2 282a0f17dc19ddd70321b55010b303f4cd024d5ae7f881fa485a7a327198a112
+                 O3 cc265977a90d14b0eec9611959642c946d0db1302aff1a1ae64ae40f763fd4c3
+                 Os db849e976869f0614edf46f2b087412622a29c17db67aae4024d939acf876d2a
+                 VERIFY bd795aad07f1c0537fb01907375cc785c3597c3f8c2f27076574bc4b9c7b2fb6
+
+The first strict AArch64 `-Werror` attempt also diagnosed unused static
+functions from the standalone header translation unit; after removing one
+unused scratch helper, the final warning policy suppressed only that known
+header-level category and treated all remaining warnings as errors. No
+AArch64 runtime was available because this host has neither an ARM sysroot
+nor an emulator.
+
+The mutation control copied `src/` to scratch, changed both backend guards
+from `if (shift > 512)` to `if (shift >= 512)`, and ran the final Clang O2
+harness in both representations. Both exited 1 at pair 6, `shift=512`, with
+the expected rounded result differing from the mutated zero result. This
+proves the independent oracle exercises the guard boundary rather than only
+the above-512 zero path.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 scalar backends, LTO, ASan/UBSan/VERIFY/VALGRIND
+execution, and Clang AArch64 code generation. The independent byte-level
+oracle found no arithmetic, boundary, input-mutation, or compiler-lowering
+mismatch. No production change, regression test, or finding commit is
+justified. This does not provide AArch64 runtime execution, GCC AArch64,
+ARMv7/RISC-V, Alive2 validation, or a proof for noncanonical inputs outside
+the contract. The next distinct queue is another compiler/architecture
+constant-time or overflow-sensitive helper; revisit cross-target execution
+if a runner or sysroot appears.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -669,5 +764,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-nine dismissed hypotheses unless compiler, source, or architecture evidence
+ten dismissed hypotheses unless compiler, source, or architecture evidence
 changes.

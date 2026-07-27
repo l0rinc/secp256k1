@@ -73,9 +73,16 @@ production finding or fix commit resulted. A ninth hypothesis then tested
 `secp256k1_scalar_is_high` with an independent threshold oracle, all
 native/forced-int64 Clang/GCC optimization and LTO runs, sanitized execution,
 mutation controls, and AArch64 codegen; all results matched and no
-conditional branch mnemonics were emitted. All nine bounded hypotheses were
-dismissed; no production finding or fix commit resulted. The goal remains
-active with another compiler/architecture constant-time helper queued.
+conditional branch mnemonics were emitted. A tenth hypothesis then tested
+`secp256k1_scalar_mul_shift_var` with an independent byte-level
+512-bit product/rounding oracle across 645 values, 4,355 pairs, all
+documented shift boundaries including 512, 513, 514, and `UINT_MAX`, native
+and forced-int64 Clang/GCC `O0/O2/O3/Os`, LTO, sanitized execution, mutation
+controls, and AArch64 code generation. Every execution matched the same
+digest; the deliberate `> 512` to `>= 512` mutation failed at shift 512 in
+both backends. All ten bounded hypotheses were dismissed; no production
+finding or fix commit resulted. The goal remains active with another
+compiler/architecture constant-time or overflow-sensitive helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff
