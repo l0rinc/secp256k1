@@ -39821,3 +39821,91 @@ master-relative caller-aware scale, and it is unrelated to clearing a nonce or
 retry counter with no standalone cryptographic meaning. No new production fix
 or severity upgrade is claimed by this replay; `e8a72397` remains the fix with
 the strongest clean-master sanitizer proof and deterministic regression.
+
+## 2026-07-27 Current-origin impossible SHA-length replay
+
+The existing `ab36b78b` impossible-SHA-length finding was replayed against the
+refreshed `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` from audit
+tree `34421269`. The l0rinc reference remained
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. This is a current-
+master reiteration, not a new production finding or a new fix.
+
+The clean control was a source archive of `origin/master`. It received only
+the tracked fuzzer directory and fuzzer CMake projection from this branch,
+plus the compile-time definition
+`SECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL` required by the newer
+harness. No hash production file or branch fix was copied. The first replay
+stopped at the known callback-ordering probe
+`secp256k1_context_preallocated_create(NULL, ...)` at clean
+`src/secp256k1.c:130`, with libFuzzer status 77. That run is excluded from
+the bug evidence. A one-line disposable harness gate then isolated that known
+stop; the production source, corpus bytes, and library result were unchanged.
+
+The exact 45-byte seed was
+`src/fuzz/corpora/context/sha256-impossible-lengths`, containing
+`context tagged sha256 impossible length seed.` followed by a newline, with
+SHA-256
+`931b21b91c6f81333ea883c25abdc9dc96facb7cbaf6413581013767bfbae8d8`.
+Clang 22.1.7 Debug ASan/UBSan builds used `-O1`, `SECP256K1_ASM=OFF`, all
+optional modules, and native plus forced-int64 wide multiplication. The clean
+fuzzer hashes were native
+`291c78337de679d7265e4f21880c2f9262eb487e0ebd1b692bd48570df10df89` and
+forced-int64
+`5a5dbd0e7da3efd2053be21da7a5d0cbd832a408495833e2e0e289cc467a95a5`.
+
+With `-runs=1`, strict failure handling, `-rss_limit_mb=0`, and leak
+detection disabled, the isolated clean seed aborted with status 134 in both
+backends. ASan reported a one-byte read immediately after the 45-byte
+fuzzer allocation. `addr2line` resolves the path through
+`secp256k1_sha256_transform_impl` at the harness-compatible `util.h:431`,
+`secp256k1_sha256_transform` at `hash_impl.h:135`, and
+`secp256k1_sha256_write` at `hash_impl.h:167`, called from
+`secp256k1_sha256_initialize_tagged` at `hash_impl.h:199` and the impossible
+length helper at `fuzz/context.c:133`. The native and forced-int64 proof log
+hashes were
+`8d5df6b1a74349befdbe50fdf842ce2c307f8541feeceeedae55b53ce534e66e` and
+`aa38a73a5120b618dc7797af9c9ce1267d13611ef179033bc6a2a8d2cf94c45a`.
+
+The repaired branch consumed the same seed with status 0. Its fuzzer hashes
+were native
+`a436bef891a2e231c65fcb79afbaf4e842497608143c8bea3daa42f7906c892f` and
+forced-int64
+`36cc06268f5518f9cc8907628634bfbe03f41e802a82992c3d2e45d06a3b2e92`; the
+replay log hashes were
+`0304c6eab5798589af0e9e18e21de45319f6b45a82c6b883b4e008a50281de65` and
+`c5d4674c6831703a003e1b9b98cd368bc1b3bc6dc0d0ba4d800cd37d00d30e08`.
+The 12-file tracked context corpus manifest, using sorted `filename size`
+records, is
+`2f11f10c396b9bc844a388027e7deff205e9498b2104cd1bf5deb72552651310`.
+Private copies ran with:
+
+    -fork=2 -jobs=2 -max_total_time=10 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -handle_abrt=0 -print_final_stats=1 -verbosity=0
+
+Both repaired backends returned status 0; every worker reported
+`oom/timeout/crash: 0/0/0`, and both artifact directories were empty. The
+campaign log hashes were native
+`4c1b239399a676554ab3abcda835d14a0356c893d4df0516ddea8733c841f7b0` and
+forced-int64
+`a494d1b5b4c5ae175f64de6861a29bbf03f491cd41ca1c69b2bfbf42e62962d7`.
+
+Master-relative severity remains **Medium** for the direct library contract:
+an impossible `taglen` or `msglen` can enter the SHA read path before the
+fixed 2^61-byte limit is rejected, producing sanitizer-visible memory-safety
+failure. It requires an incoherent pointer/length pair and therefore has low
+practical exploitability. Current Bitcoin Core caller review is narrower:
+`src/key.cpp` calls `secp256k1_schnorrsig_sign32` and verifies a fixed 32-byte
+hash, while `src/pubkey.cpp` verifies a fixed 32-byte message; no Core block or
+witness path calls `secp256k1_tagged_sha256` with attacker-controlled lengths.
+The vendored example and library tests are not production Core callers.
+
+Accordingly, current Core impact is **Informational/Low**, with no
+invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, or remote
+memory/concurrency consequence. It is not High/Critical under the
+master-relative caller-aware scale. It is unrelated to clearing a nonce or
+retry counter that has no standalone cryptographic meaning. No new production
+fix, cherry-pick, or severity upgrade is claimed; `ab36b78b` remains the
+repair, and this replay supplies the current-origin proof plus its explicit
+callback-ordering mask.
