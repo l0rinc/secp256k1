@@ -42333,3 +42333,40 @@ reproducible consensus-relevant Core path, not an internal sanitizer result.
 No production mutation, fix, deterministic regression, or cherry-pick is
 claimed by this replay. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-27 Current-build Silent Payments replay
+
+This is a second, current-build replay of the `c242ce4e` Silent Payments
+oracle narrowing. Before the replay, `HEAD` was
+`369bd964c0e4d3a8cb49a4dd159efa79f11db1c3`, `origin/master` was
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, and the
+`src/fuzz/silentpayments.c` hash was
+`7ea47a02a079b83248ca33fcac12e45606d9fb1007486a3308eb2cc859e87533`.
+The tracked corpus remained 14 files and 515 bytes with manifest
+`7c00753bfc062db32ef8805b112ff2b098992f20c715de77f604355c6b7ada3b`.
+
+Fresh Debug Clang ASan/UBSan targets were run directly on every tracked file,
+with two concurrent workers per backend and
+`-runs=1 -print_final_stats=1 -report_slow_units=0 -rss_limit_mb=0
+-ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0`.
+The current native and forced-`int64` target hashes were
+`ac2f95195233d1634d260ccbc625f85262a27876caa19fb5acc243193772e726` and
+`b9d8da19a39f07502e042130d7cb60922d3af0a3f7a56929defb11a17d481a7d`.
+All four workers returned 0, executed all 14 files, and produced no
+sanitizer, assertion, timeout, OOM, crash, or artifact. Their log hashes were
+native `b5838ac6359e2b1f561153be14dc4a9fbbd6cbfdcf52217d0c38c75fb2050c96`
+and `8e30981bb43bfceb74821b7c31ff2b16fc1e1e413cc3a1de3f3a4682251c554c`,
+and forced-`int64`
+`48595963e59281b96a793665f22e09955e9e77eee403cd276887cc454457ac69` and
+`321e8a95ab8a58e747bac31af8fe7d71780581ac4de36fdeef3c791e3d7cb858`.
+
+This remains **Informational oracle hardening**, not a production finding:
+the narrowed skip improves reachability of later malformed-state checks but
+does not change valid-output behavior. The surveyed Bitcoin Core branch has
+no production Silent Payments caller, so there is no invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+forgery, key compromise, disclosure, or severe remote memory/concurrency
+consequence to rate. No High/Critical rating, production fix, deterministic
+regression, or cherry-pick follows. A nonce or retry counter without
+standalone cryptographic meaning is not Critical merely because it is
+uncleared.
