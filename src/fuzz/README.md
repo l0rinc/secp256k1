@@ -38113,3 +38113,59 @@ justified and no existing finding is downgraded. No production mutation, fix,
 cherry-pick, or nonce-erasure claim is made. Future Silent Payments or wallet
 integration changes must state whether they preserve, change, or mask this
 result and the earlier clean-master first stops.
+
+## 2026-07-27 Field arithmetic dual-backend campaign
+
+The current audit tree `8f42b4aa` was rebuilt before a longer `fuzz_field`
+campaign; freshly fetched `origin/master` and `l0rinc/master` both remained
+`d2d04864ef9b056151603a3ced7980958b058028`. Both builds used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules, and libFuzzer.
+The native binary hash was
+`6ae5286ded1f025dc0b4484a4217df7cb3d51fb6eab99598fc165d89191efd34`; the
+forced-int64/10x26 binary hash was
+`0d217ae2200a89dc76cd91480c2c3fc2e12cdbc95df3453cbbaf7b6af82e7626`.
+
+The tracked corpus had 21 files, 742 bytes, and sorted filename/size manifest
+hash `39dd81e289232231b7edb04e1a48b7dba1e96f8f39ca99bc3c1bbf60e3d26940`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_field <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 125 and 126 seconds, with final reported
+coverage/features of 1,602/2,367 and 1,602/2,342. Forced-int64 workers exited
+zero after 126 and 127 seconds, with final reported coverage/features of
+2,811/4,084 and 2,812/4,117. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`47633611438f542772320f4aefee94806d826200d6d6a54413b11c3ac6bad249` (native)
+and `8adc48f68833211475ef8220d07d049bdb79250a1d0224ada901a74104222321`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The complete field arithmetic tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=field_half -t=field_misc \
+      -t=fe_equal_magnitude_boundaries -t=fe_equal_magnitude \
+      -t=fe_normalize_max_magnitude -t=field_convert \
+      -t=field_be32_overflow -t=fe_mul -t=sqr -t=sqrt -log=1
+
+The native and forced-int64 test-log hashes were
+`602c9f28f91a36f25dac719d7cbd82eaffd01cf335e4cb5c418757a920a4e389` and
+`df2955bc18f721193084e2b87841bc7e5fa0927b0b7492a6758abdde0f9744ad`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised unreduced field inputs, magnitude-32
+normalization, zero predicates, carry boundaries, overflow reduction,
+aliasing, multiplication/square/square-root identities, and cleanup without
+demonstrating invalid-block or invalid-witness acceptance, sigop impact,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency failure. Core reaches field arithmetic only through its
+validated key/signature operations; no untrusted block/witness admission
+consequence was shown. No High/Critical rating is justified and no existing
+finding is downgraded. No production mutation, fix, cherry-pick, or
+nonce-erasure claim is made. Future field/backend changes must state whether
+they preserve, change, or mask this result and the earlier clean-master first
+stops.
