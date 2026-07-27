@@ -15606,3 +15606,139 @@ contract. The probe, clean controls, repaired native/int64 controls, exact
 outputs, current-master reachability assessment, and why ordinary tests missed
 the transition are all recorded here so later cherry-picks cannot hide the
 master-relative behavior change.
+
+## 2026-07-27 Current-origin Silent Payments opaque-label replay
+
+This reiterates the existing l0rinc finding `ebae8e82`, rather than claiming a
+new repair. The clean baseline is current `origin/master`
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`; the l0rinc reference is
+`d2d04864ef9b056151603a3ced7980958b058028`. The current-origin delta from
+that l0rinc ref is limited here to API/comment follow-ups and the label-batch
+`VERIFY_CHECK` from `0fa38f3d`; it does not add validation to
+`secp256k1_silentpayments_label_load`. The current-origin production source
+SHA-256 for `src/modules/silentpayments/main_impl.h` is
+`39c1c5a090c37191c081ba8993e6492eefaeb458279fa61cdd88286d5c65ed13`.
+The audit branch retains `ebae8e82` and the later canonical-storage repair
+`f826e9fb`, but the clean replay below used current-origin production code.
+
+### Clean fuzzer proof
+
+The enhanced `fuzz_silentpayments` source SHA-256 is
+`cbc96e51efbfc80b3717351f8c9814b713cbbc1c11bdbe28e33b6f09d749dad6`.
+The clean-origin ASan/UBSan fuzzer binary SHA-256 is
+`95072bd3f76feb3232684028bad00d74d9c9351900eae849c8f1303a97fba750`, and
+the linked current-origin library SHA-256 is
+`a6e21fbfeb25a9134770ecc155e872d6a1c6f83e933189a269cb0516b811399b`.
+The 14-file corpus contains 515 bytes; its sorted filename/hash manifest
+SHA-256 is
+`1ced301759d5cf18a947ab49df1cbf68aa6d586b235c3d0cf156d3911c95dc6f1`.
+The exact `roundtrip` input is 25 bytes with SHA-256
+`2fd38d47a590dcd263567b3212fa7790b093329a235c3d0cf156d3911c95dc6f`.
+
+The exact clean-origin replay exited 134; log SHA-256 is
+`6a547073982009bb472015cdb7f3c005be28cca9504176d34c2a02aadcb63056`.
+The enhanced harness reaches its magic-preserving opaque-state check at
+`src/fuzz/silentpayments.c:1497`: it copies a valid label, preserves the
+four-byte label magic, zeroes the 64-byte stored group element, and requires
+`secp256k1_silentpayments_recipient_label_serialize` to return 0. Current
+origin returns 1, so the harness aborts before any sanitizer diagnostic; no
+crash artifact is needed because the failure is a deterministic API
+postcondition violation. The repaired branch's worker controls and the
+current-origin exact public replay are the authoritative evidence; the
+disposable current-origin multi-worker startup log is not counted because its
+forked child did not import the corpus before aborting.
+
+### Public API proof
+
+The minimal label-serialization probe source SHA-256 is
+`2b33836700b72fbc91ed013d7d1410f78de147b8061739f4b2d2a6dd8fb2993a` and
+its clean binary SHA-256 is
+`5eb6c6a410e546ded42df369606ac51a76fa65c42483dcf0758c908f1bc61841`.
+It creates a valid label, replaces only the stored point bytes with zeroes,
+installs a non-aborting illegal callback, and calls the public serializer.
+Clean current origin produced:
+
+    ret=1 illegal_calls=0 output_zero=0 output_prefix=02
+
+Thus the invalid opaque object is accepted without reporting an illegal
+argument and is serialized as a nonzero compressed-looking value. The public
+contract now documented by current origin says serialization returns 0 for an
+invalid opaque label, so this is a direct master-relative contract failure.
+
+The adjacent labeled-spend probe source SHA-256 is
+`b9991119c5446cf9da1b35ec3eee6361b6e0c6741736e1e7d835b7c15810ace0`.
+Against a clean no-`VERIFY` current-origin library
+`fa925ab914dfec35c30ebcda4ccfad1d9abfa4d9345466e91cbfc997d7028b97`, its
+binary SHA-256 is
+`1c149cb2494f688a0e73ef0693a88dbbbf0baff47e0853324d615c2c3b6b96ae` and
+the result was:
+
+    ret=1 illegal_calls=0 output_zero=0 serialized_zero=0 output_len=33 parse_ret=0 same_as_spend=0
+
+The malformed label therefore also produces a nonzero opaque spend key that
+the same library can serialize but that `secp256k1_ec_pubkey_parse` rejects.
+The `serialized_zero` field is only a prefilled scratch buffer; the material
+facts are the success return, no callback, nonzero output, and parse failure.
+The same return behavior was observed with the current-origin `VERIFY` build;
+the probe binary SHA-256 there is
+`6fcdd93c0752439c5b84311ec44a0b96ccc3f74294b050ed36fd5937a67fd723`.
+
+### Repaired controls and test gap
+
+The repaired label probe returned the following in both native 5x52 and
+forced-int64/10x26 builds:
+
+    ret=0 illegal_calls=1 output_zero=1 output_prefix=00
+
+The repaired probe binary SHA-256 values are
+`9444eba91e1064f1f9afb5d6e2d4385fae13bd78e9760ad096d2ca13bfa53ee7` and
+`6445e62d7c178c8411277213d6696119ede30b4b33554df74a0492f6f0a92be7`.
+The repaired labeled-spend controls returned
+`ret=0 illegal_calls=1 output_zero=1` in both backends; their binary SHA-256
+values are
+`5680b246ecf44c51390efcd63cbedd03ad60a94a65312cbbabe7a4be57c4bce2` and
+`4be13a8e4c950f8bbe24d5abeb524f4fd2f018dfd5c52370024ce5650d2db15a`.
+
+The current-origin `-t=silentpayments -i=1 -j=2` ordinary suite passed all
+selected tests; log SHA-256 is
+`670114f5d94c6902e88667c2b3a6c9bf9b2c2ac3e5ff7e60aed863213f1c5912`.
+It exercises wrong-magic labels and valid parse/serialize round trips, but
+does not construct a magic-preserving label with invalid stored coordinates.
+The repaired native and int64 Silent Payments suites passed; their log
+SHA-256 values are
+`fe0a5949e2380e7c1a19af5a6abfe27683293f8d79520453d322242cbc005039` and
+`f48673031dd4acf727890ed8c7651f4dc5644e39cdb8911e5cc3700ab24a2140`.
+The repaired exact-seed fuzzer controls also passed; log SHA-256 values are
+`5585bed5b15380a176eb94179bf3043dad3b598de0329b62bfe45919b516d828` and
+`fa7b38ff467e2859f60f82031822d6f039e314fa30f309edc0c27d2914ae274f`.
+
+The existing production fix is `ebae8e82`: validate the loaded label point
+with curve and subgroup checks before serialization or labeled-spend
+arithmetic, and validate the corresponding opaque summary state before scan
+key conversion. `f826e9fb` additionally rejects noncanonical stored field
+encodings. The clean public probes and the repaired native/int64 controls
+prove the failure and the intended return/output contract; no new production
+fix is claimed in this reiteration because the repair is already in the audit
+branch and its deterministic `test_label_api` coverage passes.
+
+### Core boundary and severity
+
+The current Bitcoin Core source tree has no production reference to the
+Silent Payments API, so this malformed opaque-label state is not currently
+reachable through Bitcoin Core block validation, witness validation, or a
+peer-supplied invalid block. It is **Low for the direct library API** and
+**Informational/Low for current Bitcoin Core**: an external wallet/application
+that corrupts or deliberately constructs an opaque label can get a false
+success and an invalid derived key, but no current Core caller was found that
+can trigger it. There is no demonstrated consensus divergence, invalid-block
+or invalid-witness acceptance, witness-sigop issue, signature forgery, key
+compromise, memory-safety fault, or remote concurrency fault. This is therefore
+not High or Critical. The nonce-clearing caveat is unrelated; this finding is
+about invalid opaque point state, not a retry counter without standalone
+cryptographic meaning.
+
+The current-origin API/comment follow-up and label-candidate `VERIFY_CHECK`
+were reviewed before this replay. They do not validate the stored label bytes
+and did not mask the clean-master failure. Later cherry-picks or follow-up
+fixes must preserve this exact master-relative replay, or amend this finding
+with the behavior change and the new proof.
