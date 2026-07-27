@@ -39911,3 +39911,90 @@ retry counter that has no standalone cryptographic meaning. No new production
 fix, cherry-pick, or severity upgrade is claimed; `ab36b78b` remains the
 repair, and this replay supplies the current-origin proof plus its explicit
 callback-ordering mask.
+
+## 2026-07-27 Current-origin HMAC/RFC6979 state-retention replay
+
+The existing `5cfe7f7c` finding was replayed against the refreshed
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The l0rinc reference
+remained `l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. This is a
+current-master reiteration of the existing repair, not a new bug or cherry-pick.
+
+The clean control was an `origin/master` source archive with only the tracked
+fuzzer directory and fuzzer CMake projection from this branch, plus the
+compile-time harness limit required by the newer fuzzer. No production hash
+fix was copied. The disposable context harness also had its unrelated known
+NULL-preallocated-context probe gated so the HMAC oracle could run to its own
+first failure; the HMAC seed does not depend on that probe.
+
+The exact 13-byte seed was
+`src/fuzz/corpora/hash/hmac-independent-reference`, containing
+`abc12341hij0` followed by a newline, with SHA-256
+`36e19b679f95412b19b8bb66f57b735a5558505c5eb2e33a9d876a66c248141c`.
+Clang 22.1.7 Debug ASan/UBSan builds used `-O1`, `SECP256K1_ASM=OFF`, all
+optional modules, and native plus forced-int64 wide multiplication. The clean
+fuzzer hashes were native
+`f6e1bfd6591b452a067ca0904e920ce558eba02b880b6a848b8091b444bcf346` and
+forced-int64
+`69b6843486865dc443d2e4c04c145488021e454d7b362f9210273eea67bd595f`.
+
+With `-runs=1`, strict crash handling, `-rss_limit_mb=0`, leak detection
+disabled, and `timeout -s KILL 10s`, the clean seed returned status 77 in both
+backends. This was the intended libFuzzer `FUZZ_CHECK` stop at
+`src/fuzz/hash.c:298`, not an ASan report: after
+`secp256k1_hmac_sha256_finalize` returned the correct digest, the local HMAC
+object still contained nonzero inner/outer SHA256 state. The native and
+forced-int64 proof log hashes were
+`f7183b2efa72e2836585379e4da1cf4f6991a857a55c95f52556d50341743424` and
+`d5bc0c0028cd48bcbabc40c5ca4614815dd455643eb5d6ceef527783c62cf6f6`.
+
+The repaired branch consumed the same seed with status 0. The repaired binary
+hashes were native
+`a6f8784087246d640a8e50612b264b32615046be0ffc2f8c03ab98071b9caf66` and
+forced-int64
+`3d57cf872140cef4da0172cf9438e171c7d0b8f0eac3baa07f43aa7f77e9fe54`; the
+exact replay log hashes were
+`320c978f3c03ffc6aad2c738f3c8df61340568f3058b8c0f8faa996c4dfa6e81` and
+`f412142095b986d3f9c7a6ad2f94d1942f38c110ee040c5d5851b317f9075f78`.
+The same repaired binaries passed all 10 tracked hash corpus inputs in both
+backends. The sorted `filename size` corpus manifest is
+`807ad928bb26669e3420f1e87f3a230375d5cdd0f5348d5ae8975ffceb6b438d`.
+Two-worker/two-job campaigns ran for 10 seconds from private corpus copies;
+all jobs returned status 0, all worker counters were
+`oom/timeout/crash: 0/0/0`, and artifact directories were empty. Campaign log
+hashes were native
+`1f0f404940abc07689a5f2e619b2a6c89107c8cd15f9bb094a239ca183b6fc2a` and
+forced-int64
+`45a779d53d0a7c579cc94b1b1cac1d4d30028efcb307baa7071159981b3b0ed6`.
+The focused repaired `tests -t=hash -j=1` runs also passed, with random seeds
+`5094c285dc5f7ca5ee86519236c77200` and
+`e1baf65a599706fe4b994a71f56d7b41`.
+
+The production contract is visible in `src/hash_impl.h`: current master
+finalizes HMAC output without clearing the HMAC object, and RFC6979 finalizer
+does not clear its `k`/`v` state. The repaired `5cfe7f7c` change clears the
+long-key temporary SHA state, clears HMAC state after finalization, and wipes
+RFC6979 state at finalization. Its deterministic `tests.c` assertions cover
+the output vectors and zeroized post-finalizer structs. The EllSwift PRNG
+clear is part of that commit but was not re-measured by this HMAC-specific
+seed.
+
+Bitcoin Core caller review matters for severity. `src/key.cpp:217` invokes
+ECDSA signing with `secp256k1_nonce_function_rfc6979` and a secret key;
+`src/key.cpp:222` repeats that path while grinding; `src/key.cpp:255` invokes
+recoverable ECDSA signing with the same nonce function. Core's Schnorr path at
+`src/key.cpp:431` signs a fixed 32-byte message hash, while MuSig nonce
+generation at `src/musig.cpp:151` and partial signing at `src/musig.cpp:234`
+also process secret signing material. Thus this state can occur during real
+Core signing operations, unlike the impossible tagged-SHA length control.
+
+Master-relative severity remains **Medium** for the library: secret-derived
+HMAC/RFC6979 state outlives its finalizer contract, but no standalone memory
+read, disclosure, key recovery, signature forgery, or concurrency primitive
+has been proven. Current Core impact is **Low/Medium**, caller-aware but not
+High/Critical: no invalid-block or invalid-witness acceptance, witness-sigop
+undercount, consensus divergence, remote memory corruption, or key compromise
+was demonstrated. The user's nonce caveat does not downgrade this specific
+finding's relevance because HMAC/RFC6979 state carries key/nonce-derived
+material; it does mean that a separate public retry-counter lifetime issue
+must not be conflated with this one. `5cfe7f7c` remains the fix with the
+strongest deterministic proof; no severity upgrade is claimed by this replay.
