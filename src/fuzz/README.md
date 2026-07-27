@@ -41438,3 +41438,164 @@ the libFuzzer output corpus and created 119 untracked evolved inputs. Those
 files were removed, the original 18-file corpus was verified at 670 bytes,
 and the final campaigns above used private copies. No fuzzer, sanitizer,
 compiler, or campaign process remained after verification.
+
+## 2026-07-27 Current-origin Recovery First-stop Revalidation
+
+This pass refreshed the compact ECDSA recovery target against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` from audit commit
+`6dbe6daf485c2aab741351c96f7f4f274d4f776a`. The comparison head
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028` was already an
+ancestor of origin and contributed no fork-only commit to cherry-pick. The
+current recovery fuzzer hash is
+`d75f5bcdc726f6bae87138b0425d8aa26275d9a098a5da39f3d0143652267362`.
+
+The clean disposable tree overlaid that fuzzer, its CMake wiring, and its
+corpus on exact origin production files. Clean-origin hashes were:
+
+    src/secp256k1.c                         7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb
+    src/modules/recovery/main_impl.h       fbec2358a560b669d85720108b0b1a8f653c91531a88ded0a1da339445266cc9
+
+The tracked corpus contained 17 files and 783 bytes. Its sorted filename/size
+manifest hash is
+`ab2d2249ed2f35a20aad6ef905069f6861dddf026e4522fa53e379914cdb3bc3`.
+The focused opaque-state seed
+`opaque-recoverable-signature-state` hashes to
+`c2d69e7cda8a4d4ebbe0bb77919bfe7711be868323c7c0b80e44747c4a4cb6a1`;
+the Core compact-recovery composition seed hashes to
+`dbf91e55346805236b2490d0be619ea441bcc63f118def5a151dfd05a3a1498d`.
+
+### Clean-master first stops and masking order
+
+The unmodified origin control used GCC 16.1.0 Release, external callbacks,
+assembly disabled, and the file driver. Every input exited 134 at the first
+shared fuzzer assertion. An O0/GDB trace identified the first production-boundary
+as the explicit built-in RFC6979 callback path:
+
+    fuzz/recovery.c:1191
+    secp256k1_ecdsa_sign_recoverable(..., secp256k1_nonce_function_rfc6979, ...)
+    expected caller SHA compression callback count != 0
+
+Clean `secp256k1_ecdsa_sign_inner` only routed the caller's SHA context when
+`noncefp == NULL`; the exported RFC6979 and default aliases were wrappers
+bound to the static context. The signature and recovery output remained
+SHA-equivalent, but the caller-installed backend was silently bypassed. The
+clean release status log hash was
+`722645c15b93ddb644f9a73f9b622af064df619328df1332450cec4a354b79cd`, with no
+diagnostic bytes. The clean Clang 22.1.7 ASan/UBSan replay produced the same
+17 status results and hash, also with no sanitizer diagnostic.
+
+The disposable ladder then isolated the existing repairs in this order:
+
+1. `91f9af34` (`ecdsa: route built-in nonce callbacks through context`) made
+   both exported library-owned aliases use
+   `nonce_function_rfc6979_impl(secp256k1_get_hash_context(ctx), ...)` while
+   retaining arbitrary callback dispatch. All 17 seeds advanced. The next
+   O0/GDB stop was `fuzz/recovery.c:664`, where serialization of a deliberately
+   corrupted opaque recoverable signature reached
+   `secp256k1_scalar_get_b32` with an overflowing native scalar. The repair-1
+   status log was
+   `2c7f9716edf498c83074e980c62fa52bd2eba37be3b478e7862b30c90ef87c12`; the
+   representative clean diagnostic was
+   `src/scalar_impl.h:43: test condition failed:
+   secp256k1_scalar_check_overflow(r) == 0`.
+2. `95f93dfe` (`recovery: validate opaque recoverable signatures`) made the
+   shared loader reject overflowing `r`/`s` storage and recovery IDs above 3,
+   and made serialization, conversion, and recovery clear fixed outputs on
+   that failure. The next stop was the independent illegal-input cleanup at
+   `fuzz/recovery.c:754`: clean master rejected a NULL compact-parser input
+   but left the prefilled opaque output unchanged. This repair-2 run still
+   had status hash
+   `722645c15b93ddb644f9a73f9b622af064df619328df1332450cec4a354b79cd`,
+   demonstrating why status-only hashes cannot replace first-stop traces.
+3. The recovery portion of `27cc01dc` (`api: clear fixed outputs on failures`)
+   cleared parser, serializer, converter, signer, and recovery outputs before
+   their later argument checks. All 17 inputs then passed. The final repaired
+   release status hash was
+   `25e3f0f73dc5bf151c038fe47dd8fca73f719567d8afb18a89c1752a76a93e25`.
+
+The ordering is material: a later fixed-output repair makes the harness green
+but does not erase the earlier context-routing or opaque-scalar findings.
+Conversely, `95f93dfe` is not a parser-wire fix: compact parser inputs were
+already checked; its proof starts from a valid opaque object mutated in
+memory. Existing fuzzer additions `d0d0c042` (lower-S assertion) and
+`da1d06a8` (Core compact header mapping) supplied oracle coverage but were not
+counted as new production findings in this revalidation.
+
+### Bitcoin Core caller-aware severity
+
+Bitcoin Core reaches this module from wallet/message code. At
+`/mnt/my_storage/bitcoin/src/key.cpp:249-258`, `CKey::SignCompact` calls
+`secp256k1_ecdsa_sign_recoverable` with the explicit exported RFC6979 alias,
+then serializes the result using the static context. At
+`/mnt/my_storage/bitcoin/src/pubkey.cpp:300-315`, `CPubKey::RecoverCompact`
+maps the one-byte compact header to a validated recovery ID, parses the
+64-byte compact signature, and only then calls recovery. These are valid
+application objects and message-signature flows, not block or witness
+admission inputs. Legacy consensus ECDSA verification does not construct an
+opaque recoverable signature or use the recovery module.
+
+* The built-in callback routing mismatch is **Low** master-relative dispatch
+  and backend-selection correctness, with **Informational/Low** current-Core
+  impact. Core does pass the explicit alias, but it does not install a custom
+  SHA compression callback, and the default and context-routed hashes are
+  equivalent. No signature forgery, nonce reuse, key disclosure, or consensus
+  result change was demonstrated.
+* Overflowing native `r`/`s` or a recovery ID above 3 in an opaque 65-byte
+  object is **Medium** for the direct library state boundary: clean master can
+  assert or consume invalid state before returning. It is **Low/Informational**
+  for current Core because `RecoverCompact` parses wire bytes first and
+  `SignCompact` creates the object through the signing API. It is not a
+  remotely supplied block or witness encoding.
+* Leaving a fixed output stale after an illegal parser or signing argument is
+  **Low/Medium** fail-closed API hygiene and **Informational/Low** for current
+  Core, whose wrappers check return values. A nonce or retry counter without
+  standalone cryptographic meaning is not Critical merely because it is not
+  cleared.
+
+No item is High or Critical. This target produced no invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, disclosure, or remote memory/concurrency
+primitive. A witness-sigop claim would require proof that Bitcoin Core accepts
+an invalid block; compact message recovery does not provide that proof.
+
+### Repaired sanitizer and worker proof
+
+The final repaired Clang 22.1.7 Debug ASan/UBSan file-driver builds used
+assembly off, external callbacks, all optional modules, and native plus
+forced-int64 arithmetic. Both passed all 17 tracked seeds and `/dev/null`;
+all 18 statuses were zero, both status logs shared hash
+`cc2ce47916da6aae8467737eb463e25b7bf070ebf59c4e4bdf8a3671db5d518d`, and
+diagnostic bytes were zero. The repaired binary hashes were:
+
+    native             f988601626a464c620368a33ddb7eea47b88f690b18569156d3d4c48592174ee
+    forced int64       0679a4524cba64af036625fcdb7a3f0225951ad3201f6d0b071b1fbb66374001
+
+The clean-origin sanitizer binary hash was
+`d5f21f6e162a24a011686372d2bf0998b33f80650e6ffee467e738faaa350130`; the
+final repaired disposable Release binary hash was
+`869be58aa4f7c36d63c6b8af5c7c01a709a42593c1aaa89c7ca3aee5931dfd64`. The
+final repaired disposable source
+hashes were `eb5817d192412854c80a53ae8284e0682e235ce3f72bbdbdf9e48e6985b2d61b`
+for `src/secp256k1.c` and
+`7166f8c88574ea33cc71c307efced118bcd5ae3595e581aa511711bc9faf0056` for
+`src/modules/recovery/main_impl.h`.
+
+Sanitized libFuzzer campaigns ran private copies of the tracked corpus with:
+
+    -fork=2 -jobs=2 -max_total_time=12 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+
+Both native and forced-int64 managers exited zero. Each had two workers;
+every worker reported `oom/timeout/crash: 0/0/0`, and both artifact
+directories were empty. The isolated campaign log hashes were:
+
+    native manager       11c7715d1270c4d922bb40d22ab3a71379f01407cadfa85ec91f8122853fe012
+    native workers       a42c2bb254e49cdb03756df5f7fdeb6c7ec92566846c9e40134f49985e9f86ec
+    forced-int64 manager 03be54644d310e0ac5dd68cf871629094ec9429fa0f273b6b3db660897426659
+    forced-int64 workers 23f114754724cc733ffec8dab8cc0b707fb8de6a24d06c295f4940f7e0bbf03e
+
+The private native and forced-int64 corpora evolved to 157 and 111 files;
+neither campaign modified the tracked 17-file corpus. No fuzzer, sanitizer,
+compiler, or worker process remained after verification. This is a
+master-relative revalidation of existing findings, not a new production fix,
+regression test, cherry-pick, or severity upgrade.
