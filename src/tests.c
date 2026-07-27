@@ -3229,7 +3229,30 @@ static void run_field_half(void) {
     }
 }
 
+static void test_fe_zero_predicates_high_magnitude(void) {
+    /* Multiples of p at high magnitude must still be recognized as zero by
+     * both zero predicates. Construct 4*p: one at magnitude 1, negated to
+     * magnitude 2, added back to magnitude 3. Its t9 limb is 4*(2^22-1) =
+     * 0x0FFFFFC, which has bit 21 set, so reduction-pass shifts and folds are
+     * actually exercised (small elements have t9 == 0 and cannot detect
+     * first-pass mutations). */
+    secp256k1_fe one, neg, fourp;
+    secp256k1_fe_set_int(&one, 1);
+    fourp = one;
+    secp256k1_fe_normalize(&fourp);
+    neg = fourp;
+    secp256k1_fe_negate(&neg, &fourp, 1);
+    secp256k1_fe_add(&neg, &fourp);
+    CHECK(secp256k1_fe_normalizes_to_zero(&neg) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&neg) == 1);
+    /* A nonzero multiple plus one must not be reported as zero. */
+    secp256k1_fe_add_int(&neg, 1);
+    CHECK(secp256k1_fe_normalizes_to_zero(&neg) == 0);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&neg) == 0);
+}
+
 static void run_field_misc(void) {
+    test_fe_zero_predicates_high_magnitude();
     secp256k1_fe x;
     secp256k1_fe y;
     secp256k1_fe z;
