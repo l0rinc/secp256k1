@@ -39327,3 +39327,60 @@ remains Informational/Low for the relevant application/wallet boundaries,
 with the separate direct-library findings retaining their recorded
 Low/Medium classifications. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-27 GCC 16 sanitizer corpus matrix
+
+To add a compiler-sensitive control that the Clang campaigns do not provide,
+the current audit commit `b41727a4034ac92afec0544d168affac3ea19f88` was built
+with GCC 16.1.0, CMake 3.31.6, Debug, `SECP256K1_ASM=OFF`, all seven optional
+modules, and the non-libFuzzer file runner. The remote refs were unchanged:
+`origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`.
+
+The build used `-O1 -g -fsanitize=address,undefined
+-fno-omit-frame-pointer`, `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:
+allocator_may_return_null=1`, and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The complete tracked
+corpus has 357 files and 14,239 bytes; its sorted `filename size` manifest is
+`dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+The per-target counts were: `api_roundtrip` 62/2901, `context` 12/693,
+`ecdh` 9/283, `ecmult_const` 11/406, `ecmult_multi` 29/1028, `ellswift`
+20/820, `field` 21/742, `group` 23/837, `hash` 10/446, `musig` 81/3054,
+`recovery` 17/783, `scalar` 10/349, `schnorrsig` 18/670,
+`silentpayments` 14/515, and `xonly_tweak` 20/712.
+
+Two independent workers per target were run in parallel. Each worker first
+called its target with no argument for the implicit empty input, then passed
+every file from a private corpus copy. The exact worker shape was:
+
+    env ASAN_OPTIONS='abort_on_error=1:detect_leaks=0:allocator_may_return_null=1' \
+      UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' timeout 300s bash -c \
+      'set -e; fuzz_TARGET; fuzz_TARGET private-corpus/TARGET/*'
+
+All 30 workers exited 0 and wrote `complete=0`; no assertion, ASan/UBSan
+diagnostic, runtime error, timeout, OOM, crash, or artifact occurred. The
+sorted per-worker log manifest is
+`7ef4fbb2d8d25c1035a4fcca89ae550a9b09eb19fbd6bf499ac767e228bff0b1`.
+The sorted target-binary manifest is
+`a0891d08c188ce0247278526fcf63ec216277304bfa9d0a498c57e79e49790c3`; the
+shared library hash is
+`d5d03213841b10ad3a04ef6f598553b1e0bec6abac83bcd9e71f0cdf95894de5`.
+
+The same GCC build passed `tests -i=1 -j=2 -log=1` and
+`noverify_tests -i=1 -j=2 -log=1`. Their log hashes are
+`7313644c7eadc36671edc102e52617d091bcc8fd669d96622dcc346181b82910` and
+`1d6e1e926dafc1ce479a8dca18332c0739fca32eb04810f9cdc96b22e6a65909`.
+
+This is new compiler-differential negative evidence, not a production bug.
+It adds no clean-master failure, deterministic regression, fix, cherry-pick,
+or severity upgrade. The exercised contracts remain the existing internal
+arithmetic/state oracles and Bitcoin Core's ECDSA, Schnorr/Taproot, recovery,
+MuSig wallet/PSBT, and BIP324 transport compositions. No invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, or severe remote memory/concurrency
+impact was shown. Current-Core severity therefore remains the recorded
+Informational/Low to Low/Medium range; no High/Critical rating follows.
+A nonce or retry counter without standalone cryptographic meaning is not
+Critical merely because it is uncleared. Future compiler, backend, or Core
+caller changes should retain this GCC matrix and state whether they preserve,
+change, or mask the existing clean-master findings.
