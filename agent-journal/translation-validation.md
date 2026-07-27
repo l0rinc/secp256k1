@@ -2962,6 +2962,102 @@ formal constant-time proof. The next queue is another distinct scalar
 compiler/architecture helper; do not repeat this predicate unless new source,
 compiler, architecture, or performance evidence changes.
 
+## Cycle 29: scalar serialization translation validation
+
+### Scope and hypothesis
+
+I audited `secp256k1_scalar_get_b32` in the native 4x64 and forced 8x32
+implementations (`src/scalar_4x64_impl.h:161-168` and
+`src/scalar_8x32_impl.h:195-206`). Its contract is to serialize a canonical
+scalar as exactly 32 big-endian bytes without changing the scalar. Callers
+cover ECDSA and Schnorr signatures, public-key recovery, secret-key and
+context offsets, ECDH, ElligatorSwift, MuSig, extra keys, test utilities,
+and scalar fuzzing. The hypothesis was that a limb-order, word-size, or
+output-boundary translation could produce a representation-dependent byte
+string or overwrite adjacent output memory.
+
+### Independent oracles
+
+The C harness constructed scalar limbs directly from canonical raw bytes and
+did not call the project's decoder. It covered 646 values: zero, one,
+`n-2`, `n/2`, `2^255-1`, `2^254`, every 256-bit power of two, every
+`n-power` boundary, and 128 deterministic values below `n`. The expected
+serialization was the independent original 32-byte big-endian input. Each
+call also checked eight trailing `0xa5` canary bytes. The accepted digest was
+`4ea96c3b19984f71`.
+
+The C++ verifier used `boost::multiprecision::cpp_int` to generate and encode
+392 canonical values: eight principal boundaries, every power of two, 64
+order-minus-power values, and 64 deterministic values below the order. Its
+accepted digest was `a57e37bca6bc2e1a`. Both independent oracles agreed in
+native and forced configurations. Scratch harness hashes were:
+
+    2c056e998e758457b27993d69017200ba07fe4f544fbc9b4c16bfb6de1c47cd6  scalar-getb32-harness.c
+    0d4c8ef57ad29d57a9fe92a74fac904052235161186252fbb437e1188f63b57a  scalar-getb32-c-shim.c
+    9809191cdedf14d2cf4b0ea52ade442c96da46aaa1bf0cfdc6b2979e6d7259c8  scalar-getb32-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+The C oracle passed all 24 Clang/GCC x86_64 combinations of assembly,
+portable, and forced-int64 selectors at O0, O2, O3, and Os, with the same
+646-case digest. Six O2 LTO runs, both compilers and all selectors, also
+matched. Six C++17 O2 bridge runs matched the C++ digest. GCC 16 emitted a
+Boost-header diagnostic while compiling the scratch `cpp_int` verifier; the
+same three runs repeated with only `-Wno-array-bounds -Wno-stringop-overflow`
+for that external-header warning and passed cleanly.
+
+Six `-DVERIFY -DVALGRIND` ASan/UBSan O1 runs, with leak detection and
+halt-on-error settings, matched without diagnostics. The native and
+forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --output-on-failure -R 'scalar|fuzz.scalar'`; each reported
+`100% tests passed, 0 tests failed out of 7`, including scalar,
+malformed-scalar, ElligatorSwift bad-scalar, and scalar fuzz-seed tests.
+
+At O2, `objdump --disassemble=probe_get` found zero conditional or loop
+jumps and zero conditional-select instructions in all six Clang/GCC x86_64
+normal probes. The instruction counts were 13 for Clang/GCC native/portable
+and 25 for Clang/GCC forced-int64. Clang AArch64 compile-only commands
+covered native and forced-int64 selectors, O0/O2/O3/Os, and normal or
+`-DVERIFY` modes: all 16 objects compiled. The eight normal probes had no
+conditional or loop branch mnemonic. The optimized VERIFY probes had one
+`cbnz` branch for the explicit scalar invariant check; it is diagnostic
+assertion code and is absent from normal production objects.
+
+The AArch64 object hashes, in O0/O2/O3/Os order, were:
+
+    native normal:  00feb7b5cd882e30ae852305e63a84e342de3e08ea77930b742adcd600fb0f0e  ea406710ad652feda8a45b408d6721216cbbf68b0018eae2c4d05e8f47436ef0  f4def97e0bd05b1666c40e9ed88b136b3d237e8ddd80ae2a0ac42b9c8bc8dbda  ca37dd3983e6e3baa280a7901ecf0e2d175b265b43d361ef87b44b393cc0d18d
+    native VERIFY:  98f92152eb319f423dff6543b9b7866c9e95a5a7ca4ca74507ee0246434ca4cb  001ce7578e6dc123d16b970e3b536a3679c3714240849a7bfc5a9cc76e778a54  6bdd9234b13f736148ab11bc360cc948e063d961c362538c3d6c766bc41c6e8d  f20d336014a47d96989d8d0ec60367d6ee43f03be879ae24b90b1dd34ace5359
+    forced normal: ecc02737452677138bc1ad351c2f2cde167de1c0dd18afc9a9899682f7e2b621  eed8e58d2fd9b73d5d69c34b1f6e87f456180a33744cdea35dfa8a8c05bb4f54  9c8852ccf740ae67145a49f342a112138c564e96a05bb9485cd381d1cf22cb44  e583b61d0bbb4a5f16c11f59866446ca4ff518d780f03c9d0519be92e3d624be
+    forced VERIFY: 304a143deb87d5c5707aeadb3f03fa56ea699488e89578e7229144e8582d7c54  b6407c2135f6e8b7b96e08974acb294ca391b208a6ff5ae8cd6c37145554c94f  5a90de5eecfee9f3e9e15b41d7ccdf6fe575e7a09236c3036ce832df2a71f3fb  b64a3a86d460abe55053ff2fb9c231bf87e3efff07c6a7adc63ed8f9f56d9894
+
+### Mutation controls
+
+Scratch native and forced copies changed only the highest serialized limb to
+the next lower limb: native `a->d[3]` became `a->d[2]`, and forced-int64
+`a->d[7]` became `a->d[6]`. The independent runners rejected both mutations:
+
+    native C:   get_b32 mismatch case=2
+    native C++: cpp get_b32 mismatch case=2
+    forced C:   get_b32 mismatch case=3
+    forced C++: cpp get_b32 mismatch case=4
+
+This proves the byte-order oracle detects a high-limb translation error and
+that the canary checks do not mask the value mismatch.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No incorrect byte order, output overwrite, undefined
+behavior, lowering anomaly, or reachable production defect was found. No
+production code, regression test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal constant-time proof. The next queue is another distinct scalar or
+cross-backend compiler/architecture helper; do not repeat this predicate
+unless new source, compiler, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
