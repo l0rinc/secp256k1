@@ -1275,6 +1275,141 @@ compiler/architecture constant-time or overflow-sensitive helper. Do not
 repeat the fifteen dismissed hypotheses unless compiler, source, or
 architecture evidence changes.
 
+### Cycle 2026-07-27: field half translation and contract
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `88eae5c5`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, `aarch64-linux-gnu-objdump`, and the existing ASan/VERIFY test builds
+were available. No AArch64 runtime, GCC AArch64, ARMv7/RISC-V sysroot,
+Alive2, CBMC, or KLEE executable was available. The field-half source,
+fuzzer oracle, tests, blame, and implementation history were read before
+selecting this distinct arithmetic kernel.
+
+The implementation history is unusually direct. Commit `925f78d5` added
+`fe_half`; `d64bb5d4` added worst-case magnitude tests that assert
+`normalized == 0`; and commit `89e324c6` abstracted the VERIFY wrapper. The
+parent of `89e324c6` still documented that the output was not guaranteed to be
+normalized, while the current wording incorrectly says it will be normalized.
+This history, the implementation, and current tests independently identify a
+stale source contract.
+
+### Hypothesis and contract
+
+The sixteenth bounded hypothesis was that compiler transformation or the
+native 5x52 versus forced-int64 10x26 representation could miscompute
+`secp256k1_fe_half` for odd residues, maximum valid input magnitude, carry
+propagation, or the output magnitude contract, or introduce a branch into the
+constant-time operation. The implementation proofs at
+`src/field_5x52_impl.h:335-386` and `src/field_10x26_impl.h:1036-1099`
+state output magnitude `floor(m/2)+1` for input magnitude `m`. The wrapper at
+`src/field_impl.h:444-453` enforces input magnitude at most 31 and sets the
+VERIFY normalized flag to zero. Existing tests at `src/tests.c:3296-3340`
+check the same magnitude and non-normalized output behavior. The mathematical
+oracle therefore computes `(x + p)` when an odd canonical residue requires it,
+then divides by two, without using either field representation.
+
+### Evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/field-half-harness.c` has SHA-256
+`ae7ef47a3b7add09b1d53abe3b8b997f5ba4f60ff76f9fa32b883517ba632f9c`.
+It covers the same 645 canonical boundary/random values used in the prior
+normalization oracle, every valid `get_bounds(m)` input for `0 <= m <= 31`,
+all 30 complementary sums whose total magnitude is 31, and 645 canonical
+values raised through every magnitude from 1 to 31 by adding a zero residue.
+For each case it checks the independent half result, the documented output
+magnitude, and that doubling the normalized result returns the original
+residue. The byte-level reference is the same carry-and-shift calculation as
+the independent fuzzer reference in `src/fuzz/field.c:1016-1034`, reproduced
+in the scratch harness and not called from production code.
+
+A preliminary scratch pass used direct `SECP256K1_WIDEMUL_INT128` and
+`SECP256K1_WIDEMUL_INT64` defines. It was discarded after `src/util.h:349-378`
+showed that the repository selects backends with
+`USE_FORCE_WIDEMUL_INT128` and `USE_FORCE_WIDEMUL_INT64`; those are the only
+selectors used for the final evidence below.
+
+Native and forced-int64 Clang and GCC builds using the repository selectors at
+`O0`, `O2`, `O3`, and `Os`, plus native and forced-int64 `O2 -flto` builds,
+all printed exactly:
+
+    ok values=645 bound-cases=32 sum-cases=30 raised-cases=645 digest=19d79583eb93cd67
+
+The four native/forced Clang/GCC `O1 -DVERIFY` ASan/UBSan runs also printed
+the same digest without diagnostics. The existing ASan and no-VERIFY binaries
+completed `field_half` and `field_misc` for four iterations, two jobs, with
+fixed seed `abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd`.
+
+The final Clang O2 x86 probe object hashes were native
+`049d6f47e3d235cc31575c83bd8649b6cd1bf8793a7b733d8e95c867fb6e3673` and
+forced-int64
+`cfa89c48134b9562049d5f64df784edbe66f9850c8f239abefd6044c1017db3c`.
+The `probe_half` body had zero conditional or loop jump mnemonics in both
+representations. This is code-generation evidence for the non-VERIFY
+constant-time path; VERIFY assertion branches are not production evidence.
+
+The final non-VERIFY AArch64 compile-only matrix used Clang
+`--target=aarch64-linux-gnu`, the repository's native and forced-int64
+selectors, and `O0`, `O2`, `O3`, and `Os`. The object hashes were:
+
+    native:      O0 b9768cc5a397877d90ccf555410b156197dc493c5d61dcd6f259034ed9bb4fc3
+                 O2 d448b082c5efabbd21bbea7a2207bd3865be8bd5dabe822d8d26b5cc409d7bad
+                 O3 5297598095a735ba09ed4926727b199f06e2c3eef2b073dc193fafb276fb48b1
+                 Os 36c6e1f7123b119c6aa5ff006355ebdb7ab8dbef2436a87801ae717679b02442
+    forced-int64: O0 f2b009d7c4ae67fe8f3ca4272127bd328bb4eae51e2c4cf05b22ea9132c3e735
+                 O2 22b8ca747baec5d0eb2e70cda80ab371d5897824aa9713517fe9ac5a5a40a41d
+                 O3 bd24e894cb0198c85332c1c5cfbfaf86cb9f338da2b7fd33ddc1f3c28b796edc
+                 Os 13dee79594709b0466520c85e8c135c714a448a58ab759be2aad299921a3f478
+
+All eight non-VERIFY `probe_half` bodies had zero conditional branch mnemonics.
+The `O0/O2/O3/Os -DVERIFY -DVALGRIND -Wall -Wextra -Wno-unused-function`
+cross-builds also succeeded without diagnostics. Their native hashes were
+`6a397380eaa954d884a515e957e5a5c140177927749017ff3eea6bcfaedeece7`,
+`07b6dab987d6cda5b078fc15efb35a8cd853272acfcd68a73a2a84c099d6a8cf`,
+`b940a762975f271b65122fbce346a89c137ae87a056aeb9510cc4c597f8c3163`, and
+`9df4b39740a63bbc2a98e4a93918a16f5e497d5bb51d1e99170a027de980ffa5`; the
+forced-int64 hashes were
+`778ce24f438c7ea339c1d7e361b67b8cef849f79dc1938aa539626ba89b1b374`,
+`11e365ee9da1a75558984362aa8f45bc80802c209658c47c768e5accb2ce8d8f`,
+`9c99b3f137312f78e0da7e95c22b4913f9dd418cf71d88f14118dcaeee65e3f4`, and
+`3f3c23a2636340f19109dae151abb957afb05674ebdd20a756b4f73aa95eacaa`.
+
+The mutation control copied `src/` and `include/` to scratch and changed the
+low field-prime addend used when the input is odd from `0x...C2F` to
+`0x...C2E` in both backend implementations. Clean Clang O2 runners using
+the correct native and forced selectors rejected the wrong result at the
+first nonzero value and exited 1:
+
+    half mismatch kind=value case=1
+    mutated native exit=1
+    half mismatch kind=value case=1
+    mutated forced exit=1
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native and forced-int64 field backends, LTO,
+ASan/UBSan/VERIFY execution, focused field tests, and Clang AArch64 code
+generation. The independent modular-halving oracle found no arithmetic,
+magnitude, carry, or lowering mismatch, and the mutation proves that the
+oracle distinguishes a shared odd-input defect. This does not provide
+AArch64 runtime execution, GCC AArch64, ARMv7/RISC-V, or a formal proof of
+constant-time behavior; branch inspection remains compiler evidence only.
+
+Separately, the source-comment contract at `src/field.h:325-331` is a
+confirmed documentation finding: it promised normalized output, contrary to
+the `field_impl.h` wrapper, implementation bounds proof, tests, and the
+pre-`89e324c6` contract. The smallest fix changed only the comment to state
+that the output magnitude is `floor(m/2)+1` and normalization is not
+guaranteed. Existing `field_half` and `field_misc` tests plus the corrected
+harness cover the behavior; no production arithmetic changed. The source
+comment fix and this journal/state update are committed together. The next
+queue is another compiler/architecture constant-time or overflow-sensitive
+helper. Do not repeat the sixteen dismissed compiler hypotheses unless
+compiler, source, or architecture evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -1288,5 +1423,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-fifteen dismissed hypotheses unless compiler, source, or architecture
+sixteen dismissed hypotheses unless compiler, source, or architecture
 evidence changes.

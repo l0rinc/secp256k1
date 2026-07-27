@@ -133,6 +133,18 @@ conditional-select lowering. All fifteen bounded hypotheses were dismissed;
 no production finding or fix commit resulted. The goal remains active with
 another compiler/architecture constant-time or overflow-sensitive helper
 queued. Scratch artifacts are under `/tmp/secp256k1-translation-78`.
+The sixteenth hypothesis then tested `secp256k1_fe_half` across native 5x52
+and forced-int64 10x26 representations with an independent modular-halving
+oracle covering 645 canonical values, magnitudes 0 through 31, magnitude-31
+carry sums, and every raised magnitude. Correctly selected native and forced
+Clang/GCC `O0/O2/O3/Os`, LTO, ASan/UBSan/VERIFY execution, focused field
+tests, mutation controls, and AArch64 code generation matched
+`digest=19d79583eb93cd67`; the deliberate odd-prime-addend mutation failed
+at the first nonzero value in both backends. The compiler hypothesis was
+dismissed. The audit also confirmed that the `fe_half` header comment wrongly
+promised normalized output; a minimal source-comment correction was committed
+with the cycle journal and state. The goal remains active with another
+compiler/architecture constant-time or overflow-sensitive helper queued.
 
 ## Handoff
 
