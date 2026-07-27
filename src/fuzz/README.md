@@ -38683,3 +38683,78 @@ regression test, cherry-pick, or nonce-clearing claim is made. A later library
 or Core change must rerun the same copied-corpus command and state whether it
 preserves, changes, or masks this negative result and the earlier master
 controls.
+
+## 2026-07-27 public-path magnitude-32 reachability tripwire
+
+The clean-master 10x26 findings for exact magnitude-32 normalization and the
+zero predicates remain valid internal contract findings. This campaign tested
+whether current public/module paths can construct that state. The audit tree
+was `767304fc`, with both `origin/master` and `l0rinc/master` at
+`d2d04864ef9b056151603a3ced7980958b058028`. The temporary build used Clang
+22.1.7 Debug ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules enabled,
+and recovery enabled.
+
+The diagnostic-only source mutation was
+`VERIFY_CHECK(r->magnitude != 32)` at the start of
+`secp256k1_fe_impl_normalize`, `secp256k1_fe_impl_normalize_weak`,
+`secp256k1_fe_impl_normalize_var`, `secp256k1_fe_impl_normalizes_to_zero`,
+and `secp256k1_fe_impl_normalizes_to_zero_var`. The mutated source hash was
+`927e424adf459286ca9c18adaad986e2656fb0d574825b221001aa7a68f07d74`.
+This was a temporary tripwire only: it is not production code and does not
+claim a new clean-master fix or a deterministic regression test.
+
+All tracked seeds replayed through the standalone diagnostic binaries with
+exit code 0 and no tripwire assertion:
+
+    target          inputs  corpus manifest
+    api_roundtrip       63  afedffeda4796ca76afec8113b8f72c22a8d7995714cec375955376e01f350d2
+    context              13  e370981b6929cfb3699b5978cb1bcda1cb1383ae91dcfda293852086e8dda1a2
+    ecdh                  9  2c73102405b309935533dc1c3c0195afda3f0f30031ff99bbabc9f47c994ad38
+    recovery             18  9a2ee966770f4665a4379507d4e693410978ff14792606ea45f2be888587764c
+    schnorrsig            18  772a4de5d3672e4e2395e6940ca019f13c729c6820fbb46499d6615f784ff671
+    xonly_tweak           20  c9b31913ee7674853c05dbad504a6c4af9ebb52baf073c199d7f1eda98298dfc
+    ellswift              20  ebf36c832e376af625f54c99b5e4f9db56b6870534612fb863c7e7a86fadb429
+    silentpayments        14  7c00753bfc062db32ef8805b112ff2b098992f20c715de77f604355c6b7ada3b
+    musig                 81  2feb9f9a8ac9cf75d635829c5040b754f808bd402db10dd30a3a4281f24ac04f
+
+The copied corpus contained 256 files and had manifest
+`ad726054f5417e7ebd93deeb9d6fd3efe285b0b62bb6ad0fe7401d459f23a76b`.
+The completed libFuzzer worker runs used `-fork=2 -jobs=2`,
+`-timeout=180 -rss_limit_mb=0`, and zero-valued crash, OOM, and timeout
+ignore flags. The log SHA and diagnostic binary SHA pairs were:
+
+    api_roundtrip  c2880c9a72019c819dc7ffa096b77d3bd97a1092dfcf45af8bf7cf8c509ec796  12cc5ffffb4afe56bce6cbfde15ea6193af0aca97f1f9300a3f2e55726e717d3
+    context        ec9724c16e1e3862a848307c5748610104253444cb4e5813f9b3d21a06384ec9  5015e7ba27ee4bdb5f94ef0ebab79d9012f042566f0179efc84406d750235202
+    ecdh           9f9c4324f11b789bb161cebe71d878c094ecfdf818710382ba0e033719d0f6a0  aa75dbb351424e5803e703561e321a6a1010e2ac095e488284bd9d844bdda614
+    ellswift       8865f97dd74d5cd762cbd126c6d0646c3f302f3e91f6d1a5f8d36236c18c53f4  c2dc26e6cc325fa0c24abbf2aa2a5646b36078a7b0953e049f842b64e792afd8
+    xonly_tweak    ff831fcd235d62abdb20db06594cfacaaabeec9533a51696e1e20327cb7a4e2d  bf0e691bf8c7dc1822a82268a51380da194752ce871f99aa76474068288916f8
+    recovery       b665b3cab9f95f9d7d42ae7408449f91639d8568031965e15618b74c9056a08c  f86bbe961c21c69fef6d5faf717ee8f88ad7489afbc2c834fb5ef13fe293d767
+    schnorrsig     3b4b05b890c02c9096dfde252e659ad47ac2619ae9f9ae0b627d754e021106c6  d65ce94f9e76a5bc0a09fdfc906f39ba5a52e7269a27d55d59f883876af57ae5
+    silentpayments  a3547c0c3845c02d54a45b2461a1e63065196b836dd58c62bfc18ed2f571a388  c9c538fbfa93026e74ccc087ed2f9d80e753e73701fee0cd957fdb372e59d704
+
+Every listed job exited 0 and reported `oom/timeout/crash: 0/0/0`; no
+assertion, ASan/UBSan diagnostic, timeout artifact, or crash artifact was
+produced. The initial full MuSig fork run was stopped after more than eleven
+minutes during libFuzzer corpus merging and is deliberately excluded from the
+evidence. A bounded eight-seed MuSig subset was then run with `-merge=0`; its
+log SHA was
+`1dd81026632387e896aab4905300b05f3296546f86fa2eeddfb2a289f22ecf08` and its
+binary SHA was `75fc638be115afe6ba4ed8e2a0fdafcd8c4fc2eebff08a9941ca9f2de8e46857`.
+Both workers exited 0 with `oom/timeout/crash: 0/0/0`. Its three slow-unit
+artifacts were replayed by the standalone diagnostic binary with exit code 0
+in 2.69, 2.51, and 2.11 seconds, respectively; they are expensive fixtures,
+not failures.
+
+This is corpus-level negative reachability evidence, not a mathematical proof
+that no future composition can produce magnitude 32. It found no tripwire
+assertion, sanitizer failure, timeout, crash, OOM, invalid-block or
+invalid-witness acceptance, sigop or consensus consequence, signature
+forgery, key compromise, or severe remote memory/concurrency failure. The
+existing clean-master defects therefore remain `Medium / latent internal`
+correctness findings, while current Bitcoin Core reachability is unproven and
+at most Low/Informational for this state. No High/Critical rating is justified,
+and no production fix, deterministic regression, cherry-pick, or nonce-clearing
+claim is warranted by this campaign. Core production also has no current
+callers for standalone ECDH, `ec_pubkey_combine`, or Silent Payments; the
+ECDSA, Schnorr/Taproot, recovery, and x-only paths above are the relevant
+public/API composition coverage.
