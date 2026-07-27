@@ -40276,3 +40276,119 @@ this revalidation. Future scalar, ecmult, backend, or l0rinc changes must
 rerun the clean WNAF first stop, the WNAF-only shift stop, and the combined
 repair, and state whether the change preserves, changes, or masks either
 existing master finding.
+
+## 2026-07-27 Current-origin field first-stop and repair masking revalidation
+
+This is a clean-master reiteration of the existing 10x26 field findings. The
+control used `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+recorded `l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. It started
+from an archive of current `origin/master` and overlaid only the audited field
+fuzzer, build files, `src/fuzz/fuzz.h`, and the tracked field corpus. No
+production repair from the audit branch was present in the clean control.
+The clean 10x26 production source hash was
+`4c23a9466b333a49e2a974f3472cec8a5379fcd69fb8ff2ebc76d1aafd444784`; the
+audited `src/fuzz/field.c` hash was
+`2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`.
+
+The tracked corpus contained 21 files and 742 bytes. Its sorted filename/size
+manifest hash was
+`39dd81e289232231b7edb04e1a48b7dba1e96f8f39ca99bc3c1bbf60e3d26940`.
+The native build uses the 5x52 field; the test-only
+`SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` build selects the 10x26 field.
+That distinction matters: this is a backend-specific production contract
+check, not a claim that the host's normal 5x52 path failed.
+
+### Clean first stop and masking order
+
+The 5x52 file driver returned 0 for all 21 inputs. Every clean-origin 10x26
+file-driver input exited 134 at the same first assertion in
+`src/fuzz/field.c:72`, reached from the unconditional
+`secp256k1_fuzz_fe_check_bounds_sum(16, 16)` call at
+`src/fuzz/field.c:1501`. The independent byte oracle expects the canonical
+residue of `get_bounds(16) + get_bounds(16)`, namely
+`64 * (2^32 + 976)`. The old 10x26 first pass carries through `uint32_t`;
+the documented magnitude-32 limbs leave no headroom, so normalization loses
+carry bits and the byte postcondition rejects the result. This is a real
+production arithmetic error under the internal `[0,32]` magnitude contract,
+not a blanket "accepted means valid" fuzzer assumption.
+
+To keep later failures from being credited to the first repair, a disposable
+tree applied only the `normalize`, `normalize_weak`, and `normalize_var` hunk
+from existing production fix `6e5e385c`. The exact production patch hash was
+`07f56b7dd51e37799a362c97cf6898a1cab76f8d3bdbd363c21f6ee95ce0885d`, and the
+normalization-only source hash was
+`227119027625b0399c232dcdf0875817f600f274ba3b64e75a3f59e6bd784114`.
+With no zero-predicate change, all 21 10x26 inputs advanced to the separate
+`src/fuzz/field.c:1330` assertion in
+`secp256k1_fuzz_fe_check_zero_predicate_false_positive`.
+
+That second input has `n[0]=0xffff0f91`, `n[1]=0xfffff040`,
+`n[9]=0x0fc00000`, all other limbs zero, and a valid magnitude of 32. It
+represents `63*p + 2^58 + 2^32`, whose nonzero normalized residue is
+`2^58 + 2^32`. Both old 10x26 zero predicates return true because their
+`uint32_t` carry chain wraps; the independent normalized-byte check is the
+separate witness. This proves that a green normalization repair does not
+erase or explain the zero-predicate master bug.
+
+The disposable tree then applied only the zero-predicate carry hunk from
+existing production fix `c3d04cfb`. Its exact patch hash was
+`49434587b867e7ace845bbe381b314ca179a53f68b7addfade2f308064b662a5`.
+The combined repaired 10x26 source hash was
+`2c642c6c87d53e358c8254b0e3985c2917f999af362afe6dd8e5d0c1478f8289`.
+All 21 inputs returned 0 in both native and forced-int64 GCC file-driver
+controls. The two repairs are therefore causally distinct; cherry-picking or
+reverting one must not be described as fixing the other.
+
+Fresh Clang 22.1.7 ASan/UBSan file-driver binaries provided the same control:
+
+    clean 5x52:       3cc1fb746f7b1bd2c916b80fa831d5d2334d3bb92e096e36c5663e3964a48952
+    clean 10x26:      a7ad7c8d60b95f0884b0c634fb686fb78595950ac0893313c8737381f3721d51
+    repaired 5x52:    5282f742c6882b682553d309a6b5c657cdfc7d8f1d97a1f360130a06af2dd8ac
+    repaired 10x26:   18022fb6134afe09bbed8cabb9fe5cf2231e5433c567a5f4ff601ad62457006f
+
+Clean native passed all 21 inputs, clean 10x26 stopped at the normalization
+oracle, and both repaired binaries passed all 21 inputs with no ASan/UBSan
+diagnostic. The repaired libFuzzer binaries were
+`f530a2ba668f9f2556fd6a848c69fad188ce4bd81b90179270b62bbd7f1eaa7f`
+(5x52) and
+`1898ce545863db47835c5c3caab252bc116f96a788f589d882ffb9d0fe01771e`
+(10x26). With isolated disposable corpus copies, both ran:
+
+    -fork=2 -jobs=2 -max_total_time=12 -timeout=20 -rss_limit_mb=0
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0
+
+Both jobs exited 0; every worker reported `oom/timeout/crash: 0/0/0`, no
+sanitizer diagnostic appeared, and both artifact directories were empty. The
+worker log hashes were
+`a65c0610b6e4da5772be5f58636391b4a49f1d479f052230a34f05ee08c3f5fe`
+(5x52) and
+`1b910a91e4c9d497817f3b9b00cce0978eba6e3de227d44c08b047a8c9ca938c`
+(10x26). The evolved corpus was discarded and did not modify the tracked
+corpus.
+
+### Caller-aware severity
+
+On unmodified master, both defects remain **Medium/latent internal field
+correctness**: the arithmetic result or zero classification is demonstrably
+wrong for a documented, representable 10x26 magnitude-32 state. Existing
+ordinary tests and the normal 5x52 host backend did not construct the exact
+carry boundaries; the independent byte and nonzero-residue postconditions did.
+
+For current Bitcoin Core, the rating remains **Informational/Low**. The exact
+worst-case state is constructed by internal test/fuzzer helpers; no current
+Core public parser, block, witness, script, signature, ECDSA, Schnorr, x-only,
+or Taproot caller has been shown to let an attacker choose this raw field
+representation. The current call-graph replay found no path from an invalid
+block or invalid witness to acceptance, no witness-sigop undercount, consensus
+divergence, signature forgery, key compromise, disclosure, or remote
+memory/concurrency failure. High/Critical would require that missing
+consensus-relevant reachability proof; a backend-only arithmetic assertion is
+not enough.
+
+The existing production fixes and deterministic tests in `6e5e385c` and
+`c3d04cfb` remain the repairs; this entry adds no production change or new
+severity claim. Future field/backend or l0rinc changes must rerun the clean
+origin control, the normalization-only control, and the combined repair, and
+amend their commit notes if any fix changes or masks the other's first stop.
+The nonce-clearing caveat is unchanged: a retry counter or nonce candidate
+without standalone cryptographic meaning is not a Critical erasure finding.
