@@ -15885,3 +15885,108 @@ justified without a Core caller-level reproduction, especially one showing
 that an invalid block is accepted or honest nodes diverge. This finding is
 also unrelated to clearing a nonce or retry counter that carries no
 standalone cryptographic meaning.
+
+## 2026-07-27 Current-origin ECDSA DER size-boundary revalidation
+
+The strict ECDSA DER length-boundary finding was replayed against the latest
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The current-origin
+`src/ecdsa_impl.h` SHA-256 is
+`883ad9ac4dfa224a1cc97bc2a4cc09b1078545a1632917dac2524a18ba4e53ee`.
+The repaired audit-branch file SHA-256 is
+`48c0af9cae8fdff45cefc0b111d4b97615f4a5b7d31a98b001197f8a79b5cd25`.
+This is a revalidation of the existing `70133c4b` repair, not a new
+l0rinc cherry-pick; the equivalent DER offset stack is already present in the
+audit branch.
+
+### Minimal clean-master proof
+
+The disposable Clang 22.1.7 ASan/UBSan probe passes a one-byte `{0x00}`
+non-DER input with `inputlen=SIZE_MAX` to
+`secp256k1_ecdsa_signature_parse_der`, after pre-filling the output signature
+with `0xA5`. Clean current origin reports:
+
+    /tmp/.../src/ecdsa_impl.h:142:39: runtime error:
+    addition of unsigned offset ... overflowed
+
+The stack reaches `secp256k1_ecdsa_sig_parse` before the malformed tag can be
+rejected, because clean master first forms `sig + size`. The clean probe
+binary SHA-256 is
+`97afc004d3b92c383cad4e471b8ec710750b56fb87b848c0b1f194427091a31c`, and
+the sanitizer log SHA-256 is
+`3761b04130dbbb789672bc8000a89f1b89f363644d7315fb467bec2b599e393d`.
+The disposable probe source SHA-256 is
+`a2abf266df65807c14c34523b46c2328f84018bb027beab3617d984e67abcd02`.
+
+The same probe compiled against the repaired parser returns:
+
+    ret=0 before=a5 output_zero=1
+
+The repaired probe binary SHA-256 is
+`ae9260999b1ceb2d493be984509a7b13dba3104dd810aabc66360fd620635375`, and
+its output log SHA-256 is
+`18ca622065728c92797460fde616e245e2a39431897916dfbdc2db88edce17ae`.
+This proves both sides of the contract: reject the malformed length without
+forming an invalid pointer, and clear the initialized output on failure.
+
+### Fuzzer and test controls
+
+The existing `api_roundtrip` seed
+`ecdsa-der-parser-boundaries` is 28 bytes with SHA-256
+`5a02ae6b50c11c909b4c0d5cbe84b886ab90ce80ada07d92756b5db2507c942e`.
+The overlaid fuzzer source SHA-256 is
+`a4a17b26cd8dcc606a53015173403579e528082d1c8105fa86a38a81c0bf28cc`.
+It invokes the exact `non_der[1]` plus `SIZE_MAX` witness and independently
+requires a zeroed signature. Current-origin native and forced-int64 fuzzer
+replays both exited `134`; their binary SHA-256 values were
+`32a0afde8490c090d1a6f7d75534522d38d0763774f6010d5dc0ff60ac10f7b2` and
+`223b7a127327c977cd048303b61d57b8fae6aee6d65d8d15de07873685c1013c`, and
+their log SHA-256 values were
+`55383360ad4203722f1843a1626f6d461f2001085142b28fb3f6097e7e4347b3` and
+`6e8af7c4511de8d81d06be12e580b1951e36afb862c237c6909bdcc4cda88dd9`.
+
+Repaired native and forced-int64 fuzzer replays of the same seed exited 0.
+Their binary SHA-256 values were
+`f646716030a495bd390c5baecc7e23b10a33c9a359289e29d4adde33faa865dd` and
+`e53013f338277cf1753baec76c14514f177eea5585cd19b0360792001061af02`, and
+their log SHA-256 values were
+`a001a422f746c964eb016e4148111804bc00012c60ae79fe921d69e1de4d6697` and
+`4ac0c50a1e1942250ed16dfc8b1d72e8e4554464397fc4cb714b592e0c29417a`.
+The repaired `tests -i=1 -j=1 -t=ecdsa_der_parse` passed in both backends;
+the native and forced-int64 log SHA-256 values were
+`eab0d8e0c342239c20cbde9aec45d26088b2c80c8f58f73c8e83b433dfa81ac8` and
+`36210417b8ddee2162ad2f6748676542356d5e235862f0957316c48fa7083a63`.
+The clean current-origin ordinary `ecdsa_der_parse` test also passed, which
+is expected: it has no deterministic `SIZE_MAX` boundary case. The missing
+boundary was supplied by the fuzzer seed and the minimal probe.
+
+### Core caller boundary and severity
+
+The public strict DER parser requires `input` to point to an array containing
+`inputlen` bytes. The clean proof deliberately violates that array-size
+precondition with a one-byte object and `SIZE_MAX`; it demonstrates real
+pointer-arithmetic undefined behavior for a malformed caller pair, but does
+not demonstrate an out-of-bounds read for a valid pointer/length pair.
+Current Bitcoin Core production code uses its bounded local
+`ecdsa_signature_parse_der_lax` in `src/pubkey.cpp:291` and `:426`, passing
+`vchSig.data()` and `vchSig.size()`. A source search found no production Core
+caller that passes a peer-controlled `SIZE_MAX` length to the strict library
+API. The relevant Core path therefore cannot turn this proof into invalid
+block or invalid witness acceptance.
+
+Severity remains **Low direct-library parser/API robustness** and
+**Informational/Low for current Bitcoin Core**. No signature forgery, key
+compromise, consensus divergence, witness-sigop consequence, invalid-block
+acceptance, invalid-witness acceptance, or remote memory/concurrency impact
+was demonstrated. High/Critical is not justified under the caller-aware
+master scale. The existing `70133c4b` deterministic regression is the
+production fix; no new production fix or test is claimed here. The related
+`52456be8` lax private-key DER parser hardening is a separate parser and must
+not be used to claim that this strict-parser boundary was already fixed.
+This is unrelated to clearing a nonce or retry counter without standalone
+cryptographic meaning.
+
+Any future parser cherry-pick or optimization that changes the first stop
+must amend its commit message with the exact `{0x00}, SIZE_MAX` condition,
+the output postcondition, the Core caller/input origin, severity on clean
+master, and whether it preserves, changes, or masks this UB proof.
