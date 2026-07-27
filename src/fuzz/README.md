@@ -38276,3 +38276,59 @@ existing finding is downgraded. No production mutation, fix, cherry-pick, or
 nonce-erasure claim is made. Future scalar/backend changes must state whether
 they preserve, change, or mask this result and the earlier clean-master first
 stops.
+
+## 2026-07-27 Hash backend dual-backend campaign
+
+The current audit tree `1db4c0b6` was rebuilt before a longer `fuzz_hash`
+campaign; freshly fetched `origin/master` and `l0rinc/master` both remained
+`d2d04864ef9b056151603a3ced7980958b058028`. Both builds used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules, and libFuzzer.
+The native binary hash was
+`83ac4edb053876dfbaf83d81fe634b498975df8ce623fa0b32fda14c1d300c6f`; the
+forced-int64/10x26 binary hash was
+`ca707c8933c3f5508ca2f74e3cc2390b5b9da6280380cf32f8c8b00d9a2fd455`.
+
+The tracked corpus had 10 files, 446 bytes, and sorted filename/size manifest
+hash `23254e48918cfce7617afa72bd7cba873ba145e776f767f961c2f1e8ccba8d7c`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_hash <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 120 seconds each, with final reported
+coverage/features of 511/1376 and 511/1375. Forced-int64 workers also exited
+zero after 120 seconds each, with final reported coverage/features of
+511/1376 and 511/1376. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`b0922090804c50a20398060aee11d71368078c8a29e0c02035543b7f864978fe` (native)
+and `a71a049e681dbbcbebdf4d50e7f9297d98a6627ee0b47c27244ec76019d56fe6`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The hash unit suites passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=sha256_known_output_tests \
+      -t=sha256_counter_tests -t=hmac_sha256_tests \
+      -t=rfc6979_hmac_sha256_tests -t=tagged_sha256_tests \
+      -t=sha256_initialize_midstate_tests -log=1
+
+The native and forced-int64 test-log hashes were
+`e799999e430b1b621790a2a02a361e91281691661a62ddc0e8ef28b18a25efc3` and
+`efdc3578d8876c3f2b8848d9b361c1195f0d46c796b4014f3cd5c60f11bdcc30`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised SHA-256 state transitions, padding and
+counter boundaries, midstate initialization, HMAC/RFC6979 derivation, tagged
+hashing, aliasing, and repeated finalization without demonstrating invalid
+block or invalid-witness acceptance, sigop impact, consensus divergence,
+signature forgery, key compromise, or severe remote memory/concurrency
+failure. Bitcoin Core reaches these routines through validated key,
+signature, sighash, MuSig, and transport compositions; this campaign showed
+no new master-reachable admission consequence. No High/Critical rating is
+justified and no existing finding is downgraded. No production mutation, fix,
+cherry-pick, or nonce-erasure claim is made. Future hash/backend changes must
+state whether they preserve, change, or mask this result and the earlier
+clean-master first stops.
