@@ -39499,3 +39499,57 @@ no High/Critical rating. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared. Future
 compiler or fuzzer changes must state whether they preserve, change, or mask
 this warning and the clean-master findings.
+
+## 2026-07-27 Clang 22 -O2 x86_64 assembly sanitizer corpus matrix
+
+This cross-compiler control repeated the explicit optimizer-level assembly
+run with Clang after the GCC `-O2` matrix. It started from audit state
+`5de57f992eac182b7c4cdba482f667df4698d054`, with
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. Both refs are
+ancestors of the audit branch; no fork commit was cherry-picked for this
+control.
+
+The Debug build used Clang 22.1.7, CMake 3.31.6, explicit `-O2`, x86_64
+assembly, all seven optional modules, and the non-libFuzzer file runner. The
+instrumentation was `-g -fsanitize=address,undefined -fno-omit-frame-pointer`
+with `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1`
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The complete tracked
+corpus was unchanged at 357 files and 14,239 bytes, with sorted `filename size`
+manifest `dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+Per-target counts were: `api_roundtrip` 62/2901, `context` 12/693,
+`ecdh` 9/283, `ecmult_const` 11/406, `ecmult_multi` 29/1028, `ellswift`
+20/820, `field` 21/742, `group` 23/837, `hash` 10/446, `musig` 81/3054,
+`recovery` 17/783, `scalar` 10/349, `schnorrsig` 18/670,
+`silentpayments` 14/515, and `xonly_tweak` 20/712.
+
+Two independent workers per target first ran the empty input and then every
+file from a private corpus copy. All 30 workers exited 0 and wrote
+`complete=0`; there was no assertion, ASan/UBSan diagnostic, runtime error,
+timeout, OOM, crash, or artifact. The path-independent sorted worker-log
+manifest is `7ef4fbb2d8d25c1035a4fcca89ae550a9b09eb19fbd6bf499ac767e228bff0b1`.
+The path-independent sorted target-binary manifest is
+`2ace05fe41dfef90ede0741b01f04a2f35d0f8edd422d9063d3c5c0222874f39`; the
+shared library hash is `9a9e9dca71d96f7dcc9e71be1884ea43634155f7332d54096a7ad73ba184e3b4`.
+
+Clang emitted only the expected deprecation warning for the fuzzer's explicit
+coverage of `secp256k1_schnorrsig_sign` at `src/fuzz/schnorrsig.c:341`. The
+GCC-only `-Wstringop-overread` warning did not reproduce under Clang, and the
+runtime results were identical: no fuzzer-only or production memory error was
+shown. This is compiler-differential negative evidence, not a harness fix or
+production finding.
+
+The same build passed `tests -i=1 -j=2 -log=1` and
+`noverify_tests -i=1 -j=2 -log=1`. Their log hashes are
+`3b70f1aeba650ed83aa0de8b0b2eeeae7c212b08f26978876e98df314d203d35` and
+`a33ada8dcc0a6bdcb692d855f0d1c2c9e33937e40ea4fff286ff263903c52177`.
+
+No invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency impact was demonstrated. Existing master-relative
+Informational/Low through Low/Medium ratings therefore remain unchanged, with
+no High/Critical rating. No mutation, deterministic regression, production
+fix, or cherry-pick is claimed. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared. Future
+compiler or backend changes must state whether they preserve, change, or mask
+this cross-compiler result and the clean-master findings.
