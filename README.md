@@ -15742,3 +15742,146 @@ were reviewed before this replay. They do not validate the stored label bytes
 and did not mask the clean-master failure. Later cherry-picks or follow-up
 fixes must preserve this exact master-relative replay, or amend this finding
 with the behavior change and the new proof.
+
+## 2026-07-27 Current-origin forced-10x26 field finding revalidation
+
+The existing 10x26 field findings were replayed against the latest
+`origin/master` after the current-origin API slices. The refs are
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The field
+production files are unchanged across `d2d04864..origin/master`; the clean
+current-origin `src/field_10x26_impl.h` SHA-256 is
+`4c23a9466b333a49e2a974f3472cec8a5379fcd69fb8ff2ebc76d1aafd444784`.
+This is a current-master revalidation, not a claim that the later Silent
+Payments merge altered the field implementation.
+
+### Clean master construction and first stops
+
+The clean source was an archive of `origin/master`, overlaid only with the
+branch's build files and `src/fuzz` target. It was configured with Clang
+22.1.7, `-O1`, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules enabled,
+and `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`. The unmodified field fuzzer
+source overlay has SHA-256
+`2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`.
+
+The frozen field corpus has 21 files and 742 bytes; its sorted filename
+manifest SHA-256 is
+`272fd45fe1524a73d1308d9e96c867183f14463932869143771acf4962ab9ee2`.
+The focused seeds are:
+
+* `magnitude32-normalize`: 57 bytes,
+  `158829afa5615d0664c06a9230d6b8ae822dd94f7251d8d1e9c6f17d5892d8cf`.
+* `zero-predicate-false-positive`: 54 bytes,
+  `dbf16239f943e537fa6f2673bb2cea1920bd0f0206e3f2af7320f385371379`.
+
+The ordinary clean forced-int64 replay of `magnitude32-normalize` exited
+`134` at the independent normalized-byte reference in `src/fuzz/field.c`;
+there was no sanitizer diagnostic. The clean binary SHA-256 was
+`70b044161c8144ed5aa63954fd4bd7a431e43871f9341b3cbe1a792e4cccf1fa`, and
+the log SHA-256 was
+`29e244d64c9c81c13488ff18ebf5ccdc6c5a7803d32ec0b6789a6590571f12f5`.
+
+The zero-predicate seed normally reaches that earlier normalization failure,
+so a disposable copy of the harness added one exact-input dispatch before
+the normal checks. It did not change production code or the predicate oracle;
+it only called the existing `secp256k1_fuzz_fe_check_zero_predicate_false_positive`
+function first for this seed. The mutated temporary fuzzer source SHA-256 was
+`8e004f2827ec772eef73168849fac771526b48af29b6d33fa8d0551f0506e0dd`, the
+binary SHA-256 was
+`8b5f0d344c16b8176dc900c0000d98408df659f09e456fc8270f895e8c3c62dd`, and
+the isolated replay exited `134` at the predicate assertion. Its log SHA-256
+was `90420014069856f6839468f194b485cad8b238be89a7d1ee92d3b3472605e0f9`.
+
+The constructed state has
+`n[0]=0xffff0f91`, `n[1]=0xfffff040`, `n[9]=0x0fc00000`, all other limbs
+zero, and `magnitude=32`. Independently, it represents
+`63*p + 2^58 + 2^32`, whose canonical byte value is
+`0000000000000000000000000000000000000000000000000400000100000000`.
+A disposable clean-origin diagnostic probe printed:
+
+    normalizes_to_zero=1 normalizes_to_zero_var=1
+    normalized=0000000000000000000000000000000000000000000000000000000000000000
+
+The probe source SHA-256 was
+`2ff19f40dedde823d4c9fa0b387bd4adb92a5323bec211ed5a0a81a428a0c0e7`,
+the clean binary SHA-256 was
+`1743ea1f74c460e6579f638ee88d81a0fcce1f8a6d0547c2f0bb32cd5f7227b6`, and
+the output log SHA-256 was
+`97b9cca0eb03879e5ae300e16bc71a913fc5f9d020d47f4c448b6570fef1792a`.
+The zero result is not being used as its own reference: the independent
+formula and byte constant above show that the state is nonzero. The clean
+normalization output also demonstrates why the normalization and predicate
+defects must be isolated rather than inferred from one shared postcondition.
+
+### Backend and repair controls
+
+The exact-seed matrix was:
+
+| build | `magnitude32-normalize` | `zero-predicate-false-positive` |
+| --- | ---: | ---: |
+| clean current-origin 5x52 | 0 | 0 |
+| clean current-origin 10x26, normal first-stop | 134 | 134 at the earlier normalize stop |
+| clean current-origin 10x26, isolated predicate stop | n/a | 134 |
+| repaired branch 5x52 | 0 | 0 |
+| repaired branch 10x26 | 0 | 0 |
+
+The clean native 5x52 binary SHA-256 was
+`acc68c16344b1c0d8947258dcb31b6e3e3cd68fb8bbbf59a55264ecfd53f504d`.
+Its complete 21-file replay exited 0 with log SHA-256
+`9c1dc422dbc988dcf37986092d6605db94093113f3224e8738a489d9d743c045`.
+The clean forced-int64 complete replay exited 134 with log SHA-256
+`b873c308775bbf708935f47ade5aa646c767cdc224407f5364e08dc8a8269376`.
+The repaired native and forced-int64 exact-seed logs were respectively
+`7e628dacc121514d96caa9489faa89cd410e25e08fc17bf07ea1c4ffbfd102d8`,
+`c9da11c81fd42cb064fa1dd617925c1fba78743478bc58bad1ce0f8c9b45ca09`,
+`57126d9aba6b698700a2bc23a2c48699e317743fd8af2306f568110237280a3a`, and
+`76fcf016721c3b6a33ea30bf8a63ef08752e61eb62d3226155f7ba86d884fa01`.
+Their complete corpus replays all exited 0; the native and forced-int64 log
+SHA-256 values were
+`085481678fa127aa7db9e4a67050c00abc6923319e38f9bc5270d5be239a553d` and
+`0e8bbc580f475fa6f17e4fcde7b9068e30effbad31fa1966693adbe627c09377`.
+
+The repaired exact focused test `fe_normalize_max_magnitude` passed in both
+backends; its native and forced-int64 log SHA-256 values were
+`b1501e60b57b8d9e5992c883815c8bd23b5ce2293087c9fdd5a84a2d2be7eeaa` and
+`b1fa534453f56d9cb814c5230caf8013ed6ceb24f6452f092d4c3810352076e4`.
+Two-worker/two-job repaired field campaigns also exited 0 with no artifact:
+the native log SHA-256 was
+`b994e7582ca3b8032034cd0aa894849cc81ef3dafabbdb62925591b3fc33662c`, and
+the clean 21-file forced-int64 worker log SHA-256 was
+`c6d6244f7b858b9b7284fe1d2d9938fe03fee66641f42f83bb9975a107184160`.
+The latter jobs executed 110 and 111 units. No fuzz, sanitizer, compiler, or
+probe process remains running.
+
+The existing production repairs are `6e5e385c` for the normalize,
+normalize-var, and normalize-weak carry overflow, and `d37b04fa` for the two
+zero predicates; `c3d04cfb` carries the independent oracle and corpus proof.
+The current replay confirms their interaction: the normalize repair does not
+repair the false-zero predicate, and the predicate repair does not make the
+old normalization residue correct. Any future cherry-pick or minor cleanup
+that changes first-stop ordering must preserve both controls and amend its
+commit message with whether it preserves, changes, or masks each master
+finding. No new production fix or deterministic test is claimed in this
+reiteration because the existing repair commits already contain them.
+
+### Core boundary and severity
+
+The raw `secp256k1_fe` type and these predicates are internal. Current Bitcoin
+Core's production callers use the public parse, verify, tweak, signing,
+MuSig, and BIP324 APIs; the source search found no production Core caller that
+constructs this exact raw magnitude-32 state. Normal Core builds select the
+5x52/int128 field backend, while the 10x26 path remains a fallback/internal
+implementation. No peer-supplied block or witness was shown to reach this
+representation.
+
+Severity on unmodified master remains **Medium/latent internal field
+correctness** for each distinct defect, and **Informational/Low for current
+Bitcoin Core**. A reachable false zero or wrong normalization could poison
+internal exceptional-state, equality, or inversion decisions, but this audit
+does not demonstrate invalid-block or invalid-witness acceptance, witness
+sigop undercount, consensus divergence, signature forgery, key compromise,
+memory corruption, or severe remote concurrency impact. High/Critical is not
+justified without a Core caller-level reproduction, especially one showing
+that an invalid block is accepted or honest nodes diverge. This finding is
+also unrelated to clearing a nonce or retry counter that carries no
+standalone cryptographic meaning.
