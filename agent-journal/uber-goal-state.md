@@ -64,8 +64,13 @@ the missing host sysroot header. A seventh hypothesis then tested
 all native/forced-int64 Clang/GCC optimization and LTO runs, sanitized
 execution, mutation controls, and AArch64 codegen; all results matched and
 all seven bounded hypotheses were dismissed. No production finding or fix
-commit resulted. The goal remains active with another compiler/architecture
-constant-time helper queued.
+commit resulted. An eighth hypothesis then tested `secp256k1_scalar_half`
+with an independent 773-value parity oracle, all native/forced-int64
+Clang/GCC optimization and LTO runs, sanitized execution, mutation controls,
+and AArch64 codegen; all results matched and no conditional branch
+mnemonics were emitted. All eight bounded hypotheses were dismissed; no
+production finding or fix commit resulted. The goal remains active with
+another compiler/architecture constant-time helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff

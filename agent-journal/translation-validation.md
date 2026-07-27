@@ -460,6 +460,108 @@ proof for noncanonical inputs outside the helper contract. The next distinct
 queue is another small constant-time or overflow-sensitive field/scalar
 helper; revisit cross-target execution if a runner or sysroot appears.
 
+## Cycle 2026-07-27: `secp256k1_scalar_half` compiler lowering
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `7d00f608`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with no running
+fuzz, sanitizer, compiler, or profiling jobs. The catalog, this journal,
+`src/fuzz/README.md`, `src/fuzz/scalar.c`, `src/tests.c`, scalar history,
+and prior findings were searched. The public contract is at
+`src/scalar.h:66-67`; the native and forced-int64 implementations are at
+`src/scalar_4x64_impl.h:197-235` and `src/scalar_8x32_impl.h:238-284`.
+The existing fuzzer has a separate byte-level half reference at
+`src/fuzz/scalar.c:308-331` and alias testing at `:586-590`, but no prior
+journal cycle had checked this helper's compiler lowering directly. The
+public API search returned only unrelated PR #1058, so it was not used as
+evidence.
+
+### Hypothesis and contract
+
+The bounded hypothesis was that optimization or LTO could introduce a
+parity-dependent branch in scalar halving, or that native 4x64 and forced
+int64 8x32 carry chains could disagree for odd/even or order-boundary
+inputs. The contract is multiplication by the modular inverse of 2. Since
+the group order `n` is odd, the independent reference computes `a/2` for
+even `a` and `(a+n)/2` for odd `a` using a 33-byte add followed by a full
+33-byte right shift. Inputs in this harness were canonical scalars below
+`n`.
+
+### Evidence
+
+The standalone byte-level harness
+`/tmp/secp256k1-translation-78/scalar-half-harness.c` has SHA-256
+`9c793ae99b1fbdb56748adf78100fa510d565e2048fad3fb226c5a5520d54d58`.
+It generated 773 values: zero, one, two, `n-1`, `n-2`, every `2^k`, every
+`n-2^k` for `0 <= k < 256`, and 256 deterministic values below `2^255`.
+It independently checked the serialized result and both distinct and
+in-place output forms for every value.
+
+The native and `-DUSE_FORCE_WIDEMUL_INT64` Clang and GCC builds at `O0`,
+`O2`, `O3`, and `Os` all printed exactly:
+
+    ok values=773 cases=773 digest=3641e4d1aece7199
+
+The `-O2 -flto` Clang/GCC native and forced-int64 executables printed the
+same result. `objdump -d --no-show-raw-insn --disassemble=probe` found zero
+x86 jump mnemonics in all four non-LTO O2 probe objects and all four LTO
+executables. Clang `-O1 -fsanitize=address,undefined -DVERIFY -DVALGRIND`
+native and forced-int64 executions also printed the same result with no
+diagnostics.
+
+The AArch64 compile matrix used:
+
+    clang --target=aarch64-linux-gnu -std=c99 -g -O{0,2,3,s} \
+      -I/tmp/secp256k1-oracles-next/src [optional -DUSE_FORCE_WIDEMUL_INT64] \
+      -c /tmp/secp256k1-translation-78/scalar-half-harness.c -o <object>
+
+All eight objects compiled successfully. `aarch64-linux-gnu-objdump -d
+--no-show-raw-insn --disassemble=probe` found zero `b.cond`, `cbz`, `cbnz`,
+`tbz`, or `tbnz` instructions for every representation and optimization
+level. AArch64 `-O1 -DVERIFY -DVALGRIND` compile-only builds also succeeded
+with zero warning bytes. The object hashes were:
+
+    native:      O0 cd08a18a052085091efc6fadc90fddfc354263b1e72f46203890e07529e26d5e
+                 O2 77fd129d3198e44439a6730f7f95b8420aa91d02a58901ab7deecf4e3555ea37
+                 O3 8acb037ff89828502d439a574baac17d89ff6ce098bec115848e8cc8727b21ed
+                 Os af85be614decf651a38e7a4a7f9017e268c191a2424a1f85341fbac4016a4bd7
+                 VERIFY 7622dc34c435f8543fd3564f950c5eb8388e49f17943d3461d98ae7de72ea552
+    forced-int64: O0 276aa1fdef154dd825e034dc1c23233e057bdc5e8cb82d3d4ad2e8433ec4de6a
+                 O2 2818978ea370cbf110ca4a80567133fc4c8b3c6d125400e4abf48cc39851c144
+                 O3 6a1cd2d1d89ff1a7d80adf17808fef1624cf9bbb4231a0a61ba1f0bf82faa70a
+                 Os e89dd34d63e363de087d20e941a7bf43079734f01dd4801db05a0fb41e84f142
+                 VERIFY 8d29686610be0e09d90001621531eebe68f89a09095b99080f7f1fc36b3e330c
+
+The oracle sensitivity control copied the source to `/tmp`, changed both
+backend parity masks to zero, and ran Clang O2 in both representations.
+Both deliberately mutated binaries exited 1 at the first odd boundary:
+
+    mutated native exit=1
+    distinct mismatch
+    case=1
+    mutated forced-int64 exit=1
+    distinct mismatch
+    case=1
+
+One parallel x86 disassembly command initially contained a shell-loop typo
+and returned a syntax error before measurement; it was rerun correctly and
+reported zero jumps for all four probes. No result from the failed command
+was counted.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 backends, LTO, sanitized execution, and Clang
+AArch64 code generation. The independent parity oracle is mutation-sensitive
+and found no arithmetic, aliasing, or compiler-lowering mismatch. No
+production change, regression test, or finding commit is justified. This
+does not provide AArch64 runtime execution, GCC AArch64 coverage, ARMv7/
+RISC-V coverage, or a proof for noncanonical inputs outside the contract.
+The next distinct queue is another small constant-time or overflow-sensitive
+field/scalar helper; revisit cross-target execution if a runner or sysroot
+appears.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -473,5 +575,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-seven dismissed hypotheses unless compiler, source, or architecture evidence
+eight dismissed hypotheses unless compiler, source, or architecture evidence
 changes.
