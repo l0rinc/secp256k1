@@ -107,7 +107,18 @@ same digest, all optimized probe bodies had zero conditional branches, and a
 high-byte `g1` mutation failed at `n-1` in both backends. All thirteen bounded
 hypotheses were dismissed; no production finding or fix commit resulted. The
 goal remains active with another compiler/architecture constant-time or
-overflow-sensitive helper queued.
+overflow-sensitive helper queued. A fourteenth hypothesis then tested
+`secp256k1_scalar_inverse` and `_var` with an independent high-level
+`cpp_int` Fermat-inverse vector oracle across 645 canonical values, including
+zero and in-place calls, native and forced-int64 Clang/GCC `O0/O2/O3/Os`, LTO,
+sanitized execution, focused existing inverse/modinv/scalar/endomorphism
+tests, mutation controls, and AArch64 code generation. Every execution
+matched `digest=609caf56698b92b5`; regular-inverse branch structure remained
+fixed-count while `_var` retained data-dependent divstep branches, and
+forcing both inverse outputs to zero failed at the first nonzero vector in
+both backends. All fourteen bounded hypotheses were dismissed; no production
+finding or fix commit resulted. The goal remains active with another
+compiler/architecture constant-time or overflow-sensitive helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff

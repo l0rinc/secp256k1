@@ -1014,6 +1014,133 @@ the contract rejects. The next distinct queue is another
 compiler/architecture constant-time or overflow-sensitive helper; revisit
 cross-target execution if a runner or sysroot appears.
 
+### Cycle 2026-07-27: scalar inverse translation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `d3fe62a5`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, `aarch64-linux-gnu-objdump`, and the existing ASan/VERIFY test builds
+were available. No AArch64 runtime, GCC AArch64 toolchain, Alive2, CBMC, or
+KLEE executable was available. The catalog, this journal, the existing
+fuzzer oracle, scalar history, and current public search results were read.
+The relevant public evidence was historical: commit `dc1e87f3` added an
+independent base-2^16 scalar-inverse fuzzer oracle; open issue
+[#1216](https://github.com/bitcoin-core/secp256k1/issues/1216) discusses
+verifying modinv metadata invariants; and closed PR
+[#1031](https://github.com/bitcoin-core/secp256k1/pull/1031) emphasizes exact
+divsteps invariants, signed-boundary cases, and measured constant-time
+performance. None is a current report of an inverse result or compiler
+mismatch. The review evidence favors explicit invariant lists, precise
+boundary reasoning, and measured claims.
+
+### Hypothesis and contract
+
+The fourteenth bounded hypothesis was that compiler transformation or the
+native 4x64 versus forced-int64 8x32 representation could miscompute
+`secp256k1_scalar_inverse` or `secp256k1_scalar_inverse_var`, mishandle zero or
+in-place operation, or introduce an unexpected secret-dependent branch in the
+constant-time inverse. The contract at `src/scalar.h:58-63` requires the
+inverse modulo the scalar group order and explicitly distinguishes the
+constant-time and variable-time variants. The production implementations are
+the 62-bit and 30-bit divsteps paths in
+`src/scalar_4x64_impl.h:974-1004` and
+`src/scalar_8x32_impl.h:789-819`; the exhaustive backend is intentionally a
+separate small-order implementation and was not mixed into this full-order
+claim. Existing callers include ECDSA signing and the scalar tests.
+
+### Evidence
+
+The standalone Boost generator
+`/tmp/secp256k1-translation-78/scalar-inverse-vectors.cpp` has SHA-256
+`c89c57dceb105dbc7ea94d6b41834d5d5351267cee71427071faf06f1b514fd9`.
+It computes `a^(n-2) mod n` with a high-level `boost::multiprecision::cpp_int`
+binary exponentiation model and emits 645 input/expected-output pairs. The
+vector artifact has SHA-256
+`f81eaacfd67fe3ebaed10892d59914d2a73d04bb4fff9b122ec538a559fbde76` and
+contains zero, one, two, `n-1`, `n-2`, every `2^k`, every `n-2^k` for
+`0 <= k < 256`, and 128 deterministic values below `2^255`. The C production
+runner has SHA-256
+`66316e4ad058c377a0eed2c339c105c8f5c0b1ad2054fbaf50a1a389697ca789`.
+For every vector it checked canonical round-trip, both inverse variants,
+variant equality, unchanged input, and distinct-output in-place operation.
+
+Native and forced-int64 Clang and GCC builds at `O0`, `O2`, `O3`, and `Os`,
+plus native and forced-int64 `O2 -flto` builds, all printed exactly:
+
+    ok values=645 digest=609caf56698b92b5
+
+Clang and GCC `O1 -DVERIFY` ASan/UBSan runs in both representations also
+printed the same digest without diagnostics. The existing ASan and no-VERIFY
+test binaries ran `inverse_tests`, `scalar_tests`, `modinv_tests`, and
+`endomorphism_tests` for four iterations, two jobs, and fixed seed
+`0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`; both
+completed without failures.
+
+The final Clang O2 x86 probe object hashes were native
+`9f83868b8b637666d7746d3788249e2f98777478232a6c431f58a569cb1a3b9d` and
+forced-int64
+`628366ef345280d1dd7e85177f3f73c42d9d2d2943f65254c1ac2ab7c9c97b37`.
+The regular inverse probe contained only fixed-count loop `jne` branches;
+the `inverse_var` probe contained the expected data-dependent divstep
+branches. The distinction was preserved in both representations.
+
+The AArch64 compile-only matrix used Clang with
+`--target=aarch64-linux-gnu`, native and forced-int64 representations, and
+`O0`, `O2`, `O3`, and `Os`. The non-VERIFY object hashes were:
+
+    native:      O0 40240d736e2bcf4d5346091fd766446d7162fea0770d3000962873543e519fd1
+                 O2 bc19d726f239ca35d52edd53c3b3a4df31de734b9ec1a53ceeb3cb309720d040
+                 O3 292be5db70b22e60105a1d344c6c585c9900f357106de54403351dfad4648277
+                 Os b57dbfdafdeb0a2325db9a95aff921c3e8d5f144cdc409ae84d7f44d22b4fd4225
+    forced-int64: O0 87f92847f8cbdde7701030d99271d024e2bde8d20d42ae484daff8c0911bf5c8
+                 O2 4ff94f2dfd52d449a467b09c5c2b885c81c93302d34c8633e6f835ac85f3ebf8
+                 O3 b55a32d5a01f6bda31de8ad8a9a76ea02355a825805c66885e6c42e9c44b2825
+                 Os 414e58f5737bfb53cb5372d42d7ceebb47fee39f14c04c10f22b1069c189e583
+
+At optimized levels, the regular inverse probe had 2/2/2 conditional branch
+mnemonics for native `O2/O3/Os` and 2/2/3 for forced-int64 `O2/O3/Os`;
+these were fixed loop branches. The variable-time probe had 12/12/9 in both
+representations at `O2/O3/Os`, including data-dependent divstep branches.
+`O0` leaves the implementation out of the
+probe and therefore has no probe-local branch count. AArch64
+`O0/O2/O3/Os -DVERIFY -DVALGRIND -Wall -Wextra -Wno-unused-function`
+compile-only builds also succeeded with no diagnostics; their native hashes
+were `da057a39f539d1acca3f3ccd715241a4620511bae34e5a7d3ebbbaf586fab096`,
+`2c0ce78981ca61944b28010b6c03938840a8917c8e243b261978e022e366fea2`,
+`4d8329c10d7b0e5d441455377dc48bd05b74a359d7651f4955be570c67ac1ab1`, and
+`c21993410f98250c96c92f992c70aca3300fe76d85fafb8154bc9c4df1002466`; the
+forced-int64 hashes were `e341a6e2b9f01f00e4c642d0c6a5ec7ee81b56898f0792968a8da3f8fcc88798`,
+`deb31229469a5d17dbf6c63a6ba5d0a761a31578dddd5863b0cf52923ef6b785`,
+`3a5fe42034f4973f0cc04f6272a77df1ebdafd85db4856ea0b920a73d05ae5fd`, and
+`23c4fea68cab368dc113766b660a8edccd95e9d7ef0bd236dd0c6c477b2d50d1`.
+
+The mutation control copied `src/` and `include/` to scratch and replaced
+`secp256k1_scalar_from_signed62(r, &s)` and
+`secp256k1_scalar_from_signed30(r, &s)` in both inverse functions with
+`secp256k1_scalar_set_int(r, 0)`. Both clean Clang O2 runners rejected the
+shared wrong result at case 1 and exited 1:
+
+    inverse mismatch case=1
+    mutated native exit=1
+    inverse mismatch case=1
+    mutated forced exit=1
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 scalar backends, LTO, ASan/UBSan/VERIFY execution,
+focused existing tests, and Clang AArch64 code generation. The independent
+high-level modular-inverse vectors found no result, aliasing, zero-input, or
+compiler-lowering mismatch, and the mutation proves the oracle distinguishes
+a shared inverse-output defect. No production change, regression test, or
+finding commit is justified. This does not provide AArch64 runtime execution,
+GCC AArch64, ARMv7/RISC-V, or a formal proof of constant-time behavior; the
+branch inspection is compiler evidence only. The next queue is another
+compiler/architecture constant-time or overflow-sensitive helper. Do not
+repeat the fourteen dismissed hypotheses unless compiler, source, or
+architecture evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -1027,5 +1154,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-thirteen dismissed hypotheses unless compiler, source, or architecture
+fourteen dismissed hypotheses unless compiler, source, or architecture
 evidence changes.
