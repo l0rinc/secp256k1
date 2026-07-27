@@ -38907,3 +38907,33 @@ Future alias work must first establish an explicit `In/Out` API guarantee or
 a real Core caller that passes overlapping storage. If either changes, rerun
 the exact clean-master fixtures and the causal mutations, then record whether
 the change uncovers a master bug or merely documents a new contract.
+
+## 2026-07-27 Bitcoin Core sigop-accounting boundary
+
+The current Bitcoin Core checkout is `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+Its consensus sigop counter does not call libsecp256k1: `src/consensus/tx_verify.cpp:143-162`
+computes `GetTransactionSigOpCost` from legacy, P2SH, and
+`CountWitnessSigOps`, and `src/script/interpreter.cpp:2125-2150` counts witness
+program operations from script structure and witness framing. `ConnectBlock`
+adds that cost at `src/validation.cpp:2671-2679` and rejects a block that
+exceeds `MAX_BLOCK_SIGOPS_COST` before accepting its state transition.
+
+Signature execution is a separate check. `ConnectBlock` calls
+`CheckInputScripts` at `src/validation.cpp:2681-2697`; ECDSA script checks reach
+`CPubKey::Verify` and libsecp parsing/verification through
+`src/script/interpreter.cpp:1702-1723` and `src/pubkey.cpp:283-298`, while
+Taproot checks reach `XOnlyPubKey::VerifySchnorr` through
+`src/script/interpreter.cpp:1958-1998` and `src/pubkey.cpp:236-242`. All of
+these callers parse the serialized key/signature and check the library return
+value. The current sigop scanner cannot be made to undercount by a secp
+verification bug; the relevant consensus failure would instead be a library
+path returning success for an invalid signature or witness.
+
+This boundary audit found no such acceptance, no sigop discrepancy, and no
+new production mutation or regression test. Existing secp findings therefore
+retain their recorded Core severities. Witness-sigop undercount is **not
+High/Critical** without a minimized invalid-block acceptance proof; invalid
+opaque state, wallet/API cleanup, transport, and direct-library failures do
+not meet that threshold. No l0rinc commit changes this caller separation, and
+the conclusion is unrelated to clearing a nonce or retry counter without
+standalone cryptographic meaning.
