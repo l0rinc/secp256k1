@@ -7,7 +7,14 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Initial status: pending selection
+- Current status: active goal 78 (`translation-validation`)
+- First draw seed: `4179223777703642971`
+- First draw: `61`
+- First draw timestamp: `2026-07-27`
+- Second draw seed: `3923475549`
+- Second eligible slot: `77` of 98
+- Second draw: `78`
+- Second draw timestamp: `2026-07-27`
 
 ## Selection rules
 
@@ -22,11 +29,15 @@
 
 ## Goal ledger
 
-All goals `0` through `98` are initially `pending`. The catalog is the source
-of titles, slugs, and campaign scope. No random draw has been made yet.
+Goals `0` through `60` and `62` through `77`, plus `79` through `98`, remain
+`pending`; this is the eligible set used for the second draw. Goal `61` is
+`exhausted` for its bounded stateful-fuzzer cycle.
+Goal `78` is `active`; its cycle journal is
+`agent-journal/translation-validation.md`. The catalog is the source of
+titles, slugs, and campaign scope.
 
 ## Handoff
 
-The next run must verify the worktree and remotes, read the catalog and this
-ledger, draw a pending goal, create or resume its journal, and perform the
-first bounded experiment before stopping.
+The active cycle must verify the worktree and remotes, read the selected goal
+journal and prior evidence, perform a bounded experiment, and record a verdict
+before drawing another pending or reopened goal.
