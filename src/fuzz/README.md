@@ -39745,3 +39745,79 @@ Informational/Low for this preservation control, with no High/Critical rating.
 The result is unrelated to clearing a nonce or retry counter without
 standalone cryptographic meaning. No production fix or new corpus seed is
 claimed, and the l0rinc imports do not mask an existing master finding.
+
+## 2026-07-27 Current-origin scratch-wrap master control
+
+The existing `e8a72397bee7908a71331a5ddb082c272fc72df9` scratch repair was
+revalidated after refreshing `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`
+and `l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The audit tree was
+`6c6c6475`; the production scratch implementation is unchanged by the
+post-import group replay. This is a revalidation of an existing finding, not
+a new production bug or a new cherry-pick.
+
+For the clean-master control, a temporary source archive was made directly
+from `origin/master`. Only the branch fuzzer sources and fuzzer CMake wiring
+were overlaid, plus the small `checked_size_mul` harness compatibility helper
+needed by those sources. The branch scratch guard and its new constructor test
+were deliberately excluded. Thus the production code in this control is
+clean master, not a production mutation or the repaired audit branch.
+
+The exact 47-byte corpus seed was
+`src/fuzz/corpora/ecmult_multi/scratch-wrap-create`, with SHA-256
+`db72836642228acaab2fd266ee26cad512be8b64c592fefc4ea0c9ebf92d6620`.
+Clang 22.1.7 Debug ASan/UBSan builds used `SECP256K1_ASM=OFF`, all optional
+modules enabled, and both native and forced-int64 wide multiplication. The
+clean-master fuzzer hashes were native
+`0b6e479d0561f448a504435446dea338e04b95e887a784622124824fdfd9a84c` and
+forced-int64
+`7a1f62825ed992c45ba6b5dc015fb8a58a955f1ab9434d170ed3ca8a5288d73d`.
+
+With `-runs=1`, `-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0`,
+`-rss_limit_mb=0`, and leak detection disabled, the clean seed aborted with
+status 134 in both builds. ASan reported a 32-byte write immediately after a
+31-byte heap allocation. The write resolves to
+`secp256k1_scratch_create` at `scratch_impl.h:18`, with the allocation at
+`util.h:174`; the reproducer is the wrapped `base_alloc + SIZE_MAX` size
+followed by constructor initialization. The native and forced-int64 proof log
+hashes were
+`aad2a1dd4d68f694ffc2576fa4460a26c573d25e26dcc330ab1af20b458177e5` and
+`d9538548a8ab378635ae986edebb537af029915421b4b5117ec81863a6ac23e9`.
+
+The clean-master distinction is important: its existing `scratch_tests` only
+calls `secp256k1_scratch_alloc(..., SIZE_MAX)` on a valid scratch object. It
+does not call `secp256k1_scratch_space_create(..., SIZE_MAX)`. The focused clean
+`scratch_tests` passed in both sanitizer builds, with log hashes
+`47560074bca40582059f421962671afe81ffe956905524c8370eaab2dffe7f11` and
+`8e63443887d8418f2a64f33130542fbe682b804de0a9843343c63013232ce142`.
+The branch-only constructor boundary test is therefore the deterministic
+regression that closes the exact gap; the ordinary clean tests passing does
+not contradict the clean fuzzer failure.
+
+The repaired branch consumed the same seed successfully in native and
+forced-int64 builds. Its proof log hashes were
+`dd7275078bdf6391919e7ee7529f4cae01241470a098bb0439a30ee2de221441` and
+`e8ed20b35a366027478f5fe16eb71b6129e87c45a4ace520de43f3afabfa7487`.
+The branch general tests also passed, with hashes
+`f8a538690003a1ac8f385264b6bb6d312f4231dc794c0980e95d09d44b7db4c0` and
+`b917cc96b855747fcdeb29f71f7674b1b620ef856b9d54577d67a57c31d0af12`.
+Finally, all 29 tracked `ecmult_multi` seeds were run from private corpus
+copies with two workers and two jobs for a controlled 10-second budget. Both
+backends returned status 0, had zero worker OOM/timeout/crash counters, and
+left zero artifacts. The campaign log hashes were native
+`8c5d38bc13da0fc87de3441fdad13f0af82c30acab6b283accb6b49a14e355a3` and
+forced-int64
+`04e45ec7e7924d0eb174f6a2a2da758638d5980f6662b93d86eca20a98eb0262`.
+
+Severity remains **Medium** on current master as an internal memory-safety
+bug, because the constructor accepts an attacker-controlled size in the
+library API and wraps before initialization. Current Bitcoin Core call-site
+review found no block, witness, or network-derived path that supplies this
+opaque `SIZE_MAX` request; the surveyed MuSig path uses the no-scratch
+`ecmult_multi` route. Therefore current Core impact is **Informational/Low**:
+there is no invalid-block or invalid-witness acceptance, witness-sigop
+undercount, consensus divergence, signature forgery, key compromise, or
+remote memory/concurrency consequence. It is not High/Critical under the
+master-relative caller-aware scale, and it is unrelated to clearing a nonce or
+retry counter with no standalone cryptographic meaning. No new production fix
+or severity upgrade is claimed by this replay; `e8a72397` remains the fix with
+the strongest clean-master sanitizer proof and deterministic regression.
