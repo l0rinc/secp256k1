@@ -37603,3 +37603,52 @@ no standalone cryptographic meaning is implicated. No production mutation,
 fix, cherry-pick, or test-gap claim is made. Future MuSig or arithmetic
 changes must state whether they preserve, change, or mask this dual-backend
 result and the earlier clean-master first stops.
+
+## 2026-07-27 Public API round-trip dual-backend campaign
+
+The current audit tree `c83a0c97` was rebuilt before a longer
+`fuzz_api_roundtrip` campaign; `origin/master` and `l0rinc/master` remained
+`d2d04864ef9b056151603a3ced7980958b058028`. Both builds used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules including
+recovery and Silent Payments, and libFuzzer. The native binary hash was
+`c257919b56293030af4b4f203a7643bfd578425eca7f0b664d70b53359bd5a1f`; the
+forced-int64/10x26 binary hash was
+`4988c1eea40f1dd1b2bb13f2e9f1b510e9e5edb44664d7b9dfb636e47135e308`.
+
+The tracked corpus had 63 files, 2,933 bytes, and sorted filename/size
+manifest hash `29a83468df73dcdc80fc6cddea65816bcb55743cf83e971df675ee7b8305a69b`.
+Each backend used an isolated corpus copy and these controls:
+
+    bin/fuzz_api_roundtrip <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Both native workers exited zero after 120 and 130 seconds; the last reported
+native coverage/features were 4,264/12,549 and 4,266/12,526. Both forced-int64
+workers exited zero after 122 and 127 seconds; their last reported
+coverage/features were 6,236/21,908 and 6,236/20,979. Every reported
+`oom/timeout/crash` counter was `0/0/0`, no sanitizer or assertion diagnostic
+appeared, and both artifact directories were empty. Complete log hashes were
+`417cee2a0e0b71ea734f94d2d4ecc4cf83cca5f61e5d82e35db2515a3878fea5` (native)
+and `45c50d9ae391794ec558f7a6c27017eb70c70192819b2307cebea90ae99b4414`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The matching focused suites also passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=ecdsa -t=extrakeys -log=1
+
+The native and forced-int64 test-log hashes were
+`6f90dca7263342b0f5baed593784619d5c224fda39689d1ce987507291c7e4e7` and
+`d1ab7231889f23ae0d6290683c2eaf017b4902ed522c942eece89631d3490bab`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised parser, serialization, key-tweak, ECDSA,
+callback, and failure-state transitions without demonstrating invalid-block
+or invalid-witness acceptance, sigop impact, consensus divergence, signature
+forgery, key compromise, or severe remote memory/concurrency failure. No
+High/Critical rating is justified, and no existing finding is downgraded.
+No production mutation, fix, cherry-pick, or nonce-erasure claim is made.
+Future API or arithmetic changes must state whether they preserve, change, or
+mask this result and the earlier clean-master first stops.
