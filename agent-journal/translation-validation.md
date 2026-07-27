@@ -1141,6 +1141,140 @@ compiler/architecture constant-time or overflow-sensitive helper. Do not
 repeat the fourteen dismissed hypotheses unless compiler, source, or
 architecture evidence changes.
 
+### Cycle 2026-07-27: field normalization translation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `c8a24e97`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, `aarch64-linux-gnu-objdump`, and the existing ASan/VERIFY test builds
+were available. No AArch64 runtime, GCC AArch64, ARMv7/RISC-V sysroot,
+Alive2, CBMC, or KLEE executable was available. The catalog, this journal,
+field contracts, recent field history, existing fuzz/test oracles, and public
+review evidence were read before selecting the next distinct kernel.
+
+The relevant history included `97727abd` (`field_10x26: fix magnitude-32
+normalize overflow`), which replaced a too-narrow carry accumulator after an
+in-contract magnitude-32 failure, and `512370b1` (`fuzz: catch 10x26
+zero-predicate carry wrap`), which added an independent zero-predicate
+regression oracle. Open PR
+[#1028](https://github.com/bitcoin-core/secp256k1/pull/1028) discusses faster
+constant-time normalization; its review explicitly challenges carry overflow
+and the maximum caller magnitude, while the response distinguishes the
+documented caller bound from the practical limit. These are useful seeds and
+review constraints, not evidence of a current compiler mismatch.
+
+### Hypothesis and contract
+
+The fifteenth bounded hypothesis was that compiler transformation or the
+native 5x52 versus forced-int64 10x26 field representation could miscompute
+`secp256k1_fe_normalize`, `_weak`, or `_var` at the documented magnitude
+bound, especially in the carry accumulator and final reduction, or alter the
+constant-time branch shape of regular normalization. `src/field.h:20-31`
+defines field magnitude and normalized-state contracts. The 5x52 implementation
+uses 52-bit limbs and a 64-bit carry path at
+`src/field_5x52_impl.h:43-78`; the 10x26 implementation uses 26-bit limbs and
+an explicitly 64-bit first-pass accumulator at
+`src/field_10x26_impl.h:53-106`. The public wrapper contract in
+`src/field_impl.h` distinguishes regular, weak, and variable-time
+normalization. The test must therefore cover canonical values, raw maximum
+magnitude, carry combinations, weak normalization, final reduction, and
+VERIFY metadata without treating implementation representation as the oracle.
+
+### Evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/field-normalize-harness.c` has SHA-256
+`87428fca4648a64401cbabcc9e626f140daab9b778dabbbd47d276223e40b223`.
+It includes the project field implementation directly and generates 645
+canonical values: zero, one, two, `p-1`, `p-2`, every `2^k`, every `p-2^k`
+for `0 <= k < 256`, and 128 deterministic values below `2^255`. The
+independent expected bytes are built from the field prime
+`p = 2^256 - 2^32 - 977`, rather than from either field backend. Every value
+is checked by regular normalization, variable-time normalization, and weak
+normalization followed by variable-time normalization. The harness also
+checks `secp256k1_fe_get_bounds(m)` for every `0 <= m <= 32`, all 31 sums of
+complementary bounds, and 645 raised cases made by adding a canonical value to
+a magnitude-31 zero representation. It verifies canonical bytes, expected
+VERIFY metadata, unchanged inputs, and reports the digest.
+
+Native and forced-int64 Clang and GCC builds at `O0`, `O2`, `O3`, and `Os`,
+plus native and forced-int64 `O2 -flto` builds, all printed exactly:
+
+    ok values=645 bound-cases=33 sum-cases=31 raised-cases=645 digest=f1bcc6afb297fe94
+
+Clang and GCC native/forced-int64 `O1 -DVERIFY` ASan/UBSan runs printed the
+same digest without diagnostics. The existing ASan and no-VERIFY binaries
+also completed `field_half`, `fe_normalize_max_magnitude`, and `field_misc`
+for four iterations, two jobs, with fixed seed
+`abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd`.
+
+The final Clang O2 x86 object hashes were native
+`b18222ef5095a4173f86663b20171047a01768928e4f95ca617e76a7905371d1` and
+forced-int64
+`e13caf5aa255a221311df22b994cf4fd3dfdf998fa8dce3708e232f5ff9bdcca`.
+The regular `normalize` probe had no conditional branch mnemonics in either
+representation. The `normalize_var` and `normalize_weak_then_var` probes each
+had one conditional branch in both representations, consistent with their
+variable-time final-reduction contract rather than an unexpected branch in
+regular normalization. A scratch native `-Wall -Wextra -Werror` build was
+not used as evidence because included project headers expose unused static
+helpers in this standalone harness; the cross-target VERIFY checks used
+`-Wno-unused-function` and were diagnostic-free.
+
+The non-VERIFY AArch64 compile-only matrix used Clang
+`--target=aarch64-linux-gnu`, native and forced-int64 representations, and
+`O0`, `O2`, `O3`, and `Os`. The object hashes were:
+
+    native:      O0 357548415ba2e308e5376a9765f6d627a4d91988d4dc2733ebaa4a7027aac1ed
+                 O2 409f4739eb3585efa75fda655af15cb2d54cddfc46b4d1fcb26569a34bed189e
+                 O3 0f44e166142067dcd84573c6f4ef44153651e6473ff87ceb941f58514ecd431d
+                 Os 1dfb907edd0ff29acdfcbf82dc53c9756ee169eb373d5f5e44b468119c52d3fa
+    forced-int64: O0 75e8f22d1b3417596a7d7ec36ef7fa1575f296cf3adf2962f8607965e4f5906f
+                 O2 b0916ede9452d1d79c57014da7d21aedcf8ca25135ff99b1992070ef651e3d0e
+                 O3 ebaf129fb20f2c9749916760caf3624a9e5a373028c960e2b48bf0a71484396e
+                 Os 620d6baeb30a37d437c0d1f823e6a1fee7dac338ae0ba4fb10e7570254e55d76
+
+All three probe functions had zero conditional branch mnemonics at every
+AArch64 optimization level; the compiler used conditional compare/select
+instructions for the variable-time wrappers in this probe. AArch64
+`O0/O2/O3/Os -DVERIFY -DVALGRIND -Wall -Wextra -Wno-unused-function`
+compile-only builds also succeeded without diagnostics. Their native hashes
+were `50baa1274c4cbb86f1b469ff51e40401ee48da628cb51e4b92d7546033725784`,
+`427e9f1f9f3c1706cdb02395b52be41fbfd83458d43dd7643920932cb65fe301`,
+`cfa17d8f94cec666b1a9d82dcfd5be1031a9e606efa2e00c34e6a6e503d24f45`, and
+`76cd6cd9b34de343de826bb27131b7808c4fea68e60659de23aeab51607bf67b`; the
+forced-int64 hashes were `4e79935e615fb0c0af09e53634969140de25d9b3ef8138214a8e347725ce58d7`,
+`4594a28fadfcd4ecc74d33083075ea2129d3a90e0dffe3eeec0bab40e9a4706a`,
+`689f3f21087e69846cf1177085e851ba5973ad8e86a3c3846659b1ab251a9fc0`, and
+`2b3b46a8a879b9de3d2a692ddc8775fd3889d40c62d49fe19f3eea7d46a805c9`.
+
+The mutation control copied `src/` and `include/` to scratch and changed the
+field-prime reduction constant from `0x3D1` to `0x3D0` in the first full
+`secp256k1_fe_impl_normalize` function of both field implementations. Clean
+Clang O2 native and forced-int64 runners rejected the wrong result at the
+first raw-bound case and exited 1:
+
+    normalize mismatch kind=bound case=1
+    mutated native exit=1
+    normalize mismatch kind=bound case=1
+    mutated forced exit=1
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 field backends, LTO, ASan/UBSan/VERIFY execution,
+focused field tests, and Clang AArch64 code generation. The independent
+prime-based oracle found no normalization, carry, metadata, or compiler
+lowering mismatch, and the mutation proves the boundary oracle detects a
+shared reduction defect. No production change, regression test, or finding
+commit is justified. This does not provide AArch64 runtime execution, GCC
+AArch64, ARMv7/RISC-V, or a formal proof of constant-time behavior; branch
+inspection remains compiler evidence only. The next queue is another
+compiler/architecture constant-time or overflow-sensitive helper. Do not
+repeat the fifteen dismissed hypotheses unless compiler, source, or
+architecture evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -1154,5 +1288,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-fourteen dismissed hypotheses unless compiler, source, or architecture
+fifteen dismissed hypotheses unless compiler, source, or architecture
 evidence changes.

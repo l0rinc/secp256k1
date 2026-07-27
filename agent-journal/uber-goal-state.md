@@ -119,7 +119,20 @@ forcing both inverse outputs to zero failed at the first nonzero vector in
 both backends. All fourteen bounded hypotheses were dismissed; no production
 finding or fix commit resulted. The goal remains active with another
 compiler/architecture constant-time or overflow-sensitive helper queued.
-Scratch artifacts are under `/tmp/secp256k1-translation-78`.
+The fifteenth hypothesis then tested field normalization across native 5x52
+and forced-int64 10x26 representations with an independent prime-based oracle
+covering 645 canonical values, all magnitude bounds 0 through 32, complementary
+bound sums, and raised magnitude-32 cases. Native and forced-int64 Clang/GCC
+`O0/O2/O3/Os`, LTO, ASan/UBSan/VERIFY execution, focused field tests, mutation
+controls, and AArch64 code generation all matched
+`digest=f1bcc6afb297fe94`; the deliberate `0x3D1` to `0x3D0` reduction
+mutation failed at the first raw-bound case in both backends. Regular
+normalization retained fixed control flow on x86, while variable-time probes
+showed only their expected reduction branch; AArch64 compile-only probes used
+conditional-select lowering. All fifteen bounded hypotheses were dismissed;
+no production finding or fix commit resulted. The goal remains active with
+another compiler/architecture constant-time or overflow-sensitive helper
+queued. Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff
 
