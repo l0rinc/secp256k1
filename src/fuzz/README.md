@@ -38223,3 +38223,56 @@ existing finding is downgraded. No production mutation, fix, cherry-pick, or
 nonce-erasure claim is made. Future group or arithmetic backend changes must
 state whether they preserve, change, or mask this result and the earlier
 clean-master first stops.
+
+## 2026-07-27 Scalar arithmetic dual-backend campaign
+
+The current audit tree `26852212` was rebuilt before a longer `fuzz_scalar`
+campaign; freshly fetched `origin/master` and `l0rinc/master` both remained
+`d2d04864ef9b056151603a3ced7980958b058028`. Both builds used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules, and libFuzzer.
+The native binary hash was
+`ef618fe65e6c999a930794058e11519fbb00fd1f5a1b74df5203b15c474dc7df`; the
+forced-int64/10x26 binary hash was
+`8f63e642018762c8d35da89cc4ef36f3a74ccc8d70e5fe9b978e5f89ecdb61ca`.
+
+The tracked corpus had 10 files, 349 bytes, and sorted filename/size manifest
+hash `3d9900b5240dd92c4fbaf9d1748828b49522e6513da5563264e993fd0a283f50`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_scalar <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 122 and 123 seconds, with final reported
+coverage/features of 2,135/6,085 and 2,135/6,028. Forced-int64 workers exited
+zero after 127 seconds each, with final reported coverage/features of
+3,778/14,051 and 3,778/14,273. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`4880abdc66b7a7e8ba0774fc35b52422c0534b93cc3cbf042a4850f467fda3ca` (native)
+and `03cad5f0e2ad11a48874bf8f385edc2d77080096822ee00c3d99a00ae7a810ed`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The scalar unit tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=scalar_tests -log=1
+
+The native and forced-int64 test-log hashes were
+`c0309754f3c0464a19ed8a53bee4f35a6c850e5595dec1689eaf5b3e82261939` and
+`df102572c19d35635d3b24f47139e4e15432f3b0f242d33fe1508745eba0bf31`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised scalar reduction, overflow and order
+boundaries, inversion, linear operations, decomposition, GLV splitting, WNAF
+digits, bit extraction, carry behavior, zero/one values, aliasing, and cleanup
+without demonstrating invalid-block or invalid-witness acceptance, sigop
+impact, consensus divergence, signature forgery, key compromise, or severe
+remote memory/concurrency failure. Core reaches scalar arithmetic only through
+validated higher-level key/signature operations; no untrusted block/witness
+admission consequence was shown. No High/Critical rating is justified and no
+existing finding is downgraded. No production mutation, fix, cherry-pick, or
+nonce-erasure claim is made. Future scalar/backend changes must state whether
+they preserve, change, or mask this result and the earlier clean-master first
+stops.
