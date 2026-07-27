@@ -38405,3 +38405,71 @@ recognition or output cleanup must preserve or explicitly amend this exact
 master-relative order, caller inventory, witness, mutation proof, and test
 gap. This is unrelated to clearing a nonce with no standalone cryptographic
 meaning. No new production fix, mutation, or cherry-pick is introduced here.
+
+## 2026-07-27 x86_64 assembly-on differential campaign
+
+This campaign exercised the optimized x86_64 assembly backend after the
+assembly-off native and forced-int64/10x26 campaigns. The audit tree was
+`2484a49d`; freshly fetched `origin/master` and `l0rinc/master` both remained
+`d2d04864ef9b056151603a3ced7980958b058028`. The build used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=x86_64`, all enabled optional modules, and
+the libFuzzer runtime. The fuzzer sources were unchanged; their hashes were:
+`ellswift.c` `22f6f7aa6d0e20f58d5802affe6b46cc20a74733a36cb16af27f2da5afa8eddb`,
+`schnorrsig.c` `baa3a9b4ac5d98476fe8a4a3afed95737cb75107f8b9523913b95e897e7c34f2`,
+`recovery.c` `05670c2d50cfb531cbabeffa9d9ec87f13f59e05e3b68f98d05d9007f8168409`,
+`musig.c` `7b140fed1e0c91a08b17da7d8ea85ead6edd63318e8c046a615082ca899d4dae`,
+and `silentpayments.c`
+`cbc96e51efbfc80b3717351f8c9814b713cbbc1c11bdbe28e33b6f09d749dad6`.
+
+Only the serial per-target runs below are authoritative. Each target had a
+private copied corpus and artifact directory, and was run separately with:
+
+    bin/fuzz_<target> <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=60 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 -artifact_prefix=<private-artifacts>/
+
+The corpus manifest is the SHA-256 of sorted `filename size` records. Coverage
+and feature pairs are the final values reported by the two workers; every
+worker reported `oom/timeout/crash: 0/0/0` and every artifact directory was
+empty.
+
+| target | seeds / manifest | assembly-on binary | final coverage/features; elapsed | log SHA-256 |
+| --- | --- | --- | --- | --- |
+| `ellswift` | 20 / `ebf36c832e376af625f54c99b5e4f9db56b6870534612fb863c7e7a86fadb429` | `ad80e0a568724ea5750dcbdf7b65629b12dbdbbb753657945279e6546e64f213` | `2941/8460`, `2939/8179`; 61/62 s | `5a26513b3a5c5d65e01c140a3335b08188e4f47ff177a0cf6287e50464449b8c` |
+| `schnorrsig` | 18 / `772a4de5d3672e4e2395e6940ca019f13c729c6820fbb46499d6615f784ff671` | `f07db7ea111ca809c1301d2d64d2957e2ba7361190f950df6bf3118c12485355` | `3165/8406`, `3165/8295`; 64/65 s | `d66e91b73b0b2bc738dd6f63cb080dbbfbd4f4cff716b7f405c3c8fbaaab8b08` |
+| `recovery` | 18 / `9a2ee966770f4665a4379507d4e693410978ff14792606ea45f2be888587764c` | `140ac044e2b68218527c7811440063987cef74976d6f29317772cbf588f4d40a` | `3047/7387`, `3048/7467`; 63/65 s | `ba845b494f9c8c44f694e79e9c425e71c1b6f48b0bd90f6b58a9d79c797a2449` |
+| `silentpayments` | 14 / `7c00753bfc062db32ef8805b112ff2b098992f20c715de77f604355c6b7ada3b` | `b7b5f71a4764dfd8d8650475b99921ddc1975f5ad3e147ab9a2fcc3f6e7addd0` | `3571/9591`, `3571/9554`; 61/61 s | `a7a90b7e44607ceb2f35272715f98553d07241b1522c5579a8d5f1d7180c2520` |
+| `musig` | 81 / `2feb9f9a8ac9cf75d635829c5040b754f808bd402db10dd30a3a4281f24ac04f` | `1cacd8ce5a7c5bf0c7fd8aa69b2222e40c2e9979130d0572fc060d58b3ccb853` | `4565/13473`, `4565/13473`; 110/111 s | `10e76f311645060aaf214aa1a7e72e2a0e458cad9eb85fcf2c49ae8b4c8a255d` |
+
+The focused assembly-on suites also passed:
+
+    bin/tests -i=1 -j=2 -t=ellswift -t=schnorrsig -t=recovery \
+      -t=musig -t=silentpayments -log=1
+    bin/noverify_tests -i=1 -j=2 -t=ellswift -t=schnorrsig -t=recovery \
+      -t=musig -t=silentpayments -log=1
+
+The test-log hashes were `5c4112aad50c5bcc97e2c20f5c76f878edad3747ccce8d49fc955c5716810312`
+and `e03fce8c792e91edb1446d2adb13ebdda444b352bc5909cfd281ce8816968118`.
+
+An earlier parallel launch was discarded because its logs showed
+cross-target seed counts and therefore did not prove which corpus each worker
+loaded. It is not evidence for coverage or a finding. That launch produced
+one Silent Payments slow-unit artifact containing the 38-byte string
+`Silent Payments recipient group limit\n`; hash
+`875cc7e59148404f5f1c718d97ae1b3b726ff9b8536f7fa74cc6775902761462`. A
+private replay with `-runs=1 -timeout=180` exited 0 in 4.992 seconds, so this
+was an expected expensive fixture rather than a timeout, availability, or
+production failure.
+
+This is negative differential evidence. No new clean-master failure,
+production bug, invalid-block or invalid-witness acceptance, sigop impact,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency failure was found. Bitcoin Core's relevant paths use the
+validated EllSwift, Schnorr, recovery, MuSig, and Silent Payments compositions
+surveyed in the earlier caller review; the assembly backend introduced no new
+master-reachable admission consequence. Existing finding severities are
+unchanged, and no High/Critical rating is justified. No production mutation,
+fix, regression test, or cherry-pick is claimed for this campaign. Future
+backend or module changes must state whether they preserve, change, or mask
+this result and the earlier master-relative findings.
