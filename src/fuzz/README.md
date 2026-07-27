@@ -38646,3 +38646,40 @@ execution without adding a stronger postcondition. Bitcoin Core also invokes
 it during static context initialization, before block or witness processing.
 No missing oracle, production bug, consensus consequence, or severity change
 was found, and no source mutation is warranted.
+
+## 2026-07-27 Core-facing two-backend worker revalidation
+
+The current native and forced-int64 Clang ASan/UBSan binaries replayed the
+Core-facing public API corpora with two libFuzzer workers per binary. The
+targets were `fuzz_api_roundtrip` (63 tracked inputs), `fuzz_schnorrsig` (18),
+`fuzz_recovery` (18), and `fuzz_xonly_tweak` (20). Each run used the exact
+command shape:
+
+    <binary> <copied-corpus> -fork=2 -jobs=2 -max_total_time=20 \
+      -timeout=180 -ignore_timeouts=0 -ignore_ooms=0 \
+      -ignore_crashes=0 -print_final_stats=1
+
+All sixteen worker runs exited 0 with `oom/timeout/crash: 0/0/0`, and no
+assertion, ASan/UBSan diagnostic, timeout artifact, or crash artifact was
+produced. The native/forced-int64 log and binary SHA-256 pairs were:
+
+    api_roundtrip  de01b4f877b70270206c1d5031ffe71aa5b91105d3a89267c80ebbd8c6a24861  c257919b56293030af4b4f203a7643bfd578425eca7f0b664d70b53359bd5a1f
+                   42fc352220c3c0949d78e3869678109a342b826382cadbbcd69e46ddfff7c2b5  4988c1eea40f1dd1b2bb13f2e9f1b510e9e5edb44664d7b9dfb636e47135e308
+    schnorrsig     9120e9a5fb8a8e9b61c8e0a85fc076ce38ffea758cd386595c4561312bde5338  47b27a654daf94b22d2fbf7fe3558943ca8eb18bba969e66cf31ae92069eacfb
+                   373d6b83b927e00e2a393e3007d49de60c8f34fcd7ee0a0a9ec46df9831cecc4  5ffd3474f3269fbe70ee1905519cafae92d54331c68ef2610153e6fc0f865841
+    recovery       da6aaa1c2cbc0cdb772a7732db4c46db2e35ccd2081140686b55dff5a050577f  dce60049ca184a26964e2d2cff5612928092883902650a089acfedbb23098f7c
+                   88b333e786232fa2d7f0ca7a8d1a5d67b39c5e0f56c20587cdf201555001542b  4b43230edee04b11905758c74789f9feb8459b8e6291e8bf4fe1a330ab866c2d
+    xonly_tweak    606301db91fedde78e978039704efe86650d248e76aa9de7de785ce913a9af47  5abc22a6d6f195c62ddccad8b515ec8284a45d794df73987db89fc43f6170613
+                   88f4f1462def5bbc157960721a0a5c5813d120dcc46e12a358018acf44585de3  449fba021d872d9d8c3d6ef4b6e4ea0fa5732f77bf33750ca446913aad8157e5
+
+This is negative differential evidence, not a new production finding. The
+replay exercises the ECDSA and Schnorr/Taproot verification contracts that
+Bitcoin Core reaches, plus recovery and x-only wallet/API composition; it did
+not demonstrate invalid-block or invalid-witness acceptance, consensus
+divergence, signature forgery, key compromise, or severe remote
+memory/concurrency impact. Existing master-relative severities are unchanged,
+with no High/Critical rating justified. No production mutation, fix,
+regression test, cherry-pick, or nonce-clearing claim is made. A later library
+or Core change must rerun the same copied-corpus command and state whether it
+preserves, changes, or masks this negative result and the earlier master
+controls.
