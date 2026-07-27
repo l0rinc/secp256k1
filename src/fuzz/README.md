@@ -39384,3 +39384,57 @@ A nonce or retry counter without standalone cryptographic meaning is not
 Critical merely because it is uncleared. Future compiler, backend, or Core
 caller changes should retain this GCC matrix and state whether they preserve,
 change, or mask the existing clean-master findings.
+
+## 2026-07-27 GCC 16 x86_64 assembly sanitizer corpus matrix
+
+This follow-up adds the GCC/backend combination missing from the preceding
+Clang assembly-on and GCC assembly-off controls. The source tree was the
+committed audit state `f1f8c60d0c350cec3a5b90ea3dd0f28d01f2715e`; the clean
+master references were unchanged: `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`.
+
+The Debug build used GCC 16.1.0, CMake 3.31.6, `SECP256K1_ASM=x86_64`, all
+seven optional modules, and the non-libFuzzer file runner, with
+`-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer`.
+`ASAN_OPTIONS` was `abort_on_error=1:detect_leaks=0:allocator_may_return_null=1`
+and `UBSAN_OPTIONS` was `halt_on_error=1:print_stacktrace=1`. The complete
+tracked corpus remained 357 files and 14,239 bytes; its sorted `filename size`
+manifest is `dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+Per-target counts were: `api_roundtrip` 62/2901, `context` 12/693,
+`ecdh` 9/283, `ecmult_const` 11/406, `ecmult_multi` 29/1028, `ellswift`
+20/820, `field` 21/742, `group` 23/837, `hash` 10/446, `musig` 81/3054,
+`recovery` 17/783, `scalar` 10/349, `schnorrsig` 18/670,
+`silentpayments` 14/515, and `xonly_tweak` 20/712.
+
+Two independent workers ran for every target. Each first called the target
+with no argument for the implicit empty input and then passed every file from
+a private copy of that target's corpus. The workers used a 300-second timeout,
+`set -e`, and wrote `complete=0` only after the full replay. All 30 workers
+exited 0. There was no assertion, ASan/UBSan diagnostic, runtime error,
+timeout, OOM, crash, or artifact. The path-independent sorted worker-log
+manifest is `7ef4fbb2d8d25c1035a4fcca89ae550a9b09eb19fbd6bf499ac767e228bff0b1`.
+The path-independent sorted target-binary manifest is
+`9f668a0a1d51237666de00b9730b66218977fcf4e1aa76a43e5fc8e7b97b5b9b`; the
+shared library hash is `b267ffaa49b5bbaf5b63ec2efa8009a8d738a6bd853a9a1d1cc48247d0eb9f09`.
+
+The same build passed `tests -i=1 -j=2 -log=1` and
+`noverify_tests -i=1 -j=2 -log=1`. Their log hashes are
+`b8c94cf3eca755894744b1e4edcf03aa61902424d1d6e893e2854ab60eac857f` and
+`43e97b67bcd93e9546e99c544a2b48577ec50e167f39b772cd0b5b1828df1f1b`.
+
+This is negative compiler/backend evidence, not a production finding. No
+mutation, deterministic regression, production fix, fork cherry-pick, or
+severity upgrade is warranted. The exercised state contracts and Core-facing
+ECDSA, Schnorr/Taproot, recovery, MuSig, silent-payment, and transport
+compositions produced no invalid-block or invalid-witness acceptance, witness
+sigop undercount, consensus divergence, signature forgery, key compromise, or
+severe remote memory/concurrency impact. Current-Core severity therefore
+remains the previously recorded Informational/Low to Low/Medium range; no
+High/Critical rating follows. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
+
+The preceding compiler/backend runs did not exercise this exact GCC plus
+x86_64-assembly combination, which is why this control is recorded separately.
+Future changes should state whether they preserve, change, or mask the known
+master-relative findings. No l0rinc commit was cherry-picked for this slice:
+the fork ref was already identical to `origin/master`.
