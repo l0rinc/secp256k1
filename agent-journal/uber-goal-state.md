@@ -40,11 +40,15 @@ titles, slugs, and campaign scope.
 
 Goal `78` tested `secp256k1_int_cmov` and
 `secp256k1_memzero_explicit` under Clang/GCC `O0`, `O2`, `O3`, `Os`, and
-`O2+LTO`. One million valid deterministic cmov vectors matched the reference,
-all cmov helper bodies were branch-free, and all wipe builds retained concrete
-zero stores or `rep stos`. Both hypotheses were dismissed; no production
-finding or fix commit resulted. The goal remains active with a
-portable-versus-forced-int64 backend constant-time helper comparison queued.
+`O2+LTO`, then compared native `5x52`/`4x64` against forced-int64
+`10x26`/`8x32` field/scalar cmov paths. The helper and backend fuzz oracles
+passed their deterministic vectors and all 31 corpus inputs in each backend
+configuration (62 input replays across both configurations);
+short mutation runs added coverage without artifacts. Independent Clang/GCC
+`-O2` wrapper objects produced branch-free mask arithmetic for all four
+backend paths. All three bounded hypotheses were dismissed; no production
+finding or fix commit resulted. The goal remains active with a compiler and
+architecture matrix around another constant-time arithmetic helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff

@@ -98,6 +98,68 @@ generation, `VERIFY` instrumentation, and the backend-specific constant-time
 helper queue remain untested. No compiler bug, secret disclosure, or
 constant-time regression was demonstrated.
 
+## Cycle 2026-07-27: portable versus forced-int64 backend cmov differential
+
+### Hypothesis and contract
+
+The next hypothesis was that compiler lowering of the backend-specific field
+and scalar conditional moves could differ between the native x86_64
+`5x52`/`4x64` representations and the forced-int64 `10x26`/`8x32`
+representations. The relevant contracts require a flag of 0 or 1, preserve
+the destination for 0, select the source for 1, and avoid a flag-dependent
+branch in the production mask operation. The field and scalar fuzzers each
+contain independent reference checks around these calls.
+
+### Evidence
+
+The native and forced builds used Clang 22.1.7, ASan/UBSan, `-DVERIFY`,
+`-DVALGRIND`, `-fsanitize=fuzzer-no-link`, and the generated CMake `-O1 -g`
+flags. The forced build added `-DUSE_FORCE_WIDEMUL_INT64=1`; native selected
+`SECP256K1_WIDEMUL_INT128` from the platform. The exact target flag files were
+`/tmp/secp256k1-oracles-next-build-native/src/CMakeFiles/fuzz_{field,scalar}.dir/flags.make`
+and the corresponding forced-int64 files.
+
+All 21 field corpus inputs and all 10 scalar corpus inputs passed individually
+in both configurations with `-runs=1 -seed=78 -timeout=30 -rss_limit_mb=0`.
+The four replay status logs contained no nonzero return code and no libFuzzer
+artifact. The source hashes were:
+
+    src/fuzz/field.c             2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9
+    src/fuzz/scalar.c            6dd32e857d391677503a63c21e44b1279bde646b7574c22f5f78e809863dd305
+    src/field_5x52_impl.h        2c42559c21f23ca02848b76b29c5a2aca36d2fd932b902adfc9ba755ff850f6c
+    src/field_10x26_impl.h       2c642c6c87d53e358c8254b0e3985c2917f999af362afe6dd8e5d0c1478f8289
+    src/scalar_4x64_impl.h       fd094854ed4d3a752384ee164fddc991313244abdc95f5e21c14c30ba321fdd8
+    src/scalar_8x32_impl.h       b37d6b65c1335fb014d58e4cdc0530232a30801f9ec583b2d037a8a44def093f
+
+Short mutation-guided runs used the same fixed seed and a four-second budget.
+Native field/scalar executed 66/55 units and added 12/37 units; forced-int64
+field/scalar executed 63/40 units and added 16/22 units. Peak RSS was
+41-45 MiB, every run returned zero, and no artifact was produced. Coverage
+counts differ by representation and are not treated as a correctness metric.
+
+For compiler-output evidence, the independent scratch wrapper
+`/tmp/secp256k1-translation-78/backend-cmov-harness.c` (hash
+`cc2841a9c8825e4a9658103bc6672f462a762a9b0faa5a0ab1b54712325e3df5`)
+materialized `probe_fe` and `probe_scalar` without `VERIFY`, sanitizers, or
+coverage. Clang and GCC `-O2` objects were built for native int128 and
+forced-int64 backends. All eight inspected bodies had zero conditional or
+loop branches and used mask arithmetic (`and`/`or`); Clang used scalar 64-bit
+operations for native and 32-bit operations for forced-int64, while GCC also
+used branch-free SSE mask operations. The object-only native builds emitted
+warnings about unrelated unmaterialized int128 helpers from included headers;
+the cmov wrapper objects themselves were emitted and inspected successfully.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested x86_64 native and forced-int64
+backends, compiler builds, sanitizer corpus oracles, and `-O2` production
+cmov lowering. No production change, regression test, or finding commit is
+justified. This does not prove all optimization levels, architecture-specific
+assembly, cross builds, compiler versions, or secret-dependent behavior in
+other helpers. The next distinct queue is a compiler/architecture matrix
+around another small constant-time arithmetic helper, followed by a cross-
+architecture or Alive2 reduction if the required toolchain is available.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -108,7 +170,8 @@ oracle. Separate source undefined behavior, test failure, inline-assembly
 contract, and compiler defect. Keep any reduction and generated artifacts in
 `/tmp`, record exact commands and hashes, and do not claim a compiler bug from
 an optimization difference without a minimized reproducer and independent
-verification. The next queue is a backend-specific constant-time helper
-comparison, starting with the portable versus forced-int64 field/scalar
-conditional-move paths; do not repeat the two dismissed helper hypotheses
-unless compiler, source, or architecture evidence changes.
+verification. The next queue is a compiler/architecture matrix around another
+small constant-time arithmetic helper, followed by a cross-architecture or
+Alive2 reduction if the required toolchain is available. Do not repeat the
+three dismissed hypotheses unless compiler, source, or architecture evidence
+changes.
