@@ -38004,3 +38004,55 @@ mutation, fix, cherry-pick, or nonce-erasure claim is made. Future x-only,
 keypair, descriptor, or Taproot-wrapper changes must state whether they
 preserve, change, or mask this result and the earlier clean-master first
 stops.
+
+## 2026-07-27 Fixed-window multiplication dual-backend campaign
+
+The current audit tree `28b98949` was rebuilt before a longer
+`fuzz_ecmult_const` campaign; freshly fetched `origin/master` and
+`l0rinc/master` both remained `d2d04864ef9b056151603a3ced7980958b058028`.
+Both builds used Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all
+optional modules, and libFuzzer. The native binary hash was
+`67c1d8455f24a81d288c0d628aa93e5ffbc7a31b773b3abda16c2158fae85a71`; the
+forced-int64/10x26 binary hash was
+`6b30bcdcc979011f952e5631edbfcb00c753639d17ea27b52bee7fcee8c569c7`.
+
+The tracked corpus had 11 files, 406 bytes, and sorted filename/size manifest
+hash `030a9d4a6e64effeb6d4b3ab6b697131078442b81ae51921a98536161fcc80fb`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_ecmult_const <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 124 and 126 seconds, with final reported
+coverage/features of 2,665/7,615 and 2,665/7,979. Forced-int64 workers exited
+zero after 121 and 123 seconds, with final reported coverage/features of
+4,548/15,105 and 4,548/15,132. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`3d1eccfbdbdf77d0e67727ea2ec164b7df2bdd318a31a6f317753e983861396b` (native)
+and `027ec197d81778138a3050baf8d544f02e94ace8dbdcea3f3b2fe20b870c7ede`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The dedicated arithmetic test passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=ecmult_const_tests -log=1
+
+The native and forced-int64 test-log hashes were
+`756dc4ac9dff0060f3f50ccf69670bf678d5056b8d9e7f42254f3815267d4d8c` and
+`926c13d1f41b48ee425b85033cdcc3257ddc2f1107f3bd16e05a63e738dbc1cb`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised fixed-window scalar multiplication, order
+and overflow boundaries, zero/one scalars, infinity transitions, arbitrary
+points, generator vectors, invalid-x setup, aliasing, and output cleanup
+without demonstrating invalid-block or invalid-witness acceptance, sigop
+impact, consensus divergence, signature forgery, key compromise, or severe
+remote memory/concurrency failure. Core's current use is local key and
+signature arithmetic, not untrusted block/witness admission. No High/Critical
+rating is justified and no existing finding is downgraded. No production
+mutation, fix, cherry-pick, or nonce-erasure claim is made. Future ecmult,
+scalar, or Core key-operation changes must state whether they preserve, change,
+or mask this result and the earlier clean-master first stops.
