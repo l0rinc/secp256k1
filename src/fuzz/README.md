@@ -41857,3 +41857,107 @@ not a new production fix, cherry-pick, or severity upgrade. Future hash or
 Core signing changes must preserve this HMAC -> RFC6979 -> SHA-buffer ordering
 in their commit notes and state whether a repair unmasks or masks a prior
 master-relative finding.
+
+## 2026-07-27 Rebased integrated sanitizer and worker revalidation
+
+After the per-target clean-master replays, the combined audit branch was
+verified from `HEAD=642d143f9951651560bcd235aea219bf0fcff9ac` with
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The l0rinc ref is
+an ancestor of current origin, so this pass cherry-picked no fork-only
+commit. The complete tracked corpus contained 357 files and 14,239 bytes;
+its sorted `filename size` manifest is
+`dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+
+### Sanitizer and unit matrix
+
+The no-recovery build was configured with Clang 22.1.7, `SECP256K1_ASM=OFF`,
+all non-recovery optional modules, `SECP256K1_BUILD_FUZZ=ON`, libFuzzer, and
+`-fsanitize=address,undefined -fno-omit-frame-pointer` in Debug mode. The
+exact integrated test command was:
+
+    ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    timeout -s TERM 600s ctest --test-dir build-integrated-asan \
+      --output-on-failure -j8
+
+All 234 tests passed. This includes both `tests` and `noverify_tests`, the
+field, group, scratch, hash, ECDSA, Schnorr, MuSig, EllSwift, and Silent
+Payments suites. The slowest complete tests were still successful: the
+integrated `ecmult_constants` test took 509.53 seconds and the full Silent
+Payments vectors took 340.40 seconds. A separate recovery-enabled build used
+the same sanitizer configuration plus `SECP256K1_ENABLE_MODULE_RECOVERY=ON`.
+The exact recovery coverage command was:
+
+    ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    timeout -s TERM 300s ctest --test-dir build-integrated-asan-recovery \
+      -R 'recovery|ecdsa' --output-on-failure -j8
+
+All 18 ECDSA and recovery tests passed. The recovery-enabled test/fuzzer
+binary manifest hash is
+`c43d6ba0d90f846a6270026e36e0ef54f2fc8c27f7d7f74bec8f44436c448621`.
+
+### Two-worker corpus proof
+
+The recovery-enabled build ran two concurrent workers for each of these 14
+targets, with a private copy of each target corpus:
+
+    api_roundtrip context hash scalar field group ecmult_const ecmult_multi
+    ecdh ellswift xonly_tweak recovery schnorrsig silentpayments musig
+
+The common worker flags were `-runs=1 -max_total_time=45 -timeout=180
+-rss_limit_mb=0 -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0
+-handle_abrt=0`, with ASan/UBSan halt-on-error settings and an outer 180
+second process guard. Every non-MuSig worker returned 0. Their sorted
+`target-worker status log-sha256` manifest is
+`18f270aec18d565f2fc49d322e72f819264e7ccab891a3fee7845df02c10ecda`.
+
+The first full-corpus MuSig pair is deliberately excluded from the proof:
+both workers reached the same expensive signing seeds, produced only
+libFuzzer `slow-unit` snapshots, and were stopped by the outer guard with
+status 124. This is a harness-runtime limitation, not a production or
+sanitizer finding. It must not be reported as a MuSig timeout vulnerability.
+
+MuSig was then rerun with two disjoint eight-file slices and no total-time
+cutoff, retaining strict per-input timeout/OOM/crash handling and
+`-report_slow_units=0`. Worker 1 used
+`keyagg-tweaks`, `noncanonical-duplicate-key`,
+`opaque-keypair-consistency`, `opaque-nonce-state`,
+`nonce-process-invalid-cache-cleanup`, `partial-sig-equation`,
+`partial-sign-null-output-cleanup`, and `static-public-signing`. Worker 2
+used `all-identical-signing`, `duplicate-signing-9`,
+`first-zero-nonce-scalar`, `nonce-second-zero-scalar-failure`,
+`partial-sig-semantic-state`, `partial-sign-opaque-state-cleanup`,
+`sixteen-signer-sign-roundtrip`, and `xonly-tweak-signing`. Both workers
+returned 0; their log hashes are
+`dcb8d34c5bc9eeee137706535006b8ee9fbc48dbb4e951e7b7a6ee19b94d406f` and
+`035a1d9409da311f9c998e737011637a1d69041bfb7b9473e81a7983c9b38ceb`, with
+sorted status/log manifest
+`b547456fcd242113746f2f8a40419db7aeebbfe9a65ef270d74098b2805eb770`.
+
+No worker log contained an ASan, UBSan, runtime-error, crash, OOM, or
+sanitizer summary. The `slow-unit-*` files emitted for `ecmult_multi`, Silent
+Payments, and MuSig are libFuzzer performance reports, not crash artifacts;
+their presence does not change any return status or severity classification.
+All worker, sanitizer, compiler, and CTest processes were gone after the
+matrix completed.
+
+### Caller-aware conclusion
+
+This integrated pass found no new production failure and does not replace
+the clean-master first-stop controls above. It found no invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, disclosure, or remote memory/concurrency
+primitive. Existing direct-library ratings remain unchanged: the 10x26
+magnitude-32 arithmetic issue and malformed contrib DER length handling stay
+Medium/latent or Medium on the master-relative library scale, while the
+current Bitcoin Core impact remains Low/Informational because the audited
+states are not peer-controlled block or witness inputs. Secret-derived hash
+state retention remains Medium direct and Low/Medium for Core; a public nonce
+or retry counter without standalone cryptographic meaning is not Critical
+merely because it is uncleared. No production fix, regression test, fork
+cherry-pick, or severity upgrade is claimed by this integrated revalidation.
+Future changes must preserve the per-target first-stop order and amend their
+commit notes if an optimization, minor fix, or worker timeout changes which
+oracle runs first.
