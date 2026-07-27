@@ -38758,3 +38758,45 @@ claim is warranted by this campaign. Core production also has no current
 callers for standalone ECDH, `ec_pubkey_combine`, or Silent Payments; the
 ECDSA, Schnorr/Taproot, recovery, and x-only paths above are the relevant
 public/API composition coverage.
+
+## 2026-07-27 static-context ThreadSanitizer stress
+
+Bitcoin Core shares `secp256k1_context_static` across its verification and
+transport callers. A temporary standalone probe therefore generated fixed
+vectors with a mutable signing context, then exercised the shared static
+context concurrently through public-key parse/serialize, ECDSA DER parse and
+verify, recoverable-signature parse/recover, x-only parse/serialize, Schnorr
+verify, x-only zero-tweak checking, EllSwift decode, and BIP324 EllSwift XDH.
+The vectors used secret key 1 and a zero 32-byte message; the BIP324 output
+was independently captured before starting the worker threads.
+
+The instrumented build used Clang 22.1.7 Debug with
+`-O1 -g -fsanitize=thread -fno-omit-frame-pointer`, all optional modules
+enabled, and the detected x86_64 assembly backend. The standalone probe source
+SHA was `335363680b99c25736a331dda917b75b81494054b5e42d3dfa40ad1d4d86fc74`,
+the instrumented library SHA was
+`acafa55b71455a440b21b364c1c3158e2b3ea5b93fc1f4eb2a9a7ab46d7f2c85`, and the
+probe binary SHA was
+`a94194c91437ff0f662b951c91154e96a49240d63a4714dca882e7097ff5988a`.
+Each of five runs used eight pthread workers and 2,000 iterations per worker:
+
+    TSAN_OPTIONS='halt_on_error=1 history_size=7 second_deadlock_stack=1' \
+      /tmp/secp256k1-static-context-tsan
+
+All five runs printed `threads=8 iterations=2000 failures=0`; ThreadSanitizer
+reported no data race, lock-order failure, or other diagnostic. A first probe
+version accidentally passed a zero secret to the worker's EllSwift call and
+reported 16,000 ordinary contract failures. That harness error was corrected,
+the source hash above is the corrected probe, and the bad run is excluded from
+the evidence.
+
+This is negative concurrency evidence, not a proof for every API composition,
+mutable context, compiler, or backend. It found no static-context race,
+remote crash, invalid-block or invalid-witness acceptance, consensus
+divergence, signature forgery, key compromise, or severe availability impact.
+The current Core static-context paths therefore receive no severity upgrade;
+no production mutation, fix, deterministic regression, cherry-pick, or nonce
+clearing claim is warranted. Future changes to static-context callbacks,
+EllSwift XDH, verification, or Core's threaded callers must rerun the probe
+with the corrected source and state whether they preserve, change, or mask
+this negative result.
