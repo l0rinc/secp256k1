@@ -40753,3 +40753,134 @@ minimized proof that an invalid block is accepted, and a nonce or retry value
 without standalone cryptographic meaning is not Critical merely because it
 is not cleared. No new production fix, deterministic regression test, corpus
 seed, cherry-pick, or severity upgrade is claimed by this revalidation.
+
+## 2026-07-27 Current-origin ECDH first-stop and callback-order revalidation
+
+This is a current-origin reiteration of the ECDH callback and opaque-key
+findings, not a new production claim. The refs were
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The audit branch
+before this entry was `7f6c20a415e0412b07c4dfe4aca354cc62dde7a7`. A clean
+archive of current `origin/master` received only the branch fuzzer and CMake
+projection. Existing ECDH production fixes were then applied one at a time in
+a disposable tree; no repair or generated corpus was copied to the branch.
+
+The tracked ECDH corpus contained 9 files and 283 bytes. Its sorted
+`filename size` manifest was
+`2c73102405b309935533dc1c3c0195afda3f0f30031ff99bbabc9f47c994ad38`.
+The fuzzer and compatibility-header hashes were
+`034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79` and
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`.
+Clean current-origin `src/modules/ecdh/main_impl.h` was
+`3cf3b168e8048cd7b03c9b4d56d072214ef859a31bc970e5a16c2cbeba8fc4eb`.
+
+### Clean first stop and masking order
+
+The unmodified current-origin GCC Debug file driver aborted all 9 inputs at
+the same ECDH postcondition. GDB on the focused
+`explicit-builtin-invalid-scalar` input stopped at
+`secp256k1_fuzz_check_ecdh_order_plus_one`,
+`src/fuzz/ecdh.c:347`: `secp256k1_ecdh` returned 0 for `order + 1` with the
+default built-in hash, but the fixed 32-byte output still contained the
+fallback scalar-one digest. The focused input is 38 bytes with SHA-256
+`f1c1b3420c86f206f279651910e6515572533154960687f627ddfb7e5b31802c`.
+
+The disposable repair ladder was deliberately staged as follows:
+
+1. `03c5f6e2` was reduced to its ECDH output-cleanup and
+   `known_hashfp` hunks. The invalid `secp256k1_pubkey_load` return was held
+   back for the later `2e0eebb9` step. The order-plus-one default output then
+   cleared, and the next stop was the separate explicit built-in SHA callback
+   routing assertion at `src/fuzz/ecdh.c:436`. The production finding is
+   **Low API fail-closed hygiene**. Current Bitcoin Core has no standalone
+   `secp256k1_ecdh` production caller, so the Core rating is
+   **Informational/Very Low** and this is not a block, witness, or shared-key
+   admission issue.
+
+2. `b8ec2786` routed the two exported library-owned ECDH hash aliases through
+   the caller's SHA context. The next stop was the direct callback NULL-input
+   dereference at `src/fuzz/ecdh.c:498`, through
+   `src/hash_impl.h:174`. The finding is **Low master-relative dispatch and
+   backend correctness** with **Informational Core impact**: the digest was
+   SHA-equivalent, so no forgery, key disclosure, nonce reuse, or consensus
+   result change was shown.
+
+3. The ECDH portion of `59e2a242` added NULL guards to the exported built-in
+   SHA callback and cleared its known 32-byte output when available. The next
+   stop was the invalid opaque-public-key path at
+   `src/fuzz/ecdh.c:258`, where clean master continued after
+   `secp256k1_pubkey_load` rejected an all-zero object. The direct callback
+   NULL condition is **Medium for an arbitrary public callback caller** and
+   **Low/Nice-to-have for current Core**; direct Core signing and validation
+   paths supply valid pointers. Clearing a value called a nonce is not the
+   severity driver, and no nonce-only Critical finding is claimed.
+
+4. The ECDH portion of `2e0eebb9` made the load failure return immediately,
+   preserving the known-hash output cleanup. All 9 inputs then returned 0 in
+   the disposable native and forced-int64 file-driver controls. The opaque
+   load transition remains **Medium local API/state integrity** and
+   **Informational/Low for current Core**, because a peer-controlled serialized
+   key is parsed before use and no current Core block or witness path was
+   shown to construct this in-memory object. The separate EC pubkey-combine
+   hunk from `2e0eebb9` was not used as evidence in this ECDH control.
+
+The ladder is intentionally not a claim that `2e0eebb9` fixes the callback
+routing or NULL callback findings. Those first stops remained reproducible
+until their own existing hunks were staged. The focused
+`builtin-null-inputs` seed has SHA-256
+`8aa91fb4ffd1ca526ebe46019b608ac270769a54f4b4cd3b9ba91d9fc43e6784`; the
+`invalid-scalar-callback-point` seed has SHA-256
+`671b60fba05cb000d1ffa236d038a49e8df472ffeb59d19e2867b48f9dcc91cb`. The
+existing commits already contain the deterministic unit tests and mutation
+proofs for each production hunk; this replay revalidates their ordering at
+the current origin ref.
+
+### Sanitizer and worker proof
+
+The clean control used Clang 22.1.7 Debug ASan/UBSan, assembly disabled,
+external callbacks, all optional modules, and a non-libFuzzer file driver.
+All 9 clean inputs aborted at the expected first postcondition. The clean
+fuzzer, library, and status log hashes were
+`f10af6332121da021288a6c8d8917ad169e801c105840cb33831763f9a5756f0`,
+`144540c07a2cb853020038cc6403db9df5e9223461e690f73682f882a40f4abf`, and
+`9f9b43ed877faf4a56ae319621d86d65822f3f9db0e528bb17013c29d47b7cd6`.
+
+The repaired disposable tree had ECDH implementation hash
+`a018e33b652c638ffd58e367b4a7a63e311a008e57ed8690adc2a631df86fee1`.
+Fresh Clang 22.1.7 ASan/UBSan libFuzzer binaries replayed all 9 inputs
+individually in native 5x52 and forced-int64/10x26 modes. Both backends had
+zero failures, sanitizer diagnostics, and artifacts. The status-only replay
+hash was `de4f5b90f61a45bb4808d0d152d0564e6a213a85ffd3672650f52563538eab77`
+for both backends. The fuzzer and library hashes were:
+
+    native 5x52       fuzzer 01331140159243c6cbf7442f7159fbcb9bd5b1a85d1f923bc420bef4aad5b65e
+                       library 0892b72f2e5ecd9fa6abe052c8fb36156020ab3d43993038e64804632439815b
+    forced int64      fuzzer dea6716b44179fb025e892a94490b5ece2a5c8925dd316b36fada1d865595fe6
+                       library 6814b2a1022e7962b0b119a8454b184394cc4ea16d8c5431b47f85c5cf56f6c0
+
+Private corpus copies then ran with two managers and two fork workers per
+backend using:
+
+    -fork=2 -jobs=2 -max_total_time=10 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+
+Both backends returned zero, every worker reported
+`oom/timeout/crash: 0/0/0`, and both artifact directories were empty. The
+native and forced-int64 campaign log hashes were
+`eeccad98a2fa38095e168441ce435afb02673ff2f1435788f5a4882b269d7261` and
+`3af270a4063a35becaaebe96ae456e713e1103b119d86fdafa4ea0c2c9445b67`.
+The evolved private corpora were discarded and the tracked corpus remained
+unchanged.
+
+### Caller-aware conclusion
+
+Bitcoin Core's BIP324 transport path uses EllSwift XDH rather than the
+standalone ECDH API. No current Core block or witness validation path was
+found that reaches these ECDH callback or opaque-key conditions. Therefore
+this revalidation found no invalid-block or invalid-witness acceptance,
+witness-sigop undercount, consensus divergence, signature forgery, key
+compromise, disclosure, or severe remote memory/concurrency consequence.
+No ECDH item above is High or Critical under the caller-aware scale; that
+would require a minimized consensus-relevant Core trigger, not a direct
+library callback or sanitizer assertion. No new production fix, deterministic
+test, corpus seed, cherry-pick, or severity upgrade is claimed here.
