@@ -15782,6 +15782,46 @@ to the signing loop must state whether they preserve, mask, or alter this
 exact wrap proof; `aab3a680` remains the fix with the deterministic boundary
 test.
 
+## 2026-07-27 Current-origin ecmult callback-failure output revalidation
+
+The existing `12b2e3cb` repair was revalidated against the current
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The relevant
+`src/ecmult_impl.h` and MuSig key-aggregation sources are byte-identical to
+the earlier `d2d04864ef9b056151603a3ced7980958b058028` clean-master proof,
+so the earlier isolated witness remains valid on the refreshed baseline.
+This is a reiteration, not a new production fix.
+
+The 43-byte corpus witness
+`src/fuzz/corpora/ecmult_multi/callback-failure-output-state` has SHA-256
+`605855a1db2299ebe6a79851137a4abbd0f0252ae8e5677f507203a53057e897`.
+It initializes two valid terms, accepts callback index 0, rejects index 1,
+and calls `secp256k1_ecmult_multi_var` with no scratch. Clean master returns
+`0` after two callbacks while leaving a finite partial Jacobian result; the
+repaired branch clears the result to canonical infinity. The current-origin
+clean source hash is
+`ce70d26cb987c9bb2a2477389459437fc2831546c9c14404b58cf7ed07f32cc1` and
+the repaired hash is
+`663bbdb6790bdf183b1c76588de82802fb3415671c8003a740c0e5f8b692b9b0`.
+The earlier exact native and forced-int64 ASan/UBSan controls used a
+harness-only trigger to bypass unrelated scratch-wrap and compatibility
+stops; both clean controls aborted at the independent infinity postcondition,
+and both repaired controls exited `0`. No production source was changed by
+this revalidation.
+
+This is **Low internal correctness** and **Nice-to-have for current Bitcoin
+Core**. Core's MuSig aggregation constructs its point/scalar vector locally,
+uses the no-scratch path, and supplies a callback that always returns `1`;
+Core checks the library return and does not expose this callback boundary to
+block, witness, or BIP324 peer input. The failure therefore demonstrates no
+invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, memory safety, or
+remote concurrency impact. It is not High/Critical. The production reset and
+deterministic regression remain the strongest proof for direct internal
+callers that do provide a failing callback. Later ecmult, scratch, MuSig, or
+l0rinc changes must state whether they preserve, mask, or alter the exact
+callback transcript and output-state witness; this is unrelated to clearing a
+nonce or retry counter with no standalone cryptographic meaning.
+
 ## 2026-07-27 Current-origin impossible SHA-length revalidation
 
 The existing `ab36b78b` repair was revalidated against
