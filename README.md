@@ -16076,3 +16076,79 @@ corruption, or severe concurrency impact was demonstrated. High/Critical is
 not justified without a Core caller-level reproduction, especially one that
 accepts an invalid block. This finding is also unrelated to clearing a nonce
 or retry counter that carries no standalone cryptographic meaning.
+
+## 2026-07-27 Current-origin HMAC/RFC6979 state-retention revalidation
+
+The HMAC/RFC6979 finalizer finding was revalidated against the fetched
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The clean current
+origin `src/hash_impl.h` SHA-256 is
+`70247571d95e3c8824d6ca2e90956f6941c196a42d860083040690aaf9ccf6cc`.
+The repaired audit-branch file SHA-256 is
+`9040d926e994f0b088accdb62ac31e41e00e847c8da91e241bd5de4c5e9fdcc6`.
+This revalidates existing repair `5cfe7f7c`; it is not a new production fix
+or a claim that the current origin already wipes the state.
+
+### Exact finalizer proof
+
+The focused input
+`src/fuzz/corpora/hash/hmac-independent-reference` is 13 bytes with SHA-256
+`36e19b679f95412b19b8bb66f57b735a5558505c5eb2e33a9d876a66c248141c`.
+The overlaid `src/fuzz/hash.c` SHA-256 is
+`f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc`.
+The fuzzer compares HMAC output against an independent implementation and
+checks that the consumed HMAC object is all zero immediately after finalize;
+it separately checks one-shot/chunked equivalence and RFC6979 output before
+checking RFC6979 state cleanup. This makes the first HMAC failure independent
+of the digest result and avoids treating a cleanup-only assertion as a
+cryptographic mismatch.
+
+Clean current-origin Clang 22.1.7 ASan/UBSan replays of that one input exited
+`134` in native and forced-int64 builds. The binary SHA-256 values were
+`7ee67120e600537b40106c25e0bdbe298b0bd95f98430a0ce59e30545c1195bf` and
+`1bcf80d4710b9c381cfc81938257d4c2c597509d0f5ca491ffddead97d1a2862`;
+the log SHA-256 values were
+`52281bdf0c522915a73eec61ed9e29d4a1c2d2d4cca36cdc6ba822c90993dc6e` and
+`9a4d4e7f0576491124893c8637baead9f5b0398e6027e2fb9a9fcd9a8f725653`.
+The digest is correct, but clean `secp256k1_hmac_sha256_finalize` leaves the
+inner and outer SHA256 state live, so the fuzzer's post-finalizer oracle fails
+at the HMAC key-boundary check. This is a production state-retention failure,
+not a sanitizer-only report or an unsupported pointer/length pair.
+
+The repaired native and forced-int64 binaries were
+`a6f8784087246d640a8e50612b264b32615046be0ffc2f8c03ab98071b9caf66` and
+`3d57cf872140cef4da0172cf9438e171c7d0b8f0eac3baa07f43aa7f77e9fe54`.
+The exact replay logs were
+`320c978f3c03ffc6aad2c738f3c8df61340568f3058b8c0f8faa996c4dfa6e81` and
+`f412142095b986d3f9c7a6ad2f94d1942f38c110ee040c5d5851b317f9075f78`; both
+replays exited `0`. The current-origin `bin/tests -i=1 -j=1 -t=hash` suite
+also passed in both backends, with log hashes
+`19bcc57ba07be7fd05fc296081f88a0c1ffac2d2a167cc6c454a925620ae5121` and
+`3367f2796291ce53fa210c28595befe36de5f6bebca6b3e6ff3445e2d613d54f`.
+Those ordinary tests verify output vectors but do not require post-finalizer
+zeroization. The repaired hash tests passed with logs
+`ffce0f82ce977a98ef027e0f899c23d67021b116f932438f3630e73cea12675a` and
+`d3cd03e8a94c7eacb586aa88c98321549e2e3c270a799e5d51ba3cc94a097df7`.
+
+### Core caller boundary and severity
+
+The repaired `5cfe7f7c` clears the long-key temporary SHA state, clears the
+HMAC object after finalization, and clears RFC6979 `k`, `v`, and retry state at
+its finalizer. The adjacent SHA buffered-block wipe is a separate finding;
+it must not be credited with fixing HMAC/RFC6979 retention. Likewise, the
+custom ECDSA retry counter has no standalone cryptographic meaning and is not
+the severity driver here. Any later cleanup, optimizer, or cherry-pick that
+changes the first HMAC/RFC6979 stop must document whether it preserves, masks,
+or changes the exact post-finalizer state proof.
+
+Bitcoin Core reaches this code during real private-key operations:
+`src/key.cpp:217` and `:222` use RFC6979 for `CKey::Sign`, and `:255` uses it
+for `CKey::SignCompact`; Schnorr and MuSig paths also process signing-secret
+material. The retained state can therefore exist on an authorized wallet
+signing path, but the audit found no memory-read primitive, disclosure,
+signature forgery, key recovery, or remote attacker-controlled trigger. It is
+**Medium for the library's secret-state lifetime contract** and **Low/Medium
+for current Bitcoin Core**, not High/Critical: no invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+key compromise, remote memory corruption, or severe concurrency impact was
+demonstrated. The caller reachability makes this more relevant than a public
+retry-counter wipe, but does not justify a consensus or critical rating.
