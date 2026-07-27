@@ -41599,3 +41599,261 @@ neither campaign modified the tracked 17-file corpus. No fuzzer, sanitizer,
 compiler, or worker process remained after verification. This is a
 master-relative revalidation of existing findings, not a new production fix,
 regression test, cherry-pick, or severity upgrade.
+
+## 2026-07-27 Current-origin MuSig clean-master first-stop revalidation
+
+This pass re-ran the MuSig state-machine oracle from the current production
+baseline `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` in a
+disposable tree. The audit branch was `b210fd47`; `l0rinc/master` was
+`d2d04864ef9b056151603a3ced7980958b058028`, already an ancestor of origin, so
+there was no fork-only commit to cherry-pick. The l0rinc-derived repairs listed
+below are already represented in this branch history. They were replayed one
+at a time against clean origin solely to prevent rediscovery and to preserve
+the exact masking order. No production file was changed by this documentation
+commit.
+
+The tracked corpus contained 81 files and 3,054 bytes. Its sorted
+filename/size manifest is
+`2feb9f9a8ac9cf75d635829c5040b754f808bd402db10dd30a3a4281f24ac04f`.
+The aggregate hash of the fuzzer, the MuSig-related production headers, and
+that corpus was `0e01e4315f63fcc566e97f44b5e851ef55068b6e55f76170f431768a3f4cea8f`
+for clean origin and `d2f20b7a5321a19d1ddbc007290ae60fd90431f530b6f0483c742c5ce1300d64`
+after the disposable repair ladder.
+
+### Clean-master first stop and causal ladder
+
+The clean GCC Release replay stopped on all 81 inputs with status 134. The
+clean Clang 22.1.7 Debug ASan/UBSan file-driver replays stopped on all 81
+inputs plus `/dev/null` (82/82) in both native and forced-int64/10x26 builds.
+The native per-input diagnostic was 131 bytes with hash
+`5f6962bc77c3728a389bcf632c5d637993302b1e139621953ac5f10556130afa`; the int64 diagnostic was 164 bytes with hash
+`707ddd64a6c1ee63949f04b73bbdf509162e583046a04aa4489f6c6110903d22`.
+Neither baseline diagnostic contained an ASan or UBSan report: the first
+failure was a library verification assertion in field storage handling.
+
+An O0/GDB trace identified the first boundary precisely:
+
+    fuzz/musig.c:2440
+    secp256k1_fuzz_check_musig_noncanonical_duplicate
+    secp256k1_pubkey_load -> secp256k1_fe_from_storage
+    src/field_5x52_impl.h:29: d[0] < 0xFFFFEFFFFFC2FULL
+
+The seed injects `x = p + 1` into an opaque public key. This is malformed
+in-process state, not a serialized peer public key. The following ordered
+mutations expose independent contracts; a later cleanup must not be credited
+with hiding an earlier state-validation failure:
+
+1. `752649cf` (`ec: reject noncanonical opaque public keys`) changed the
+   field assertion into an argument rejection. The next stop was the failed
+   key-aggregation output at `fuzz/musig.c:2453`; `f89223d2` and `86a3692a`
+   cleared the cache on failure.
+2. The next stale aggregate-nonce output at line 2555 was fixed by the same
+   failure-output series. `07dc72ee` then rejected off-curve and wrong-
+   subgroup opaque public keys; the next stop moved to the public codec at
+   line 2600.
+3. `8b35b723` validated aggregate-cache points, moving the stop to the
+   cache-derived public key at line 2609. `9bb1effd` rejected invalid cache
+   parity and overflowing tweak scalars instead of silently normalizing them;
+   the next stop was the semantic cache oracle at line 2678.
+4. `bbca5a72` made opaque keypair loading require scalar-derived public-key
+   consistency and routed `musig_nonce_gen_counter` through that loader. The
+   mismatched-keypair seed stopped at lines 4349/4352. `084013b2` cleared the
+   failed public-nonce output. This is API hygiene only: a public nonce or
+   retry counter with no standalone cryptographic meaning is not Critical just
+   because it was not erased.
+5. `1b540c39` rejected noncanonical nonce-point storage; the next invalid
+   nonce-processing transition exposed stale session state at line 4458.
+   `8c44dae6` added curve, subgroup, scalar-overflow, and zero checks to the
+   opaque nonce loaders. The remaining session, partial-signature, and
+   serialized-output cleanup from `f89223d2`/`86a3692a` exposed, in order,
+   stale state at lines 4458 and 4547, then stale serialized output at line
+   1827.
+6. `b823491a` rejected invalid session parity, final-nonce coordinates,
+   nonce-coefficients, challenges, and partial-signature scalars; the next
+   stop was the partial-signature aggregation oracle at line 3542.
+   `7e2c058e` changed overflowing partial-signature loads from verification
+   aborts to argument rejection. `cd027525` cleared serialized output before
+   validation, and `c7babbe8` made serialization use the checked loader; the
+   next stop was line 1831.
+7. `6c45aa1a` rejected zero-derived secret nonce scalars and invalidated the
+   secret nonce. At the real group order this is an approximately 2^-255
+   relation, so it is hardening, not a practical remote key-recovery proof.
+   The reduced-order weighted-cancellation seeds then reached
+   `keyagg_impl.h:217`; `c00a6227` rejected infinity aggregates. That result is
+   deterministic only in the reduced model and is not a normal-master remote
+   exploit.
+8. The final static-context partial-signing seed reached the generator-table
+   assumption in the keypair loader. `e126fb62` supplied the constant-time
+   fixed-256-bit fallback needed by Bitcoin Core's static-context Taproot
+   keypair path while retaining the keypair consistency check. This is a
+   compatibility regression on the repaired audit branch, not a clean-master
+   invalid-block finding.
+
+After the full ladder, all 81 inputs passed in both the repaired GCC Release
+replay and the repaired O0/Debug replay. The repaired native and forced-int64
+ASan/UBSan file-driver replays also passed 82/82 with zero diagnostic bytes.
+The status-log hash was
+`77f5c187793477284faacaf63035756f6ba3968d45dd924cf6b5232866ab2592` for both
+backends. Clean/repaired file-driver binary hashes were:
+
+    clean native ASan/UBSan       8e2706b6fe6e13cfd9cd598fe2649b10b926adca73fc90dff2244004467188c0
+    clean forced-int64 ASan/UBSan 0db38ffd7bbfb34c1e1f11c1be6e84a7c1de6a99ee555bd1bcaf3a1f17ce8041
+    repaired native ASan/UBSan   1360a8452b9ae652df234274dc225c66fd96d9a879f3a28826b324c3473829f7
+    repaired forced-int64        de8f491949da106d51aaae9e202f48921755ab7c0040e7889badc41674c7139d
+
+### Bitcoin Core severity and reachability
+
+Bitcoin Core's MuSig signing path reaches the library from local wallet,
+descriptor, PSBT, and authorized-signing code (`src/musig.cpp:151` and
+`src/musig.cpp:234`). Those callers create and consume opaque keypairs,
+key-aggregation caches, nonces, sessions, and partial signatures; they check
+return values and do not receive these objects directly from block or witness
+serialization. Block and witness signature admission uses Core's parsers and
+script checks, so this corpus does not establish invalid-block acceptance or a
+witness-sigop undercount.
+
+* Noncanonical, off-curve, wrong-subgroup, or semantically invalid opaque
+  public-key/cache/nonce/session state is **Medium** at the direct library
+  state boundary. It is **Low/Informational** for current Core because the
+  malformed objects require local application state or an invalid direct API
+  construction, not a peer-controlled block or witness encoding.
+* Inconsistent opaque keypairs are **Medium** directly and **Low/Medium** for
+  Core wallet/API signing state. The proof shows invalid signing state being
+  accepted or asserted, not a forged signature, key disclosure, or consensus
+  transition.
+* Stale failed outputs and cleanup are **Low/Medium** API correctness and
+  **Informational/Low** for Core, whose MuSig wrappers check return values. The
+  public-nonce cleanup is deliberately not treated as nonce erasure or a
+  cryptographic severity claim.
+* Zero nonce scalars and infinity aggregates are **Low/Informational**
+  reduced-model hardening at the real group order. Overflowing partial
+  signatures and noncanonical opaque storage remain **Medium direct** but
+  **Low/Informational Core** because they are not wire inputs.
+* The static-context generator fallback is **Medium wallet/API compatibility**
+  on the affected audit branch. It is not a clean-master production bug and
+  does not reach block validity.
+
+No MuSig item is High or Critical. No invalid block or invalid witness was
+accepted, no witness-sigop accounting result changed, and no consensus
+divergence, signature forgery, key compromise, disclosure, or remote
+memory/concurrency primitive was demonstrated. A severity upgrade requires a
+minimized Bitcoin Core caller proof, especially a block/witness acceptance
+test; a reduced exhaustive-model assertion or a stale opaque object is not
+that proof.
+
+### Repaired multi-worker proof
+
+The first combined `-fork=2 -jobs=2` attempt was stopped by its outer guard
+while libFuzzer was still processing expensive corpus inputs; it executed no
+useful worker units and produced no artifacts. It was not counted as a clean
+campaign. The final proof used two independent concurrent libFuzzer processes
+per backend, private disjoint eight-file corpus slices, `-runs=1`,
+`-timeout=180`, `-rss_limit_mb=0`, and `-ignore_crashes=0`/
+`-ignore_ooms=0`/`-ignore_timeouts=0`. Both native workers completed nine runs
+with exit 0 and no artifacts; their log hashes were
+`69db345a3628739b7b33ddb14c702c479423a9d17855a766224ea1bdd13ade9e` and
+`ebbfc0451481def16d6574385c3294caf7f459d399ed546b47823a26041d6b80`.
+Both forced-int64 workers also exited 0 after nine runs with no artifacts;
+their log hashes were `5b8b13e957ea76347ac5f41b981f920dc25e56d58b024bf2f5654a2b650f6a10`
+and `f4143a7754b0e9747d14c1d2359fa5f6cc7b1ed0cb7e1768df7c2528fae5ca92`.
+No fuzzer, sanitizer, compiler, or worker process remained after verification.
+
+This is a master-relative reiteration of existing findings and their masking
+order, not a new production fix or severity upgrade. Any future cherry-pick
+that changes one of these loaders or cleanup paths must amend its commit note
+with the exact mutation ordering and state whether it unmasks, masks, or
+changes the master-relative result.
+
+The zero-nonce repair has two equivalent imported commit IDs in the audit
+history: `6c45aa1a` is the earlier l0rinc-chain copy and `6f5565c0` is the
+later copy on the current stack. Their production, fuzzer, and exhaustive-test
+diffs are identical. The duplicate is provenance only; it did not change the
+clean-master first-stop order or hide a separate failure. Future cherry-pick
+notes should name both IDs when describing this stage.
+
+## 2026-07-27 Current-origin hash full-corpus first-stop revalidation
+
+This pass revalidated the hash target against clean
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The fork reference
+remained `l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`, already an
+origin ancestor. No branch production repair was copied into the clean
+control. The target source hash was
+`f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc`; the
+clean production hashes were `src/secp256k1.c`
+`7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb` and
+`src/hash_impl.h`
+`70247571d95e3c8824d6ca2e90956f6941c196a42d860083040690aaf9ccf6cc`.
+The 10 tracked inputs total 446 bytes and have manifest
+`807ad928bb26669e3420f1e87f3a230375d5cdd0f5348d5ae8975ffceb6b438d`.
+
+The clean Clang ASan/UBSan file-driver replay used native and forced-int64
+arithmetic, `-runs=1`, strict timeout/OOM/crash handling, and leak detection
+disabled. All 10 inputs returned 134. The first-stop ordering matches the
+existing causal matrix from `5cfe7f7c`, `0b984e03`, and `81f7dc98`:
+
+* `sha256-write-buffer-clear` takes its dedicated early path and stops at
+  `src/fuzz/hash.c:101`: the consumed 64-byte block remains in `hash.buf`
+  after compression. The digest comparison is not reached.
+* The other nine inputs stop at `src/fuzz/hash.c:298`, the HMAC key-boundary
+  postcondition. `hmac-rfc6979-finalize` therefore cannot expose its own
+  RFC6979 state-retention stop until HMAC cleanup is staged first.
+
+This ordering is a real masking boundary, not a harness artifact. Applying
+only the HMAC final-state cleanup advances the nine inputs to the independent
+RFC6979 finalizer check at line 382. Adding the RFC6979 cleanup still leaves
+only the SHA buffer seed at line 101. Applying `0b984e03` as well makes the
+complete corpus pass. The earlier disposable mutations and their bypasses
+were removed; this replay changes no production behavior.
+
+The repaired current audit binaries had production hash-state cleanup and
+passed all 10 inputs in both backends. The clean/repaired binary hashes were:
+
+    clean native ASan/UBSan        f6e1bfd6591b452a067ca0904e920ce558eba02b880b6a848b8091b444bcf346
+    clean forced-int64 ASan/UBSan  69b6843486865dc443d2e4c04c145488021e454d7b362f9210273eea67bd595f
+    repaired native ASan/UBSan    83ac4edb053876dfbaf83d81fe634b498975df8ce623fa0b32fda14c1d300c6f
+    repaired forced-int64          ca707c8933c3f5508ca2f74e3cc2390b5b9da6280380cf32f8c8b00d9a2fd455
+
+The per-input status-log hashes were `f7d2ce039e40239774d48b015f83c56352c278bb19e445715f922e6da0ecda07`
+(clean native), `5695e004e27b9996a9c3d6efcc39e6cab08ee14b1d414b38939cfae92e5b8268`
+(clean forced-int64), `33b2cb3f8e4abb9783299c9edeba0edc001e8ee6ebd8158ae065cc6bcfb891ad`
+(repaired native), and `5641a264356b3f9c8bab9fcac60b682bdd2ceb519cf875001eb41f0c152999ce`
+(repaired forced-int64). The repaired logs contained no ASan, UBSan, or
+runtime-error diagnostic.
+
+### Caller-aware severity
+
+HMAC/RFC6979 state retention is **Medium** at the direct library boundary:
+the state is derived from secret signing material and survives finalization,
+but no standalone read primitive, disclosure, key recovery, signature
+forgery, or concurrency exploit was demonstrated. Bitcoin Core uses these
+paths for ECDSA, compact ECDSA, Schnorr, and MuSig signing, so its application
+impact is **Low/Medium**, not merely informational; however, the current Core
+callers do not provide a memory-read primitive or let an invalid block select
+the internal state layout. The consumed SHA buffer is also **Medium** internal
+secret-state hygiene and **Low/Medium** for current Core for the same reason.
+Neither finding is High/Critical, and neither is a public retry-counter or
+nonce-erasure claim. No invalid block or witness was accepted, no
+witness-sigop count changed, and no consensus divergence, key compromise,
+disclosure, or remote memory/concurrency primitive was shown. A High/Critical
+rating would require a minimized Core caller proof, especially invalid-block
+or invalid-witness acceptance, rather than the existence of secret-derived
+bytes in a reusable internal object.
+
+### Repaired multi-worker proof
+
+Two concurrent libFuzzer workers per backend used private copies of all 10
+tracked inputs, `-runs=64`, `-timeout=90`, `-rss_limit_mb=0`, and
+`-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0`. All four workers
+returned 0 and produced no artifact. Log hashes were:
+
+    native worker 0  d210ecfd495e38ab2dce0c65cf027b3bb97485681c6bff787b4776cfdc8bd059
+    native worker 1  cde9d44ce228a18771b1135c96a9ca9b63ff6a8a7f0f6b81d0c3a87ce198dc47
+    int64 worker 0   4d4f4dc08ca674a72bd1ca0c8d8bd53891564e275ef74a9e76af275a1d97f7f3
+    int64 worker 1   ceac18803a314c981a8baa34c89c8548e961fb0b0128d934357e1634364efa09
+
+No fuzzer, sanitizer, compiler, or worker process remained. This is a
+current-origin reiteration and full-corpus proof of existing hash findings,
+not a new production fix, cherry-pick, or severity upgrade. Future hash or
+Core signing changes must preserve this HMAC -> RFC6979 -> SHA-buffer ordering
+in their commit notes and state whether a repair unmasks or masks a prior
+master-relative finding.
