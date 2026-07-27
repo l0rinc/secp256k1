@@ -202,6 +202,18 @@ the exact `n` case in both backends and both verifiers. The compiler
 hypothesis was dismissed; no production change was made. Goal 78 remains
 active with another distinct helper queued.
 
+The twenty-first hypothesis then tested `secp256k1_scalar_set_b32_seckey`
+with an independent `0 < input < n` validity oracle and canonical-output
+checks across 395 raw boundary/power/random values
+(`digest=c178fe0c22775966`), plus a Boost `cpp_int` verifier with the same
+digest. Native assembly, native portable C, and forced-int64 Clang/GCC
+optimization/LTO matrices, ASan/UBSan/VERIFY runs, focused tests, scalar
+corpus replays, mutation controls, and Clang AArch64 compile-only code
+generation all matched. The deliberate validity operator mutation from `&`
+to `|` failed at zero in both backends and both verifiers. The compiler
+hypothesis was dismissed; no production change was made. Goal 78 remains
+active with another distinct helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

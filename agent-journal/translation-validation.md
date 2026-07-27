@@ -1947,6 +1947,133 @@ another compiler/architecture constant-time or overflow-sensitive helper;
 do not repeat the twenty dismissed compiler hypotheses unless compiler,
 source, architecture, or performance evidence changes.
 
+### Cycle 2026-07-27: secret-key validity wrapper
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `a51a299e`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, CMake/Ninja, `aarch64-linux-gnu-objdump`, and the existing ASan and
+recovery/no-VERIFY builds were available. No AArch64 runtime or sysroot,
+GCC AArch64, ARMv7/RISC-V runner, Alive2, CBMC, or KLEE was available.
+The `scalar_set_b32_seckey` declaration, implementation, callers, fuzzer
+checks, tests, blame/history, and the preceding raw decoder cycle were read
+before selecting this adjacent but distinct validity wrapper.
+
+### Hypothesis and contract
+
+The twenty-first bounded hypothesis was that compiler lowering or backend
+representation could misclassify zero, `n`, or high raw inputs as valid,
+return inconsistent values around the order boundary, or leave a different
+canonical output across native 4x64 and forced 8x32 paths. The API comment at
+`src/scalar.h:38-40` promises a return value of one only for a valid secret
+key. `src/scalar_impl.h:34-41` first calls `scalar_set_b32`, then returns
+`(!overflow) & (!scalar_is_zero(r))`; history identifies the wrapper's
+introduction in `9ab2cbe0`. The implementation necessarily writes the
+canonical decoded scalar before returning, including for invalid inputs, but
+that output-on-invalid behavior is an observed implementation invariant
+rather than the short public comment's primary promise.
+
+### Independent oracle evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/scalar-seckey-harness.c` has SHA-256
+`434c02e7f93123ddc181a2a9ec0f6a1f116ec92f7799b836f19e04b6c9109d8f`. It
+independently computes the canonical value and validity predicate
+`0 < input < n` for 395 raw values: zero, one, `n-1`, `n`, `n+1`, `n+2`,
+maximum 256-bit inputs, nearby maxima, half-order boundaries, every power of
+two, and 128 full-width deterministic values. It checks the return value and
+the canonical output for every input. Clang and GCC native assembly, native
+portable C, and forced-int64 O2 runs all printed:
+
+    ok values=395 cases=395 digest=c178fe0c22775966
+
+The independent high-level verifier
+`/tmp/secp256k1-translation-78/scalar-seckey-cpp-harness.cpp` has SHA-256
+`943d065ad46bacf074b10ae213bf84ea6e8dae8282a0b70b26ec355f65490255`. It
+uses Boost `cpp_int` for the validity comparison and reduction and calls
+production code through `scalar-seckey-c-shim.c` (SHA-256
+`8a9f45ead550655e227fab29943af3b21d3840ead218841a52187ed3303c071b`).
+Clang and GCC native-assembly and forced-int64 runs produced the same
+`c178fe0c22775966` digest.
+
+### Compiler, sanitizer, and project evidence
+
+Clang and GCC built and ran the C oracle for native assembly, native
+portable C, and forced-int64 at `O0`, `O2`, `O3`, and `Os` (24 executions).
+Clang and GCC native/portable/forced `O2 -flto` builds (six executions)
+matched the same digest. Clang and GCC native-assembly, native-portable-C,
+and forced-int64 `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined`
+executions (six executions) also matched without diagnostics. The existing
+ASan and recovery/no-VERIFY binaries passed `scalar_tests`, `field_half`,
+and `field_misc` for four iterations and two jobs with fixed seed
+`13579bdf2468ace013579bdf2468ace013579bdf2468ace013579bdf2468ace0`. All ten
+files in `src/fuzz/corpora/scalar` ran once under both sanitized scalar
+fuzzers with fixed seed `3923475549`, without diagnostics or artifacts.
+
+The no-inline `probe_set_b32_seckey` bodies in all six Clang/GCC O2 native,
+portable, and forced builds and all six O2-LTO builds had zero conditional or
+loop jumps. Input comparisons and the zero test lowered to `set`/conditional
+select operations. This is code-generation evidence, not a formal
+constant-time proof.
+
+The Clang AArch64 compile-only matrix used native and forced-int64 selectors
+at `O0`, `O2`, `O3`, and `Os`, with and without VERIFY. All 16 builds
+completed, and all eight non-VERIFY probe bodies had zero conditional or
+loop branch mnemonics. The non-VERIFY object hashes were:
+
+    native: O0 7bf8b785a17408a15d60bd7990d7f72d0abe5c512f739cbce8bcaaadb717aadc
+            O2 d4c478c405ad7dea9e2713164fd5de4b53eb3be2f8a97a108744a057c908def3
+            O3 2a2eac75242e19b6c0dee01cfe3d5ceed213c6663e85c4034adf357018dc5b90
+            Os 783414b8b507a00b6c631b64fe807544f406690b683e87f484b582193b5a996a
+    forced: O0 6959be63cc12416bd8e62732929177de8d46fa2f621182c352b12ee38951670f
+            O2 aae42a9f97c1aa558c38878986cedf82dcafde9c0210d4838f84eba85262ff24
+            O3 fa8b0261c6f077598526bb903453898da09ef0df66843980c36652ed20991df6
+            Os 7377726da1d84cac9e719fc6df19ef91760eb782023b58a0f3297d9bed7927b3
+
+The VERIFY hashes, in native O0/O2/O3/Os then forced O0/O2/O3/Os order,
+were:
+
+    8a535797ebd488880cf0a942cba3e684bd7bd8ab63763df4f2391e825a5bd805
+    fa75d9ce812b042befb0901631715793d156ec3265aa0cf7fe5a033495aae4ea
+    0fde95b2cbf37e146097c292dc175c6437b8374f360cc291461f9ba256662ef3
+    521afa84b94eae58cb2d353eb1ad231bfbdd45f8ddf22c8b3762c4d2bd0159a4
+    0c0b6699ea59a0eb4d6a52c314638015cbebea8c104936a7b89aaf2078dfe0a0
+    e3bc0eedc6cc47dd2c8f4da85e3ad69012d3fe2b3c93c0270209882ffbd90dc0
+    a243e3d1ea5fbd8ce06d2b0e0adb0d9d3888175f3de6614dccee543f2d699f63
+    69ab8076a45732748d90dbe20f3aee1f51e46b92f5b10b87eb0bdb90c226121f
+
+No AArch64 runtime, GCC AArch64, ARMv7/RISC-V build, or formal translation
+validation was possible.
+
+### Mutation controls
+
+Scratch copies changed the validity combination in `src/scalar_impl.h` from
+`(!overflow) & (!secp256k1_scalar_is_zero(r))` to `|` in both native and
+forced source trees. Clean Clang O2 runners rejected the mutation at the zero
+vector:
+
+    validity mismatch case=0 expected=0 actual=1
+    validity mismatch case=0 expected=0 actual=1
+
+The independent `cpp_int` verifier likewise rejected both mutated builds with
+`cpp validity mismatch case=0`. The mutation proves the oracle observes the
+validity contract and is not only checking the canonical decoded bytes.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native assembly/native C/forced-int64 paths, LTO,
+ASan/UBSan/VERIFY execution, focused tests and scalar corpus, and Clang
+AArch64 code generation. Both independent oracles found no zero/order
+boundary, validity-return, canonical-output, or lowering mismatch. No
+production code, regression test, or finding commit is justified. This does
+not provide AArch64 runtime execution, GCC AArch64, ARMv7/RISC-V, or a
+formal constant-time proof. The next queue is another compiler/architecture
+constant-time or overflow-sensitive helper; do not repeat the twenty-one
+dismissed compiler hypotheses unless compiler, source, architecture, or
+performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
