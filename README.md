@@ -16663,3 +16663,60 @@ not a production finding or fix. It is unrelated to clearing a nonce or retry
 counter without standalone cryptographic meaning. Future parser, signer, or
 recovery changes must state whether they preserve, change, or mask these
 current-master controls.
+
+## 2026-07-27 Current-origin Schnorr/Taproot signing revalidation
+
+The current `origin/master` Schnorr/Taproot production path was replayed with
+two focused compositions, both with native and forced-int64 arithmetic and
+with ASan/UBSan enabled. The production source under test was
+`src/modules/schnorrsig/main_impl.h`, SHA-256
+`24e5cbbaaf25cfa613b42c4b0d2e146ab85188a9a262fded6cbc40024a77c440`. The
+disposable clean fuzzer source was restored to SHA-256
+`47c871312162705d4355265bf682d4e195dcb64a3d13bb253a71a68552ce822b` after
+the replay; the audit overlay used for dispatch was
+`baa3a9b4ac5d98476fe8a4a3afed95737cb75107f8b9523913b95e897e7c34f2`.
+
+The exact inputs were `core-tapscript-schnorr-composition` (SHA-256
+`79448aa97aae2f1bc1eedce85df204ac385054bd9640df2d68e083ca9f399e6a`) and
+`core-taproot-signing-composition` (SHA-256
+`5a99c015adb015ddfaee133cfbdaf4074afa600e9d95dd6b087a355c23afb59d`).
+The clean native logs were
+`49a79d40fea5035e4362848b75e996b51208c278a77595607ad5eb8795de91eb` and
+`55701284c44af3b37bdcf24ade56b73148dcfaa2912268baaa513d372637b65b`;
+the clean forced-int64 logs were
+`dcc59bbe7f4e7fa895df2af9719999109739e4c58124247d59fa4e94ba8fdace` and
+`7c1a8ca42814f9b2cdba181a800375cb45f72e69ae4fb62a664aec4488c03d43`.
+The repaired native logs were
+`53303155d08dda3b2c392b7ba60ecdcef4504b87ae308c3c4c9b534831df5e6b` and
+`6e9f1460a908d51acc137768af2220ae210d7be7eff8a393bdd322b35ab929f2`;
+the repaired forced-int64 logs were
+`79e26425227e8343839e2488b736a1d313166477ccf920b32b29f6337a5935e9` and
+`f68e2d6bbd89ac61c0426c9f42a538bcb182461e0a9bdf44589fe6a5db60f6b7`.
+All eight exact runs exited zero with no sanitizer diagnostic or artifact.
+
+The first full-target attempt was intentionally discarded: the existing
+fuzzer reached the already documented impossible SHA-length oracle at
+`util.h:438` before it reached these helpers. Temporary exact-input dispatch
+was used only to isolate the existing Schnorr/Taproot operations, and was
+removed before restoring the source and rebuilding the clean controls. This
+ordering is a harness limitation and must not be reported as a Schnorr
+finding. Any future fuzzer or production change that moves this stop must say
+whether it preserves, changes, or masks this control.
+
+The Tapscript composition follows Core's
+`EvalChecksigTapscript -> CheckSchnorrSignature -> XOnlyPubKey::VerifySchnorr`
+route. The signing compositions cover `CKey::SignSchnorr` with no tweak,
+null root, and nonzero root inputs; these are wallet/application boundaries,
+not consensus validation. No invalid-witness acceptance, witness-sigop
+undercount, consensus divergence, signature forgery, key compromise, or
+remote memory/concurrency failure was reproduced. A master mismatch in the
+verification route would be High/Critical only after a serialized
+transaction/block reproducer proves invalid-witness acceptance or another
+consensus consequence; absent that proof this replay is negative evidence,
+not a production finding or fix. It is also unrelated to clearing a nonce or
+retry counter that has no standalone cryptographic meaning.
+
+The exact clean/repaired matrix, source hashes, isolation reason, Core call
+routes, and severity decision are retained here so a later cherry-pick or
+follow-up fix cannot silently mask a current-master behavior without adding
+the context to its commit message.
