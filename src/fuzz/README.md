@@ -42276,3 +42276,60 @@ No production mutation, fix, deterministic regression, or cherry-pick is
 claimed by this replay. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared. No fuzz,
 sanitizer, compiler, or worker process remains running.
+
+## 2026-07-27 Current-origin ecmult_multi worker revalidation
+
+This is a regression replay of the existing `ecmult_multi` findings after the
+current-origin and l0rinc history was reconciled. It is not a new clean-master
+production claim. Before this documentation commit, `origin/master` was
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and `HEAD` was `cbaacc2c`. The
+tracked `src/fuzz/ecmult_multi.c` hash was
+`aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`. The
+corpus contained 29 files and 1,028 bytes; the sorted `filename size`
+manifest was
+`83da45a0324a861424c79208f4a6a376edd5c4238249ddb7481e394c4ead4ed2`.
+
+Fresh Clang 22.1.7 Debug ASan/UBSan libFuzzer builds used
+`SECP256K1_ASM=OFF`, all optional modules enabled, and the CMake flags
+`-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer`. The native
+target hash was
+`1b94beb4e45ea1bb070cd5a9d29eae23a379eb875a14b8f14df345af407fc1b3`, and
+the forced-`int64` target hash was
+`278e974e9018187197cd925a338ae02d81efccfeddef0c13f8dac806da82d349`.
+Every tracked seed passed independently (`-runs=1`) on both backends. No
+assertion, ASan, UBSan, runtime-error, timeout, OOM, crash, or fuzzer
+diagnostic appeared.
+
+Private copies of all 29 seeds then ran under two libFuzzer fork workers and
+two jobs per backend with:
+
+    -fork=2 -jobs=2 -max_total_time=45 -timeout=180 -rss_limit_mb=0
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0
+
+Each manager printed `Running 2 workers`, both jobs exited 0, and every worker
+statistic reported `oom/timeout/crash: 0/0/0`. The native and forced-`int64`
+combined manager-log hashes were
+`73720368cfce473b815728c34ad566436da1fb5833a5703b98ee89b77a2c11d3` and
+`9e79d07de4d8a5a0dc91fedaadc55501470345310b2fb8d8d05355407a2f5956`.
+The private corpora ended at 153 and 54 files because libFuzzer workers
+discovered non-failing mutations; neither artifact directory contained a
+file. No worker or build process remained after the replay.
+
+The prior clean-origin first-stop ladder remains the controlling proof and
+must not be collapsed into this regression result: the scratch-constructor
+size wrap is a separate **Medium direct memory-safety** finding, malformed
+magic-valid scratch accounting is **Low/Informational internal hardening**,
+and partial callback-failure output is **Low internal state correctness**.
+Their production repairs and deterministic tests are already recorded in
+`e8a72397`, `3d285c02`, and `8c5c8124`; the worker replay did not cherry-pick
+or silently reorder a repair. For current Bitcoin Core, call-site review
+keeps all three at **Informational/Low**: no peer-controlled block or witness
+path was shown to manufacture the opaque scratch state or a rejecting
+callback, and callers honor the failure return. No invalid block or invalid
+witness was accepted, no witness-sigop count changed, and no consensus
+divergence, forgery, key compromise, disclosure, or severe remote
+memory/concurrency effect was demonstrated. High/Critical would require a
+reproducible consensus-relevant Core path, not an internal sanitizer result.
+No production mutation, fix, deterministic regression, or cherry-pick is
+claimed by this replay. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
