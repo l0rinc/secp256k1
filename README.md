@@ -15527,3 +15527,82 @@ production bug, consensus divergence, invalid-block acceptance, signature
 forgery, key compromise, or remote memory/concurrency failure. No deterministic
 regression test is claimed for this replay, and no nonce-clearing severity is
 inferred merely from buffer hygiene.
+
+## 2026-07-27 Current-origin invalid opaque-public-key load replay
+
+This reiterates the existing `5ad80528` finding, rather than claiming a new
+production defect. The branch was revalidated against current `origin/master`
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` after refreshing the remote refs;
+the relevant ECDH, pubkey-combine, recovery, and test sources are unchanged
+from the previously audited l0rinc baseline `d2d04864ef9b056151603a3ced7980958b058028`.
+The existing repair is present in the audit branch, but the disposable
+replay used an unmodified current-origin source archive.
+
+The public probe source SHA-256 is
+`ffdb13dfab08cc9b93541e2b5860cc3e75438e2057c4632785cae6058739e27e`.
+It creates a sign|verify context, installs a non-aborting illegal-argument
+callback, initializes an opaque `secp256k1_pubkey` with 64 zero bytes, and
+passes it to both `secp256k1_ec_pubkey_combine` and default `secp256k1_ecdh`.
+The exact current-origin ASan/UBSan library SHA-256 is
+`fa925ab914dfec35c30ebcda4ccfad1d9abfa4d9345466e91cbfc997d7028b97`; the
+probe binary SHA-256 is
+`d49596771b25b4de47425cb08c8e01cef5b70b76d039d260fa12f2577e81bb4d`.
+The clean output was:
+
+    combine_ret=1 combine_callbacks=1 combine_zero=1
+    ecdh_ret=1 ecdh_callbacks=1 ecdh_zero=0
+    clean_opaque_status=1
+
+The callback therefore reports the invalid load, but both public APIs proceed
+as if loading succeeded. Combine reports success, and ECDH reports success
+with a nonzero output derived from the invalid state. This is a concrete
+precondition/postcondition failure, not a sanitizer-only artifact. The
+ordinary clean-origin `tests -i=1 -j=2 -t=ecdh -t=ec -log=1` suite also passed;
+its log SHA-256 is
+`f56624c64777211699e9416c625840da0c258bb7a173520d9e9d0836baec01cc`.
+That suite did not construct an invalid opaque object after a non-aborting
+callback, which is why the public probe is needed.
+
+As controls, the repaired native and forced-int64/10x26 probes returned:
+
+    combine_ret=0 combine_callbacks=1 combine_zero=1
+    ecdh_ret=0 ecdh_callbacks=1 ecdh_zero=1
+    native_opaque_status=0
+    int64_opaque_status=0
+
+Their binary SHA-256 values are
+`f07679c08f5cdecb696cfa22e7b08f774b2dc36994b43c56cdc2d491f668ebb4` and
+`61377e661ec0d7932d6703f8272201bf03c93a4d0a569eb395f9aa17df52176a`.
+Focused repaired `ecdh` and `ec` tests passed in both backends; their log
+SHA-256 values are
+`7588df677c00ce13656a7051bfd6651fc8bcec38831e5d3d2501102028b6d30a` and
+`8be45032adf6baba0232403ba7d979ceea2b755629889126bbd3e8e4b11bfd16`.
+
+The production fix remains the one documented by `5ad80528`: check the
+`secp256k1_pubkey_load` result in combine and ECDH, and clear the known default
+ECDH output before returning failure. The exact broken condition is an
+initialized opaque pubkey whose serialized bytes are invalid, together with a
+non-aborting illegal-argument callback. No source mutation was needed for
+this replay. The current clean source has the unchecked loads in
+`src/secp256k1.c` and `src/modules/ecdh/main_impl.h`; the repaired controls
+show the intended failure and output-clearing contract.
+
+Severity on current master is **Medium for the direct library API**: invalid
+opaque state is accepted past an explicit validation callback and ECDH can
+produce a value from it. It is **Informational/Low to Low/Medium for current
+Bitcoin Core**, because the surveyed Core tree has no production caller for
+standalone `secp256k1_ec_pubkey_combine` or standalone `secp256k1_ecdh`.
+Core parses serialized public keys before its verification and MuSig paths,
+and BIP324 uses EllSwift XDH instead. There is no demonstrated invalid-block
+or invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, remote memory-safety failure, or remote
+concurrency failure. Accordingly this is not High or Critical. The nonce
+clearing caveat is unrelated: this finding concerns invalid public-key state,
+not a retry counter with no standalone cryptographic meaning.
+
+This replay leaves no new production fix or deterministic regression test to
+claim; `5ad80528` remains the fix and its existing tests cover the repaired
+contract. The probe, clean controls, repaired native/int64 controls, exact
+outputs, current-master reachability assessment, and why ordinary tests missed
+the transition are all recorded here so later cherry-picks cannot hide the
+master-relative behavior change.
