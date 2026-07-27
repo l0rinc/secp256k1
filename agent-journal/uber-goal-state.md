@@ -48,7 +48,11 @@ configuration (62 input replays across both configurations); short mutation
 runs added coverage without artifacts. The cadd-bit harness passed 767
 boundary/carry cases with the same digest across Clang/GCC, both backends,
 `O0/O2/O3/Os`, `O2+LTO`, and ASan/UBSan/VERIFY. Eight optimized cadd-bit
-probe bodies had no conditional or loop jumps. All four bounded hypotheses
+probe bodies had no conditional or loop jumps. A subsequent
+`secp256k1_scalar_cond_negate` byte-level oracle passed 769 cases with the
+same digest across the same compiler/backend matrix and its eight optimized
+probe bodies also had no conditional or loop jumps; the focused production
+fuzzer trigger passed in both sanitized backends. All five bounded hypotheses
 were dismissed; no production finding or fix commit resulted. The goal
 remains active with another compiler/architecture constant-time helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.

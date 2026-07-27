@@ -218,6 +218,73 @@ architecture check of another constant-time scalar/field helper; prioritize a
 path with an independent algebraic or byte-level oracle and use cross-
 architecture or Alive2 reduction if the missing tools become available.
 
+## Cycle 2026-07-27: `secp256k1_scalar_cond_negate` compiler lowering
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `744637d3`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with no running
+fuzz, sanitizer, compiler, or profiling jobs. Clang 22.1.7 and GCC 16.1.0
+were available; no QEMU or Alive2 executable was installed. The catalog,
+prior goal journal, scalar implementation history, `src/fuzz/README.md`, and
+existing finding notes were searched before selecting this distinct helper.
+
+### Hypothesis and contract
+
+The hypothesis was that optimization or LTO could make the flag in
+`secp256k1_scalar_cond_negate` influence a branch, or that native `4x64` and
+forced-int64 `8x32` carry paths could disagree for zero, nonzero, and order
+boundary values. The contract at `src/scalar.h:81-83` requires flag 0 or 1,
+promises constant-time conditional negation, and returns -1 when the flag is
+one and 1 otherwise. Zero must remain zero when negated.
+
+### Evidence
+
+The independent scratch harness
+`/tmp/secp256k1-translation-78/cond-negate-harness.c` (SHA-256
+`6ff57b4b52da49e0599806954bb387ac433efa7151f8c4c1b011539b4d273991`)
+implemented byte-level `order - input` reference arithmetic. It checked zero,
+every power of two, `order - 2^bit` for every bit, and 256 deterministic
+nonzero values, exercising both flags for 769 cases. It independently checked
+the return value and serialized result; it did not call the production negate
+helper for its expected values.
+
+Clang and GCC native and `-DUSE_FORCE_WIDEMUL_INT64` executions all printed:
+
+    ok cases=769 digest=607e49bc2d0edb6f
+
+The same digest held at `O0`, `O2`, `O3`, `Os`, and `O2+LTO` for all eight
+compiler/backend combinations. Clang ASan/UBSan `-DVERIFY -DVALGRIND` native
+and forced-int64 builds also passed the complete harness with no diagnostics.
+The implementation hashes were
+`src/scalar_4x64_impl.h=fd094854ed4d3a752384ee164fddc991313244abdc95f5e21c14c30ba321fdd8`
+and
+`src/scalar_8x32_impl.h=b37d6b65c1335fb014d58e4cdc0530232a30801f9ec583b2d037a8a44def093f`.
+
+The eight optimized `probe` bodies, including the four LTO outputs, were
+disassembled with `objdump -d --no-show-raw-insn --disassemble=probe`. Each
+had zero conditional or loop jumps. The generated code used flag-derived
+mask arithmetic and `sete`/carry operations, not flag-dependent branches.
+The focused existing ASan/UBSan `fuzz_scalar` binaries then executed the
+`scalar zero one predicates\n` trigger once each with `-seed=78`; native and
+forced-int64 both exited zero after 94 ms and 124 ms respectively, with no
+artifact. The first attempt was rejected before target startup because the
+specified scratch artifact directory did not exist; creating it and rerunning
+produced the results above, so the setup error is not counted as target
+evidence.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested x86_64 native and forced-int64
+representations, Clang/GCC optimization and LTO matrix, independent byte
+oracle, sanitized `VERIFY` execution, and production fuzzer trigger. No
+production change, regression test, or finding commit is justified. This
+does not cover other architectures, assembly backends, compilers, invalid
+flag domains, or unrelated scalar operations. The next distinct queue is a
+compiler/architecture check of another constant-time field or scalar helper;
+use cross-architecture or Alive2 reduction if the missing tools become
+available.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -231,5 +298,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-four dismissed hypotheses unless compiler, source, or architecture evidence
+five dismissed hypotheses unless compiler, source, or architecture evidence
 changes.
