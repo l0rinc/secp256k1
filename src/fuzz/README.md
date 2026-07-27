@@ -42232,3 +42232,47 @@ No detached ref was cherry-picked in this reconciliation. No new production
 finding or severity upgrade was found, and no later fork repair was used to
 mask the clean-origin result. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-27 Current-origin group worker revalidation
+
+The group target was rebuilt from the current audit branch after the remote
+refresh, with `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`HEAD=e71a01bba8367c104e87bfb066a2ca7542de6634`. The source hash for
+`src/fuzz/group.c` is
+`c8b122ad7a011834ad7ef3a23d9ab57e006a5be903c17783f66dfdc059aa98b3`. The
+tracked corpus has 23 files and 837 bytes; its sorted `filename size`
+manifest is
+`7aa67d1533a11c4c94e716fcff6b446bcb5896e8608e71eba791a6fad147bcff`.
+
+Fresh Clang 22.1.7 Debug ASan/UBSan libFuzzer builds used `SECP256K1_ASM=OFF`
+with all optional modules enabled. The native and forced-`int64` fuzzer hashes
+are respectively
+`29e9c98a57421caf7687016c4429783edf6d469655d05483f1bf980fb6b3abd5` and
+`42e45c791aba24273df662411d4f7fcd54546d6449b88cbeb4516156ac11e2a0`.
+Each backend used two workers and two jobs for 45 seconds with
+`-timeout=180 -rss_limit_mb=0 -ignore_crashes=0 -ignore_ooms=0
+-ignore_timeouts=0 -handle_abrt=0`. Both managers and all workers exited 0;
+each reported `oom/timeout/crash: 0/0/0`, and no artifact was produced. The
+worker log hashes are native
+`5b2afe41566da2a2a2f76f2be2f5d7247563842c5b26ffc44822a443ca76196d` and
+forced-`int64`
+`eb21368edd1655bfae5e25668b1e5c98791dbca627d9ef2cef0c9d7f37b5dd30`.
+The private worker corpora ended at 276 and 305 files. A separate `-runs=1`
+replay of every tracked seed passed 23/23 on each backend with no sanitizer,
+assertion, runtime-error, or fuzzer diagnostic; the status-manifest hashes are
+`0e3aa4acf2216eae2cfecab6cc96f21ba33f43e768c2abc2a47d5012f30439dc` and
+`25db7843e543ff0d8c21316328b397a10eaab0b37d6d7fa9317a3d02cb5297aa`.
+
+This is negative current-origin evidence, not a new production finding. The
+existing independent affine, representation, infinity, inverse-Z, and opaque
+public-key barriers remain exercised. The direct opaque-state issue remains
+**Medium** for a caller that can manufacture malformed library objects and
+**Informational/Low** for current Bitcoin Core, whose block and witness
+callers parse serialized keys before constructing opaque state. No invalid
+block or invalid witness was accepted, no witness-sigop count changed, and no
+consensus divergence, forgery, key compromise, disclosure, or severe remote
+memory/concurrency effect was shown. High/Critical is therefore unjustified.
+No production mutation, fix, deterministic regression, or cherry-pick is
+claimed by this replay. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared. No fuzz,
+sanitizer, compiler, or worker process remains running.
