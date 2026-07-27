@@ -38169,3 +38169,57 @@ finding is downgraded. No production mutation, fix, cherry-pick, or
 nonce-erasure claim is made. Future field/backend changes must state whether
 they preserve, change, or mask this result and the earlier clean-master first
 stops.
+
+## 2026-07-27 Group arithmetic dual-backend campaign
+
+The current audit tree `f9c6d562` was rebuilt before a longer `fuzz_group`
+campaign; freshly fetched `origin/master` and `l0rinc/master` both remained
+`d2d04864ef9b056151603a3ced7980958b058028`. Both builds used Clang 22.1.7,
+Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules, and libFuzzer.
+The native binary hash was
+`9bc887996583a2b10937aa873ba3e0112dc420037256490c79be1bd501efa09b`; the
+forced-int64/10x26 binary hash was
+`a4e1e3bf2d863d07916123c20161a79de9d9c99743bccb608991bb615e382204`.
+
+The tracked corpus had 23 files, 837 bytes, and sorted filename/size manifest
+hash `58df7480c185f05cea339a1a79152f59a0af18d4ee59b967bbabdb81e40404be`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_group <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 124 seconds each, with final reported
+coverage/features of 2,892/5,207 and 2,892/5,420. Forced-int64 workers exited
+zero after 127 seconds each, with final reported coverage/features of
+4,651/9,316 and 4,651/9,357. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`aeab65580bced006e1f8b4d7b556f1151a585c80c62761396c3287f2ade59a41` (native)
+and `67fdfac525e18c6ca5f67c6067c8f26580026b9f7c4f556be923193eaa97af92`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The complete group tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=ge -t=gej -t=gej_rescale_alias \
+      -t=gej_zinv_in_place -t=group_decompress -log=1
+
+The native and forced-int64 test-log hashes were
+`b1c68f092f1ef440b756695abe380ab0c851836952b2d440230bd36d8fdf3dc1` and
+`799a878a950df8eeb47280274af38b087a744a9e5639befe25748ab304104b57`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised affine/Jacobian conversion, doubling and
+addition, inverse-Z representations, infinity transitions, lambda-degenerate
+addition, in-place aliasing, batch conversion, decompression, and cleanup
+without demonstrating invalid-block or invalid-witness acceptance, sigop
+impact, consensus divergence, signature forgery, key compromise, or severe
+remote memory/concurrency failure. Core reaches these internals only through
+validated higher-level key/signature operations; no untrusted block/witness
+admission consequence was shown. No High/Critical rating is justified and no
+existing finding is downgraded. No production mutation, fix, cherry-pick, or
+nonce-erasure claim is made. Future group or arithmetic backend changes must
+state whether they preserve, change, or mask this result and the earlier
+clean-master first stops.
