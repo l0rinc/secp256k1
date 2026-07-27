@@ -37832,3 +37832,59 @@ is justified and no finding is downgraded. No production mutation, fix,
 cherry-pick, or nonce-erasure claim is made. Future recovery or Core-wrapper
 changes must state whether they preserve, change, or mask this result and the
 earlier clean-master first stops.
+
+## 2026-07-27 Schnorr/Taproot dual-backend campaign
+
+The current audit tree `8103fa0a` was rebuilt before a longer
+`fuzz_schnorrsig` campaign; freshly fetched `origin/master` and `l0rinc/master`
+both remained `d2d04864ef9b056151603a3ced7980958b058028`. Both builds used
+Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules,
+and libFuzzer. The native binary hash was
+`47b27a654daf94b22d2fbf7fe3558943ca8eb18bba969e66cf31ae92069eacfb`; the
+forced-int64/10x26 binary hash was
+`5ffd3474f3269fbe70ee1905519cafae92d54331c68ef2610153e6fc0f865841`.
+
+The tracked corpus had 18 files, 670 bytes, and sorted filename/size manifest
+hash `8a7de8922e1560f87d54694cf50bd0482c84ab4b69ee2e4e6cd671aeeeff4549`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_schnorrsig <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 129 seconds each, with final reported
+coverage/features of 3,292/8,866 and 3,292/9,178. Forced-int64 workers exited
+zero after 125 seconds each, with final reported coverage/features of
+5,172/17,098 and 5,171/16,402. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`4318dc984cdf48a07f288420c87bd065cc0c5ed60810489a8e8b89cf7a84405e` (native)
+and `2879876f096ff40f4f6d7e4ac0545a3bc0fbf39b358c36deb4f9341eb58718e7`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The complete Schnorr module tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=nonce_function_bip340_tests \
+      -t=test_schnorrsig_api -t=test_schnorrsig_sha256_tagged \
+      -t=test_schnorrsig_bip_vectors -t=test_schnorrsig_sign \
+      -t=test_schnorrsig_sign_verify -t=test_schnorrsig_taproot \
+      -t=test_schnorrsig_ctx_sha256 -log=1
+
+The native and forced-int64 test-log hashes were
+`905f6a9dbfc04c8a1272052c31259a5ab6fe88f5717b42395328e4a96d6e9dbe` and
+`a788bad296e3c27cc973e5b6a5d361775a082a6918610fb249759a482de9a0f7`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised BIP340 nonce transcripts, custom nonce tags,
+empty messages, invalid and high-order signatures, x-only parity, Taproot
+composition, callback failures, magic-byte validation, static contexts, and
+output cleanup without demonstrating invalid-block or invalid-witness
+acceptance, sigop impact, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure. Bitcoin Core's direct
+`VerifyScript`/Taproot caller boundary is therefore negative for this corpus;
+no High/Critical rating is justified and no existing finding is downgraded.
+No production mutation, fix, cherry-pick, or nonce-erasure claim is made.
+Future Schnorr, x-only, or Core checker changes must state whether they
+preserve, change, or mask this result and the earlier clean-master first stops.
