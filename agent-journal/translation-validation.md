@@ -2624,6 +2624,149 @@ or fix commit is justified. The next queue is another distinct scalar
 compiler/architecture helper; do not repeat this predicate unless new
 source, compiler, architecture, or performance evidence changes.
 
+### Cycle 2026-07-27: scalar conditional move translation
+
+#### Scope and hypothesis
+
+The twenty-sixth goal-78 hypothesis targeted
+`secp256k1_scalar_cmov` in the native 4x64 backend
+(`src/scalar_4x64_impl.h:920-935`) and forced 8x32 backend
+(`src/scalar_8x32_impl.h:717-735`). The implementation derives complementary
+masks from a volatile flag, selects every destination limb, verifies the
+result, and permits the destination and source to alias. The trust boundary
+is the internal contract `flag == 0 || flag == 1`, initialized canonical
+scalar objects, and the documented selection rule: retain `r` for flag zero
+and copy `a` for flag one. The question was whether mask formation, a limb
+representation difference, aliasing, or compiler lowering could select a
+wrong value or introduce a flag-dependent branch.
+
+Existing coverage was used as a seed: the general scalar fuzzer checks
+`scalar_cmov` for both flags at `src/fuzz/scalar.c:596-600`, but it does not
+provide an independent full-output oracle, systematic pair coverage, or
+backend code-generation evidence. History and source review found no prior
+cycle specifically validating this backend helper.
+
+#### Independent oracle evidence
+
+The C harness
+`/tmp/secp256k1-translation-78/scalar-cmov-harness.c` has SHA-256
+`0a80b1472e4c924dc3cad558a1bdad9e36204a732f061f027db929477a23be66`. It
+constructs raw big-endian values independently, reduces them with byte
+subtraction, compares the complete serialized output for both flags, and
+also calls cmov with `r == a`. It covers 648 raw values: zero, one, `n-1`,
+`n-2`, `n/2`, all 256 powers of two and their order complements, 128
+deterministic values, `n`, `n+1`, and all ones. Each value is paired with
+itself, seven fixed values, an offset value, and its reverse, producing 6,480
+pairs and four output checks per pair. Successful runs printed:
+
+    ok values=648 pairs=6480 digest=7d8cb7e35cecbc29
+
+The C++ harness
+`/tmp/secp256k1-translation-78/scalar-cmov-cpp-harness.cpp` has SHA-256
+`24bdb0a53ebb962862ad67afa74fdc90e2d704bf122d37aed5b536185602416d`, and
+its C shim `/tmp/secp256k1-translation-78/scalar-cmov-c-shim.c` has SHA-256
+`d5ba856063dfec929de2b89f4b5bfeb0571b489ff7e6291d4b74a9b76086e131`. It
+uses Boost `cpp_int` to compute `input mod n`, independently encodes the
+expected bytes, and calls production wrappers for normal and aliased cmov.
+Its 327-value set produces 3,270 pairs and every successful run printed:
+
+    ok cpp-values=327 cpp-pairs=3270 digest=c1bb10e893ff03ef
+
+The first scratch C version contained a no-op self-assignment and an invalid
+uninitialized alias expression; those were corrected before the baseline was
+accepted. The final harness contains no such expression and was rebuilt from
+the corrected source for all reported results.
+
+#### Compiler and project evidence
+
+The exact C matrix used `-DSECP256K1_BUILD`, `-std=c99`, `-Wall -Wextra`, and
+`-I src -I include` with Clang 22.1.7 and GCC 16.1.0. It covered `O0`, `O2`,
+`O3`, and `Os` for x86_64 assembly (`-DUSE_ASM_X86_64=1`), portable native C,
+and forced 8x32 (`-DUSE_FORCE_WIDEMUL_INT64=1`): 24 executions, all with the C
+digest above. Six additional `-O2 -flto` executions, both compilers and all
+three selectors, matched. Six C++ bridge executions, both compilers and all
+three selectors, matched the C++ digest.
+
+The sanitizer matrix used `-O1 -DVERIFY -DVALGRIND
+-fsanitize=address,undefined -fno-sanitize-recover=all` and ran all six
+compiler/backend combinations with
+`ASAN_OPTIONS=detect_leaks=1:halt_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1`; all six matched without diagnostics.
+
+The native and forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --test-dir <build> --output-on-failure -R 'scalar|fuzz.scalar'`.
+Each configuration ran seven tests and reported `100% tests passed, 0 tests
+failed out of 7`, including `scalar_tests`, malformed scalar tests,
+ElligatorSwift bad scalar tests, and `fuzz.scalar.seeds`.
+
+For optimized x86 production probes, `objdump -d --no-show-raw-insn
+--disassemble=probe_cmov` found zero conditional or loop jumps in all six
+Clang/GCC O2 assembly, portable, and forced binaries. The Clang assembly
+probe showed arithmetic masks and per-limb AND/OR selection with no branch.
+This is lowering evidence, not a formal constant-time proof.
+
+Clang AArch64 compile-only commands used
+`clang --target=aarch64-linux-gnu -DSECP256K1_BUILD [-DUSE_FORCE_WIDEMUL_INT64=1]
+-std=c99 -O{0,2,3,s} [-DVERIFY -DVALGRIND] -I src -I include -c`.
+All 16 native/forced, normal/VERIFY objects compiled, and
+`aarch64-linux-gnu-objdump -d --no-show-raw-insn
+--disassemble=probe_cmov` found no branch mnemonic in any probe. The native
+normal hashes in O0/O2/O3/Os order were:
+
+    b006b7f56749780bf43fc46fa466f6e18baf389c2f7b539b48d1f1d6bb71aebf
+    028c72a74d5ea53c26cb4f54df6654a58443866fdd94755233279ea1eebb43a9
+    a2901713e187b5755710586fed1f4fdf71a6fb8119bdd60d8bcfd22d0aaa0533
+    a8306322997cbabed26e8f7b9fc87af8a6d6aae043a3c2b50c5ebef583efa1cf
+
+The native VERIFY hashes in the same order were:
+
+    3c3732f81d034569d2752652fe43afd2864d9f8b5244e8e53e9a8f97170e6fa9
+    d6a31145cf2325585c739d0c9860796f3d5b011bd38cebbf74b1eb16d48cf60a
+    6121e239ff489e9bf426bce8177d956ce3c378cac43fb6e66f34f31e46db09da
+    a901d9395616b3859b879a477d6f55fbc18aed367e6780febb9d46907ba93ed1
+
+The forced-int64 normal hashes were:
+
+    7653bee0684996d358e7e6406b65e4d8290299d409188c8c56257ec59fc8b532
+    c8e7c2992dba76746a69951ec60edd176b75923b54e26e2ce6fbb2b1d6e03f5d
+    d88c00006952c3c4fcd009756b9faef92134b561b39b5ffef6882ac2246e6967
+    82047ae6f7a425b67cab83d23715f3a21a90e2d7e962136cba26c53bb52438f7
+
+The forced-int64 VERIFY hashes were:
+
+    5d6ecee933364c027136fbe9280f6e447f7b563a6def2ee45879f7cf269c8536
+    c56def898c453f8e0815584f30e973e56092ffe50d24d90e7a41d6dadd531407
+    996cdf56081e7c928684099c5f05f73fe331eaa5ad0b5e58e9fd76f2e838be17
+    d54a567102976de7928316cc4c756c4806ff7d58a62ffcdbec0830c501ec0ab1
+
+No runtime AArch64, GCC AArch64, ARMv7/RISC-V, or formal translation
+validation was available.
+
+#### Mutation controls
+
+Scratch copies changed only `mask1 = ~mask0` to `mask1 = mask0` in the native
+and forced backend implementations. Both Clang O2 C and C++ runners rejected
+the mutation at the first distinct pair after the zero-only cases:
+
+    cmov mismatch pair=2 flag=0
+    cpp cmov mismatch pair=2 flag=0
+
+This proves that both independent oracles distinguish retained and selected
+operands, test both flag values, and exercise the mask complement.
+
+#### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, aliasing cases, and
+Clang AArch64 code generation. Native and forced implementations agree with
+both independent full-output oracles, no flag-dependent branches were found,
+and no mask, aliasing, undefined-behavior, lowering, or reachable production
+defect was found. No production code, regression test, or fix commit is
+justified. The next queue is another distinct scalar compiler/architecture
+helper; do not repeat this predicate unless new source, compiler,
+architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and

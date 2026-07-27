@@ -271,6 +271,21 @@ dismissed; no production change was made. Limitations are no AArch64 runtime,
 GCC AArch64, ARMv7/RISC-V, or formal constant-time proof. Goal 78 remains
 active with another distinct scalar helper queued.
 
+The twenty-sixth hypothesis then tested `secp256k1_scalar_cmov` with an
+independent full-output byte oracle covering 648 values, 6,480 pairs, both
+flags, and aliased destinations (`digest=7d8cb7e35cecbc29`), plus a Boost
+`cpp_int` verifier covering 327 values and 3,270 pairs
+(`digest=c1bb10e893ff03ef`). Native assembly, portable C, and forced-int64
+Clang/GCC optimization/LTO matrices, six ASan/UBSan/VERIFY runs, native and
+forced CMake scalar tests/corpus runs, and Clang AArch64 compile-only
+normal/VERIFY code generation all matched. The direct probe had no
+conditional or loop branches in the tested optimized x86 and AArch64 objects.
+The deliberate mask-complement mutation failed at pair 2, flag 0, in both
+backends and both verifiers. The compiler/representation hypothesis was
+dismissed; no production change was made. Limitations are no AArch64 runtime,
+GCC AArch64, ARMv7/RISC-V, or formal constant-time proof. Goal 78 remains
+active with another distinct scalar helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
