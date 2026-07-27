@@ -38800,3 +38800,50 @@ clearing claim is warranted. Future changes to static-context callbacks,
 EllSwift XDH, verification, or Core's threaded callers must rerun the probe
 with the corrected source and state whether they preserve, change, or mask
 this negative result.
+
+## 2026-07-27 Unsupported EllSwift create output/input alias boundary
+
+A disposable probe against clean `origin/master`
+`d2d04864ef9b056151603a3ced7980958b058028` tested the exact trigger
+`EllSwift create input-output overlap\n` (SHA-256
+`0874b7450245739bb656058df714ff0c85e709cfb5e9649f3b91200a5f8eaae8`).
+It placed a valid secret or auxiliary randomizer at offsets 0 through 32 in
+the 64-byte output object and compared the result with a disjoint-input
+reference. The clean-master probe reported 33 failed secret-input offsets and
+64 failed auxiliary-input offsets, for `failures=97`; this was reproducible
+across the native, forced-int64, and x86_64 assembly ASan/UBSan builds.
+
+This is **not a production finding and has no severity rating**. The public
+header describes `ell64` as `Out` and `seckey32`/`auxrnd32` as `In`; it does not
+promise an `In/Out` alias contract. The audit ledger established in the
+unsupported X-only and Schnorr alias retractions that pure `Out` plus `In`
+overlap is not a valid production oracle merely because the implementation
+writes the output before consuming the input. Only explicit `In/Out`
+contracts, such as the documented tweak and MuSig state objects, receive an
+alias fix or oracle.
+
+The earlier audit slice temporarily delayed the output wipe, added a header
+guarantee, unit coverage, a gated fuzzer oracle, and a corpus seed. That slice
+was over-broad and is fully retracted in this amended commit. The temporary
+mutation was still useful as causal evidence: restoring clean master's
+pre-clear ordering made the oracle abort with exit 134 on all three sanitized
+backends, while the clean implementation produced the measured failures.
+No production change, deterministic regression, fuzzer oracle, or corpus seed
+is retained. The probe is evidence of an undocumented API boundary only.
+
+Bitcoin Core's current `CKey::EllSwiftCreate` passes separate storage for the
+encoded output, private key, and entropy. The surveyed Core BIP324 path cannot
+reach this alias arrangement, and there is no invalid-block or invalid-witness
+acceptance, sigop effect, consensus divergence, signature forgery, key
+compromise, or remote-memory/concurrency consequence. It is therefore
+**Informational only** for current Core. The behavior is unrelated to clearing
+a nonce or retry counter with no standalone cryptographic meaning. No l0rinc
+PR contains a distinct fix for this unsupported contract.
+
+The detached probe source hash was
+`ef4a519ba22c179116592607608f18828efac69fc088714aeb5bfc585b6d8c3f`; its
+clean-master library replay reported `failures=97`. If maintainers later
+choose to document this output/input overlap, reintroduce the oracle and
+production fix together, rerun the three backend proof matrix, and amend the
+severity and Core-caller analysis. Until then, future audit work must not
+reclassify this undocumented overlap as a master bug.
