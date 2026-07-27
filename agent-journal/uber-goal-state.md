@@ -348,6 +348,21 @@ made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
 or formal constant-time proof. Goal 78 remains active with another distinct
 scalar or cross-backend compiler/architecture helper queued.
 
+The thirty-first hypothesis was selected by draw seed `538901017` from the
+eligible helper queue at index 1: `scalar_set_int`. An independent C oracle
+covered 69,708 unsigned values, including all 65,536 low-word values, full
+32-bit boundaries, powers/complements, and 4,096 deterministic values; a
+separate Boost C++ bridge used the same schedule. All 24 C O0/O2/O3/Os runs,
+six C++ bridge runs, six LTO runs, six ASan/UBSan/VERIFY runs, native and
+forced CMake scalar/corpus selections, and 16 Clang AArch64 compile-only
+objects matched `digest=5fb02c6d07de71fe`. Isolated normal helper symbols
+had no conditional or loop branches. Low-limb and upper-limb-zero mutations
+failed at value 0 in both C and C++ controls for both representations. The
+compiler/representation hypothesis was dismissed; no production change was
+made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
+formal translation proof, or unusual non-32-bit unsigned-int ABI. Goal 78
+remains active with another distinct uncovered scalar helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

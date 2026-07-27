@@ -3149,6 +3149,106 @@ formal constant-time proof. The next queue is another distinct scalar or
 cross-backend compiler/architecture helper; do not repeat this predicate
 unless new source, compiler, architecture, or performance evidence changes.
 
+## Cycle 31: scalar integer construction translation validation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `c1ba5c169b1ed380d705343e4c81d5b344e0dea0`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The controller draw
+used seed `538901017` over the eligible helper queue
+`scalar_reduce_512 scalar_set_int scalar_eq scalar_from_signed scalar_to_signed scalar_clear`,
+selected index 1, and chose `scalar_set_int`. Clang 22.1.7, GCC 16.1.0,
+CMake 3.31.6, and GNU objdump 2.45 were available; no AArch64 runtime,
+GCC AArch64, ARMv7/RISC-V runner, or formal translation validator was
+available.
+
+### Scope and hypothesis
+
+I audited the declaration at `src/scalar.h:43` and the native 4x64 and
+forced 8x32 implementations at `src/scalar_4x64_impl.h:32-39` and
+`src/scalar_8x32_impl.h:41-52`. The contract is to construct the canonical
+scalar represented by the 32-bit `unsigned int` input: store `v` in the
+lowest limb, clear every higher limb, preserve surrounding memory, and pass
+the scalar verification contract. Callers include the shift-zero path at
+`scalar_4x64_impl.h:903`/`scalar_8x32_impl.h:696`, the ECDSA failure path at
+`src/ecdsa_impl.h:136`, MuSig session initialization, exhaustive tests, and
+scalar/ecmult fuzz reconstruction. Blame attributes the assignments to
+`1e6c77c3` and the current verification call to `a0fb68a2`.
+
+The hypothesis was that a backend limb-width or compiler lowering change
+could truncate the unsigned input, leave stale high limbs, write outside the
+scalar, or introduce a representation-dependent result. Existing coverage
+mostly uses zero, one, and small constants, so this cycle used an exhaustive
+low-word range and full-width boundary/random values.
+
+### Independent oracle evidence
+
+The C harness constructed a guarded scalar directly and encoded its limbs to
+bytes without calling the production serializer. It covered 69,708 values:
+all 65,536 low 16-bit values, 32-bit boundaries and powers/complements, and
+4,096 deterministic full-width values. It checked all higher limbs and
+16-byte prefix/suffix canaries. All 24 Clang/GCC assembly, portable, and
+forced-int64 O0/O2/O3/Os runs printed:
+
+    ok values=69708 digest=5fb02c6d07de71fe
+
+The separate C++17 bridge called production code through a C shim while
+using Boost `cpp_int` to encode each expected integer. All six Clang++/G++
+backend-selector runs printed the same digest. Six additional O2 LTO runs
+also matched. Scratch harness hashes are:
+
+    e67977d2e0cc5ab409c3f97cf8e32948a4d327c272e4094ebf4277cae52d9bea  scalar-set-int-harness.c
+    33ae14cca6264fd82748601a16929809b62403106d63fad07c64decfbf739ee5  scalar-set-int-c-shim.c
+    e11a14636a2b88fe6c66b6b4e67c00d6efec522cb24229c065f3a1fb55625515  scalar-set-int-cpp-harness.cpp
+
+The harness asserts 32-bit `unsigned int`, which matches the tested x86_64
+and AArch64 ABIs.
+
+### Matrix and lowering evidence
+
+Six `-DVERIFY -DVALGRIND` Clang/GCC O1 ASan/UBSan runs with leak detection
+and halt-on-error settings matched without diagnostics. The native and
+forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --output-on-failure -R 'scalar|fuzz.scalar'`; each reported
+`100% tests passed, 0 tests failed out of 7`.
+
+The isolated x86 helper symbol was emitted with `-fno-inline` and inspected
+with `objdump`; all six normal helper bodies had zero conditional or loop
+jumps. Clang AArch64 compile-only commands covered native and forced-int64
+selectors at O0/O2/O3/Os with and without `-DVERIFY`; all 16 objects
+compiled, and every isolated helper body had zero conditional or loop branch
+mnemonics. The AArch64 object manifest hash is
+`5f65f58d6c942a7ecba91d6a640135512dbe17e0c9865a5416cf9e0a625e5a7c`.
+The x86 no-inline object hashes were stable by compiler/selector:
+Clang native/portable `f505bc2954bf0cc32f8af16071a5d12332a25432d4f0f24b3639152117f0a3bc`,
+Clang forced `81ce6d4485c623e0187ffa14cc388220653754353ccfd1e906800568a5695b29`,
+GCC native/portable `13f6212f67b87fa13527db58a9097726c1c7ff84ec5a85d4d8be132c58bb396f`,
+and GCC forced `ab43a16b0d53239fc523aa06ff42264ffd9cbde9c2e0334f615c5af1e6270dbd`.
+
+### Mutation controls
+
+Scratch native and forced copies changed the low-limb assignment from
+`r->d[0] = v` to `r->d[0] = v + 1`; both C and C++ runners rejected both
+mutations at `index=0 value=0`. Separate copies changed the first upper-limb
+zero assignment to one; both C and C++ runners again rejected both
+representations at `index=0 value=0`. The controls prove the oracle detects
+both input-value and high-limb-zeroing defects.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No truncation, stale-limb, memory-boundary, undefined
+behavior, lowering anomaly, or reachable production defect was found. No
+production code, regression test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal translation proof; the harness also assumes the 32-bit unsigned-int
+ABI used by the supported builds tested here. The next queue is another
+distinct uncovered scalar helper; do not repeat this predicate unless new
+source, compiler, architecture, or caller evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
