@@ -36,6 +36,16 @@ Goal `78` is `active`; its cycle journal is
 `agent-journal/translation-validation.md`. The catalog is the source of
 titles, slugs, and campaign scope.
 
+## Latest Cycle
+
+Goal `78` tested `secp256k1_int_cmov` under Clang/GCC `O0`, `O2`, `O3`, `Os`,
+and `O2+LTO`. One million valid deterministic vectors matched the independent
+reference in every build, and all extracted helper bodies were branch-free.
+The hypothesis was dismissed; no production finding or fix commit resulted.
+The goal remains active with `secp256k1_memzero_explicit` dead-store
+preservation as the next distinct hypothesis. Scratch artifacts are under
+`/tmp/secp256k1-translation-78`.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
