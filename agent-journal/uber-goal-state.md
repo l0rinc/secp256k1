@@ -40,15 +40,17 @@ titles, slugs, and campaign scope.
 
 Goal `78` tested `secp256k1_int_cmov` and
 `secp256k1_memzero_explicit` under Clang/GCC `O0`, `O2`, `O3`, `Os`, and
-`O2+LTO`, then compared native `5x52`/`4x64` against forced-int64
-`10x26`/`8x32` field/scalar cmov paths. The helper and backend fuzz oracles
-passed their deterministic vectors and all 31 corpus inputs in each backend
-configuration (62 input replays across both configurations);
-short mutation runs added coverage without artifacts. Independent Clang/GCC
-`-O2` wrapper objects produced branch-free mask arithmetic for all four
-backend paths. All three bounded hypotheses were dismissed; no production
-finding or fix commit resulted. The goal remains active with a compiler and
-architecture matrix around another constant-time arithmetic helper queued.
+`O2+LTO`, compared native `5x52`/`4x64` against forced-int64 `10x26`/`8x32`
+field/scalar cmov paths, and checked `secp256k1_scalar_cadd_bit` with an
+independent byte-level oracle. The helper and backend fuzz oracles passed
+their deterministic vectors and all 31 corpus inputs in each backend
+configuration (62 input replays across both configurations); short mutation
+runs added coverage without artifacts. The cadd-bit harness passed 767
+boundary/carry cases with the same digest across Clang/GCC, both backends,
+`O0/O2/O3/Os`, `O2+LTO`, and ASan/UBSan/VERIFY. Eight optimized cadd-bit
+probe bodies had no conditional or loop jumps. All four bounded hypotheses
+were dismissed; no production finding or fix commit resulted. The goal
+remains active with another compiler/architecture constant-time helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff

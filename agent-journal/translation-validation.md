@@ -160,6 +160,64 @@ other helpers. The next distinct queue is a compiler/architecture matrix
 around another small constant-time arithmetic helper, followed by a cross-
 architecture or Alive2 reduction if the required toolchain is available.
 
+## Cycle 2026-07-27: `secp256k1_scalar_cadd_bit` compiler lowering
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `ec2fedbbe52300916713323754b22ca746d7eb0e`, with base `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and no running fuzz, sanitizer, compiler, or profiling jobs. Clang 22.1.7, GCC 16.1.0, CMake, and Ninja were available; no Alive2 or QEMU executable was installed. The catalog, this journal, `src/fuzz/README.md`, scalar history, and prior journals were searched. Existing history and corpora already cover cadd-bit carry and no-op boundaries, but no prior journal entry verified compiler lowering of this helper.
+
+### Hypothesis and contract
+
+The bounded hypothesis was that optimization or LTO could make the flag in
+`secp256k1_scalar_cadd_bit` influence control flow, or that the native
+`4x64` and forced-int64 `8x32` implementations could produce different
+results at limb carries and the order boundary. The public internal contract
+at `src/scalar.h:52` requires `flag` 0 or 1, `bit < 256`, and a result that
+does not overflow. The implementation uses a volatile flag and deliberately
+maps flag zero to a no-op bit outside the represented limbs.
+
+### Evidence
+
+The independent scratch harness
+`/tmp/secp256k1-translation-78/cadd-bit-harness.c` (SHA-256
+`aa99d9ce69201d6a119ab354b40205a375d9c0f4e857bfa3d8eaad07dd2329c6`)
+used a byte-level reference, not scalar arithmetic, for three families at all
+256 bit positions: zero plus the selected bit, a carry chain of all lower
+bits for positions below 255, and `order - 1 - 2^bit` plus the selected bit.
+It checked both flags for 767 total cases and accumulated a deterministic
+digest. The expected order boundary was encoded independently in bytes.
+
+Clang and GCC native and `-DUSE_FORCE_WIDEMUL_INT64` builds all printed:
+
+    ok cases=767 digest=4cf0c5e0e57450c3
+
+That output was identical at `O0`, `O2`, `O3`, `Os`, and `O2+LTO` for all
+eight compiler/backend combinations. Clang ASan/UBSan `-DVERIFY -DVALGRIND`
+executions for native and forced-int64 also printed the same result, with no
+diagnostic or nonzero exit. The implementation hashes were
+`src/scalar_4x64_impl.h=fd094854ed4d3a752384ee164fddc991313244abdc95f5e21c14c30ba321fdd8`
+and
+`src/scalar_8x32_impl.h=b37d6b65c1335fb014d58e4cdc0530232a30801f9ec583b2d037a8a44def093f`.
+
+The four non-LTO `O2` `probe` bodies and the four LTO `O2` bodies were
+disassembled with `objdump -d --no-show-raw-insn --disassemble=probe`. Every
+body contained zero conditional or loop jumps. Clang and GCC used `sete` to
+form the per-limb masks, followed by shifts and add/adc carry propagation;
+the native path used four 64-bit limbs and the forced path eight 32-bit limbs.
+No compiler warning was emitted by the optimized or LTO builds.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested x86_64 native and forced-int64
+representations, Clang/GCC optimization and LTO matrix, independent byte
+oracle, and ASan/UBSan/VERIFY execution. No production change, regression
+test, or finding commit is justified. This is not evidence for other
+architectures, assembly implementations, compilers, invalid flag/bit domains,
+or unrelated scalar arithmetic. The next distinct queue is a compiler and
+architecture check of another constant-time scalar/field helper; prioritize a
+path with an independent algebraic or byte-level oracle and use cross-
+architecture or Alive2 reduction if the missing tools become available.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -173,5 +231,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-three dismissed hypotheses unless compiler, source, or architecture evidence
+four dismissed hypotheses unless compiler, source, or architecture evidence
 changes.
