@@ -16496,3 +16496,72 @@ acceptance, witness-sigop undercount, consensus divergence, forgery, key
 compromise, or remote concurrency consequence was demonstrated. This is
 unrelated to clearing a nonce or retry counter with no standalone
 cryptographic meaning.
+
+## 2026-07-27 Current-origin Taproot composition revalidation
+
+The three existing serialized Taproot fixtures were revalidated against the
+freshly fetched `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`.
+The clean production `src/modules/extrakeys/main_impl.h` SHA-256 is
+`6c002046bda20ffb8767cac1c6800dd3b8e9be9e648772a1498539159a4b4937`; no
+production repair from the audit branch was copied into the clean proof. The
+clean disposable fuzzer overlay is `f7910e0c16f3c682acd0892fe7de9a1df6d4d216084161a9da42993a624ed870`;
+the audit-branch overlay is
+`0ea640e205c208e60a728fc154e84163261622034dee9dec66fb78e2eef55f05`.
+
+The exact seed files and content SHA-256 values are:
+
+    core-taproot-control-composition       51b39917c03cb9a5eaffa94a30da609a273837a84d08973feafe506ee04d7e2e
+    core-tapleaf-compactsize-boundaries    866f54bde18a3b90c82cad1263f1f286fd70b5920eb5f406452bd07ff07fad86
+    core-taproot-control-max-depth         18509e1ecac3350f5d1c1f199559d6674204227fc7efc80a9765f1d39f1a45bb
+
+The first full-target attempts were discarded: an unrelated old-harness
+pre-oracle stop prevented them from being usable evidence about the selected
+Core checks. A disposable early-dispatch gate routed only these exact three
+strings directly to their existing Taproot helpers. It changed no production
+code, was removed before the final clean build, and was not used in the
+repaired controls. This preserves the causal boundary: a failure in the
+selected helper would still be a clean-master production result, while an
+earlier aggregate-harness assertion cannot be mistaken for a Taproot bug.
+
+The isolated clean-origin Clang 22.1.7 ASan/UBSan runs all exited 0. Native
+and forced-int64 binary SHA-256 values were respectively
+`34187ff9dac58e3399c923e17f0802487cd40d439b00430514596e6a79c6e8f0` and
+`1e9d6603f5af188fc2a31bd92981176378ae7babc9f426ab7e8b00ca89040975`.
+The native log hashes, in fixture order, were
+`e181b20d7244d3aff5dd1f5bd49ef1ce77ce376c117a3a00df1f4a3dd89929c6`,
+`72018cc04b968288bd6ea2f2c489528068e3f8d07cd82deb293946a1d8f63aaa`, and
+`3ff3325ef8da419a8cfc32b45f35dd1d713025c55fb30d1028b4aeaf8ddbc7c1`;
+the forced-int64 hashes were
+`5ae83db5fbc2d1ffc782226b59b7ad391322ed8c43a60e0e24e14b73ea1e75b1`,
+`d954f55615c97e4d61a11f8d7c834fdbd9a145e4c4f99825732393895b7d8cda`, and
+`e86852b6692deeb736b01d67602a877b6e0ba2e07fcea1a732eb87aeb8725031`.
+
+The repaired audit-branch binaries were
+`e1a88535a2fb9d304367ba03c5f9211335e0ea1834c6e3af8147564d63011549` and
+`324bbde7807227592bc91e7e7652607555b2bc2410d9bcc019d84008a6a218d6`.
+Their existing exact controls also exited 0; native log hashes were
+`33d98aa42602834c50a58b09a9b786de4824c701578b731a1cb96e91eeb8e29b`,
+`081a1c82b5603b8c7dc4b0dcc5a15873a134fb276eb9774d236d0c7a7f1adb9f`, and
+`e07307b575cfe98dd87b378a2e6ffe8a40f36795111030ce56ca3d473e42d734`;
+forced-int64 log hashes were
+`1fd11dbc1415072ccfa8753749453938692b15b5c037c553dc26ca60eb3eefdd`,
+`5f51a6907b6c9d65ff169a191e6b2ce4787620891d587ccfcf7a450fbb76672c`, and
+`1e2b83158298bd4255a6887ff3854078bee715574fb089e21b77dcd654932b91`.
+No artifact or sanitizer diagnostic was produced, and no production mutation
+or deterministic regression fix is claimed.
+
+These helpers model Core's serialized witness boundary:
+`VerifyWitnessProgram` computes `TapLeaf`/`TapBranch` and calls
+`VerifyTaprootCommitment`, which reaches `XOnlyPubKey::CheckTapTweak` and the
+static `secp256k1_xonly_pubkey_tweak_add_check`. The fixtures cover one- and
+two-leaf commitments, CompactSize script lengths 252 and 253, and the maximum
+128-sibling control block. A clean mismatch here could change acceptance of a
+valid or invalid Taproot witness and would require High/Critical severity
+based on the demonstrated consensus effect. None was reproduced on current
+master: there is no invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, or remote
+memory/concurrency failure. This is negative evidence, not a production
+finding. It is unrelated to clearing a nonce or retry counter without
+standalone cryptographic meaning. Later Taproot, field, group, or parser
+changes must state whether they preserve, change, or mask these exact clean
+master boundary replays.
