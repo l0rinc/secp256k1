@@ -39026,3 +39026,56 @@ compromise, or severe memory/concurrency failure. A nonce or retry counter with
 no standalone cryptographic meaning is not Critical merely because it is not
 cleared. No l0rinc commit masks this result, and no cherry-pick or production
 fix is warranted by this pass.
+
+## 2026-07-27 EllSwift denominator predicate mutation proof
+
+The final audit branch at `4c20ae2c21a5b96fd55f0dd9be2096755f31152e` was
+checked against `origin/master == l0rinc/master ==
+d2d04864ef9b056151603a3ced7980958b058028`. The existing
+`fuzz_ellswift` denominator oracle independently computes whether `xn/xd` is
+on the curve, then compares that result with
+`secp256k1_ge_x_frac_on_curve_xd2_var` using an explicitly supplied `xd^2`.
+The tracked `ellswift/inverse-degenerate` seed was used (SHA-256
+`457dbc552d1004c8dd30be3d245b98261c4012d305dddcf9b7b34af84d3484bf`).
+
+The clean native Clang 22.1.7 ASan/UBSan binary
+(`fuzz_ellswift` SHA-256
+`5eb22950fe1de833e038b2a7c3e515db3165a591f1e1379de1a7abcfc1df9b1f`) was
+replayed with:
+
+    -runs=1 -handle_abrt=0 -timeout=5 -rss_limit_mb=0
+
+It exited 0; the replay log SHA-256 was
+`e4a2ddc6a8f3e9d9088dc317f93f34b3d84109bf1ea2dabf2a6ac0b30635c86a`.
+
+For causal sensitivity, a disposable copy inverted only the production
+predicate's final return in
+`secp256k1_ge_x_frac_on_curve_xd2_var`:
+
+    return secp256k1_fe_is_square_var(&r);
+    return !secp256k1_fe_is_square_var(&r);
+
+The disposable harness added a `proof` trigger that returned immediately
+after this existing denominator oracle, so the later decode checks could not
+become the first failure. This wrapper and mutation were never applied to the
+audit branch. The mutated Clang ASan/UBSan binary SHA-256 was
+`dad65623d8a146fc0c315dd302316c6ad13d4c728b8d7e94ee47929c87f64719`; replay
+of the exact `proof` trigger with the same libFuzzer flags exited 134 at the
+existing `FUZZ_CHECK`. Its log SHA-256 was
+`c1b58df87b012ec4f48dacfdff1079d03c888ff762c8f4f19c50bbb06d8b3bee`.
+The earlier attempt that mutated the supplied-square operand instead was
+also rejected, but its first stop was the production decode postcondition
+and is not used as the primary proof here.
+
+This is oracle-sensitivity evidence, not a clean-master production bug: the
+unmutated implementation passes, and the mutation deliberately reverses the
+curve predicate. It demonstrates that a denominator-square regression would
+fail immediately in the independent field model before a later transport
+state check. EllSwift reaches Bitcoin Core's BIP324 transport path, not block
+or witness validation; no invalid-block or invalid-witness acceptance, sigop
+undercount, consensus divergence, signature forgery, key compromise, or
+severe remote memory/concurrency consequence was shown. The result therefore
+does not receive a High/Critical severity rating and requires no production
+fix or deterministic regression test. No l0rinc commit masks this control.
+It is unrelated to clearing a nonce or retry counter that has no standalone
+cryptographic meaning.
