@@ -681,8 +681,10 @@ domain construction, sanitizer-only issue, or already-covered behavior.
 The entries below preserve the severities recorded against their historical
 clean-master snapshots. For current decisions, the authoritative upstream
 baseline is `origin/master` at
-`d2d04864ef9b056151603a3ced7980958b058028`; `l0rinc/master` resolves to the
-same commit. Historical replay references to older master states remain
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`; the comparison
+`l0rinc/master` ref is
+`d2d04864ef9b056151603a3ced7980958b058028`. Historical replay references to
+older master states remain
 evidence for those earlier conditions, but a later minor fix must not be
 allowed to hide a more serious failure that existed on the baseline being
 reviewed. Every production finding has a focused corpus and a mutation or
