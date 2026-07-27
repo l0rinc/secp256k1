@@ -40067,3 +40067,93 @@ remote concurrency impact. It is not High/Critical. The retry candidate has
 no standalone cryptographic meaning, so nonce clearing is not the severity
 driver. `aab3a680` remains the fix with the deterministic private-boundary
 test; no new production change or severity upgrade is claimed.
+
+## 2026-07-27 Current-origin group alias masking revalidation
+
+The existing group findings were replayed against the current refs
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. This is a
+master-baseline preservation pass, not a new production finding. The
+disposable control started from a clean `origin/master` archive and overlaid
+only the audited fuzzer build files, `src/fuzz/fuzz.h`, `src/fuzz/group.c`,
+and its tracked corpus. Clean production `src/group_impl.h` was
+`f55f65b95486c79ab44b55a767fb0879b27983a119757f9207b3c367478ff29e`; the
+audited group target is `c8b122ad7a011834ad7ef3a23d9ab57e006a5be903c17783f66dfdc059aa98b3`.
+
+The corpus contained 23 files and 837 bytes. Its sorted `filename size`
+manifest was
+`7aa67d1533a11c4c94e716fcff6b446bcb5896e8608e71eba791a6fad147bcff`.
+The exact group corpus was replayed one file at a time with the project file
+driver in native and forced-int64/10x26 Debug builds. Every unmodified
+current-origin input exited 134 at the existing malformed opaque-public-key
+barrier, `secp256k1_fuzz_group_check_opaque_pubkey_barrier` at
+`src/fuzz/group.c:124`, which constructs the structurally valid but off-curve
+point `(x,y)=(1,1)`. This is the already recorded opaque-key master finding;
+it is not evidence that any group-law seed failed there independently.
+
+To expose the next transition, the only disposable harness change was a
+compile-time guard around that helper, with
+`SECP256K1_FUZZ_SKIP_OPAQUE_BARRIER` enabled. No production byte or corpus
+byte changed. With that single barrier skipped, all 23 clean-origin inputs
+reached the same independent alias failure:
+
+    field_impl.h:341: test condition failed: r != b
+    group_impl.h:872: secp256k1_gej_rescale
+    group.c:670: secp256k1_gej_rescale(&actual, &actual.z)
+
+The native and forced-int64 gated file-driver binary hashes were
+`1adea2c26d8e1004f691719b5085843677e62b8ba6f4f21a3a276d4ccf8b69a4` and
+`810c5fb67a9d8f7b20bcdf65babbfab6092d3f455183c2b4f177029933651222`.
+This failure is the existing `gej_rescale` alias finding, not a new bug
+created by the current-origin recheck. The barrier ordering is material:
+fixing malformed opaque-key validation must not be credited with fixing the
+independent scale-alias transition.
+
+For the strongest repair proof, the disposable repaired tree used exactly
+the focused production file from `84fedf4a` (`group_impl.h` SHA-256
+`6300da2da165001f65322847491813c5f21087073b272567227a1f54beb5217f`), not
+the later group optimizations in the audit branch. That commit snapshots the
+nonzero scale before updating any Jacobian coordinate. All 23 seeds then
+returned 0 in both arithmetic backends. The exact-repair file-driver hashes
+were native
+`9488b36b0b1bbc569a985b17ae8cd58db7cb8b379c97d59da6123a4627fded19` and
+forced-int64
+`90a4898ceeaa9f569547280b4e16b6dd14092dafe242ba29cc7189aebe96b941`.
+The focused `rescale-x-alias` repaired logs were empty with SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` in
+both modes.
+
+The same exact-repair binaries ran copied corpus directories with
+`-fork=2 -jobs=2 -max_total_time=8 -timeout=20 -rss_limit_mb=0`, with
+crashes, OOMs, and timeouts treated as failures. Both native and forced-int64
+jobs exited 0; both workers in each job reported
+`oom/timeout/crash: 0/0/0`, and both artifact directories were empty. The
+worker log hashes were native
+`ad6e475011459c854d76e3368cafc6a2ce1bea29acef66058b73741b0aa5b89e` and
+forced-int64
+`d43f766f51027c94fba43b28056bf7bdbf85f741f628dfb703ae93844c42876b`.
+
+The production repair is already committed as `84fedf4a`; the existing
+`tests.c` `gej_rescale_alias` regression and the unconditional group-fuzzer
+alias checks remain the deterministic coverage. No new production fix,
+corpus seed, or severity upgrade is claimed here. `gej_rescale` is a static
+internal helper. Current in-tree callers pass separate scale objects (for
+example generator blinding's `proj_blind` and ecmult's local `Z`); no public
+Bitcoin Core API, serialized block, or witness path was shown to control an
+aliasing scale. The master-relative rating therefore remains **Low internal
+availability/correctness**, and **Informational/Low for current Bitcoin
+Core**. The malformed opaque-key condition remains **Medium for direct
+opaque-state callers** and **Low-to-Medium for Core** because normal Core
+serialized key parsing validates the point before it becomes opaque state.
+
+No invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, disclosure,
+remote memory/concurrency failure, or High/Critical consequence was shown.
+High/Critical would require a demonstrated path from an invalid block or
+witness to consensus-relevant acceptance. A nonce or retry counter without
+standalone cryptographic meaning is unrelated and is not a Critical erasure
+finding. The exact focused repair was isolated from later l0rinc group
+optimizations, so those follow-up commits do not mask this master result;
+future cherry-picks or fixes must rerun both the opaque-key first stop and the
+barrier-skipped alias witness and amend their notes if either behavior
+changes.
