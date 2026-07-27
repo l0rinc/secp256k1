@@ -42024,3 +42024,80 @@ severity ratings and the clean-master first-stop ordering therefore remain
 unchanged. Future low-level arithmetic or assembly changes must rerun both
 backends and state whether a backend-specific failure is a production bug,
 an unsupported internal-domain construction, or only a compiler limitation.
+
+## 2026-07-27 Fresh l0rinc-ref reconciliation after origin rebase
+
+The remote refs were fetched with pruning after the current-origin assembly
+replay. `origin/master` is
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`; `l0rinc/master` is
+`d2d04864ef9b056151603a3ced7980958b058028`, and the latter is an ancestor of
+both current origin and this audit branch. The audit branch is therefore
+based on the latest origin master; no rebase or master commit is pending.
+There are no fuzzer, sanitizer, test, compiler, or worker processes left by
+this comparison.
+
+The fork-only behavior-changing commits were matched against the current
+stack before deciding whether to cherry-pick. A raw cherry-pick is deliberately
+not used when the same behavior is already present with a stronger oracle or
+when it would reorder a clean-master first stop:
+
+- `boundary-condition-bugs` (`161a39a1`, `65d38b0c`) is covered by the exact
+  `994b3501` `fe_equal` master state and the expanded `97727abd` 10x26
+  magnitude-32 repair. The latter includes independent normalize and
+  zero-predicate checks. The 10x26 defect remains **Medium/latent internal
+  field correctness** on unmodified master; no Core block/witness trigger,
+  invalid-block acceptance, witness-sigop undercount, consensus divergence,
+  forgery, key compromise, or severe remote memory/concurrency effect was
+  demonstrated. It is not High/Critical merely because the arithmetic defect
+  could matter if a currently unreachable maximum-magnitude state were built.
+- The context-bound callback aliases `19c82a24` and `144e38eb` are represented
+  by `b8ec2786` and `91f9af34`. The current commits test all exported built-in
+  aliases, arbitrary callback dispatch, output equivalence, and the caller's
+  SHA backend; no alias patch is missing. Their ratings remain Low direct API
+  dispatch/performance and Informational/Low for current Core, not a signing
+  or consensus vulnerability.
+- `b5e61084` is represented by `70133c4b`, which adds the SIZE_MAX pointer
+  overflow proof and the cleared-output regression. `dda36140` and `fe361c7f`
+  are represented by `cc3253a4` and `3d30341f`, with the EllSwift zero-u
+  first-stop and denominator-square masking controls already recorded.
+- `833eaaa2` and `ff010bd9` are the behavior-preserving group changes already
+  in `a80b126d` and `7dee1d31`; their in-place and infinity-transition tests
+  were rerun after import. `87e57c85` is represented by `3f4b9d46`, with the
+  scalar shift-boundary oracle and normal/forced-int64 checks.
+- The opaque-state barriers `a2a0ac20`, `d1dca5c1`, `68375d54`, `b0b9b3b7`,
+  `a6658112`, and `97dab671` are represented by the stronger current commits
+  `b37ade0d`, `2e0eebb9`/`59e2a242`, `95f93dfe`, `402fd672`, `07dc72ee`, and
+  `7bde103c`. The clean-master mutation proofs and Core caller analysis in
+  those commit messages remain authoritative; no duplicate cherry-pick is
+  permitted to obscure which unmodified-master state failed first.
+- `d4394823` and `88424b7a` are represented by `c7babbe8` and `6f5565c0`,
+  respectively. MuSig cleanup chains from `detached2`, `detached3`,
+  `musig-cleanup-failures`, and `musig-clear-invalid-seckey-pubnonce` are
+  represented by the staged failure-output commits and fuzzer postconditions
+  already on this branch. A public nonce or retry counter with no standalone
+  cryptographic meaning is not Critical merely because it is uncleared.
+
+The remaining fetched refs do not add a missing discovery contract. `detached4`
+(`3a5e9f3a`) is an ecmult one-point fast path; `detached5` and
+`detached6` through `detached14`, `detached16` through `detached22` are hash,
+field, group, inlining, constant-time, benchmark, or comment snapshots.
+`detached15` is already in master as `8363a2d8`; `detached20` is represented
+by the narrow BER, scalar, ecmult, allocation, and fuzzer commits already
+present; `detached21` is comment-only. `scratch-free-warning` and
+`check-test-operation-results` are test-harness changes.
+`silentpayments-flush-label-batch` is already in current master as `1ae90bde`, while the
+remaining Silent Payments API documentation branch changes no code. The
+pruned `detached23` through `detached30` refs are alternate Core/audit ledgers,
+not missing secp production fixes; importing them wholesale would duplicate
+evidence and alter no master behavior. The comment-only reordered ref is also
+excluded.
+
+This comparison preserves the evidence ordering. Clean-origin controls were
+run before repaired controls, and each staged repair records whether it
+unmasked a later stop or could mask one. No fork-only optimization was used to
+make a failing master control pass. The fresh reconciliation found no new
+finding and no severity upgrade: no invalid block or witness was accepted, no
+witness-sigop count changed, and no consensus divergence, signature forgery,
+key compromise, disclosure, or severe remote memory/concurrency primitive was
+shown. This is a documentation-only commit; no production fix, deterministic
+test, corpus mutation, or cherry-pick is claimed here.
