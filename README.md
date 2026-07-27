@@ -15737,6 +15737,58 @@ not High or Critical. The nonce-clearing caveat is unrelated; this finding is
 about invalid opaque point state, not a retry counter without standalone
 cryptographic meaning.
 
+## 2026-07-27 Current-origin impossible SHA-length revalidation
+
+The existing `ab36b78b` repair was revalidated against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. This is a
+current-master reiteration, not a new production fix. The exact
+`src/fuzz/corpora/context/sha256-impossible-lengths` seed is 45 bytes,
+contains `context tagged sha256 impossible length seed.` plus a newline, and
+has SHA-256
+`931b21b91c6f81333ea883c25abdc9dc96facb7cbaf6413581013767bfbae8d8`.
+
+The clean control used an `origin/master` source archive with only the
+tracked fuzzer directory, fuzzer CMake projection, and the required
+`SECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL` harness definition. No
+hash production fix was copied. After isolating an unrelated known callback
+ordering stop, native and forced-int64 Clang 22.1.7 Debug ASan/UBSan exact
+replays exited `134`. ASan reported a one-byte read immediately after the
+45-byte fuzzer allocation, through `secp256k1_sha256_transform_impl`,
+`secp256k1_sha256_write`, and `secp256k1_sha256_initialize_tagged` while the
+helper passed an impossible tag or message length. The proof log hashes are
+`8d5df6b1a74349befdbe50fdf842ce2c307f8541feeceeedae55b53ce534e66e` and
+`aa38a73a5120b618dc7797af9c9ce1267d13611ef179033bc6a2a8d2cf94c45a`.
+
+The repaired branch consumed the same seed with status `0` in both backends.
+Its fuzzer hashes are
+`a436bef891a2e231c65fcb79afbaf4e842497608143c8bea3daa42f7906c892f` and
+`36cc06268f5518f9cc8907628634bfbe03f41e802a82992c3d2e45d06a3b2e92`; the
+replay logs are
+`0304c6eab5798589af0e9e18e21de45319f6b45a82c6b883b4e008a50281de65` and
+`c5d4674c6831703a003e1b9b98cd368bc1b3bc6dc0d0ba4d800cd37d00d30e08`.
+The repaired 12-file context corpus campaigns used two workers per backend,
+returned `0`, reported `oom/timeout/crash: 0/0/0`, and left no artifacts;
+their log hashes are
+`4c1b239399a676554ab3abcda835d14a0356c893d4df0516ddea8733c841f7b0` and
+`a494d1b5b4c5ae175f64de6861a29bbf03f491cd41ca1c69b2bfbf42e62962d7`.
+
+The failure still requires an incoherent pointer/length pair: the public
+helper accepts a length large enough to make the SHA implementation read
+past the fuzzer allocation before the fixed 2^61-byte limit can reject it.
+That is a real direct-library memory-safety contract violation, rated
+**Medium** for the library and **Informational/Low** for current Bitcoin Core.
+Core's secp256k1 callers use fixed 32-byte message/hash inputs in
+`src/key.cpp` and `src/pubkey.cpp`; no Core block, witness, or network path
+was found that forwards attacker-controlled lengths to
+`secp256k1_tagged_sha256`. There is no demonstrated invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, or remote memory/concurrency impact.
+It is therefore not High/Critical. The finding is unrelated to clearing a
+nonce or retry counter with no standalone cryptographic meaning. Later hash
+or API changes must state whether they preserve, mask, or alter this exact
+first stop; `ab36b78b` remains the production repair with the strongest
+clean-master proof.
+
 The current-origin API/comment follow-up and label-candidate `VERIFY_CHECK`
 were reviewed before this replay. They do not validate the stored label bytes
 and did not mask the clean-master failure. Later cherry-picks or follow-up
