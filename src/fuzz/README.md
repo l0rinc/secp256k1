@@ -40540,3 +40540,216 @@ must rerun all three clean first stops and amend their commit notes if any
 fix changes or masks their ordering. The nonce caveat is unchanged: a retry
 counter or nonce candidate without standalone cryptographic meaning is not a
 Critical erasure finding.
+
+## 2026-07-27 Current-origin API first-stop and masking-order revalidation
+
+This entry reiterates the existing public-API findings against the refreshed
+current origin. It is a clean-master control and not a new production claim.
+The refs were `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`; the audit branch
+before this documentation commit was `4179e10b145e11a8cb29f4f3807c42e935c879f4`.
+A temporary archive of `origin/master` received only the branch fuzzer and
+build projection. Existing production repairs were added one at a time to a
+separate disposable tree to expose the next clean-master stop. No temporary
+repair, harness gate, or generated corpus was copied into the audit branch.
+
+The `api_roundtrip` source hash was
+`a4a17b26cd8dcc606a53015173403579e528082d1c8105fa86a38a81c0bf28cc`.
+The tracked corpus contained 62 files and 2,901 bytes; its sorted
+`filename size` manifest was
+`a35fa856630d6bf1dd4739b83c05f60edd9fb1b889a96b2260211e59bc454b1d`.
+Clean-origin production hashes used for the control were:
+
+    src/secp256k1.c                         7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb
+    src/ecdsa_impl.h                        883ad9ac4dfa224a1cc97bc2a4cc09b1078545a1632917dac2524a18ba4e53ee
+    contrib/lax_der_privatekey_parsing.c    48352c75520eecd141936c0011601925510cdf60afd3e46e79f0a0547cbc78da
+
+### Clean first stop and repair ladder
+
+With the unmodified current-origin production files, a GCC Debug file-driver
+with external callbacks replayed every tracked input to the same first
+oracle: `secp256k1_fuzz_check_privkey_der` at
+`src/fuzz/api_roundtrip.c:3999`. The invalid group-order scalar makes the
+contrib DER exporter return failure and set the length to zero, but clean
+master leaves the documented 279-byte output region at `0xA5`. The focused
+`privkey-der-export-failure` input is 50 bytes with SHA-256
+`869889b2880daf7bc0f41e195cca0f26697acf5ac35b5ed526d2e6927af4a922`.
+Existing fix `94618d75` clears that documented region. This is **Low stale
+output state** on the library and **Nice-to-have/Low for current Core**:
+Bitcoin Core does not use this private-key DER exporter for block or witness
+admission, and no cryptographic bypass or memory safety issue was shown.
+
+The disposable controls then staged the existing repairs in this order. Each
+later stop was recorded only after the earlier hunk was applied, so a repair
+that changes behavior cannot be credited with fixing a later finding.
+
+1. `8f84a6d6` exposed the direct RFC6979 callback NULL-input contract. After
+   the exporter repair, all 62 inputs reached
+   `secp256k1_fuzz_check_rfc6979_nonce_failure_cleanup`; clean master could
+   dereference a NULL nonce output, message, or key at
+   `src/hash_impl.h:308` through `src/secp256k1.c:525`. The dedicated
+   `rfc6979-callback-guards` seed has SHA-256
+   `dbdd76bbc6c98c1b38c78dc0fe19b551526aaeae688a2074a5a4a13d5ef7082f`.
+   This is **Medium for a direct public callback caller** and
+   **Low/Nice-to-have for current Core**, whose normal signing calls provide
+   validated pointers. Clearing a nonce buffer is fail-closed hygiene; it is
+   not a Critical finding merely because the value is called a nonce.
+
+2. `08705eb7` is a distinct boundary in the same callback family. With valid
+   message and key inputs, `counter == UINT_MAX` made the clean RFC6979 loop
+   wrap and continue indefinitely. The focused
+   `rfc6979-counter-max` seed has SHA-256
+   `447539c7e6f593dc6a8f216362dd6ad24335f5a5ebbee049538e932706ec391e`.
+   This is **Medium direct-API denial of service** and **Low/edge-case for
+   current Core**; normal Core signing does not forward an attacker-owned
+   retry counter. It is not nonce reuse, forgery, or key compromise. A retry
+   counter with no standalone cryptographic meaning is not Critical to clear.
+
+3. `b3fe5d69` exposed stale variable output from a too-small public-key
+   serialization. The first stop was the zero-output assertion at
+   `src/fuzz/api_roundtrip.c:535`; clean master reset the output length but
+   left the caller's supplied prefix unchanged. The related DER variable
+   output and normalization checks use the same known-range contract. These
+   remain **Low to Medium fail-open API state** and **Low/Nice-to-have for
+   current Core** because Core checks serialization returns and this is not a
+   malformed block or witness admission path.
+
+4. The fixed-output parser hunks from `67c1b976` then exposed NULL DER and
+   compact parser inputs at `src/fuzz/api_roundtrip.c:625`. The focused
+   `null-parser-inputs` seed has SHA-256
+   `75334d1c5ded3bd77404331dd79a1e98b3c48879e295a0f5b0ef580cc1b3f1df`.
+   Clean master invoked the illegal callback without invalidating the opaque
+   signature. This is **Low to Medium API-state correctness** and
+   **Informational/Low for current Core**; Core's wire parsers receive actual
+   serialized input and callers check failure returns.
+
+5. `95272693` exposed NULL-tweak invalidation at
+   `src/fuzz/api_roundtrip.c:324`. The focused `null-tweak-cleanup` seed has
+   SHA-256 `91073873bc07022424f4b1626fe714690850d98c08a9d860da842f56b59fc7eb`.
+   Clean master returned before clearing the in/out secret or public key.
+   This is **Low to Medium fail-open key state** and **Informational/Low for
+   current Core**; no block or witness path supplies a NULL tweak.
+
+6. `2e0eebb9` exposed the invalid opaque-public-key load boundary in
+   `secp256k1_ec_pubkey_combine`, at the assertion in
+   `src/fuzz/api_roundtrip.c:440`. The focused `invalid-ecdsa-pubkey` seed has
+   SHA-256 `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa`.
+   Under a non-aborting illegal callback, clean master continued after
+   `secp256k1_pubkey_load` failed. This is **Medium local opaque-state
+   integrity** and **Informational/Low for current Core**: serialized public
+   keys are parsed before Core uses them, and no invalid block or witness can
+   directly construct this opaque object.
+
+7. `91f9af34` exposed explicit built-in RFC6979/default callback aliases
+   bypassing the SHA compression hook installed on the caller's context. The
+   current fuzzer assertion is at `src/fuzz/api_roundtrip.c:4207`. The
+   callback still computes the SHA-equivalent result, so this is **Low
+   master-relative dispatch/performance correctness** and **Informational for
+   current Core**, not signature forgery, nonce reuse, key disclosure, or a
+   consensus result change.
+
+8. `7bde103c` (with the equivalent follow-up `97dab671`) exposed overflowing
+   scalars in deliberately corrupted opaque ECDSA signatures. Clean master
+   reached `secp256k1_scalar_get_b32` and the assertion at
+   `src/scalar_impl.h:43`; the focused `opaque-ecdsa-signature-state` seed has
+   SHA-256 `3e7753d5224e1722e199be3770a322e6ad9ea2229ebedae7bce5e344261aec86`.
+   This is **Medium local API/state-boundary correctness** and
+   **Informational/Low for current Core**. Core parses wire signatures rather
+   than accepting arbitrary opaque signature bytes from a block or witness.
+
+9. The remaining fixed-output hunk from `67c1b976` exposed compact ECDSA
+   serialization with a NULL signature. The dedicated
+   `ecdsa-compact-null-output` seed has SHA-256
+   `9e133d339b56042a6cdbc2e87ef6c6ab77f6f0ad606011b04a0211110270eec8` and
+   stopped at `src/fuzz/api_roundtrip.c:697` until the 64-byte output cleanup
+   was staged. `1e82f988` is the existing oracle revalidation for this exact
+   condition. The finding remains **Low to Medium fail-open API state** and
+   **Informational/Low for current Core**; no invalid-block acceptance,
+   forgery, disclosure, or memory error is involved.
+
+10. Only after the preceding API repairs were staged did the strict DER
+    length boundary become the first remaining production stop. Clean
+    `origin/master` forms `sig + inputlen` in `src/ecdsa_impl.h:142` before it
+    can reject a one-byte non-DER input when `inputlen == SIZE_MAX`. The
+    focused `der-input-size-max` seed has SHA-256
+    `7bc90f653163aadb9bd6770e39c3514586bea2a5ef8c4256f6f94558ecd210ce`.
+    A fresh direct clean-origin Clang 22.1.7 UBSan control used `{0x00}` and
+    `SIZE_MAX`; it exited 1 with the pointer-overflow diagnostic at that
+    exact line. The clean control binary, library, and log hashes were
+    `5cafa5173d01b79f4e6174c5e5cf074842953643466e81ea2eff576dd51f89c4`,
+    `da37180bb8254504325c80d7c844d526056d7535a17ce15c290499178558d359`, and
+    `c613622d87cf8543c7c0fb340df41023a896142af6b439edfa8ef3cc236da4ab`.
+    Existing fix `70133c4b` tracks offsets instead of forming the end
+    pointer. This is **Low direct-API parser robustness** and
+    **Informational/Very Low for current Core** because the public contract
+    requires an array containing the claimed length; it is not a remote DER,
+    signature, or block-validation vulnerability.
+
+The source changes in this ladder were disposable copies of existing commits,
+not new fixes from this revalidation. The `ecdsa-sign-null-input-cleanup`
+seed (`6d0f226c4476c7730751e1d1bb3e6a0e57b976d09de53f3947f59bfc9ed2dd98`)
+and `variable-output-cleanup` seed
+(`167bf5a0c2924f483b0cd4f345bad305aaa36e363117403eb31fb44671c876d1`) remain
+covered by the existing `67c1b976` and `b3fe5d69` contracts. They were not
+recounted as new findings merely because another API stop came first. The
+ordering also means that applying a later repair such as `70133c4b` must not
+be described as fixing any earlier callback, stale-output, or opaque-state
+problem.
+
+### Repaired verification
+
+Fresh Clang 22.1.7 Debug ASan/UBSan builds used `SECP256K1_ASM=OFF`, all
+optional modules, external callbacks, libFuzzer, and the repository-supported
+native and `-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` configurations. The
+final staged source hashes in the disposable tree were:
+
+    fuzz_api_roundtrip.c       a4a17b26cd8dcc606a53015173403579e528082d1c8105fa86a38a81c0bf28cc
+    src/secp256k1.c            e01c6b0f47e3c9707d1bbc9a0880dd46f2a05bd067180c1a598636ce66e5934e
+    src/ecdsa_impl.h           48c0af9cae8fdff45cefc0b111d4b97615f4a5b7d31a98b001197f8a79b5cd25
+    contrib/lax_der_privatekey_parsing.c  8b41b39efcafa1ff53749a609c3bae49189143a5e88e66a5ff814099fedb4258
+
+All 62 tracked inputs were run independently with strict failure handling in
+both arithmetic builds. Both completed with zero failures and zero artifacts;
+the status-only replay log hash was
+`c1d697670e20f42a1f3aceadd2b68aa116382b1858ffcd37e11b8ee7ef2c5846` for each
+backend. The final fuzzer and shared-library hashes were:
+
+    native 5x52       fuzzer 00b4e5634a778176438cdaac8e7fbc266974a25deac18c8e1236ca98e6b96f00
+                       library d4b435d32de5dec615e93cff346d2a1ea751cf87e823b605bfea1c8d62dcf026
+    forced int64      fuzzer ea3671a578f829b981cc2704eda2a06837272383bad17a2b67dc660609df6dff
+                       library 8fedf4d92cd1b2647baf904fb11366d3e349ed8a48f34f130b2360f684f8bb25
+
+Private corpus copies then ran with two managers and two workers using:
+
+    -fork=2 -jobs=2 -max_total_time=10 -timeout=180 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0 -handle_abrt=0
+
+Both backends returned zero. Every worker reported
+`oom/timeout/crash: 0/0/0`, and both artifact directories were empty. The
+native and forced-int64 campaign log hashes were
+`4bf2e75107c5a916f079af9b90c1c0685991d4b2ba11dc64292e88524e411d8d` and
+`6841177558c742a778207b07b0b75bd4a9f208820ad88b85dc6510c2f2188fe9`.
+LibFuzzer loaded 61 non-empty tracked seeds; the zero-length tracked input
+was covered by the standalone file-driver replay. The evolved private
+corpora and logs were disposable and did not modify the tracked corpus.
+
+### Caller-aware severity conclusion
+
+The clean-master ratings above are library ratings, not Bitcoin Core impact
+ratings. Core's ECDSA and Taproot validation paths parse serialized keys and
+signatures and check the library return values before accepting them. The
+direct callback NULL and retry-counter cases are not attacker-controlled
+normal Core callback inputs. The opaque signature/public-key cases require
+deliberately corrupt in-memory objects. The contrib private-key exporter is
+not a block or witness parser, and Core does not use `secp256k1_ec_pubkey_combine`
+as a peer-controlled block-validation primitive in the surveyed paths.
+
+Accordingly, this current-origin replay found no invalid-block or
+invalid-witness acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, disclosure, or severe remote
+memory/concurrency consequence. No API item above is High or Critical under
+the caller-aware scale. In particular, a witness-sigop result would require a
+minimized proof that an invalid block is accepted, and a nonce or retry value
+without standalone cryptographic meaning is not Critical merely because it
+is not cleared. No new production fix, deterministic regression test, corpus
+seed, cherry-pick, or severity upgrade is claimed by this revalidation.
