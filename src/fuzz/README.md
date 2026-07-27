@@ -40392,3 +40392,151 @@ origin control, the normalization-only control, and the combined repair, and
 amend their commit notes if any fix changes or masks the other's first stop.
 The nonce-clearing caveat is unchanged: a retry counter or nonce candidate
 without standalone cryptographic meaning is not a Critical erasure finding.
+
+## 2026-07-27 Current-origin ecmult_multi first-stop and repair masking revalidation
+
+This is a clean-master reiteration of the existing `ecmult_multi` findings,
+not a new production claim. The control used
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and recorded
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. It began with an
+archive of current `origin/master`, then overlaid the audited fuzzer sources,
+build files, `src/fuzz/fuzz.h`, and the tracked corpus. `origin/master` also
+predates the shared `checked_size_mul` helper used by this newer fuzzer, so the
+disposable `ecmult_multi.c` received only a harness-local compatibility shim;
+no production allocation helper was copied into the clean control.
+
+The corpus contained 29 files and 1,028 bytes. Its sorted filename/size
+manifest was
+`5ca3510f05b14c9555abd220d28a71cedacdb70925a24e2dfe5e580cc549ce5c`.
+The tracked fuzzer source hash was
+`aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`; the
+disposable source with the compatibility shim and a compile-time barrier
+guard was `f60e9b306570bb14c7456840f0d4dbd64a571c2c351d930e9ae8a62f737d03fc`.
+Clean production hashes were:
+
+    src/scratch_impl.h  294a55d429fa4cc9dec46ade345bbb2bfdff4055eb1cbf1ba6168a23e5e74db6
+    src/ecmult_impl.h   ce70d26cb987c9bb2a2477389459437fc2831546c9c14404b58cf7ed07f32cc1
+
+### Clean first stops and masking order
+
+With unmodified production code, all 29 native and forced-int64 GCC file
+drivers exited 134 at the same first harness assertion, the
+`secp256k1_scratch_create(SIZE_MAX)` boundary in the disposable
+`ecmult_multi.c:298` helper. The focused `scratch-wrap-create` seed is 47
+bytes with SHA-256
+`db72836642228acaab2fd266ee26cad512be8b64c592fefc4ea0c9ebf92d6620`.
+Clang 22.1.7 ASan/UBSan reproduced the production failure in both backends:
+the constructor requested `base_alloc + SIZE_MAX`, wrapped to a 31-byte
+allocation, and wrote its 32-byte scratch header at
+`src/scratch_impl.h:18`. The allocation is at `src/util.h:174`; the
+symbolized fuzzer frame is `ecmult_multi.c:298`. The complete native and
+forced-int64 ASan logs were
+`e37a464777b9d31550d13f9049aaa56727c5a203aaaecfe7ef74513d0dd464f9` and
+`a0a6d7f5e522aaf9b6c923679335a074e0a109512795441ce3c4ae21fad6a93a`.
+
+The constructor barrier was then skipped only in the disposable harness with
+`SECP256K1_FUZZ_SKIP_SCRATCH_CREATE_BOUNDARY`; no production byte changed.
+All 29 inputs advanced to `secp256k1_fuzz_check_scratch_accounting_boundary`
+at disposable `ecmult_multi.c:87`. Its focused seed is 65 bytes,
+`scratch-accounting-boundary`, with SHA-256
+`d39eeeeb613739c8c497ff25b1d60851ccb678bc097ead65fc86e63110481c1d`.
+The test creates a magic-valid object whose `alloc_size` is 9 and
+`max_size` is 8. Clean master returns the invalid `alloc_size` from
+`scratch_checkpoint` instead of rejecting the state, and the subsequent
+accounting operations are likewise unguarded. This is distinct from the
+constructor overflow.
+
+Applying only the `secp256k1_scratch_check` accounting hunk from `3d285c02`
+on top of the clean tree left the constructor guard absent. The exact
+accounting-only patch hash was
+`63fa2fc13b31dcf6fa336136c338793769a5e5e7bb1f45de65451f0e79ade85a`.
+With that one repair and the harness barrier still skipped, every seed
+advanced to the separate callback-failure output oracle. The first stop was
+`secp256k1_fuzz_ecmult_multi_check_failure_output`, reached from the repeated
+Pippenger and Strauss failure matrices. The focused
+`callback-failure-output-state` seed is 43 bytes with SHA-256
+`605855a1db2299ebe6a79851137a4abbd0f0252ae8e5677f507203a53057e897`.
+After earlier terms have accumulated, clean
+`secp256k1_ecmult_multi_simple_var` or a later batch returns failure without
+clearing the output Jacobian, so the caller can observe a partial result.
+
+The exact production output repair from `8c5c8124` was then applied only to
+`src/ecmult_impl.h`; its production patch hash was
+`28969427b83400a5aaf30942829be8e370ee3af0322533391f096bd569ec33ac`.
+It resets the result to infinity in both the simple callback path and the
+batched path before returning failure. With the constructor call still
+disabled in the harness, the accounting and output repairs made all 29 seeds
+return 0 in both GCC backends. Finally, the exact constructor repair from
+`e8a72397` was restored and the full, ungated harness passed the same corpus.
+The combined repaired production hashes were:
+
+    src/scratch_impl.h  6d0ac9640db7627b2997375c2ecdbcfffae4f4883f0fe08ff5ea90e74ec17540
+    src/ecmult_impl.h   d6b9f173b73752fdd2b5696a24c2c1967a2b896ac4b002049e7b3830f3971395
+
+The three first stops are therefore causally separate. A constructor repair
+must not be credited with fixing malformed-object accounting or callback
+output state; the accounting repair must not be credited with clearing a
+partial multiplication result.
+
+Fresh Clang 22.1.7 ASan/UBSan repaired file-driver hashes were
+`66e89cb1a22b3536c3176d97e8db4655672860e8b64952057baac6a3865cde24`
+(5x52) and
+`4fd09180b2d08d856c607a3b566c8a2efa98fee12fbe613676ded83bb0b0a979`
+(10x26). All 29 inputs returned 0 in both backends with no sanitizer,
+assertion, crash, timeout, OOM, or artifact; the aggregate native and
+forced-int64 file-driver log hashes were
+`5172f4d71ad299055966258b03b0e4e78d59a3320756d8c6a0f5b9cadb227e56` and
+`a0f47031e16dd30996155568fd73faced9e97c4be568172a2e9a78468a8fc9d9`.
+The clean constructor proof used sanitizer binaries
+`b04f1d434ae5b12ce83e8f572abe69897c16c0b7246f731b773bf703a5e85cbf`
+(5x52) and
+`3b48b7fc311316ae7c2b06681d631d16768fc12cb51c716eff2b6de142157f93`
+(10x26), both of which reported the 32-byte write after a 31-byte
+allocation.
+
+The repaired libFuzzer binaries were
+`9951e4fa85f9d8b9a0e908f33fa8a9791030c5c7419cd2f40cd4819dfd4800ff`
+(5x52) and
+`81d6ba852ebfbadfa618966d1f43e5db7c48940f5c8ba41988c8fb516d5b14dc`
+(10x26). Isolated disposable corpus copies ran with:
+
+    -fork=2 -jobs=2 -max_total_time=10 -timeout=20 -rss_limit_mb=0
+    -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0
+
+Both jobs exited 0; every worker reported `oom/timeout/crash: 0/0/0`, no
+sanitizer diagnostic appeared, and both artifact directories were empty. The
+worker log hashes were
+`328d520c733dbc7673971ef1f0aafff010540aac97c7a7d46c80629857a55e81`
+(5x52) and
+`7920a9d397ba677250053e434547ab39c98d76f8d468e0965c41fe0cef449398`
+(10x26). The evolved corpora were discarded.
+
+### Caller-aware severity
+
+The scratch constructor overflow remains **Medium confirmed internal memory
+safety** on unmodified master. The malformed magic-valid accounting state is
+**Low/informational internal hardening**, and the partial callback-failure
+output is **Low internal state correctness**. All three are real production
+contract failures, but their master-relative severity is not a proxy for Core
+consensus impact.
+
+For current Bitcoin Core, all three remain **Informational/Low**. The scratch
+object and callback are static/internal library state; Core's current MuSig
+path uses the no-scratch `ecmult_multi` route and does not give a peer block or
+witness control over `SIZE_MAX`, a malformed scratch object, or a rejecting
+ecmult callback. Existing callers check the failure return, and no public
+Core parser or signing/verifying path was shown to consume the partial result.
+No invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, disclosure, or
+remote memory/concurrency consequence was demonstrated. These are not
+High/Critical findings under the caller-aware scale; that rating would require
+a reproducible consensus-relevant Core path, not merely an internal sanitizer
+failure.
+
+The production fixes and deterministic tests in `e8a72397`, `3d285c02`, and
+`8c5c8124` remain the repairs. This entry adds no production source, corpus
+seed, or severity upgrade. Future scratch, ecmult, MuSig, or l0rinc changes
+must rerun all three clean first stops and amend their commit notes if any
+fix changes or masks their ordering. The nonce caveat is unchanged: a retry
+counter or nonce candidate without standalone cryptographic meaning is not a
+Critical erasure finding.
