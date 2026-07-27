@@ -3717,6 +3717,24 @@ helper made the identical mutated seed pass with exit 0. Both temporary
 changes were restored before fixed replay; no clean-master production bug is
 claimed.
 
+As a post-rebase control, the native and forced-int64 builds were rebuilt with
+`cmake --build <build> --target fuzz_field fuzz_musig tests -j4`. The field
+binary hashes were `6ae5286ded1f025dc0b4484a4217df7cb3d51fb6eab99598fc165d89191efd34`
+(native) and
+`0d217ae2200a89dc76cd91480c2c3fc2e12cdbc95df3453cbbaf7b6af82e7626`
+(forced-int64/10x26). Private copies of the tracked field corpus were replayed
+with two managers and two workers using `-fork=2 -jobs=2 -max_total_time=10
+-timeout=180 -rss_limit_mb=0`, with all libFuzzer failure classes enabled.
+Both managers exited 0, reported no assertion or sanitizer diagnostic, and
+left zero artifacts. The native and forced-int64 log hashes were
+`8d79e06ea0e1470ecb7f0ba6c4ec4e60679dd46585f6470e4da8423a33a30bb8` and
+`b7e526ef9fda77f77c5ac5a1579ee59de337c2786a4e1a72ae454e5203c91f27`.
+The focused native verifier also passed `fe_normalize_max_magnitude`,
+`fe_equal_magnitude`, `ecmult_const_tests`, and all registered MuSig suites
+with `tests -i=1 -j=2`. This is verification of the existing ledger, not a
+new production fix or a claim that the separately time-bounded sequential
+MuSig replay completed its full 81-file corpus.
+
 The restored Clang ASan/UBSan target passed all 50 MuSig corpus files on the
 default 5x52 backend and on forced-`int64`/10x26, with 51 fixed executions and
 exit 0 in each replay. Isolated
@@ -39079,3 +39097,118 @@ does not receive a High/Critical severity rating and requires no production
 fix or deterministic regression test. No l0rinc commit masks this control.
 It is unrelated to clearing a nonce or retry counter that has no standalone
 cryptographic meaning.
+
+## 2026-07-27 Latest l0rinc detached-ref reconciliation
+
+The fork refs were fetched again after the EllSwift denominator proof. Both
+`origin/master` and `l0rinc/master` remain
+`d2d04864ef9b056151603a3ced7980958b058028`. This reconciliation started from
+audit commit `b0cecca5143b09d1afd3202a6046767d2622a06b`, directly on that base.
+No remote master commit was missed, and the working tree was clean before this
+ledger entry.
+
+The unmerged refs were compared by commit, source hunk, and current caller
+behavior. The decisions below are intentional: an equivalent change already
+in this branch is not cherry-picked a second time, because doing so would
+obscure which master behavior was tested first and could make a later repair
+look like it caused the result.
+
+- `l0rinc/boundary-condition-bugs` adds `161a39a1` and `65d38b0c`. The former
+  tightens `secp256k1_fe_equal`'s `b` magnitude from 31 to 30; current master
+  already has that upstream contract correction, and this branch retains the
+  stronger exact-boundary test from `994b3501`/`5a8a4114` plus the fuzzer
+  oracle. It is not a new master production finding. The latter is the
+  10x26 magnitude-32 normalize repair already imported as `6e5e385c`, with
+  `c3d04cfb` separately covering the zero-predicate carry loss that the fork
+  patch did not repair. Its clean-master severity remains **Medium/latent
+  field correctness**, not High/Critical: no current Bitcoin Core block or
+  witness path has been shown to construct the maximum-magnitude state.
+- `l0rinc/detached2` and `detached3` repeat the MuSig failure-output cleanup
+  series, ending in `13308e3e`/`51e93c4a`. The current equivalents are
+  `6b6cbf46`, `961533d4`, `e52006a5`, `03e28bd1`, `5fca864d`, `a5124da2`,
+  `e76ed994`, `432d5695`, `e2fd2fee`, and `a8d180a3`, with focused corpus
+  postconditions. No raw cherry-pick is warranted; it would only duplicate
+  already-tested cleanup behavior. Core's MuSig calls check returns and are
+  wallet/PSBT signing paths, so these remain below consensus High/Critical.
+- `l0rinc/detached` and `detached27` contain the already represented invalid
+  keypair/public-key barriers (`c86729e`, `91b9d762`/`f106aaa5` equivalents).
+- `detached6` through `detached14`, `detached16` through `detached19`, and
+  `detached22` are backend, constant-time implementation, inlining, and
+  comment/optimization snapshots. They do not add a missing contract oracle
+  that should be cherry-picked into a master-relative discovery branch. The
+  one behavior-sensitive test in this group, `e8318a94`, checks rejection of
+  overflowing EllSwift XDH secrets; current master already contains the
+  production fix `307b49f1`, and this branch has the stronger boundary test
+  `b99a94c3` plus `secp256k1_fuzz_check_ellswift_overflow_secret` in
+  `src/fuzz/ellswift.c`. The native and forced-int64
+  `tests -i=1 -j=1 -t=ellswift_xdh_bad_scalar_tests` runs both passed (status
+  0). Bitcoin Core supplies a locally generated valid secret to its BIP324
+  XDH call; peer-controlled wire encodings do not create this secret-key
+  overflow condition, and the path is transport rather than block/witness
+  admission. No High/Critical rating follows.
+- `detached15`'s full MuSig aggregate-nonce comparison is already in current
+  master as `8363a2d8`. The long `detached20` snapshot is likewise not one
+  missing patch: its BER test-vector repair is `921e3428`, compact-signature
+  scalar coverage is `ba667582`, ecmult temporary cleanup is `c2cacecf`,
+  allocation/iteration arithmetic coverage is `e12c22cc`, `bd7dd2f8`, and
+  `978cdd7e`, secret-key example cleanup is `e05f92fc`, and scalar-boundary
+  coverage is `2f81d535`. Its monolithic `104f53ea` review stack was split
+  across master and narrow current commits such as `826308a4`, `591452da`,
+  `307b49f1`, and the existing API/fuzzer barriers; cherry-picking the old
+  stack would change implementation order without adding a master-relative
+  failure. `detached21` is comment-only. The current ledger preserves the
+  production/test ordering and clean-master first-stop evidence for each.
+- `detached4` is an optimization stack, including the one-point Strauss
+  fast path; `detached5` is an optimization/context-rebase stack. They do not
+  add a contract oracle or a master-relative failure not already tested here,
+  so they are not cherry-picked into the discovery branch. A future
+  optimization replay must rerun the clean-master differential and state
+  whether it changes or masks an existing oracle.
+- `codex/comment-audit-reordered` is comment-only. `detached23` through
+  `detached30` are alternate Core-side documentation ledgers, not missing
+  secp production fixes. Their relevant caller and severity conclusions are
+  already recorded in this README; importing the divergent histories
+  wholesale would duplicate evidence without strengthening a proof.
+
+A post-rebase interaction control checked that the two 10x26 repairs do not
+mask one another. In disposable forced-int64 Clang 22.1.7 ASan/UBSan
+worktrees based on this branch, reverting only `6e5e385c`'s
+`normalize`/`normalize_var`/`normalize_weak` carry hunk left the
+`c3d04cfb` zero-predicate repair intact but made
+`tests -i=1 -j=1 -t=fe_normalize_max_magnitude` abort at its independent
+normalized-value comparison (status 134, log SHA
+`9d5fff56b2d470e57411caa1f96187c6b6622023e812d6af39457420ed628c7e`).
+Reverting only `c3d04cfb`'s `normalizes_to_zero{,_var}` hunk left the
+`6e5e385c` normalize repair intact but made the same test abort at the
+independent false-zero postcondition (status 134, log SHA
+`9e7c9c645b3cc34ececdb4c811604aafe01f8b76095639d437a1240c3087d81b`). The
+fixed branch passed that test (status 0, log SHA
+`b63e7906472e9a9fc9cbfade75273d0e8a4be006d44fe394214e92c5f4af6e1c`).
+
+A clean `origin/master` forced-int64 control with a temporary combined test
+first failed at the independent normalize byte comparison (status 134, log
+SHA `1f591c9765dc1c7df4d526ada2bd4f4fb2ee44bb552fd2fcd47ffb7710142289`); a
+separate zero-predicate-first control failed at the zero predicate (status
+134, log SHA `6af042bf7a3383ae4a5f4240a97e0da6e9183721730185882ea6b15eed57434c`).
+These controls were temporary and no new source change is retained. The
+ordering proves that a green follow-up normalize repair must not be treated as
+evidence that the distinct zero-predicate master bug was fixed, or vice versa.
+Both defects remain **Medium/latent internal field correctness** on unmodified
+master. No invalid-block or invalid-witness acceptance, witness-sigop
+undercount, consensus divergence, signature forgery, key compromise, or severe
+remote memory/concurrency impact was demonstrated; current Core reachability
+of the maximum-magnitude state remains unproven, so no High/Critical rating is
+justified. The nonce-clearing note is unchanged.
+
+This reconciliation found no unmerged l0rinc commit that changes the
+master-relative classification of an existing finding. In particular, no
+candidate demonstrated invalid-block or invalid-witness acceptance, witness
+sigop undercount, consensus divergence, signature forgery, key compromise,
+or severe remote memory/concurrency impact. A nonce or retry counter with no
+standalone cryptographic meaning is not Critical merely because it is not
+cleared. The exact fork repairs that do affect production remain in their
+existing commits, whose messages document the mutation/corpus condition,
+test gap, Core caller, severity on unmodified master, and any follow-up
+masking order. This is a documentation-only reconciliation; no new
+production fix, deterministic regression test, or severity upgrade is
+claimed.
