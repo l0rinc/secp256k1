@@ -38332,3 +38332,76 @@ justified and no existing finding is downgraded. No production mutation, fix,
 cherry-pick, or nonce-erasure claim is made. Future hash/backend changes must
 state whether they preserve, change, or mask this result and the earlier
 clean-master first stops.
+
+## 2026-07-27 ECDH repaired-output revalidation
+
+This pass reiterates the existing `03c5f6e2` production finding against the
+current repaired audit tree `c5646250`; freshly fetched `origin/master` and
+`l0rinc/master` both remained `d2d04864ef9b056151603a3ced7980958b058028`.
+The production fix is present as committed, and the current fuzzer source and
+ECDH implementation hashes are
+`034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79` and
+`87c496b84d0229aa7775d5563e656112b87757008d49f9833aca46641051383e`.
+
+Both builds used Clang 22.1.7, Debug, ASan/UBSan,
+`SECP256K1_ASM=OFF`, all optional modules, and libFuzzer. The native and
+forced-int64/10x26 `fuzz_ecdh` binary hashes were
+`781de3e6624ea035d65565d03dab399d3324a7f0b61a1b2731eefb51d4ccb34c` and
+`09fe02ada059311f7669d01daef3bd1ff1595c76f52218d426878455c8771870`.
+
+The tracked corpus has nine files and 283 bytes. The exact existing witness
+`explicit-builtin-invalid-scalar` is 38 bytes with SHA256
+`f1c1b3420c86f206f279651910e6515572533154960687f627ddfb7e5b31802c`.
+The sorted filename/size manifest hash is
+`2c73102405b309935533dc1c3c0195afda3f0f30031ff99bbabc9f47c994ad38`.
+
+The full copied-corpus campaign used two independent workers per backend:
+
+    bin/fuzz_ecdh <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 125 seconds each, with final reported
+coverage/features of 2633/5556 and 2633/5522. Forced-int64 workers exited
+zero after 131 and 133 seconds, with final reported coverage/features of
+4462/12611 and 4462/12516. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete campaign log hashes were
+`c59151885b1c9af5a0ed1889774926e2ad8edf16ad9da76350c605ff226bd173` (native)
+and `e8f92af10a61f35cffa79616fbe7ec55cb3239bc57be055e4e326f3a92e60d2b`
+(forced-int64). The exact witness replay also exited zero; its log hashes
+were `e38ee10433c4b49ba94dd1b2db73f138020942f61648fff974f3e22528903d0b`
+and `53befba806cfd454a0c68891190f74d6e9428f1fcdfd7d63617297121a062a10`.
+
+The focused verification suites passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=ecdh -log=1
+    bin/noverify_tests -i=1 -j=2 -t=ecdh -log=1
+
+The native tests/noverify and forced-int64 tests/noverify log hashes were,
+respectively,
+`2e8ec016fbf542692365b6154575dd3365b6f4918d611c1969113bed966d6a6c`,
+`116914da7a4f9e12c94ea7d6ca2deae63a11e565b9028754664099da981ab607`,
+`e14f0becb8692bcadd0b0966d2e58b8c307c4df6707ab1b2a781fa3bc37ad2b`, and
+`558a3a4a077629ed20cba9a8162d85977a8de58261dee50356d09854f84e19da`.
+
+The master-relative finding remains **Low / API fail-closed hygiene**, not a
+new bug. On clean master, `secp256k1_ecdh(..., order + 1, hashfp = NULL, ...)`
+returned 0 after hashing the fallback scalar-one point but left a nonzero
+32-byte output; the earlier diagnostic mutation showed the explicit exported
+SHA256/default callbacks were the second first stop. `03c5f6e2` now recognizes
+those library-owned callbacks and clears the fixed-size output on failure while
+preserving custom-callback ownership semantics. This replay proves the
+regression remains fixed and does not alter that masking order.
+
+Bitcoin Core has no standalone `secp256k1_ecdh` production caller; BIP324
+uses `secp256k1_ellswift_xdh`. Therefore this cannot be triggered by an
+invalid block or witness, does not affect sigop accounting or consensus
+acceptance, and does not justify High/Critical severity, key-compromise, or
+signature-forgery language. A future cherry-pick touching ECDH callback
+recognition or output cleanup must preserve or explicitly amend this exact
+master-relative order, caller inventory, witness, mutation proof, and test
+gap. This is unrelated to clearing a nonce with no standalone cryptographic
+meaning. No new production fix, mutation, or cherry-pick is introduced here.
