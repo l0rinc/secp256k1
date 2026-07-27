@@ -38629,3 +38629,20 @@ evidence; the containing `ecmult_const_tests` run above is the valid proof.
 The assembly backend therefore has no remaining iteration-gated test gap in
 this audit. No production mutation, fix, regression test, finding, or
 severity change is claimed.
+
+## 2026-07-27 public self-test coverage closure
+
+An inventory of the 83 public declarations in `include/*.h` found one symbol
+without a direct textual call from a fuzz target: `secp256k1_selftest`. This is
+intentional coverage, not an uncovered production path. The context fuzzer
+creates heap and preallocated contexts on every input, while
+`secp256k1_context_preallocated_create` invokes `secp256k1_selftest()` before
+initializing the context. The self-test therefore runs through the context
+target in every assembly, native, and forced-int64 backend campaign.
+
+The public self-test has no return value or output state; failure reaches the
+library error callback. A standalone fuzzer call would duplicate the same
+execution without adding a stronger postcondition. Bitcoin Core also invokes
+it during static context initialization, before block or witness processing.
+No missing oracle, production bug, consensus consequence, or severity change
+was found, and no source mutation is warranted.
