@@ -2865,6 +2865,103 @@ formal constant-time proof. The next queue is another distinct scalar
 compiler/architecture helper; do not repeat this predicate unless new source,
 compiler, architecture, or performance evidence changes.
 
+## Cycle 28: scalar reduction translation validation
+
+### Scope and hypothesis
+
+I audited `secp256k1_scalar_reduce` in the native 4x64 and forced 8x32
+implementations (`src/scalar_4x64_impl.h:76-94` and
+`src/scalar_8x32_impl.h:94-117`). Its contract is to return the supplied
+overflow bit and, when it is one, add the modular negative group order so a
+256-bit scalar in the valid `[n, 2^256-1]` range becomes `r-n`; overflow zero
+must leave a valid scalar unchanged. Callers include byte decoding, scalar
+addition, multiplication final reduction, and secret-key validation. The
+hypothesis was that carry propagation, the negative-order constants, or
+32-bit versus 64-bit representation could translate incorrectly under a
+compiler or optimization mode.
+
+### Independent oracles
+
+The C harness constructed limbs directly from raw big-endian bytes and did
+not use the project's byte decoder. It covered 776 cases: zero, one, `n-1`,
+`n/2`, `n`, `n+1`, `n+2`, the maximum value, every 256-bit power of two,
+every `n-power` boundary, 128 deterministic values below `n`, and 128
+deterministic values of the form `n+offset`. For overflow zero the byte
+oracle expected the input unchanged; for overflow one it independently
+subtracted the order byte by byte. The accepted digest was
+`11ef97f81a04e006`.
+
+The C++ verifier used `boost::multiprecision::cpp_int` to decode and subtract
+the order, and covered 392 cases: eight principal boundaries, all powers of
+two, 64 deterministic values below the order, and 64 deterministic values
+above it. Its accepted digest was `d36b339d72b8e407`. Both independent
+oracles agreed in native and forced configurations. Scratch harness hashes
+were:
+
+    cc88020b3eeed26ec009f29bad6057d632872003b3c688e95c30acd1179fe0bd  scalar-reduce-harness.c
+    9462e52aa4ae92aece27c258b00ac80052d0b3a8762bc420d165a7e2565aee5f  scalar-reduce-c-shim.c
+    3da0187cb780a883a4ca1cc41afdc7ea723d7ee550c99da34bd4921668848063  scalar-reduce-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+The C oracle passed all 24 Clang/GCC x86_64 combinations of assembly,
+portable, and forced-int64 selectors at O0, O2, O3, and Os, with the same
+776-case digest. Six O2 LTO runs, both compilers and all selectors, also
+matched. Six C++17 O2 bridge runs matched the C++ digest. GCC 16 emitted a
+Boost-header diagnostic while compiling the scratch `cpp_int` verifier; the
+same three runs repeated with only `-Wno-array-bounds -Wno-stringop-overflow`
+for that external-header warning and passed cleanly.
+
+Six `-DVERIFY -DVALGRIND` ASan/UBSan O1 runs, with leak detection and
+halt-on-error settings, matched without diagnostics. The native and
+forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --output-on-failure -R 'scalar|fuzz.scalar'`; each reported
+`100% tests passed, 0 tests failed out of 7`, including scalar,
+malformed-scalar, ElligatorSwift bad-scalar, and scalar fuzz-seed tests.
+
+At O2, `objdump --disassemble=probe_reduce` found zero conditional or loop
+jumps in all six Clang/GCC x86_64 normal probes. The instruction counts were
+11 for Clang native/portable, 36 for Clang forced-int64, 32 for GCC
+native/portable, and 46 for GCC forced-int64. Clang AArch64 compile-only
+commands covered native and forced-int64 selectors, O0/O2/O3/Os, and normal
+or `-DVERIFY` modes: all 16 objects compiled. The eight normal probes had no
+conditional or loop branch mnemonic. The optimized VERIFY probes had two
+branches for the explicit overflow/invariant checks; those branches are
+diagnostic assertions and are absent from normal production objects.
+
+The AArch64 object hashes, in O0/O2/O3/Os order, were:
+
+    native normal:  e4fef2628da5d9b7dd2794ce7da390b3fa21dfb5d65dbca5296009ca8634645c  be1812575e092c02312942ab7b93852226981a214e23f81c2edab940d8be20f6  202ff10fd8169fe1957b93f765b5d6df3e753c2ccfb2737b235896f8a6033fed  b2b1a7971566054f072ef7a00bab7bf30f888b384627e3d46a1e59929901070b
+    native VERIFY:  be5e855c91583c22eae27c258b00ac80052d0b3a8762bc420d165a7e2565aee5f  591423ebb10637cb0c4a23ea73d8a641c82b89d0be5a71e7c261b89f02cb43e2  f3386cbef02e579360ab6ca4cd7f7023622f108caecb3710f41a4dd4b13cbb44  43e3fe11ab11fc3ae43efefa703714fc9dbb8575047cbee7545d62ef6835ff37
+    forced normal: 6d113245e74e9acaf00c8ea19ac228ae46becf040112ff30418e90ad6bd047bb  e434332f580f11667d8fae7a417ee3d1e390e4fd4fdc10952ee4775cc6122c11  cd7af42c34ea20d9af3ab2fe9e699e7b8b9e12572a2a25689eaf8e2c8c04c6c6  e570f3372abb5008812f6d25c04c5d4281c57aa4e7b0e9ac1c525d62c4eeb8a2
+    forced VERIFY: f7b4d6c9740eece2291b48092b658ba56ca8b185091c0ff63c702dafdc378fd2  cc95d6b2620322100c696534397246620c3fcd8e4af20ad7e6002c3012de8d0d  a57bd13f68c0745243d3829a77950ba2eb8766bf6e474df9224dca77ea2394c1  4095d67e066a3fe80a300eaaea896b40b92ef8bea5374c9302249d13867f1ce7
+
+### Mutation controls
+
+Scratch native and forced copies changed only the first negative-order
+constant from `SECP256K1_N_C_0` to `SECP256K1_N_C_0 + 1`. Both C runners and
+both C++ runners rejected the mutation at the exact order input, case 4:
+
+    reduce mismatch case=4 overflow=1 returned=1
+    cpp reduce mismatch case=4 overflow=1 returned=1
+
+This proves both independent oracles detect a carry/constant error at the
+first reduction boundary and exercise both backend representations.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No incorrect reduction, carry error, undefined behavior,
+lowering anomaly, or reachable production defect was found. No production
+code, regression test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal constant-time proof. The next queue is another distinct scalar
+compiler/architecture helper; do not repeat this predicate unless new source,
+compiler, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and

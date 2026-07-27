@@ -301,6 +301,22 @@ made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
 or formal constant-time proof. Goal 78 remains active with another distinct
 scalar compiler/architecture helper queued.
 
+The twenty-eighth hypothesis then tested `secp256k1_scalar_reduce` with a
+direct raw-limb C oracle covering 776 cases
+(`digest=11ef97f81a04e006`) and an independent Boost `cpp_int` verifier
+covering 392 cases (`digest=d36b339d72b8e407`). Native assembly, portable C,
+and forced-int64 Clang/GCC O0/O2/O3/Os matrices, six LTO runs, six C++ bridge
+runs, six ASan/UBSan/VERIFY runs, native and forced CMake scalar/corpus runs,
+and Clang AArch64 compile-only normal/VERIFY code generation all matched.
+Normal optimized x86 and AArch64 probes had no conditional or loop branches;
+the optimized AArch64 VERIFY probes had only the expected invariant-check
+branches. Changing the first negative-order constant by one failed at the
+exact `n` input in both C and C++ mutation controls. The
+compiler/representation hypothesis was dismissed; no production change was
+made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
+or formal constant-time proof. Goal 78 remains active with another distinct
+scalar compiler/architecture helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
