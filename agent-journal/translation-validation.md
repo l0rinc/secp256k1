@@ -285,6 +285,78 @@ compiler/architecture check of another constant-time field or scalar helper;
 use cross-architecture or Alive2 reduction if the missing tools become
 available.
 
+## Cycle 2026-07-27: AArch64 `secp256k1_scalar_cond_negate` translation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `f34c5d26`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with no running
+fuzz, sanitizer, compiler, or profiling jobs. The catalog, this journal,
+`src/fuzz/README.md`, scalar history, and prior finding notes were searched.
+Clang 22.1.7 and `aarch64-linux-gnu-objdump` were available. No QEMU runner,
+AArch64 sysroot, Alive2, CBMC, or KLEE executable was available. A public
+GitHub API search found no exact conditional-negation issue; the currently
+visible matching PR concerned an unrelated test-result oracle and was not
+used as evidence.
+
+### Hypothesis and contract
+
+The bounded hypothesis was that Clang's AArch64 lowering of the constant-time
+conditional-negation helper could introduce a flag-dependent branch, or that
+the native 4x64 and forced-int64 8x32 representations could produce visibly
+different lowering in the helper's carry and zero-selection paths. The
+contract at `src/scalar.h:81-83` requires flag 0 or 1, constant-time
+conditional negation, and return value -1 when negated and 1 otherwise; zero
+must remain zero when negated.
+
+### Evidence
+
+The independent byte-oracle harness
+`/tmp/secp256k1-translation-78/cond-negate-harness.c` has SHA-256
+`6ff57b4b52da49e0599806954bb387ac433efa7151f8c4c1b011539b4d273991`.
+The AArch64 compile matrix used:
+
+    clang --target=aarch64-linux-gnu -std=c99 -O{0,2,3,s} -g \
+      -I/tmp/secp256k1-oracles-next/src [optional -DUSE_FORCE_WIDEMUL_INT64] \
+      -c /tmp/secp256k1-translation-78/cond-negate-harness.c -o <object>
+
+Native and forced-int64 objects were produced successfully at all four
+optimization levels. `aarch64-linux-gnu-objdump -d --no-show-raw-insn
+--disassemble=probe` found zero `b.cond`, `cbz`, `cbnz`, `tbz`, or `tbnz`
+instructions in every probe output. The O2 native and forced-int64 probes
+use AArch64 `csel`, `cneg`, and carry instructions for flag-derived data;
+the O0 helper disassemblies likewise contain zero conditional or loop branch
+mnemonics. The object hashes were:
+
+    native:      O0 304b63e7e8d34c1a27772e8e39556f68964fba5f921c198fd47464a56d203045
+                 O2 ae2d275c81009f4f7bf952f64f62e592b4ab591b47e42f5ca7eb81f534931d15
+                 O3 f7c8ed17e4c303c81c27fe6bfd038774cc89cb224bfa7c9ad91f6c7825888510
+                 Os aa1a22a2cf32d7eaac1ed9ea69fcf670c4ec00a65d9354345d870c41050d994d
+    forced-int64: O0 44958373e6d3d546307a479600de520ef57c8bd5aa27fed5c7c12ddeff41998c
+                 O2 ee297c490999d9f5552925dd8e43ce1c68c1861d0c122a3f4237c1f0abb34e28
+                 O3 965b36d5aef58a1ababf59ca2bc3a8355f60dba679c1021095f6c7ec58588ad0
+                 Os dc902ec6b41ed2ce894dc4e79ce859a472483b22c8e7f3df14be361a8c9995bb
+
+Compile-only `-O1 -DVERIFY -DVALGRIND` builds also succeeded for both
+representations with zero warning bytes; their object hashes were
+`a68b4792aff0e0ccee73b7344b59e0981ff76a1992ad792f29f907d667274102` and
+`c97c45c1b1dab53f994b652dfb913352be637f7debc4a786ba6d52d0fc79bde5`.
+Attempts to compile ARMv7 and RISC-V variants stopped at the host's missing
+`/usr/include/bits/libc-header-start.h` sysroot header, before any object was
+created. No AArch64 executable was linked or run, so this cycle is codegen
+evidence only, not a semantic execution result.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang AArch64 object lowering,
+native and forced-int64 representations, optimization levels, and compile
+diagnostics. No production change, regression test, or finding commit is
+justified. This does not prove AArch64 runtime behavior, cover other
+compilers, assembly paths, ARMv7/RISC-V, invalid flag domains, or establish
+semantic equivalence without execution. The next distinct queue is another
+small constant-time field or scalar helper; revisit AArch64 execution or the
+ARMv7/RISC-V matrix if a runner or sysroot becomes available.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -298,5 +370,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-five dismissed hypotheses unless compiler, source, or architecture evidence
+six dismissed hypotheses unless compiler, source, or architecture evidence
 changes.
