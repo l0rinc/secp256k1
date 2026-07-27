@@ -15990,3 +15990,89 @@ Any future parser cherry-pick or optimization that changes the first stop
 must amend its commit message with the exact `{0x00}, SIZE_MAX` condition,
 the output postcondition, the Core caller/input origin, severity on clean
 master, and whether it preserves, changes, or masks this UB proof.
+
+## 2026-07-27 Current-origin recoverable ECDSA opaque-state revalidation
+
+The recoverable-signature state-boundary finding was revalidated against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The clean current
+origin `src/modules/recovery/main_impl.h` SHA-256 is
+`fbec2358a560b669d85720108b0b1a8f653c91531a88ded0a1da339445266cc9`.
+The repaired audit-branch file SHA-256 is
+`4ae9cb6b7f0c4e322d5ed1c278992f8de8ff8e84074e78c567b64bad83bd0b70`.
+This is a revalidation of existing repair commit `95f93dfe`, not a new
+production fix or a claim that current origin already contains it.
+
+### Exact state transition and proof
+
+The existing `recovery` fuzzer first creates and round-trips a valid
+recoverable signature. Its state-barrier oracle then copies that initialized
+65-byte object and independently replaces `r` with 32 bytes of `0xff`,
+replaces `s` with 32 bytes of `0xff`, or sets `recid` to `4`. For each invalid
+state it calls compact serialization, conversion, and public-key recovery
+through the public API. The oracle installs a non-aborting illegal callback,
+requires one callback and return value `0` from each operation, and requires
+the compact output, normal signature, and public key to be all zero. This
+keeps the proof about the production state loader and failure postconditions,
+not about an arbitrary fuzzer-only assertion.
+
+The focused corpus input
+`src/fuzz/corpora/recovery/opaque-recoverable-signature-state` is 52 bytes
+with SHA-256
+`c2d69e7cda8a4d4ebbe0bb77919bfe7711be868323c7c0b80e44747c4a4cb6a1`.
+The overlaid fuzzer source SHA-256 is
+`d75f5bcdc726f6bae87138b0425d8aa26275d9a098a5da39f3d0143652267362`.
+On clean current origin, the exact one-input replay exited `134` in both
+the native and forced-int64 ASan/UBSan builds. The binary SHA-256 values were
+`ae695a977ea887006dd924c9cfca3ac86914b9d8b599f5e88b1c8dc571c3e0e7` and
+`fd11b0f73c2400e414cd281f1d3483bc7660954927be0e57aac212e08f0f20bd`;
+the log SHA-256 values were
+`4bc4a8e98bfccdab9974d6f0f6b8a7dac10ac6bc8136c9c04bfd6040cb8fc17a` and
+`505fd672956b946c38558e199996a78ef72ee4aa212564cf1710bfce6b35d088`.
+The clean loader calls `ARG_CHECK` without returning a validity result, then
+passes the overflown native scalar to later scalar operations. With the
+fuzzer callback returning, compact serialization reaches the scalar invariant
+assertion. The same seed therefore proves a production assertion failure on
+master, rather than merely proving that a new postcondition is too strict.
+
+The repaired native and forced-int64 replays both exited `0`; their binary
+SHA-256 values were
+`588f40698dd25be63f5cd00a22a78ce0e32a191ec76a18d5a12b4beecd715d52` and
+`343d370e3070b058849ba7f9b74988ac36064f3938169583f5d97e6e4397fc93`.
+Their corrected log SHA-256 values were
+`be4f5d6a91affef0fc7531edbd6a0547d71bf3a38a2cf69709f318a99ea52365` and
+`779cec5229dc1d06eccda4c22960e37957ab731d11dce118b26ee2163afd9273`.
+The repaired deterministic API test and the existing recovery edge tests
+passed with `bin/tests -i=1 -j=1 -t=test_ecdsa_recovery_end_to_end` in both
+backends. The clean current-origin end-to-end test also passed because it
+does not contain this invalid opaque-state mutation; the corpus is the
+missing regression trigger.
+
+### Repair interaction and Core severity
+
+`95f93dfe` validates both scalar halves and the recovery-id byte at the
+opaque-state boundary, returns failure, and clears outputs before returning.
+Its deterministic test mutates each component independently. This must remain
+distinct from compact parser checks: a valid wire compact signature is already
+parsed through the bounded API, while this finding begins after a caller has
+an initialized object and then corrupts its implementation-defined bytes.
+Any later output-cleanup, scalar-representation, or parser cherry-pick that
+changes the first failing operation must amend its commit message with the
+three mutations, the exact corpus, and whether it preserves, changes, or
+masks the scalar assertion and cleanup proof. Do not count a patch that only
+makes the harness fail earlier as a production fix.
+
+Bitcoin Core's production compact-signature users are bounded: `CKey::SignCompact`
+creates a recoverable signature, immediately serializes it, and verifies the
+recovered key; `CPubKey::RecoverCompact` checks the vector length, parses the
+64-byte compact payload and recovery id, then recovers; message verification
+uses that wrapper. No current Core production path was shown to mutate the
+opaque `data[65]` bytes or accept a peer-controlled invalid in-memory object.
+Consequently this is **Medium for the direct library invalid-state boundary**
+because clean master can abort or continue with an invalid scalar after
+caller-side state corruption, but **Informational/Low for current Bitcoin
+Core**. No invalid-block or invalid-witness acceptance, consensus divergence,
+witness-sigop effect, signature forgery, key compromise, remote memory
+corruption, or severe concurrency impact was demonstrated. High/Critical is
+not justified without a Core caller-level reproduction, especially one that
+accepts an invalid block. This finding is also unrelated to clearing a nonce
+or retry counter that carries no standalone cryptographic meaning.
