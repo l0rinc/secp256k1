@@ -37703,3 +37703,23 @@ rating is justified, and no existing finding is downgraded. No production
 mutation, fix, cherry-pick, or nonce-erasure claim is made. Future context or
 callback changes must state whether they preserve, change, or mask this
 result and the earlier clean-master first stops.
+
+## 2026-07-27 Full sanitizer test-suite verification
+
+After the public API and context campaigns, the complete configured test suite
+was run once in each current sanitizer build from audit tree `5e5e7232`:
+
+    bin/tests -i=1 -j=2 -log=1
+
+Both runs exited zero. The native ASan/UBSan run completed in 96.519 seconds;
+the forced-int64/10x26 ASan/UBSan run completed in 139.987 seconds. No test
+failure, sanitizer diagnostic, or assertion failure appeared. Complete log
+hashes were
+`99aa795b59242f9721865af9f2363bc6c56f6f1241b57760e8a8c99edb44447f` (native)
+and `7c539e72d81fd65d17ffd8949e6142225373a4a0042c9e01f0819224c24b9c69`
+(forced-int64).
+
+This is verification evidence only. It does not prove invalid-block or
+invalid-witness rejection beyond the tests exercised, does not change any
+master-relative severity, and supplies no production bug, fix, cherry-pick,
+or nonce-erasure claim.
