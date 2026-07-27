@@ -42194,3 +42194,41 @@ invalid-block or invalid-witness acceptance, a witness-sigop undercount,
 consensus divergence, forgery, key compromise, disclosure, or a severe remote
 memory/concurrency effect. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared.
+
+## 2026-07-27 Fresh l0rinc detached-ref reconciliation
+
+The l0rinc remote was fetched again after the current-origin replay. Its
+`master` remains `d2d04864ef9b056151603a3ced7980958b058028`, and no new pull
+head appeared beyond the previously inventoried set. One previously described
+as-pruned ref is behavior-bearing and is recorded here rather than imported
+without context.
+
+`detached27` (`53b78cca`) adds the two `secp256k1_pubkey_load` checks for the
+curve equation and subgroup, then tests an opaque `(x,y)=(1,1)` point through
+load, serialization, and combination. It is represented by `07dc72ee`, which
+has the same production checks and deterministic regression, plus a current
+origin severity statement and a disposable mutation proof: removing both
+checks makes the `group` test and the focused group corpus abort on native and
+forced-int64 builds. The patch differs only in surrounding source context and
+test-size spelling; no behavior-bearing hunk is missing. The clean-master
+finding remains **Medium direct opaque-state integrity**, but
+**Informational/Low for current Bitcoin Core** because serialized block and
+witness inputs are parsed before creating opaque public keys. It is not an
+invalid-block acceptance, witness-sigop, forgery, key-compromise, disclosure,
+or severe remote memory/concurrency finding.
+
+The standalone `detached` ref (`6e60f8df`) is represented by `ed0d95eb`, which
+adds the same NULL-tweak keypair invalidation and carries the stronger
+master-relative proof. `detached2` (`13308e3e`) and `detached3` (`51e93c4a`)
+are the same final-signature cleanup and are represented by the existing
+`445308f6`/`2b332892` cleanup chain and its fuzzer proof. `detached26`
+(`cea6d114`) is documentation-only and follows the already-imported
+`silentpayments-flush-label-batch` behavior; `detached28` is benchmark-only;
+`detached29` and `detached30` are audit ledgers. The remaining detached field,
+hash, group, optimization, and test-only snapshots do not add a missing
+contract or discovery oracle.
+
+No detached ref was cherry-picked in this reconciliation. No new production
+finding or severity upgrade was found, and no later fork repair was used to
+mask the clean-origin result. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
