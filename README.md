@@ -15737,6 +15737,51 @@ not High or Critical. The nonce-clearing caveat is unrelated; this finding is
 about invalid opaque point state, not a retry counter without standalone
 cryptographic meaning.
 
+## 2026-07-27 Current-origin custom ECDSA retry-boundary revalidation
+
+The existing `aab3a680` custom-nonce retry-counter finding was replayed
+against `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The
+relevant ECDSA, recovery, and test files are byte-identical to the earlier
+`d2d04864ef9b056151603a3ced7980958b058028` proof baseline. This is a
+current-origin reiteration, not a new production fix.
+
+A disposable clean-origin probe called both public ECDSA signing entry
+points with a custom nonce callback. The callback fails at attempt zero and
+returns one invalid all-zero nonce only at `UINT_MAX`; each clean entry point
+called it once and failed. The clean production `src/secp256k1.c` hash was
+`7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb`; the
+probe source and binary hashes were
+`a603756ba5bc58ee1a84f9afc037de908f2ce1674dcbef3303cd0a9cd1fc107a` and
+`0a5a0e96303ae90bfb187bf5352882a012629e3f8797a61ecdbbee671f95fd7f`.
+
+For causal separation, the only disposable production mutation changed
+`src/secp256k1.c:547` from `unsigned int count = 0` to
+`unsigned int count = UINT_MAX`. The mutated clean library called the
+callback twice per entry point and returned success:
+
+    ret=0 normal_calls=2 recoverable_ret=0 recoverable_calls=2
+
+The second callback is the wrapped counter at zero. This proves the
+boundary without attempting 2^32 callbacks; the mutation was restored before
+the repaired controls. Repaired native and forced-int64 libraries called the
+callback once per entry point, and focused `ecdsa` plus `recovery` tests
+passed with log hashes
+`2d52e86f8584a4cc84c5bd244b5e15ef00c860dbb84bd4fb1a963e74212a1cb6` and
+`8c41195028e3464229daee2d2a9ad300be76efcdf13d50119a4397103948674a`.
+
+Severity remains **Low** for direct-API retry-state availability robustness
+and **Informational/Very Low** for current Bitcoin Core. `CKey::Sign` and
+`CKey::SignCompact` use the library-owned RFC6979 callback, which has its own
+bounded counter rejection; no Core path supplies an attacker-owned callback.
+The finding is not reachable from an invalid block or witness and shows no
+invalid-block acceptance, witness-sigop undercount, consensus divergence,
+signature forgery, key compromise, memory-safety, or remote concurrency
+impact. It is not High/Critical. A retry candidate with no standalone
+cryptographic meaning is not a nonce-clearing severity driver. Later changes
+to the signing loop must state whether they preserve, mask, or alter this
+exact wrap proof; `aab3a680` remains the fix with the deterministic boundary
+test.
+
 ## 2026-07-27 Current-origin impossible SHA-length revalidation
 
 The existing `ab36b78b` repair was revalidated against
