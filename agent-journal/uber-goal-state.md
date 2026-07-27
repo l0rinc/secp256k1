@@ -52,16 +52,20 @@ probe bodies had no conditional or loop jumps. A subsequent
 `secp256k1_scalar_cond_negate` byte-level oracle passed 769 cases with the
 same digest across the same compiler/backend matrix and its eight optimized
 probe bodies also had no conditional or loop jumps; the focused production
-fuzzer trigger passed in both sanitized backends. All five bounded hypotheses
-were dismissed; no production finding or fix commit resulted. A sixth
-hypothesis then compiled the same helper for AArch64 with native and forced
-int64 representations at `O0/O2/O3/Os`, found no conditional branch
+fuzzer trigger passed in both sanitized backends. The first five bounded
+hypotheses were dismissed; no production finding or fix commit resulted. A
+sixth hypothesis then compiled the same helper for AArch64 with native and
+forced-int64 representations at `O0/O2/O3/Os`, found no conditional branch
 mnemonics in the probe or O0 helper disassemblies, and passed `VERIFY`/
 `VALGRIND` compile-only builds. AArch64 execution was unavailable because no
 runner or sysroot was installed; ARMv7/RISC-V compilation likewise stopped at
-the missing host sysroot header. All six bounded hypotheses were dismissed;
-no production finding or fix commit resulted. The goal remains active with
-another compiler/architecture constant-time helper queued.
+the missing host sysroot header. A seventh hypothesis then tested
+`secp256k1_scalar_add` with an independent 773-value, 597,529-pair oracle,
+all native/forced-int64 Clang/GCC optimization and LTO runs, sanitized
+execution, mutation controls, and AArch64 codegen; all results matched and
+all seven bounded hypotheses were dismissed. No production finding or fix
+commit resulted. The goal remains active with another compiler/architecture
+constant-time helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff

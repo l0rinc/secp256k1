@@ -357,6 +357,109 @@ semantic equivalence without execution. The next distinct queue is another
 small constant-time field or scalar helper; revisit AArch64 execution or the
 ARMv7/RISC-V matrix if a runner or sysroot becomes available.
 
+## Cycle 2026-07-27: `secp256k1_scalar_add` compiler lowering
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `63eba06e`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with no running
+fuzz, sanitizer, compiler, or profiling jobs. The catalog, this journal,
+`src/fuzz/README.md`, `src/fuzz/scalar.c`, scalar implementation history,
+and prior findings were searched. The public scalar contract is at
+`src/scalar.h:48-49`; the native and forced-int64 implementations are at
+`src/scalar_4x64_impl.h:96-120` and `src/scalar_8x32_impl.h:119-146`.
+The existing fuzzer has an independent base-2^16 addition oracle and
+alias checks at `src/fuzz/scalar.c:172-196` and `:568-575`, but no prior
+journal cycle had checked this helper's compiler lowering directly.
+
+### Hypothesis and contract
+
+The bounded hypothesis was that optimization or LTO could introduce a
+data-dependent jump in scalar addition's carry/overflow/reduction path, or
+that the 4x64 and 8x32 implementations could disagree at modular-order
+boundaries or under supported output aliasing. The contract is addition
+modulo the group order `n`, returning whether the unreduced sum overflowed
+the order. Inputs in this harness were canonical scalars below `n`.
+
+### Evidence
+
+The standalone byte-level harness
+`/tmp/secp256k1-translation-78/scalar-add-harness.c` has SHA-256
+`90ff74ca7b24bdab9e949286e5d256fdbfc7288981a961a2e00ace6455176efa`.
+Its reference adds 33 bytes, compares the extended sum with `n`, subtracts
+`n` across all 33 bytes when needed, and independently checks the serialized
+result and overflow bit. It generated 773 values: zero, one, two, `n-1`,
+`n-2`, every `2^k`, every `n-2^k` for `0 <= k < 256`, and 256 deterministic
+values below `2^255`. It checked all 597,529 ordered pairs three ways:
+distinct output, `r == a`, and `r == b`.
+
+The native and `-DUSE_FORCE_WIDEMUL_INT64` Clang and GCC builds at `O0`,
+`O2`, `O3`, and `Os` all printed exactly:
+
+    ok values=773 pairs=597529 digest=4871192a2e4ff35b
+
+The `-O2 -flto` Clang/GCC native and forced-int64 executables printed the
+same result. `objdump -d --no-show-raw-insn --disassemble=probe` found zero
+x86 jump mnemonics in all four non-LTO O2 probe objects and all four LTO
+executables; the emitted code used `setcc`, `cmov`, and carry arithmetic.
+Clang `-O1 -fsanitize=address,undefined -DVERIFY -DVALGRIND` native and
+forced-int64 executions also printed the same result with no diagnostics.
+
+The AArch64 compile matrix used:
+
+    clang --target=aarch64-linux-gnu -std=c99 -g -O{0,2,3,s} \
+      -I/tmp/secp256k1-oracles-next/src [optional -DUSE_FORCE_WIDEMUL_INT64] \
+      -c /tmp/secp256k1-translation-78/scalar-add-harness.c -o <object>
+
+All eight objects compiled successfully. `aarch64-linux-gnu-objdump -d
+--no-show-raw-insn --disassemble=probe` found zero `b.cond`, `cbz`, `cbnz`,
+`tbz`, or `tbnz` instructions for every representation and optimization
+level. AArch64 `-O1 -DVERIFY -DVALGRIND` compile-only builds also succeeded
+with zero warning bytes. The object hashes were:
+
+    native:      O0 7c6f15c3fddce3d19df1fa04f8f3b4bb914573c0f9895bfcd2fff9dda5ebd9f6
+                 O2 e61345bef1f6b7de41c76eb1bfcaa818f725a36a244a1ae4bcf1315198467b65
+                 O3 2d76891d74db7628da735e62c70c2e0cf032d752b3c3478727301b90f1e9af40
+                 Os 980e07430b96dea5102da57a168384d6955c21be4c17ca525728a341dc90c52f
+                 VERIFY 3737733e684d9da563ec8b6803ae280f0528b2e83cd49654b3f8cd05b8cf9862
+    forced-int64: O0 7134f024915107154d6d1bcdb42ae234d700c2e3469bce8e95f95bf6d134db2c
+                 O2 ec6036946c5b0b890725546ed2471647e22eb91d1b952ed9777b62c1bed9696d
+                 O3 183436996727d717373624b6d03ee73894b9a7cdf29cc2beab91c0efd25d8ab7
+                 Os ee5d56e075f2bb77c073385382def71a903528774643a5a991fa9d5bdb6fbfe2
+                 VERIFY 5aa2de193cf703d6b48e67541fb50ffe0df88412b4d75e7c72bc949cf230aecf
+
+The oracle sensitivity control copied the source to `/tmp`, changed both
+backend calls from `secp256k1_scalar_reduce(r, overflow)` to
+`secp256k1_scalar_reduce(r, 0)`, and ran Clang O2 in both representations.
+Both deliberately mutated binaries exited 1 at the same minimal boundary:
+
+    mutated native exit=1
+    distinct mismatch overflow=1/1
+    case left=1 right=3
+    mutated forced-int64 exit=1
+    distinct mismatch overflow=1/1
+    case left=1 right=3
+
+The first run of the uncorrected scratch oracle printed its own
+`reference subtraction underflow` diagnostics because it subtracted from
+only the low 256 bits when the 257th carry was set. It was discarded; the
+33-byte subtraction fix above was applied before any result was accepted.
+The first mutation-overlay compile also failed because the copied `util.h`
+needed the sibling `include/` directory; that scratch dependency was added
+and the mutation was rerun. Neither setup failure is target evidence.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 backends, LTO, sanitized execution, and Clang
+AArch64 code generation. The independent oracle is mutation-sensitive and
+found no arithmetic, aliasing, or overflow mismatch. No production change,
+regression test, or finding commit is justified. This does not provide
+AArch64 runtime execution, GCC AArch64 coverage, ARMv7/RISC-V coverage, or a
+proof for noncanonical inputs outside the helper contract. The next distinct
+queue is another small constant-time or overflow-sensitive field/scalar
+helper; revisit cross-target execution if a runner or sysroot appears.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -370,5 +473,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-six dismissed hypotheses unless compiler, source, or architecture evidence
+seven dismissed hypotheses unless compiler, source, or architecture evidence
 changes.
