@@ -214,6 +214,17 @@ to `|` failed at zero in both backends and both verifiers. The compiler
 hypothesis was dismissed; no production change was made. Goal 78 remains
 active with another distinct helper queued.
 
+The twenty-second hypothesis then tested `secp256k1_scalar_eq` with an
+independent serialized-byte oracle covering 645 values and 6,450 symmetric
+pair cases (`digest=36554ee1f215b27b`), plus a C++ verifier covering 581 and
+5,810 pairs (`digest=022065fdd7629ffb`). Native assembly, native portable C,
+and forced-int64 Clang/GCC optimization/LTO matrices, ASan/UBSan/VERIFY
+runs, focused tests, scalar corpus replays, mutation controls, and Clang
+AArch64 compile-only code generation all matched. The deliberate first OR to
+AND mutation failed at the first unequal pair in both backends and both
+verifiers. The compiler hypothesis was dismissed; no production change was
+made. Goal 78 remains active with another distinct helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

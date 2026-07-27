@@ -2074,6 +2074,133 @@ constant-time or overflow-sensitive helper; do not repeat the twenty-one
 dismissed compiler hypotheses unless compiler, source, architecture, or
 performance evidence changes.
 
+### Cycle 2026-07-27: scalar equality comparison
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `e1578b0d`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, CMake/Ninja, `aarch64-linux-gnu-objdump`, and the existing ASan and
+recovery/no-VERIFY builds were available. No AArch64 runtime or sysroot,
+GCC AArch64, ARMv7/RISC-V runner, Alive2, CBMC, or KLEE was available.
+The scalar equality declaration, both limbwise implementations, fuzzer
+uses, tests, history, and previous scalar predicate cycles were read before
+selecting this distinct comparison helper.
+
+### Hypothesis and contract
+
+The twenty-second bounded hypothesis was that native 4x64 and forced 8x32
+limb comparison could disagree for zero, order-adjacent, power/complement,
+or cross-limb differences, or that an optimizer could introduce an
+input-dependent branch. The contract at `src/scalar.h:86` is equality of two
+canonical scalar values. The native implementation at
+`src/scalar_4x64_impl.h:886-892` and forced implementation at
+`src/scalar_8x32_impl.h:679-685` XOR corresponding limbs, OR the differences,
+and compare the aggregate to zero. Existing fuzzer checks at
+`src/fuzz/scalar.c:598-603` were used as coverage/history seeds, not as the
+independent oracle.
+
+### Independent oracle evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/scalar-eq-harness.c` has SHA-256
+`2ba1e8f4e437391e116cfd0e602a48a4305708290f9288f577dcdc88ed5b1c5c`. It
+compares serialized canonical bytes with `memcmp`, then checks both argument
+orders. It covers 645 values including zero, one, `n-1`, `n-2`, `n/2`, every
+power of two and its order complement, and 128 deterministic values. Each
+value is compared with itself, seven fixed boundary values, offset and
+reverse values, producing 6,450 pair cases. Clang and GCC native assembly,
+native portable C, and forced-int64 O2 runs all printed:
+
+    ok values=645 cases=6450 digest=36554ee1f215b27b
+
+The independent C++ verifier
+`/tmp/secp256k1-translation-78/scalar-eq-cpp-harness.cpp` has SHA-256
+`cb2a3dd4604779c1b8cf51df7be742d6498aa9d861d1a3ca5d1d8635b4790b2e`. It
+uses serialized-byte equality and calls production code through
+`scalar-eq-c-shim.c` (SHA-256
+`1ffb7011558cf141ef5552a81e07d6fe234ad15a65a08fff5ee0aac3dc52013e`). It
+covers 581 values and 5,810 symmetric pair cases. Clang and GCC
+native-assembly and forced-int64 runs all printed:
+
+    ok cpp-values=581 cpp-cases=5810 digest=022065fdd7629ffb
+
+### Compiler, sanitizer, and project evidence
+
+Clang and GCC built and ran the C oracle for native assembly, native
+portable C, and forced-int64 at `O0`, `O2`, `O3`, and `Os` (24 executions).
+Clang and GCC native/portable/forced `O2 -flto` builds (six executions)
+matched the same digest. Clang and GCC native-assembly, native-portable-C,
+and forced-int64 `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined`
+executions (six executions) also matched without diagnostics. The existing
+ASan and recovery/no-VERIFY binaries passed `scalar_tests`, `field_half`,
+and `field_misc` for four iterations and two jobs with fixed seed
+`2468ace013579bdf2468ace013579bdf2468ace013579bdf2468ace013579bdf`. All ten
+files in `src/fuzz/corpora/scalar` ran once under both sanitized scalar
+fuzzers with fixed seed `3923475549`, without diagnostics or artifacts.
+
+The no-inline `probe_eq` bodies in all six Clang/GCC O2 native, portable, and
+forced builds and all six O2-LTO builds had zero conditional or loop jumps.
+Clang x86 lowered the final comparison to `sete`; Clang AArch64 lowered it to
+vector compare/aggregate operations and a final bit calculation. This is
+code-generation evidence, not a formal constant-time proof.
+
+The Clang AArch64 compile-only matrix used native and forced-int64 selectors
+at `O0`, `O2`, `O3`, and `Os`, with and without VERIFY. All 16 builds
+completed, and all eight non-VERIFY probe bodies had zero conditional or
+loop branch mnemonics. The non-VERIFY object hashes were:
+
+    native: O0 e3ffabbaaaef6457a8f74279abc64961d02e72c5aa9b779ab853b372480799b4
+            O2 ac9c2d2179cb039d63382d812592b29c44228d7a0251c56059d42a1955172c1b
+            O3 a73d277888057d1614cbc658907c21bb416a9b0af34212d73309d0aad93e3c10
+            Os e6c4bcb361260f0297e2ff7dd65994e226d7bec5f6796155b0afe9b4e1ed4213
+    forced: O0 547342bfae0ab69691c539b8b1d15d494194b6f69d283c1dab8984764ee045ef
+            O2 5187a522cfd1413832624a0d2cc6bed2ef1196ed966489e590e3cf36766355e9
+            O3 79a811b63f54f7758852c2176ce087e45b9624bd031df596b42b175ad0812d08
+            Os df28166dc3bf722aee35b3fe701e7cda4df240314f7bdcac58724fec87ff6eea
+
+The VERIFY hashes, in native O0/O2/O3/Os then forced O0/O2/O3/Os order,
+were:
+
+    e65a749b775178ad9c12b9b0e321e0b76f1a4275126713f8b6a2f111a83cc2ea
+    0b41e8a39ec053065fe8c916b79148f9960387910460ce6eb504691493472a
+    b1e0054a22b1c2f342427cc53a3edac71407e372aa476ce4ea5decbf766fc87e
+    d637c350d5d7d114341ca127fd539618d7fac13bf41be68e82466d60d0e4714b
+    f6c65bfb8433b3f0ee81e836bb5cb7058d3beb6412415e0dc73689c8cfa57d98
+    6d6cbad4dfa99f72ddcd86022daba36feaba1d2efce2e551e94de3fbb5e63940
+    974582b8ec27823cb98bdeb44d25c42e2931202d51bc9b66792d852c2cec6113
+    c5931cb5100b49f0d8198656643eb76bed5f70e410f80b06653bdbe6c1434038
+
+No AArch64 runtime, GCC AArch64, ARMv7/RISC-V build, or formal translation
+validation was possible.
+
+### Mutation controls
+
+Scratch copies changed the first XOR-aggregate operator from `|` to `&` in
+both backend equality expressions. Clean Clang O2 runners rejected the
+mutation at the first unequal fixed pair:
+
+    eq mismatch case=2 expected=0 actual=1
+    eq mismatch case=2 expected=0 actual=1
+
+The independent C++ verifier likewise rejected both mutated native and forced
+builds with `cpp eq mismatch case=2`. The mutation proves that the oracle
+distinguishes unequal limb patterns rather than only testing equal inputs.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native assembly/native C/forced-int64 paths, LTO,
+ASan/UBSan/VERIFY execution, focused tests and scalar corpus, and Clang
+AArch64 code generation. Both independent oracles found no equality,
+symmetry, cross-limb, or lowering mismatch. No production code, regression
+test, or finding commit is justified. This does not provide AArch64 runtime
+execution, GCC AArch64, ARMv7/RISC-V, or a formal constant-time proof. The
+next queue is another compiler/architecture constant-time or
+overflow-sensitive helper; do not repeat the twenty-two dismissed compiler
+hypotheses unless compiler, source, architecture, or performance evidence
+changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
