@@ -2483,6 +2483,147 @@ code, regression test, or fix commit is justified. The next queue is another
 distinct scalar compiler/architecture helper; do not repeat this predicate
 unless new source, compiler, architecture, or performance evidence changes.
 
+### Cycle 2026-07-27: scalar even predicate translation
+
+#### Scope and hypothesis
+
+The twenty-fifth goal-78 hypothesis targeted the direct
+`secp256k1_scalar_is_even` predicate in the native 4x64 backend
+(`src/scalar_4x64_impl.h:1004-1008`) and forced 8x32 backend
+(`src/scalar_8x32_impl.h:819-823`). Both implementations verify the scalar
+and return the inverse of the low limb's least-significant bit. The trust
+boundary is a canonical scalar produced by `secp256k1_scalar_set_b32`; raw
+bytes are untrusted until conversion. The question was whether limb
+endianness, reduction of `n`/`n+1`, compiler optimization, or backend
+selection could invert parity.
+
+Existing coverage was used as a seed: the general scalar fuzzer checks
+`secp256k1_scalar_is_even(a) == ((a32[31] & 1u) == 0)` at
+`src/fuzz/scalar.c:592-594`, and its boundary trigger checks half-order and
+half-order-plus-one at `src/fuzz/scalar.c:1093-1099`. Those checks do not
+independently reduce arbitrary raw inputs or compare backend representations.
+History search found the per-implementation move in `aa404d53`, with the
+constant-time scalar implementation ancestry in `44015000`.
+
+#### Independent oracle evidence
+
+The C harness
+`/tmp/secp256k1-translation-78/scalar-even-harness.c` has SHA-256
+`5a8f659038193a30d3ddac31a0e4045198379605a5b6abab3165b1fca39af7fb`. It
+constructs big-endian values independently, computes the expected reduction
+with byte subtraction, verifies production serialization, and derives parity
+from the reduced bytes. It covers 648 values: zero, one, `n-1`, `n-2`, `n/2`,
+all 256 powers of two and their order complements, 128 deterministic values,
+`n`, `n+1`, and all ones. Every successful run printed:
+
+    ok values=648 cases=648 digest=80f78c7b48a35aaf
+
+The C++ harness
+`/tmp/secp256k1-translation-78/scalar-even-cpp-harness.cpp` has SHA-256
+`0e1ff69421f599ca0af238f13bf309bfaa28658808571d008d8eeca316f0d089`, and
+its C shim `/tmp/secp256k1-translation-78/scalar-even-c-shim.c` has SHA-256
+`10161b574d4a0b6afbe173c4da3d2fb3cc277bec0f3cb712446b4a95330fe71c`. It
+decodes input with Boost `cpp_int`, computes `(input mod n) mod 2 == 0`, and
+calls the production predicate through the shim. Its 327-value set includes
+zero, one, `n-1`, `n-2`, all powers of two, 64 deterministic values, `n`,
+`n+1`, and all ones. Every successful run printed:
+
+    ok cpp-values=327 cpp-cases=327 digest=17d3c11fa9e857a1
+
+The explicit modulo-before-parity step is necessary because the group order
+is odd: the raw parity of `n` is odd while its reduced scalar is zero and
+even.
+
+#### Compiler and project evidence
+
+The exact C matrix used `-DSECP256K1_BUILD`, `-std=c99`, `-Wall -Wextra`, and
+`-I src -I include` with Clang 22.1.7 and GCC 16.1.0. It covered `O0`, `O2`,
+`O3`, and `Os` for x86_64 assembly (`-DUSE_ASM_X86_64=1`), portable native C,
+and forced 8x32 (`-DUSE_FORCE_WIDEMUL_INT64=1`): 24 executions, all with the C
+digest above. Six additional `-O2 -flto` executions, both compilers and all
+three selectors, matched. Six C++ bridge executions, both compilers and all
+three selectors, matched the C++ digest.
+
+The sanitizer matrix used `-O1 -DVERIFY -DVALGRIND
+-fsanitize=address,undefined -fno-sanitize-recover=all` and ran all six
+compiler/backend combinations with
+`ASAN_OPTIONS=detect_leaks=1:halt_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1`; all six matched without diagnostics.
+
+The native and forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --test-dir <build> --output-on-failure -R 'scalar|fuzz.scalar'`.
+Each configuration ran seven tests and reported `100% tests passed, 0 tests
+failed out of 7`, including `scalar_tests`, malformed scalar tests,
+ElligatorSwift bad scalar tests, and `fuzz.scalar.seeds`.
+
+For optimized x86 production probes, `objdump -d --no-show-raw-insn
+--disassemble=probe_is_even` found zero conditional or loop jumps in all six
+Clang/GCC O2 assembly, portable, and forced binaries. Clang lowered the
+native probe to `not` plus `and $1`; this is lowering evidence, not a formal
+constant-time proof.
+
+Clang AArch64 compile-only commands used
+`clang --target=aarch64-linux-gnu -DSECP256K1_BUILD [-DUSE_FORCE_WIDEMUL_INT64=1]
+-std=c99 -O{0,2,3,s} [-DVERIFY -DVALGRIND] -I src -I include -c`.
+All 16 native/forced, normal/VERIFY objects compiled, and
+`aarch64-linux-gnu-objdump -d --no-show-raw-insn
+--disassemble=probe_is_even` found no branch mnemonic in any probe. The
+native normal hashes in O0/O2/O3/Os order were:
+
+    0d8c9077e7b6001357ca8749d86e2e155d2ab4c00abe0a8863ac8d4555591110
+    bc7461bf93d0f53deb8d7b6540b5983deecb4f47fa814ae68455243690b8dac9
+    587987cde84729ccda6a26a81e0673e64f04b60facab6583c031d2f77180a311
+    595809f81e7612cda7884355c69d2fd56760f933d5396c724d548c90ba7d32a4
+
+The native VERIFY hashes in the same order were:
+
+    33ff4bc9929a27f16836fe0fb12e70c9f91120f645222b07ffb1213947c20ff1
+    9faebf21317473902ab2b40a45d0646f25ed8205a20f82f86d2d419d045925d7
+    5e9867c1353c60f95f19b0ddf1be1217d02ab0c9ffdb37d39377eac5fb1e7d97
+    d6e0d02ca551777c2c67692d3c44048cea5ab11273624d2c96c7b07799da6e3b
+
+The forced-int64 normal hashes were:
+
+    e7434f682e026ba5d2200caae05946c4b1ab4c68e03a1286c814deddebea6312
+    9225d463fcb3c871253b7944ea90f3de4146f2a0ceec10f1421c2482c7fd80bd
+    a5fcb2761d504d8a9904e6473a762fe3fc7edc24633a254cf4fa72829eff485d
+    081cc0f447a52d3a86d72e0aeaee2c4b0f74e300729032ef46534179f85a8c07
+
+The forced-int64 VERIFY hashes were:
+
+    64e2360f5183a0c8c991cdc652fab790a11a37d12a99594a45843bcf8747136c
+    885921532307c553dc6762e86e27f606b88955eccb5357d174c01a944ebe7fbc
+    d4e298ff27c7216a4c26daa09f7b86e8afb45122de00b9dd8e7716cbdd71548f
+    eab3155b1ee02ac15209328324c9c563aba36864ee1be919fcc6f7f42d1b67ce
+
+No runtime AArch64, GCC AArch64, ARMv7/RISC-V, or formal translation
+validation was available.
+
+#### Mutation controls
+
+Scratch copies changed only the low-limb `& 1` to `| 1` in
+`scalar_4x64_impl.h` and `scalar_8x32_impl.h`. Clang O2 C and C++ runners for
+both copies rejected the mutation at zero:
+
+    even mismatch case=0 expected=1 actual=0
+    cpp even mismatch case=0 expected=1 actual=0
+
+The compiler also emitted a tautological-bitwise-compare warning for the
+mutation. The behavioral failure proves that both independent oracles cover
+the positive even case rather than only odd values.
+
+#### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. The native and forced implementations agree with both
+independent oracles, and no parity, endianness, undefined-behavior, lowering,
+or reachable production defect was found. No production code, regression test,
+or fix commit is justified. The next queue is another distinct scalar
+compiler/architecture helper; do not repeat this predicate unless new
+source, compiler, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and

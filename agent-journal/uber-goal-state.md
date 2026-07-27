@@ -256,6 +256,21 @@ production change was made. Limitations are no AArch64 runtime, GCC AArch64,
 ARMv7/RISC-V, or formal constant-time proof. Goal 78 remains active with
 another distinct scalar helper queued.
 
+The twenty-fifth hypothesis then tested `secp256k1_scalar_is_even` with an
+independent byte-reduction oracle covering 648 values, including `n`, `n+1`,
+all ones, every power of two, order complements, and deterministic values
+(`digest=80f78c7b48a35aaf`), plus a Boost `cpp_int` modulo/parity oracle
+covering 327 values (`digest=17d3c11fa9e857a1`). Native assembly, portable C,
+and forced-int64 Clang/GCC optimization/LTO matrices, six ASan/UBSan/VERIFY
+runs, native and forced CMake scalar tests/corpus runs, and Clang AArch64
+compile-only normal/VERIFY code generation all matched. The direct probe had
+no conditional or loop branches in the tested optimized x86 and AArch64
+objects. The deliberate `& 1` to `| 1` mutation failed at zero in both
+backends and both verifiers. The compiler/representation hypothesis was
+dismissed; no production change was made. Limitations are no AArch64 runtime,
+GCC AArch64, ARMv7/RISC-V, or formal constant-time proof. Goal 78 remains
+active with another distinct scalar helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
