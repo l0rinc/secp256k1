@@ -37947,3 +37947,60 @@ finding is downgraded. No production mutation, fix, cherry-pick, or
 nonce-erasure claim is made. Future EllSwift, ECDH, or BIP324 wrapper changes
 must state whether they preserve, change, or mask this result and the earlier
 clean-master first stops.
+
+## 2026-07-27 X-only tweak and keypair dual-backend campaign
+
+The current audit tree `08a8d34e` was rebuilt before a longer
+`fuzz_xonly_tweak` campaign; freshly fetched `origin/master` and
+`l0rinc/master` both remained `d2d04864ef9b056151603a3ced7980958b058028`.
+Both builds used Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all
+optional modules, and libFuzzer. The native binary hash was
+`5abc22a6d6f195c62ddccad8b515ec8284a45d794df73987db89fc43f6170613`; the
+forced-int64/10x26 binary hash was
+`449fba021d872d9d8c3d6ef4b6e4ea0fa5732f77bf33750ca446913aad8157e5`.
+
+The tracked corpus had 20 files, 712 bytes, and sorted filename/size manifest
+hash `f286299c18c65c34adcee2c782609597ac8bce3b8ef7900ed57c6cd49fd488f1`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_xonly_tweak <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 121 and 132 seconds, with final reported
+coverage/features of 3,233/8,448 and 3,232/8,609. Forced-int64 workers exited
+zero after 123 and 130 seconds, with final reported coverage/features of
+5,206/15,860 and 5,205/15,143. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`bdf133501cd1d012e072290e625caebf5e2d365079ac095f8994f55c4d4133cc` (native)
+and `d99eb914e28ab0f9dc7ca9ad3ef76d99ebc6ee7d4972bca67dcb7a810601f34f`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The complete extrakeys/x-only test modules passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=test_xonly_pubkey \
+      -t=test_xonly_pubkey_tweak -t=test_xonly_pubkey_tweak_check \
+      -t=test_xonly_pubkey_tweak_recursive -t=test_xonly_pubkey_comparison \
+      -t=test_keypair -t=test_keypair_add -log=1
+
+The native and forced-int64 test-log hashes were
+`8db32033ef4bfd182612f41e34565d52f532e038f01fb6ae218d9da18c8af396` and
+`d60e35598b0bc05f52984b6eb0f4d145b66dcd11a2969e846bb337aee401b928`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised x-only parsing, parity normalization, tweak
+addition and multiplication, cancellation, recursive tweaks, keypair
+projections, invalid control inputs, overlap/failure cleanup, and static
+context behavior without demonstrating invalid-block or invalid-witness
+acceptance, sigop impact, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure. Bitcoin Core reaches
+these operations through descriptor, wallet, and Taproot application paths;
+this campaign found no consensus-admission consequence. No High/Critical
+rating is justified and no existing finding is downgraded. No production
+mutation, fix, cherry-pick, or nonce-erasure claim is made. Future x-only,
+keypair, descriptor, or Taproot-wrapper changes must state whether they
+preserve, change, or mask this result and the earlier clean-master first
+stops.
