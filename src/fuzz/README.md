@@ -38569,3 +38569,61 @@ rating justified. No production mutation, fix, regression test, or
 cherry-pick is claimed, and no nonce-clearing severity is inferred. Future
 assembly, arithmetic, context, or wrapper changes must state whether they
 preserve, change, or mask this result and the earlier clean-master findings.
+
+## 2026-07-27 x86_64 assembly full-suite verification
+
+After the fifteen-target assembly-on corpus matrix, the complete test binaries
+were run once with the same Clang 22.1.7 Debug ASan/UBSan x86_64 assembly
+configuration. The exact commands were:
+
+    bin/tests -i=1 -j=2 -log=1
+    bin/noverify_tests -i=1 -j=2 -log=1
+
+Both suites passed 121 test cases and emitted no failure, sanitizer, assertion,
+or runtime-error diagnostic. The `tests` log SHA-256 is
+`d0ed555824235b1f16b4938fce2d511b68fb7d31c1880aa8a616066e2e14c2d0`; the
+`noverify_tests` log SHA-256 is
+`be389c9c58a71d2d01ff5d5aae1e34870a2e72fd400b862435cde304b71194c7`.
+The total execution times were 96.713 and 47.710 seconds, respectively.
+
+At `-i=1`, three expected iteration-gated checks were skipped in both suites:
+`run_sha256_known_output_tests 1000000`, `test_ecmult_constants_sha 2048`,
+and `test_ecmult_constants_2bit`. This is a test-runner threshold, not a
+failure or a missing assembly result; the named suites passed. The skipped
+checks are run explicitly in the follow-up record below.
+
+This is negative verification evidence only. It found no clean-master bug,
+invalid-block or invalid-witness acceptance, consensus divergence, signature
+forgery, key compromise, or severe remote memory/concurrency failure. No
+production mutation, fix, regression test, cherry-pick, or severity change is
+claimed. Future backend changes must state whether they preserve, change, or
+mask this full-suite result.
+
+## 2026-07-27 x86_64 assembly gated-test follow-up
+
+The three iteration-gated checks from the full-suite record were run directly
+through their containing test targets. The exact commands were:
+
+    bin/tests -i=2048 -j=2 -t=ecmult_const_tests -log=1
+    bin/noverify_tests -i=2048 -j=2 -t=ecmult_const_tests -log=1
+    bin/tests -i=1000000 -j=2 -t=sha256_known_output_tests -log=1
+    bin/noverify_tests -i=1000000 -j=2 -t=sha256_known_output_tests -log=1
+
+All four targets passed. The ecmult test-log hashes were
+`031adf18ebd503bb3bc92b58545bafbc7556f6fc8472464bbb43911a3b0ecece` and
+`ee5b2f51a30ca6eb8e7c721e9802b53bd2b2972e1c4dd8cc51bc9427b56f6d3d`; the
+SHA-256 log hashes were
+`992207d2a1df94abb5c6f993d53a727f53ff7e649d87a57fc17177ca3b51cb3d` and
+`406031cb312820971913312fa7e14782739d06033157650629c03dca12dc1d18`.
+The ecmult runs took 5.293 and 1.046 seconds; the SHA-256 runs took 0.032 and
+0.029 seconds.
+
+Before this follow-up, an attempted direct selection of the internal output
+labels `test_ecmult_constants_sha` and `test_ecmult_constants_2bit` was
+rejected by the test runner because they are not registered targets. Both
+commands exited before executing a test and are explicitly excluded from the
+evidence; the containing `ecmult_const_tests` run above is the valid proof.
+
+The assembly backend therefore has no remaining iteration-gated test gap in
+this audit. No production mutation, fix, regression test, finding, or
+severity change is claimed.
