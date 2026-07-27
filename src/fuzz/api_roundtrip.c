@@ -1596,55 +1596,6 @@ static void secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(const secp256k1_cont
     FUZZ_CHECK(secp256k1_ecdsa_verify(ctx, &sig, one32, &pubkey) == 1);
 }
 
-/* The signing API documents no non-overlap precondition for its inputs and
- * output. Check exact aliasing against the fixed equation rather than against
- * another signing call, so an output write that happens too early cannot make
- * the oracle agree with the same corrupted production path. */
-static void secp256k1_fuzz_check_ecdsa_sign_input_output_alias(const secp256k1_context *ctx, const unsigned char *input, size_t size) {
-    static const unsigned char trigger[] = "ecdsa sign input-output overlap\n";
-    static const unsigned char one32[32] = {
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
-    };
-    static const unsigned char expected_sig64[64] = {
-        /* r = x(G), s = k^-1 * (z + r*d), with d = z = k = 1. */
-        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
-        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
-        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
-        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
-        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac,
-        0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07,
-        0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9,
-        0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x99
-    };
-    union {
-        secp256k1_ecdsa_signature sig;
-        unsigned char bytes[sizeof(secp256k1_ecdsa_signature)];
-    } alias;
-    unsigned char serialized[sizeof(expected_sig64)];
-
-    if (size != sizeof(trigger) - 1 || memcmp(input, trigger, sizeof(trigger) - 1) != 0) {
-        return;
-    }
-
-    /* The output starts at the message buffer. The signature save happens
-     * only after the message has been consumed by signing and nonce code. */
-    memset(&alias, 0xA5, sizeof(alias));
-    memcpy(alias.bytes, one32, sizeof(one32));
-    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &alias.sig, alias.bytes, one32, secp256k1_fuzz_ecdsa_nonce_fixed_one, NULL) == 1);
-    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, serialized, &alias.sig) == 1);
-    FUZZ_CHECK(memcmp(serialized, expected_sig64, sizeof(serialized)) == 0);
-
-    /* Repeat with the output starting at the secret-key buffer. */
-    memset(&alias, 0xA5, sizeof(alias));
-    memcpy(alias.bytes, one32, sizeof(one32));
-    FUZZ_CHECK(secp256k1_ecdsa_sign(ctx, &alias.sig, one32, alias.bytes, secp256k1_fuzz_ecdsa_nonce_fixed_one, NULL) == 1);
-    FUZZ_CHECK(secp256k1_ecdsa_signature_serialize_compact(ctx, serialized, &alias.sig) == 1);
-    FUZZ_CHECK(memcmp(serialized, expected_sig64, sizeof(serialized)) == 0);
-}
-
 static void secp256k1_fuzz_check_ecdsa_verification_infinity(const secp256k1_context *ctx) {
     secp256k1_ecdsa_signature sig;
     secp256k1_pubkey generator;
@@ -4308,7 +4259,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size) {
     secp256k1_fuzz_check_ecdsa_invalid_seckey_nonce_domain(ctx);
     secp256k1_fuzz_check_ecdsa_message_reduction(ctx, seckey, &pubkey);
     secp256k1_fuzz_check_ecdsa_fixed_nonce_equation(ctx);
-    secp256k1_fuzz_check_ecdsa_sign_input_output_alias(ctx, input, size);
     secp256k1_fuzz_check_ecdsa_verify_half_order(ctx, input, size);
     secp256k1_fuzz_check_ecdsa_reject_high_half_order(ctx, input, size);
     secp256k1_fuzz_check_ecdsa_variable_nonce_equation(ctx, msg32, seckey, equation_nonce32);

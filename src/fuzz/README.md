@@ -6,8 +6,8 @@ oracles that exercise contract boundaries rather than only maximizing coverage.
 
 Targets:
 
-- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, sorting, key transformations, and secret-key validation, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order normalization plus valid low-S and rejected high-S verification boundaries, ECDSA input/output overlap, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
-- `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, standalone tagged-SHA reference, and tagged-SHA output/tag and output/message overlap
+- `fuzz_api_roundtrip`: compressed/uncompressed/hybrid pubkey wire parsing, static-context public-key codecs, comparators, sorting, key transformations, and secret-key validation, two-, three-, four-, eight-, and sixteen-term public-key combine with intermediate-infinity transitions, static-context public combine against fixed SEC1 vectors, NULL-member combine cleanup, four-, eight-, and sixteen-key public-key sorting with duplicate-pointer preservation, independent byte-level tweak arithmetic at the order-minus-one boundary including static-context public add/mul, secret-key tweak input/output overlap, independent ECDSA low-S half-order normalization plus valid low-S and rejected high-S verification boundaries, static-context ECDSA signature codecs and verification, ECDSA compact, direct RFC6979 algorithm-domain transcripts, arbitrary-signature verification equation, fixed- and variable-nonce equations, fixed ECDSA verification-infinity and finite-x-mismatch transitions, valid- and invalid-secret nonce callback key- and message-domain checks, valid-nonce retry and post-retry failure cleanup, NULL-argument ECDSA signing cleanup, NULL-output public-key and compact-signature serialization cleanup, empty/NULL/invalid sort, DER, independently parsed private-key DER, signing, verification, normalization
+- `fuzz_context`: context randomize, clone, reset, static-context lifecycle and secret-operation rejection cleanup, NULL-reset deterministic ECDSA and Schnorr signing, valid legacy-flag matrix, invalid-flag rejection, deterministic signing consistency, custom SHA compression equivalence through source and heap/preallocated clones during public-key creation and ECDSA/Schnorr signing, and standalone tagged-SHA reference
 - `fuzz_hash`: shared standalone SHA-256 reference, raw-SHA256 HMAC reference, arbitrary multi-block midstate reference, full-stream RFC6979 sequencing, chunking consistency, and finalized-state cleanup
 - `fuzz_scalar`: scalar high/conditional-negation half-order boundary,
   bit-extraction boundaries, cadd-bit carry/no-op boundaries, and rounded
@@ -19,7 +19,7 @@ Targets:
 - `fuzz_ecdh`: ECDH symmetry with a standalone default-SHA reference, fixed generator-times-two and negative-scalar generator byte-equation oracles, coordinate passthrough hashers, built-in callback NULL-input output cleanup, and invalid-scalar callback-point postconditions
 - `fuzz_ellswift`: EllSwift encode/decode, modulo-alias wire encodings, randomizer influence, inverse-branch round trips and degenerate rejection guards, an independent BIP324 decode vector and SHA transcript, fixed decoded-point scalar-one and negative-scalar XDH vectors, both-party raw XDH point consistency, XDH symmetry, static-context public paths with static-create rejection cleanup, built-in hash cleanup, built-in callback NULL-input output cleanup, invalid-secret callback-X postconditions, and custom hash callback encoded-party domain checks
 - `fuzz_xonly_tweak`: x-only serialization, standalone byte-level curve-membership parsing, parity, tweak, Bitcoin Core Taproot control-block composition with independent TapLeaf/TapBranch/TapTweak hashing, TapLeaf CompactSize boundary vectors, and maximum-depth 128-sibling Merkle-chain vectors, static-context public codecs/comparator behavior, static-context public tweaking and static keypair-creation rejection cleanup, keypair equivalence, invalid keypair-creation cleanup, partial keypair projections and tweak rejection, invalid and NULL full-pubkey conversion, invalid comparator ordering, and complete in/out tweak alias coverage
-- `fuzz_recovery`: recoverable ECDSA round trips, recoverable signing input/output overlap, arbitrary parsed-signature recovery, Bitcoin Core compact-recovery header and compressed/uncompressed serialization composition, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
+- `fuzz_recovery`: recoverable ECDSA round trips, arbitrary parsed-signature recovery, Bitcoin Core compact-recovery header and compressed/uncompressed serialization composition, a fixed generator recovery vector, exact high-S half-order recovery and low-S normalization boundary, independent recovery point equations, static-context parse/serialize/convert/recover/verify plus static-signing rejection cleanup, zero-`s` recovery rejection, no-curve-point recovery failure cleanup, nonce callback key- and message-domain checks, valid-nonce retry, and post-retry failure cleanup when recovery is enabled
 - `fuzz_schnorrsig`: Schnorr sign/verify, standalone BIP340 tagged-SHA reference, arbitrary-signature BIP340 verification equation, exact scalar-order signature rejection, raw Bitcoin Core Tapscript key/signature composition including 64/65-byte witness framing, Core Taproot signing composition across NULL, null-root, and script-root tweak states with exact BIP340 vectors, empty-message pointer equivalence, `sign32`/`sign_custom` equivalence, nonce callback message-domain checks, signing precondition cleanup including static-context rejection cleanup, an independent BIP340 point-equation model, and a fixed generator algebraic-equation oracle that also checks static-context verification
 - `fuzz_musig`: MuSig key aggregation, zero-length key/nonce/partial-signature aggregation boundaries, one- through sixteen-key independent coefficient transcripts, valid duplicate-key first-distinct coefficient transcripts, duplicate-key and all-identical-key signing round trips, zero-coefficient and weighted-key-cancellation aggregate-infinity rejection, optional aggregate outputs, static-context key aggregation/cache/tweak public operations, opaque cache curve/state barriers, tweak equivalence, x-only-tweak signing, standalone tagged-SHA transcripts, an authoritative BIP327 nonce-generation known-answer vector with static-context nonce-generation rejection cleanup, static-context public nonce aggregation and session creation, static-context public nonce and partial-signature codecs, one- through sixteen-signer nonce/signature round trips, consumed-secnonce reuse rejection, failure-path secnonce invalidation, zero secret-nonce scalar load rejection, first- and second-derived-nonce scalar zero rejection, second secret-nonce scalar overflow rejection, static-context partial-signing equivalence and secret-nonce consumption, static-context public partial-signature verification and aggregation, NULL-argument partial-sign cleanup, NULL-member nonce/final-signature aggregation cleanup, counter-nonce optional-input equivalence, partial-keypair counter-nonce rejection, optional-secret-key nonce-input equivalence, session-random aliases with optional inputs and the aggregate cache, deterministic zero-derived-nonce failure, mixed-infinity effective-nonce modeling, deterministic zero-nonce-coefficient effective-nonce modeling, finite nonce-cancellation fallback modeling, intermediate nonce-sum cancellation recovery, NULL-input and invalid-cache nonce-process cleanup, arbitrary parseable partial-signature verification equations, invalid opaque partial-signature verification state, and independent partial- and final-signature point equations
 
@@ -38847,3 +38847,63 @@ choose to document this output/input overlap, reintroduce the oracle and
 production fix together, rerun the three backend proof matrix, and amend the
 severity and Core-caller analysis. Until then, future audit work must not
 reclassify this undocumented overlap as a master bug.
+
+## 2026-07-27 Retraction of unsupported pure output/input alias oracles
+
+The earlier commits `3b9f274f`, `6f2075f9`, and `059fd7ac` retained three
+informational alias fixtures even though their APIs expose separate `Out` and
+`In` arguments: tagged SHA output versus tag/message, ordinary ECDSA signing
+output versus message/seckey, and recoverable ECDSA signing output versus
+message/seckey. They did not claim a master production bug, but retaining
+these as active fuzzer oracles made the contract boundary too easy to confuse
+with the explicit `In/Out` contracts used by the supported tweak and MuSig
+state checks. This correction removes the three functions, calls, and seeds
+from the active fuzzers without rewriting their historical commits.
+
+The exact retired corpus conditions were:
+
+    context/tagged-sha256-output-overlap
+      trigger: tagged sha256 output overlap\n
+      SHA-256: d7b80e1a8ea6b296acb97da18fa21f37d81899b886ed8eddddc7026b4fde6d59
+    api_roundtrip/ecdsa-sign-input-output-overlap
+      trigger: ecdsa sign input-output overlap\n
+      SHA-256: 5572f5101a25d2be39672efbf02851d7996cf7307876e8d62a0b371f31ce6eb9
+    recovery/recoverable-sign-input-output-overlap
+      trigger: recoverable sign input-output overlap\n
+      SHA-256: 2b0de211ddb99fee8fb550b5157ecce9e899e8ecbaa873a188e187de10d92fd8
+
+Each clean-master fixture passed its fixed independent oracle on the native,
+external-callback, and forced-int64/10x26 sanitizer configurations recorded
+in its original section. The old disjoint-input corpora also passed: 12
+context files before the tagged-SHA seed, 48 API files before the ECDSA seed,
+and 13 recovery files before the recoverable-signing seed. Thus the existing
+tests did not miss a supported contract; they simply never exercised an
+undocumented alias arrangement. That is insufficient evidence for a
+production fix.
+
+Causal mutations demonstrate only harness sensitivity, not a library defect.
+The temporary changes inserted `memset(hash32, 0, 32)` immediately after the
+tagged-SHA output argument check, and
+`memset(signature, 0, sizeof(*signature))` immediately after the output
+argument check in each of the ordinary and recoverable signers. The matching
+three exact seeds aborted with exit 134 under the sanitized builds, while
+unmutated master produced the expected signatures/digest. The mutations were
+restored before this retraction; no production behavior, deterministic
+regression, or severity claim follows from them.
+
+The public declarations use `Out` for these outputs and `In` for the input
+buffers. They do not promise arbitrary overlap. Current Bitcoin Core callers
+provide separate output, message, and key storage, and the surveyed paths do
+not allow an invalid block or witness to select this alias arrangement. No
+invalid-block or invalid-witness acceptance, sigop or consensus effect,
+signature forgery, key compromise, remote memory/concurrency failure, or
+Core-reachable availability issue was demonstrated. Severity is therefore
+**Informational only** for current Core, with no High/Critical rating. This is
+unrelated to clearing a nonce or retry counter that has no standalone
+cryptographic meaning. No l0rinc PR adds a distinct supported contract or
+production fix for these cases.
+
+Future alias work must first establish an explicit `In/Out` API guarantee or
+a real Core caller that passes overlapping storage. If either changes, rerun
+the exact clean-master fixtures and the causal mutations, then record whether
+the change uncovers a master bug or merely documents a new contract.
