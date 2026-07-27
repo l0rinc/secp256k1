@@ -39267,3 +39267,63 @@ retry counter with no standalone cryptographic meaning is not Critical merely
 because it is uncleared. No l0rinc commit masks this result; no source,
 corpus, deterministic regression, or cherry-pick change is claimed by this
 recheck.
+
+## 2026-07-27 Correct forced-int64 API and recovery differential replay
+
+The previous comparator slice used a native sanitizer build and had one
+disposable configuration that passed the wide-multiply setting as ordinary C
+macros. That configuration is not counted as a forced-int64 result. This
+follow-up was configured from audit commit `f38f25f800105db4c67eee63bc661582bf27aeff`
+with Clang 22.1.7 Debug ASan/UBSan, assembly disabled, all optional modules,
+libFuzzer, and the repository-supported
+`-DSECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64` option, which defines
+`USE_FORCE_WIDEMUL_INT64=1`. The native control used the same source and
+sanitizers with the detected default wide-multiply backend. Both remote
+master refs remained `d2d04864ef9b056151603a3ced7980958b058028`.
+
+The exact tracked corpus manifests were:
+
+    api_roundtrip: 62 files, 2901 bytes,
+      a35fa856630d6bf1dd4739b83c05f60edd9fb1b889a96b2260211e59bc454b1d
+    recovery: 17 files, 783 bytes,
+      297b3aaa5120c86142fb822f29d5ba2ae5bdc748f07c1afa7fc604c3ef1450a2
+
+Each file was passed as a standalone input, so libFuzzer could not rewrite a
+private corpus or make the worker's seed count ambiguous. Two processes ran
+in parallel for each target/backend pair with `-runs=1`, strict timeout/OOM/
+crash handling, `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0`, and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. All 158 input/backend
+executions exited 0. There was no assertion, ASan/UBSan diagnostic, timeout,
+OOM, crash artifact, or cross-backend disagreement. The per-input log
+manifests were:
+
+    native api       9a7b44408eb290d2afc7cc14bd5ae5334ae4f9c0d7dc108c7846b4826240ec11
+    int64 api        170dff824baf21d84c2429f3507b02218588dc91ad97146ea05ef1b0ebce6550
+    native recovery  9af098db7fa320a7991599af19e1b8572d1869378b0649ab87ec46eda1ae2d7a
+    int64 recovery   39e3fc38b8325baa8a4ceed7d59465e3915f221bccc56c15ff58ccac6d84abc7
+
+The native target hashes were
+`b9dcfbfbfb54fb027da5185f5e3dfbe316f9ed4093d379d624d4168a0a8bb246`
+(`api_roundtrip`) and
+`0e60690e2ef41c7e8ce734d4fdcbbe454bea2f0920123a7a2850c829140d7805`
+(`recovery`); the shared library was
+`74c22661d0b1207e192bc726217c7ab4c6cfdcec06f0ccafb7425b4e79266ebd`.
+The correctly forced-int64 target hashes were
+`e5aa48b8aaea33aef0cc1aba8b7584a84035b70f26ae684c8d4ee4213b415173` and
+`eda3e6b94490d66d8cbd342e9160d5586b88ae2d8cce2af3b837c11eb50718a9`, with
+library hash
+`e4180a8080463c25c8d46e866d1ccbddb71f06d05c112eb52b44fde94dca7ac4`.
+
+This is corrected negative verification evidence, not a new master bug. No
+production mutation, deterministic regression test, fix, cherry-pick, or
+severity upgrade is warranted. The API target covers the existing Core ECDSA
+serialization/signing and key-derivation compositions; recovery covers the
+recoverable-signature state and Core's compact message-signature boundary.
+Those paths do not make the sigop counter accept an invalid block or witness,
+and no invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency consequence was shown. Current-Core severity therefore
+remains Informational/Low for the relevant application/wallet boundaries,
+with the separate direct-library findings retaining their recorded
+Low/Medium classifications. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared.
