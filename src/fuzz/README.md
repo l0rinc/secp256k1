@@ -40885,6 +40885,153 @@ would require a minimized consensus-relevant Core trigger, not a direct
 library callback or sanitizer assertion. No new production fix, deterministic
 test, corpus seed, cherry-pick, or severity upgrade is claimed here.
 
+## 2026-07-27 Current-origin x-only tweak first-stop and Taproot revalidation
+
+This is a current-origin reiteration of the existing x-only, opaque-keypair,
+Taproot-model, and tweak-alias findings. It is not a new production claim.
+The refs were `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. The branch before
+this entry was `86f13e23fa221925b27ac51d3c9a2b6d22aea2e3`. A clean archive of
+current `origin/master` received only the branch's CMake fuzz wiring,
+`src/fuzz`, and private corpus copies; no audit-branch production repair was
+present in the clean control.
+
+The tracked x-only corpus contained 20 files and 712 bytes. Its sorted
+`filename size` manifest was
+`c9b31913ee7674853c05dbad504a6c4af9ebb52baf073c199d7f1eda98298dfc`.
+The branch fuzzer and common fuzz-driver hashes were
+`0ea640e205c208e60a728fc154e84163261622034dee9dec66fb78e2eef55f05` and
+`484bbcf9b3152bf22d9283bb019b4a4c5c689d4efa1bc6ea774aa18769ae7d05`.
+Clean origin `src/modules/extrakeys/main_impl.h` was
+`6c002046bda20ffb8767cac1c6800dd3b8e9be9e648772a1498539159a4b4937`.
+The isolated repaired extrakeys module was
+`6233eddd4539c3adbaa1bc4313ae67910a4df43a0e1f3141d83752eb02a73e5a`.
+The isolated core API source retained the exact-origin code except for the
+supported tweak-input ordering repair and was
+`5f35d3ab60b826088d98374a25542be8d74ba5a5b92722764f6dbc08c668c677`.
+
+### Clean first stop and repair ordering
+
+The unmodified current-origin GCC Debug file driver stopped all 20 inputs at
+the same oracle. GDB on `zero-and-order-tweaks` stopped at
+`src/fuzz/xonly_tweak.c:1277`, where
+`secp256k1_keypair_xonly_pub` returned failure for an all-zero opaque keypair,
+cleared the x-only output, but left the caller's prefilled parity value `7`.
+The focused input is 49 bytes with SHA-256
+`84fadb30fb68eb25ff8ddb7dd71a80dc9d58827e8c7d05e100a294123918f93d`.
+
+The clean Clang 22.1.7 Debug ASan/UBSan file-driver control used external
+callbacks, assembly disabled, and the same branch fuzzer. All 20 inputs
+exited 134 at the expected first stop; the status log hash was
+`1ee9c9680d3828c0e6a84fbfbd7f030147acdf162c68c76e8265491b2fd34462` and the
+empty diagnostic log hash was
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+There was no ASan, UBSan, memory, or artifact diagnostic. The clean fuzzer
+binary hash was
+`82190fca3c3b89d63e9c684cc7ce549483acc5071309f684fa7de75298bc8a86`.
+
+The disposable ladder was staged one contract at a time. Each later stop is
+recorded because a minor repair must not mask an earlier clean-master result:
+
+1. `67c1b976` initialized the parity output in
+   `keypair_xonly_pub`. The next stop was the invalid full-pubkey projection
+   at `xonly_tweak.c:1382`, where `xonly_pubkey_from_pubkey` left a prefilled
+   output live.
+2. The second `67c1b976` hunk initialized parity and cleared the output on
+   NULL or invalid input in `xonly_pubkey_from_pubkey`. The next stop was the
+   individually valid but inconsistent secret/public opaque keypair at
+   `xonly_tweak.c:1180`.
+3. `bbca5a72` made the shared keypair loader derive the public point from the
+   secret scalar and reject a mismatch. The next stop was an odd-Y point
+   smuggled into an opaque x-only object at `xonly_tweak.c:1038`.
+4. `402fd672` rejected odd-Y opaque x-only points during loading. The next
+   stop was `keypair_xonly_tweak_add` preserving a valid keypair after a NULL
+   tweak at `xonly_tweak.c:1101`.
+5. `ed0d95eb` cleared the keypair before the mandatory NULL-tweak argument
+   failure. Because `bbca5a72` had temporarily required generator
+   precomputation for its consistency check, the next stop was the valid
+   static-context Core-shaped tweak at `xonly_tweak.c:1124`.
+6. `e126fb62` reconciled that interaction with Core: the loader retains the
+   consistency check but derives the expected public point with a fixed
+   constant-time fallback when generator precomputation is absent. The valid
+   static tweak now agrees byte-for-byte with the dynamic path, while the
+   static mismatched keypair still invokes the illegal callback, returns zero,
+   and clears all 96 bytes.
+7. `b37ade0d` preserved supported input bytes before clearing the in/out
+   object in `ec_pubkey_tweak_add` and `keypair_xonly_tweak_add`. The exact
+   `tweak-input-output-overlap` seed is 27 bytes with SHA-256
+   `e34d8552dca62ae33b33630977fa1e88ffd5352d98ad7eb73e0f1e0627009e9c`.
+   With this repair, all 20 inputs pass.
+
+The x-only output/tweak alias probe from `89b3ded3` was intentionally not
+retained. `86dfec56` retracts it because the public header documents the
+output as Out-only and the tweak as In-only without promising that overlap.
+Its clean-master behavior is useful negative evidence, but it is not a
+production contract violation, has no severity rating, and must not be
+reintroduced as an oracle. The supported core/keypair alias findings above
+remain independent and are not masked by that retraction.
+
+The static-context step maps to Bitcoin Core's `KeyPair::KeyPair`
+(`src/key.cpp:409-424` in the local Core checkout): Core creates the keypair
+with its signing context, extracts the x-only key with the static context,
+computes TapTweak, and calls `keypair_xonly_tweak_add` with the static context.
+This is wallet, descriptor, PSBT, and authorized-signing state, not block,
+witness, or peer-message validation. The static-context failure is therefore
+**Medium wallet/API compatibility on the affected audit branch**, not a
+clean-master production vulnerability; exact clean origin accepted the valid
+static tweak. The underlying inconsistent opaque-keypair state is **Medium at
+the direct API/local state boundary** and **Low/Medium for current Core**:
+constructing it requires local mutation, corruption, or unsafe persistence of
+the opaque 96-byte object. It is not a remotely supplied wire-format object.
+
+### Sanitizer and worker proof
+
+Fresh repaired Clang 22.1.7 ASan/UBSan libFuzzer binaries replayed all 20
+inputs individually in native 5x52 and forced-int64/10x26 modes. Both status
+logs contained 20 zero exits and had the same hash
+`564f5ec405cee0f0abcb1abc083b5135b933459f77b29885763c2bf53208285`.
+The final repaired binary hashes were
+`2102a7739037e2f04bd308b90c3e721d0a0d8c76596b6d4e34d98d5dc4210ac3`
+(native) and
+`4cd6a59ed2388a5e43a2a7365e2f7eed1efa6d62365d065c4ea2775d762a4081`
+(forced int64). Neither replay emitted an ASan, UBSan, memory, or artifact
+diagnostic.
+
+The final source then ran with `-fork=2 -jobs=2 -max_total_time=12
+-timeout=180 -rss_limit_mb=0 -ignore_timeouts=0 -ignore_ooms=0
+-ignore_crashes=0 -handle_abrt=0`. Both native workers and both forced-int64
+workers loaded all 20 seed inputs, each manager exited zero, every worker
+reported `oom/timeout/crash: 0/0/0`, and both native and int64 artifact
+directories were empty. The final campaign log hashes were
+`179cc308a4d526de382bfd1e4cf8c8190fdafd6f56ebe8f55e0b555cadf7ab87`
+(native) and
+`192241418e70cea66d88e5d93546aa242cb628fb5d97237ba418ff35bc4de5a4`
+(forced int64). A final process inventory found no fuzz, sanitizer, compiler,
+or campaign process remaining.
+
+### Caller-aware conclusion
+
+The Taproot model covers x-only parsing, parity, tweak arithmetic, TapLeaf
+CompactSize boundaries, control-block composition, and the 128-sibling depth
+boundary. All repaired corpus inputs pass, but this replay did not accept an
+invalid block or witness, produce a witness-sigop undercount, diverge from
+Core's serialized Taproot commitment, forge a signature, disclose a secret,
+or show a remote memory or concurrency failure. No x-only item is High or
+Critical. A High/Critical rating would require a minimized Bitcoin Core
+reproducer proving invalid-block or invalid-witness acceptance, rather than a
+direct opaque API state, wallet assertion, or sanitizer-only transition.
+The result also says nothing about clearing a nonce or retry counter with no
+standalone cryptographic meaning; such a buffer is not Critical merely
+because it remains uncleared.
+
+This entry reiterates existing fixes and findings; it adds no new production
+commit, deterministic test, or cherry-pick. Later changes touching
+`keypair_load`, static-context behavior, TapTweak, x-only parsing, or Core's
+`KeyPair::KeyPair` path must preserve this first-stop ordering and amend their
+commit messages and this ledger with whether they preserve, change, or mask
+the clean-origin behavior. A minor repair that happens to make a follow-up
+pass must not lower the severity of an independent master finding.
+
 ## 2026-07-27 Current-origin EllSwift first-stop and BIP324 revalidation
 
 This is a current-origin reiteration of the existing EllSwift findings, not a
