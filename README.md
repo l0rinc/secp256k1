@@ -16153,6 +16153,80 @@ key compromise, remote memory corruption, or severe concurrency impact was
 demonstrated. The caller reachability makes this more relevant than a public
 retry-counter wipe, but does not justify a consensus or critical rating.
 
+## 2026-07-27 Current-origin SHA256 buffered-block retention revalidation
+
+The independent SHA256 buffer-cleanup finding was revalidated against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The clean current
+origin `src/hash_impl.h` SHA-256 is
+`70247571d95e3c8824d6ca2e90956f6941c196a42d860083040690aaf9ccf6cc`; the
+repaired audit-branch file is
+`9040d926e994f0b088accdb62ac31e41e00e847c8da91e241bd5de4c5e9fdcc6`.
+This revalidates `0b984e03`, not a new production fix.
+
+The focused corpus input `src/fuzz/corpora/hash/sha256-write-buffer-clear`
+contains `sha256 write buffer` plus a newline and is 20 bytes. The overlaid
+hash fuzzer SHA-256 is
+`f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc`.
+The trigger writes one byte and then the remaining 63 bytes of a fixed
+64-byte message, causing `secp256k1_sha256_write` to compress a buffered
+block. The oracle independently computes the digest and requires the
+reusable `hash->buf` storage to be zero before finalization. It therefore
+tests an intermediate state transition, not digest correctness or final
+whole-object clearing.
+
+The seed SHA-256 is
+`d98d6210724ee37f8ba4e6311f85ba836214e36d37a62cbc5e92f637c441d431`.
+Clean current-origin native and forced-int64 Clang 22.1.7 ASan/UBSan fuzzer
+replays exited `134`; binary SHA-256 values were
+`7ee67120e600537b40106c25e0bdbe298b0bd95f98430a0ce59e30545c1195bf` and
+`1bcf80d4710b9c381cfc81938257d4c2c597509d0f5ca491ffddead97d1a2862`.
+The proof log hashes were
+`e7bffd5901fe3613036fc599bb961be25ae62567a1a666461056ff5ddcc7fe78` and
+`d9566f8ba6ebf61bfad1010f6fb57d600c4216a8e370b910d8fca7bc94cd86f0`.
+The digest/reference checks still pass; only the clean-master zeroization
+postcondition fails.
+
+The repaired native and forced-int64 fuzzer binaries were
+`a6f8784087246d640a8e50612b264b32615046be0ffc2f8c03ab98071b9caf66` and
+`3d57cf872140cef4da0172cf9438e171c7d0b8f0eac3baa07f43aa7f77e9fe54`.
+Their exact replay logs were
+`85255797de6517143dd2f1318f5541ed94948385e97d22713cb6cab905431037` and
+`48b74c01aa08f093ee0d19fdae4ce7cfccf0e8f96f23057050c2849c1980848f`; both
+exited `0`. Current-origin ordinary `hash` tests also passed in both backends
+because they check vectors and state only after explicit full-object clear;
+the repaired hash tests passed with the same logs recorded in the adjacent
+HMAC revalidation.
+
+The repaired ten-file hash corpus was also replayed from private copies with
+`-fork=2 -jobs=2 -max_total_time=15 -timeout=60 -rss_limit_mb=0` and all
+timeout, OOM, and crash failures non-ignored. Both native and forced-int64
+campaigns exited `0`; every worker reported `oom/timeout/crash: 0/0/0`, and
+both artifact directories were empty. The native and forced-int64 campaign
+log SHA-256 values were
+`8126ae528d66206c775a1a5c63be2aef4aa4094ba7233ebd1d275b618e92dbc2` and
+`3dfd2eea983f960fda75a1647823dfbe8d6b9ae5524d6cd05fa0b5f9b446e203`.
+
+The production repair adds `secp256k1_memclear_explicit(hash->buf,
+sizeof(hash->buf))` immediately after the buffered block is compressed. Keep
+this finding separate from HMAC/RFC6979 finalizer cleanup: clearing the HMAC
+object at finalization does not prove that a consumed block was absent during
+the remaining computation, while this buffer wipe does not clear the live
+HMAC outer/inner state. Any later hash optimization or cleanup cherry-pick
+must state whether it preserves, changes, or masks both first stops.
+
+Bitcoin Core reaches the secp256k1 SHA/HMAC machinery through private-key
+signing: `src/key.cpp:217` and `:222` use RFC6979 for `CKey::Sign`, and
+`:255` uses it for `CKey::SignCompact`; other signing and MuSig paths also
+process secret-derived hash material. This makes the retained buffer relevant
+to an authorized wallet signing path, but no memory-read primitive, disclosure,
+signature forgery, key recovery, or remote attacker-controlled trigger was
+demonstrated. Severity is **Medium for the library secret-state lifetime
+contract** and **Low/Medium for current Bitcoin Core**, not High/Critical:
+there is no invalid-block or invalid-witness acceptance, witness-sigop
+undercount, consensus divergence, key compromise, remote memory corruption,
+or severe concurrency impact. It is unrelated to clearing a nonce or retry
+counter with no standalone cryptographic meaning.
+
 ## 2026-07-27 Current-origin scratch-constructor overflow revalidation
 
 The existing `e8a72397` scratch-size repair was revalidated against
