@@ -90,7 +90,15 @@ zero conditional branches, and a deliberately wrong high-half limb failed
 at `n-1` in both backends. All eleven bounded hypotheses were dismissed; no
 production finding or fix commit resulted. The goal remains active with
 another compiler/architecture constant-time or overflow-sensitive helper
-queued.
+queued. A twelfth hypothesis then tested scalar bit extraction with an
+independent bit-order oracle across 645 values, 4,963,920 variable-width
+cases, 2,724,480 legal same-limb cases, native and forced-int64 Clang/GCC
+`O0/O2/O3/Os`, LTO, sanitized execution, mutation controls, and AArch64 code
+generation. Every execution matched the same digest; the deliberately
+truncated output mask failed on the first high-bit case in both backends.
+All twelve bounded hypotheses were dismissed; no production finding or fix
+commit resulted. The goal remains active with another compiler/architecture
+constant-time or overflow-sensitive helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff

@@ -834,6 +834,97 @@ prove unsupported output aliasing. The next distinct queue is another
 compiler/architecture constant-time or overflow-sensitive helper; revisit
 cross-target execution if a runner or sysroot appears.
 
+## Cycle 2026-07-27: scalar bit-extraction translation validation
+
+### Hypothesis and contract
+
+The twelfth bounded hypothesis was that compiler transformation or native
+versus forced-int64 representation could mishandle bit order, 32-bit limb
+crossings, or the exact boundary checks in
+`secp256k1_scalar_get_bits_var` and `secp256k1_scalar_get_bits_limb32`.
+The contracts in `src/scalar.h:26-29` require `1 <= count <= 32` and
+`offset + count <= 256`; the limb32 variant additionally requires every
+requested bit to be in one 32-bit limb, while the variable variant must
+handle crossings and is explicitly not constant-time in offset/count. The
+historical `0cad3df5` check fix is relevant boundary precedent. The public
+search found no matching get-bits issue or PR; its only lexical hit was the
+unrelated historical signed-digit PR #693.
+
+### Evidence
+
+The standalone harness
+`/tmp/secp256k1-translation-78/scalar-get-bits-harness.c` has SHA-256
+`51405a9a753cf4d4b7f180e037ac004692d4d7c5c203cfef478d4211c6228bdb`.
+Its reference reads each requested bit from the big-endian byte array and
+places it in the corresponding little-endian result position. It checks
+every valid offset and count pair for 645 canonical values: zero, one, two,
+`n-1`, `n-2`, every `2^k`, every `n-2^k` for `0 <= k < 256`, and 128
+deterministic values below `2^255`. The run covers 4,963,920
+`get_bits_var` cases and 2,724,480 legal `get_bits_limb32` cases, and checks
+input immutability. Native and forced-int64 Clang and GCC builds at `O0`,
+`O2`, `O3`, and `Os` all printed exactly:
+
+    ok values=645 var-cases=4963920 limb-cases=2724480 digest=7284ac614eb82cf4
+
+Clang and GCC `O2 -flto` native and forced-int64 builds printed the same
+digest. Clang `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined` native
+and forced-int64 executions also printed the same digest with no
+diagnostics.
+
+The final Clang O2 x86 probe object hashes were native
+`3924585c688c7956836bd6ef8c889f0c680235de2c4ab4ac2e489ac53b4e6e48` and
+forced-int64
+`99a32dd5f15af400f18a33b3e0251b58fc2c6b9ed372bec31fdf2196917470a8`.
+Both `probe_var` bodies have the expected two-branch same-limb/cross-limb
+selection, while both `probe_limb32` bodies have zero conditional or loop
+jumps. The disassembly uses `shrd` for the x86 cross-limb extraction.
+
+The AArch64 compile-only matrix used Clang with
+`--target=aarch64-linux-gnu`, native and forced-int64 representations, and
+`O0`, `O2`, `O3`, and `Os`. `probe_var` had zero conditional branches at O0
+and one at each optimized level in both representations; `probe_limb32` had
+zero at every level. AArch64 O2 uses the expected conditional cross-limb
+load and direct same-limb load. AArch64
+`O1 -DVERIFY -DVALGRIND -Wall -Wextra -Wno-unused-function -Werror`
+compile-only builds succeeded with zero diagnostics. Object hashes were:
+
+    native:      O0 c3272e3b0d210fbc78eacf10497c186921abf1de45590e9947b240463b16dadd
+                 O2 ee616f1a925f50ccdec5e0d91467ae58f0f2a7999f6a2178cdbaa118eb1beb22
+                 O3 8f8a6b967038bb20d27af40feff37eca02b57d24e8f679322020672e0ef9de4d
+                 Os 76c5b29502e8e7534f54b0b2d7147e53418aa21a0877e5c2e123e09aecab6edd
+                 VERIFY 7179c27a6dca8002382e96b0b50b8725a9469a9cba0e06df5e4abbf3d76154fa
+    forced-int64: O0 dd0fc28caafc28c694389dce68bd73d415a4aaad16deb0f4dbf307329a15917d
+                 O2 0d7d899bcaf0b9079ccba1fd6d3f0ad82169edf736b0baa9397d0fe9434b3f23
+                 O3 670845e9bcaef9a9bed7fd4782dc2596b0b53cd9996ba3e49aa906d6b2663760
+                 Os 528639625cc07ed758203c670a861afd1144871d93df1f0a282d08052a38fbcf
+                 VERIFY 1a449cbab77fd89b392d578731c0f2f6dc8d8b61a228d14e6293c61bda7235b3
+
+The mutation control copied `src/` to scratch and changed the mask constant
+`0xFFFFFFFF` to `0x7FFFFFFF` in each backend's bit-extraction helpers. Both
+final Clang O2 harnesses exited 1 on the first nonzero high-bit value:
+
+    var mismatch case=1 offset=0 count=1 expected=00000001 actual=00000000
+    mutated native exit=1
+    var mismatch case=1 offset=0 count=1 expected=00000001 actual=00000000
+    mutated forced exit=1
+
+The oracle therefore detects a real output-mask regression as well as the
+cross-limb cases.
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 scalar backends, LTO, ASan/UBSan/VERIFY/VALGRIND
+execution, and Clang AArch64 code generation. The independent bit-order
+oracle found no value, boundary, cross-limb, input-mutation, or
+compiler-lowering mismatch. No production change, regression test, or
+finding commit is justified. This does not exercise the intentionally
+simplified exhaustive-test scalar backend, provide AArch64 runtime
+execution, GCC AArch64, ARMv7/RISC-V, or invalid arguments that should trip
+VERIFY checks. The next distinct queue is another compiler/architecture
+constant-time or overflow-sensitive helper; revisit cross-target execution
+if a runner or sysroot appears.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -847,5 +938,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-eleven dismissed hypotheses unless compiler, source, or architecture
+twelve dismissed hypotheses unless compiler, source, or architecture
 evidence changes.
