@@ -99,6 +99,15 @@ truncated output mask failed on the first high-bit case in both backends.
 All twelve bounded hypotheses were dismissed; no production finding or fix
 commit resulted. The goal remains active with another compiler/architecture
 constant-time or overflow-sensitive helper queued.
+A thirteenth hypothesis then tested `secp256k1_scalar_split_lambda` with an
+independent base-256 product/reduction oracle across 645 canonical values,
+native and forced-int64 Clang/GCC `O0/O2/O3/Os`, LTO, sanitized execution,
+mutation controls, and AArch64 code generation. Every execution matched the
+same digest, all optimized probe bodies had zero conditional branches, and a
+high-byte `g1` mutation failed at `n-1` in both backends. All thirteen bounded
+hypotheses were dismissed; no production finding or fix commit resulted. The
+goal remains active with another compiler/architecture constant-time or
+overflow-sensitive helper queued.
 Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff
