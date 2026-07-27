@@ -562,6 +562,100 @@ The next distinct queue is another small constant-time or overflow-sensitive
 field/scalar helper; revisit cross-target execution if a runner or sysroot
 appears.
 
+## Cycle 2026-07-27: `secp256k1_scalar_is_high` compiler lowering
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `0cade2f5`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, with no running
+fuzz, sanitizer, compiler, or profiling jobs. The catalog, this journal,
+`src/fuzz/README.md`, `src/fuzz/scalar.c`, `src/tests.c`, scalar history,
+and prior findings were searched. The public contract is at
+`src/scalar.h:78-79`; the native and forced-int64 implementations are at
+`src/scalar_4x64_impl.h:244-256` and `src/scalar_8x32_impl.h:292-310`.
+The existing fuzzer has an independent high-half boundary oracle, but no
+prior journal cycle had checked this predicate's compiler lowering directly.
+The public issue search for `scalar_is_high` returned no matching issue or
+PR.
+
+### Hypothesis and contract
+
+The bounded hypothesis was that optimization or LTO could introduce a
+secret-dependent branch in the high-half comparison, or that the native
+4x64 and forced-int64 8x32 lexicographic comparisons could disagree at the
+exact threshold. The contract is a predicate that returns true when a
+canonical scalar is greater than `floor(n/2)`. The independent oracle derives
+`floor(n/2)` by decrementing the byte-level order and shifting it right once;
+it also checks that the predicate does not mutate its input.
+
+### Evidence
+
+The standalone byte-level harness
+`/tmp/secp256k1-translation-78/scalar-high-harness.c` has SHA-256
+`d8ffd68de4abb82e52030c5f669a9fe95a43e6bad94de6c253f7a437ba3d9e21`.
+It tested the derived threshold, threshold plus one, zero, `n-1`, every
+`2^k`, every `n-2^k` for `0 <= k < 256`, and 256 deterministic values below
+`2^255`, for 772 canonical values total. All native and
+`-DUSE_FORCE_WIDEMUL_INT64` Clang and GCC builds at `O0`, `O2`, `O3`, and
+`Os` printed exactly:
+
+    ok threshold=7fff values=772 digest=f67485d83805dd6f
+
+The `-O2 -flto` Clang/GCC native and forced-int64 executables printed the
+same result. `objdump -d --no-show-raw-insn --disassemble=probe` found zero
+x86 jump mnemonics in all four non-LTO O2 probe objects and all four LTO
+executables. Clang `-O1 -fsanitize=address,undefined -DVERIFY -DVALGRIND`
+native and forced-int64 executions also printed the same result with no
+diagnostics.
+
+The AArch64 compile matrix used:
+
+    clang --target=aarch64-linux-gnu -std=c99 -g -O{0,2,3,s} \
+      -I/tmp/secp256k1-oracles-next/src [optional -DUSE_FORCE_WIDEMUL_INT64] \
+      -c /tmp/secp256k1-translation-78/scalar-high-harness.c -o <object>
+
+All eight objects compiled successfully. `aarch64-linux-gnu-objdump -d
+--no-show-raw-insn --disassemble=probe` found zero `b.cond`, `cbz`, `cbnz`,
+`tbz`, or `tbnz` instructions for every representation and optimization
+level. AArch64 `-O1 -DVERIFY -DVALGRIND` compile-only builds also succeeded
+with zero warning bytes. The object hashes were:
+
+    native:      O0 cb878cef96f52308d43b7abe2039df9b0792a75f5c015f935d03f15b99beccdf
+                 O2 27e4febcf895bf665e1556954db806fdcbeaad3256dc39b1330e3104744c7e5b
+                 O3 a9d6d015238e001ac60c27b643fdd1c356d8398f32b0565355a1216029c72c48
+                 Os 8e251eb866178195216bccd1536f18b4423203b4f2e6cc598459e05a23534241
+                 VERIFY 819dc3497e289a528a6e05c57b22dc9e52170a687614375fb0a615862cabd5cd
+    forced-int64: O0 2a410a9858b34cb610d64282ce7f9c7bf0e48a4bfc32f63e8cf308f5db63d07b
+                 O2 24bda26c203a9e0b65334c9053a8842afd1ff1dfb1232266558a90758e59414e
+                 O3 2e65fb2d2ee5af23c70d22e17a322957084c5a18bcd062f8ca387ba961c4d2e7
+                 Os eb21adb35ef5a874e57b21a08673d4c077098340392feb2bba4fb4d2bf08d255
+                 VERIFY 073d4f5dec0bf7d693fe559f4bdb80a33645597b4b58a0b04b462cba8c580acb
+
+The oracle sensitivity control copied the source to `/tmp`, changed both
+backend `return yes` statements in `secp256k1_scalar_is_high` to
+`return yes ^ 1`, and ran Clang O2 in both representations. Both deliberately
+mutated binaries exited 1 at the first case:
+
+    mutated native exit=1
+    predicate mismatch expected=0
+    case=0
+    mutated forced-int64 exit=1
+    predicate mismatch expected=0
+    case=0
+
+### Verdict and limits
+
+The hypothesis is **dismissed** for the tested Clang/GCC x86_64 matrix,
+native and forced-int64 backends, LTO, sanitized execution, and Clang
+AArch64 code generation. The independent threshold oracle is
+mutation-sensitive and found no predicate, input-mutation, or compiler-
+lowering mismatch. No production change, regression test, or finding commit
+is justified. This does not provide AArch64 runtime execution, GCC AArch64
+coverage, ARMv7/RISC-V coverage, or a proof for noncanonical inputs outside
+the contract. The next distinct queue is another small constant-time or
+overflow-sensitive field/scalar helper; revisit cross-target execution if a
+runner or sysroot appears.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -575,5 +669,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-eight dismissed hypotheses unless compiler, source, or architecture evidence
+nine dismissed hypotheses unless compiler, source, or architecture evidence
 changes.
