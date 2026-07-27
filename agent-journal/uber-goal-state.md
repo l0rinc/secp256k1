@@ -225,8 +225,6 @@ AND mutation failed at the first unequal pair in both backends and both
 verifiers. The compiler hypothesis was dismissed; no production change was
 made. Goal 78 remains active with another distinct helper queued.
 
-## Handoff
-
 The twenty-third hypothesis then tested `secp256k1_scalar_is_zero` with an
 independent byte-level reduction oracle covering 648 values, including `n`,
 `n+1`, all ones, every power of two, order complements, and deterministic
@@ -241,6 +239,22 @@ nonzero input in both backends and both verifiers. The compiler/representation
 hypothesis was dismissed; no production change was made. Limitations are no
 AArch64 runtime, GCC AArch64, ARMv7/RISC-V, or formal constant-time proof.
 Goal 78 remains active with another distinct scalar helper queued.
+
+The twenty-fourth hypothesis then tested `secp256k1_scalar_is_one` with an
+independent byte-reduction oracle covering 648 values, including `n`, `n+1`,
+all ones, every power of two, order complements, and deterministic values
+(`digest=e0992ce3f53f682e`), plus a Boost `cpp_int` modulo oracle covering 327
+values (`digest=a4d7ffa194fdd729`). A newly found 31-byte scratch order
+constant was corrected before accepted results. Native assembly, portable C,
+and forced-int64 Clang/GCC optimization/LTO matrices, six ASan/UBSan/VERIFY
+runs, native and forced CMake scalar tests/corpus runs, and Clang AArch64
+compile-only normal/VERIFY code generation all matched. The direct probe had
+no conditional or loop branches in the tested optimized x86 and AArch64
+objects. The deliberate OR-to-AND mutation failed at zero in both backends
+and both verifiers. The compiler/representation hypothesis was dismissed; no
+production change was made. Limitations are no AArch64 runtime, GCC AArch64,
+ARMv7/RISC-V, or formal constant-time proof. Goal 78 remains active with
+another distinct scalar helper queued.
 
 ## Handoff
 

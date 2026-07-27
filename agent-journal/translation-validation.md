@@ -2339,6 +2339,150 @@ The next queue is another distinct scalar compiler/architecture helper; do
 not repeat this predicate unless new source, compiler, architecture, or
 performance evidence changes.
 
+### Cycle 2026-07-27: scalar one predicate translation
+
+#### Scope and hypothesis
+
+The twenty-fourth goal-78 hypothesis targeted the direct
+`secp256k1_scalar_is_one` predicate in the native 4x64 backend
+(`src/scalar_4x64_impl.h:238-242`) and forced 8x32 backend
+(`src/scalar_8x32_impl.h:286-290`). Each implementation XORs the lowest
+limb with one, ORs the remaining limbs, and compares the aggregate with zero.
+The trust boundary is a canonical scalar produced by
+`secp256k1_scalar_set_b32`; raw input bytes are untrusted until conversion.
+The question was whether a limb layout, order-reduction boundary, compiler,
+or optimized lowering mismatch could classify a non-one scalar as one or
+disagree across backends.
+
+Existing coverage was used as a seed: the scalar fuzzer's
+`scalar zero one predicates` trigger at `src/fuzz/scalar.c:1041-1060` checks
+only zero, one, `n-1`, and `n` for this predicate, while the general fuzzer
+checks parity but supplies no independent one oracle. History and blame
+point to the constant-time predicate introduced with the scalar
+implementations in `1d52a8b1`, with later relocation/verification changes in
+`aa404d53`, `44015000`, `1e0e885c`, and `a0fb68a2`.
+
+#### Independent oracle evidence
+
+The C harness
+`/tmp/secp256k1-translation-78/scalar-one-harness.c` has SHA-256
+`b3b07677a16a664ca352e427ef66d46179882b7c15850e8bf18b1c1a62b22764`. It
+constructs big-endian values independently, computes the expected reduction
+with byte subtraction, verifies production serialization, and checks whether
+the reduced bytes equal one. It covers 648 values: zero, one, `n-1`, `n-2`,
+`n/2`, all 256 powers of two and their order complements, 128 deterministic
+values, `n`, `n+1`, and all ones. After correcting an initial 31-byte order
+constant in the new scratch harness, every accepted run printed:
+
+    ok values=648 cases=648 digest=e0992ce3f53f682e
+
+The C++ harness
+`/tmp/secp256k1-translation-78/scalar-one-cpp-harness.cpp` has SHA-256
+`d9ba265b6dd16ecb05242c4fb677beeae30522b2e7999480a0a8e348a1f2761d`, and
+its C shim `/tmp/secp256k1-translation-78/scalar-one-c-shim.c` has SHA-256
+`b6c1e118114378dafa85710be2826fcb77249330b0725e5b78dc71675277e610`. It
+decodes each input to an independent Boost `cpp_int`, computes `input mod n
+== 1`, and calls the production predicate through the shim. Its 327-value
+set includes zero, one, `n-1`, `n-2`, all powers of two, 64 deterministic
+values, `n`, `n+1`, and all ones. Every accepted run printed:
+
+    ok cpp-values=327 cpp-cases=327 digest=a4d7ffa194fdd729
+
+The initial faulty C run stopped at `case=645` with an overflow mismatch and
+was discarded; the corrected C and independently correct C++ harnesses were
+then rerun from scratch before any matrix result was accepted.
+
+#### Compiler and project evidence
+
+The exact C matrix used `-DSECP256K1_BUILD`, `-std=c99`, `-Wall -Wextra`, and
+`-I src -I include` with Clang 22.1.7 and GCC 16.1.0. It covered `O0`, `O2`,
+`O3`, and `Os` for x86_64 assembly (`-DUSE_ASM_X86_64=1`), portable native C,
+and forced 8x32 (`-DUSE_FORCE_WIDEMUL_INT64=1`): 24 executions, all with the C
+digest above. Six additional `-O2 -flto` executions, both compilers and all
+three selectors, matched. Six C++ bridge executions, both compilers and all
+three selectors, matched the C++ digest.
+
+The sanitizer matrix used `-O1 -DVERIFY -DVALGRIND
+-fsanitize=address,undefined -fno-sanitize-recover=all` and ran all six
+compiler/backend combinations with
+`ASAN_OPTIONS=detect_leaks=1:halt_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1`; all six matched without diagnostics.
+
+The existing fresh CMake/Ninja native and forced-int64 builds from this HEAD
+were rebuilt and reran with
+`ctest --test-dir <build> --output-on-failure -R 'scalar|fuzz.scalar'`.
+Each configuration ran seven tests and reported `100% tests passed, 0 tests
+failed out of 7`, including `scalar_tests`, malformed scalar tests,
+ElligatorSwift bad scalar tests, and `fuzz.scalar.seeds`.
+
+For optimized x86 production probes, `objdump -d --no-show-raw-insn
+--disassemble=probe_is_one` found zero conditional or loop jumps in all six
+Clang/GCC O2 assembly, portable, and forced binaries. Clang lowered the
+native probe to a scalar XOR/OR aggregate and `sete`; GCC's forced probe
+used 32-bit limb ORs and `sete`/zero extension. This is lowering evidence,
+not a formal constant-time proof.
+
+Clang AArch64 compile-only commands used
+`clang --target=aarch64-linux-gnu -DSECP256K1_BUILD [-DUSE_FORCE_WIDEMUL_INT64=1]
+-std=c99 -O{0,2,3,s} [-DVERIFY -DVALGRIND] -I src -I include -c`.
+All 16 native/forced, normal/VERIFY objects compiled, and
+`aarch64-linux-gnu-objdump -d --no-show-raw-insn
+--disassemble=probe_is_one` found no branch mnemonic in any probe. The
+native normal hashes in O0/O2/O3/Os order were:
+
+    4fa0314e6a1c7b6bcbfb3ef63302e3fe4bbc57f80c047a8c10b2f13bbc34f174
+    5e243d3d1d59e3301b94bf17e81d2b1c962b5130d3e27ef118825bd6a3772f26
+    c27c72b840bd7bdb6754b403d29e4fd8e7666828039e45b97f562896873e1c7c
+    b7d66fb96ca9dcc05135be123be72c9413e5898f00f66dccaa762cfd194dfc31
+
+The native VERIFY hashes in the same order were:
+
+    0cd0d0e0858bfb51c317f0090b407017578410db997d6b715089148a9e134911
+    1e0cd2d16e37fcd12dcb08bac1c72bf64a61ace152df0342b5e86106d80c0a4a
+    eb062284667e029d24f3295e47c328e175c6bab8b9be0768a0b80a75a4e4e258
+    39625c3094d6043e01e9adb3b8128907d78480e376a088e697fce64ba3c467fe
+
+The forced-int64 normal hashes were:
+
+    13faad4a67d89f1e9bd064e088e6e3c9d114f762ef3134cbcfe398f957bf7fc6
+    df549019f4538c4716081a00bdb62562d2875d9a150527e1ad1fe924f6d19585
+    c1d592239fb4185f832657fa5edcecd75b00dc328611d0e045282a0b98a9b131
+    0475c6038960346fd09f9e03c96bcc18dac3f68d7dafd147268d97ff2186fb59
+
+The forced-int64 VERIFY hashes were:
+
+    159fc84da09ab4e48d782a47aa9970918e5486af56c368eb6558ba4053646b63
+    48127559203769cf39b0480539f0051f63917a190ad3f6ab372ff2cc75d3f850
+    ef5649b7cc492cb1f19b3cf6c928f1eee1268efb81660d156528a6c0dd56a94d
+    9d6115a9f629709cbf904cfb0a57060c11f81edda071aa42605ca42c998c4c02
+
+No runtime AArch64, GCC AArch64, ARMv7/RISC-V, or formal translation
+validation was available.
+
+#### Mutation controls
+
+Scratch copies changed only the OR aggregate to an AND aggregate in
+`scalar_4x64_impl.h` and `scalar_8x32_impl.h`. Clang O2 C and C++ runners for
+both copies rejected the mutation at zero:
+
+    one mismatch case=0 expected=0 actual=1
+    cpp one mismatch case=0 expected=0 actual=1
+
+This proves that both independent oracles distinguish zero from one and are
+not merely checking the positive one case or a passing corpus.
+
+#### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. The native and forced implementations agree with both
+independent oracles at the reduction boundary and no lowering mismatch,
+undefined behavior, or reachable production defect was found. No production
+code, regression test, or fix commit is justified. The next queue is another
+distinct scalar compiler/architecture helper; do not repeat this predicate
+unless new source, compiler, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
