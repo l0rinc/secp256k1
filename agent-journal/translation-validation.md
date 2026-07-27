@@ -1410,6 +1410,112 @@ queue is another compiler/architecture constant-time or overflow-sensitive
 helper. Do not repeat the sixteen dismissed compiler hypotheses unless
 compiler, source, or architecture evidence changes.
 
+### Cycle 2026-07-27: field negation translation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `3bacc91c`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, `aarch64-linux-gnu-objdump`, and the existing ASan/VERIFY test builds
+were available. No AArch64 runtime, GCC AArch64, ARMv7/RISC-V sysroot,
+Alive2, CBMC, or KLEE executable was available. The field-negation contract,
+both backend implementations, the independent field fuzzer oracle, blame,
+and the historical static-assert change were read before selecting this
+distinct arithmetic kernel.
+
+### Hypothesis and contract
+
+The seventeenth bounded hypothesis was that compiler transformation or the
+native 5x52 versus forced-int64 10x26 representation could miscompute
+`secp256k1_fe_negate` for zero, near-prime, maximum-magnitude, or aliasing
+inputs, violate the output magnitude contract, or introduce a
+data-dependent branch. The public contract at `src/field.h:204-217` accepts
+an input of magnitude `m` with `0 <= m <= 31`, permits an uninitialized output,
+and promises an output magnitude of `m+1` without normalization. The VERIFY
+wrapper at `src/field_impl.h:297-305` checks the input bound and records
+`m+1`/`normalized=0`. The 5x52 implementation at
+`src/field_5x52_impl.h:278-291` and 10x26 implementation at
+`src/field_10x26_impl.h:343-362` subtract each limb from `2*(m+1)` times
+the corresponding representation of the field prime.
+
+### Evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/field-negate-harness.c` has SHA-256
+`bc4db3db512233ba6b545033dc8142f3c79054fddd7bdc2f1bfe7a7bf3859eac`. It
+uses a byte-level `p-x` reference independent of either production field
+representation. It covers 645 canonical values including zero, one, the
+two values adjacent to the prime, every power of two and its prime
+complement, and 128 deterministic values below `2^255`. Each canonical
+value is raised to every input magnitude from 1 through 31 by adding a zero
+residue, for 19,995 raised cases. It checks the residue, VERIFY metadata,
+normalization state, cancellation after adding the original value, and
+in-place aliasing for magnitudes 0, 1, 8, and 31. It also checks all 32
+independent `get_bounds(m)` cases. Clean native and forced-backend O2 runs
+printed exactly:
+
+    ok values=645 bound-cases=32 raised-cases=19995 digest=0315022cfbcaee3d
+
+Clang and GCC native/forced builds using the repository's actual
+`USE_FORCE_WIDEMUL_INT128` and `USE_FORCE_WIDEMUL_INT64` selectors passed at
+`O0`, `O2`, `O3`, and `Os`; native and forced O2 LTO builds also matched.
+Clang/GCC ASan+UBSan VERIFY runs (with Clang also using VALGRIND checks)
+matched without diagnostics. The existing ASan and recovery/no-VERIFY
+binaries completed the focused `field_half`/`field_misc` tests with fixed
+seeds, and both `fuzz_field` binaries accepted the
+`src/fuzz/corpora/field/negation-byte-reference` input once without failure.
+
+The final Clang O2 x86 probe object hashes were native
+`e46131555e4fae480dbd9c6c8ca45eb8b9115e186499399d0e6bf3aa23e0adda` and
+forced
+`7ba0e6ef1d4a1ca3970bea2fd630bd406bab4da97633ef4e5d457fe2f31dbd68`.
+Representative non-VERIFY `probe_negate_1`, `_8`, and `_31` bodies had no
+conditional or loop jump mnemonics at O2 in either backend.
+
+The Clang AArch64 compile-only matrix used the same native and forced
+selectors at `O0`, `O2`, `O3`, and `Os`, with and without VERIFY. All 16
+builds completed. Non-VERIFY object hashes were:
+
+    native: O0 2781984a89f4b88d4d3097b97300a062373c2257ecc16c70ff59a37b6f96f492
+            O2 fc72cda8468530406f02b7407587691fb087cb0cebc233260a47512338a7926a
+            O3 438adb4b4b900d205327b9737416eaf7a34fac5e13cf1bfe177542052e5319d2
+            Os d665dc5d646ae75496bf4a1b5646395a33431152c0601085f3fcea0711b6934c
+    forced: O0 2a8e4641340f6aef1421810865364f674655db8fceed9a26fc9aa1a8fbffd1a5
+            O2 ab955fe23aaa5f200112152516757c394a5bcd01fd712862a4f86813aeb29036
+            O3 77df9bdc6398ca538f51341c669537af768a9346ad05595c677c7633017fc4ff
+            Os d235976003997cb59153fe9ed23eff22c1c1c2a297aa6abd52d94268a951cd4d
+
+All eight non-VERIFY AArch64 probe bodies had no conditional branch
+mnemonics. The AArch64 O0 unconditional branches are wrapper-call
+scaffolding, not data-dependent production branches; VERIFY branches are
+assertion/debug scaffolding and are not constant-time evidence.
+
+The mutation controls copied `src/` and `include/` to scratch and changed
+the first field-prime output constant from `0xFFFFEFFFFFC2FULL` to
+`0xFFFFEFFFFFC2EULL` in the native 5x52 implementation and from
+`0x3FFFC2FUL` to `0x3FFFC2EUL` in the forced 10x26 implementation. Both
+clean Clang O2 runners rejected the mutation immediately:
+
+    negate mismatch kind=raised case=0 m=1
+    mutated native exit=1
+    negate mismatch kind=raised case=0 m=1
+    mutated forced exit=1
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native and forced-int64 field backends, LTO,
+ASan/UBSan/VERIFY execution, focused field tests, and Clang AArch64 code
+generation. The independent modular-negation oracle found no residue,
+magnitude, aliasing, or lowering mismatch, and the mutation proves that the
+oracle detects a shared field-prime defect. No production change,
+regression test, or finding commit is justified. This does not provide
+AArch64 runtime execution, GCC AArch64, ARMv7/RISC-V, or a formal proof of
+constant-time behavior; branch inspection remains compiler evidence only.
+The next queue is another compiler/architecture constant-time or
+overflow-sensitive helper. Do not repeat the seventeen dismissed compiler
+hypotheses unless compiler, source, or architecture evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -1423,5 +1529,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-sixteen dismissed hypotheses unless compiler, source, or architecture
+seventeen dismissed hypotheses unless compiler, source, or architecture
 evidence changes.

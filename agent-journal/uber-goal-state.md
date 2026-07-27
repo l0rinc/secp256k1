@@ -146,6 +146,18 @@ promised normalized output; a minimal source-comment correction was committed
 with the cycle journal and state. The goal remains active with another
 compiler/architecture constant-time or overflow-sensitive helper queued.
 
+The seventeenth hypothesis then tested `secp256k1_fe_negate` across native
+5x52 and forced-int64 10x26 representations with an independent byte-level
+prime-negation oracle covering 645 canonical values, all input magnitudes 1
+through 31, 32 raw bound cases, aliasing cases, and 19,995 raised cases.
+Correctly selected native and forced Clang/GCC `O0/O2/O3/Os`, LTO,
+ASan/UBSan/VERIFY execution, focused field/fuzzer checks, mutation controls,
+and Clang AArch64 code generation matched
+`digest=0315022cfbcaee3d`; the deliberate field-prime-constant mutations
+failed immediately in both backends. The compiler hypothesis was dismissed.
+The goal remains active with another compiler/architecture constant-time or
+overflow-sensitive helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
