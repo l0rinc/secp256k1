@@ -39438,3 +39438,64 @@ x86_64-assembly combination, which is why this control is recorded separately.
 Future changes should state whether they preserve, change, or mask the known
 master-relative findings. No l0rinc commit was cherry-picked for this slice:
 the fork ref was already identical to `origin/master`.
+
+## 2026-07-27 GCC 16 -O2 x86_64 assembly sanitizer corpus matrix
+
+After the audit branch was rebased onto the newly fetched
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`, this optimizer-level
+control started from audit state `d4de264b66977bbfef20f9b5cd51d75672684ed6`.
+`l0rinc/master` remained `d2d04864ef9b056151603a3ced7980958b058028` and is
+already contained in the current upstream ancestry. No fork commit was
+cherry-picked for this run.
+
+The Debug build used GCC 16.1.0, CMake 3.31.6, explicit `-O2`, x86_64
+assembly, all seven optional modules, and the non-libFuzzer file runner. The
+instrumentation was `-g -fsanitize=address,undefined -fno-omit-frame-pointer`
+with `ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1`
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The tracked corpus
+remained 357 files and 14,239 bytes; its sorted `filename size` manifest is
+`dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+Per-target counts were: `api_roundtrip` 62/2901, `context` 12/693,
+`ecdh` 9/283, `ecmult_const` 11/406, `ecmult_multi` 29/1028, `ellswift`
+20/820, `field` 21/742, `group` 23/837, `hash` 10/446, `musig` 81/3054,
+`recovery` 17/783, `scalar` 10/349, `schnorrsig` 18/670,
+`silentpayments` 14/515, and `xonly_tweak` 20/712.
+
+Two independent workers per target first ran the empty input and then every
+file from a private corpus copy. All 30 workers exited 0 and wrote
+`complete=0`; there was no assertion, ASan/UBSan diagnostic, runtime error,
+timeout, OOM, crash, or artifact. The path-independent sorted worker-log
+manifest is `7ef4fbb2d8d25c1035a4fcca89ae550a9b09eb19fbd6bf499ac767e228bff0b1`.
+The path-independent sorted target-binary manifest is
+`d9cd8d9d454c8c49270ad26845bd80a0691e2db2f08f10f9488c0b6863c24fa1`; the
+shared library hash is `ddf211c9769fa32a100d433be69fb1d7a0897b14456da0ad3c554c05962d1635`.
+
+GCC emitted `-Wstringop-overread` while inlining
+`secp256k1_fuzz_scalar32_in_order` in the API and recovery compact-signature
+parsers (`src/fuzz/api_roundtrip.c` source hash
+`a4a17b26cd8dcc606a53015173403579e528082d1c8105fa86a38a81c0bf28cc`,
+`src/fuzz/recovery.c` source hash
+`d75f5bcdc726f6bae87138b0425d8aa26275d9a098a5da39f3d0143652267362`). The
+warnings point to the 32-byte `memcmp` calls at `api_roundtrip.c:1692` and
+`recovery.c:26`, with inlined call sites at `:2785` and `:623`. Both direct
+input call sites are guarded by `size >= 64`; the complete empty-plus-corpus
+replay under ASan/UBSan produced no out-of-bounds or other diagnostic. This
+is therefore a compiler-only, fuzzer-harness warning rather than a production
+memory-safety finding. No harness rewrite, production mutation, regression
+test, or fix is claimed; the warning is retained as optimizer evidence.
+
+The same build passed `tests -i=1 -j=2 -log=1` and
+`noverify_tests -i=1 -j=2 -log=1`. Their log hashes are
+`95d2f662d23aa90be5a6fc2fd9d59db711b38624408eda0a1bcf3f2308043237` and
+`344fb38aa7192ee587c041f32d856dfff6952dad7431da23d809b2e6f1b9227a`.
+
+This is negative optimizer/compiler evidence, not a new production finding.
+No invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency impact was shown. The warning is confined to fuzzer input
+plumbing and has no Bitcoin Core consensus caller; existing master-relative
+Informational/Low through Low/Medium ratings therefore remain unchanged, with
+no High/Critical rating. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared. Future
+compiler or fuzzer changes must state whether they preserve, change, or mask
+this warning and the clean-master findings.
