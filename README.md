@@ -16720,3 +16720,93 @@ The exact clean/repaired matrix, source hashes, isolation reason, Core call
 routes, and severity decision are retained here so a later cherry-pick or
 follow-up fix cannot silently mask a current-master behavior without adding
 the context to its commit message.
+
+## 2026-07-27 Current-origin MuSig nonce/keypair revalidation
+
+The current `origin/master`
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` was rechecked for two existing
+MuSig findings that a broad corpus replay can hide behind earlier opaque-state
+stops. Clean production source hashes were
+`src/modules/musig/session_impl.h`:
+`afb0e3ba18768184b551ae43acd1419390ed50cd4a276ee80d9054ab401a5ba5`,
+`src/modules/extrakeys/main_impl.h`:
+`6c002046bda20ffb8767cac1c6800dd3b8e9be9e648772a1498539159a4b4937`, and
+`src/secp256k1.c`:
+`7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb`.
+The copied MuSig corpus had 81 files, 3,054 bytes, and a sorted per-file
+SHA-256 manifest of
+`1e647b464b09de335ced0453b1c39e656c69dd30556d86cba55c14c02092549d`.
+
+The first disposable `-fork=2 -jobs=2 -runs=1` attempt was not counted as a
+corpus result. Both workers started with zero temporary seed files and hit the
+already documented `src/field_5x52_impl.h:29` assertion from the harness's
+noncanonical opaque-public-key helper; the manager and worker log hashes were
+`2fc6bd66cac60281ae8ce5cd74fe053d000e7ac78f941673621424c7dc05bafb`,
+`62e4ff55b7508e46ea5b268b4e3a737847103acf7f6cda533e9dd90abd184f64`, and
+`68f8d9a625ac64db6595d2d9571164b2efe670e7c372655722936d30f633e170`.
+The triggering `aggregate-no-outputs` input is 59 bytes with SHA-256
+`540f2a18bae31835a2abdd09ec29d871586f87dfcb51e3d2deccb98ea4b51c8c`.
+Only that known helper was disabled in a disposable fuzzer overlay before
+isolating later MuSig transitions; no production source was changed. This
+masking context must remain attached to follow-up fuzzer or cherry-pick work.
+
+### Failed nonce output cleanup
+
+An independent ASan/UBSan public-API probe passed an all-zero secret key to
+`secp256k1_musig_nonce_gen` and to `secp256k1_musig_nonce_gen_counter` while
+keeping the public half valid and poisoning both outputs. On clean master both
+calls returned `0` and cleared the secret nonce, but left 131 and 130 nonzero
+bytes in the public nonce respectively. The same probe with only the existing
+`084013b2` repair returned `0` with both objects zero. Native and forced-int64
+outputs were identical; clean/repaired log hashes were respectively
+`c3845efa6866f2cc6a4851215c46c25fbbce646333de7e6273db604f5700402e` /
+`5d9d73559b40cdc8f403360fc2b77f889480b97b02b1ee401134d818cc0f5e51`.
+Probe source SHA-256 was
+`425fea170df0b17cb46b26d34e55eddfe7dcca51780f2d595634d82d62ade090`.
+
+This reiterates the existing `084013b2` production fix and its deterministic
+MuSig tests; it is not a new fix. The secret nonce is invalidated and the
+public nonce has no standalone cryptographic meaning, so this is **Low API /
+state hardening** on current master, not Critical. A caller that ignores the
+`0` return can propagate stale public state and break a local signing session,
+but no nonce secret disclosure, nonce reuse, forgery, key compromise, invalid
+block or invalid witness acceptance, witness-sigop undercount, consensus
+divergence, or remote memory/concurrency effect was shown. Core's surveyed
+MuSig use is wallet/application state, not block or witness validation.
+
+### Counter nonce keypair consistency
+
+The second independent probe copied the public half of a valid keypair made
+from secret `1` from a distinct valid keypair made from secret `2`, then called
+`secp256k1_musig_nonce_gen_counter`. Clean master returned success without an
+illegal callback and produced nonzero 132-byte secret and public nonce
+objects on both native and forced-int64 backends. With the existing
+`bbca5a72` consistency repair and its shared keypair loader, the same input
+invoked one illegal callback, returned `0`, and cleared both objects. Clean
+and repaired log hashes were
+`9af6dacd0ea7a780107c4ff1a02680cfefa3b684033d7c14525a86c5f6956671` /
+`d656e0fba528ebf3abe695df0a6c02ba26062e222a3a10a607879bd783de80fe`;
+probe source SHA-256 was
+`7c7f93b3a6cafb4e68e289f2c787e862f5520e1f0f4b69dae59e7badc5df8a3f`.
+The exact fuzzer witness `partial-keypair-nonce-counter-invalid` is 38 bytes
+with SHA-256
+`735460d24399b180f54a4e930e66abb056de4aa1b1f596eb529803ca25da42c4`; after
+the unrelated opaque-public-key helper was gated, clean master exited 134 at
+the fuzzer's output-state assertion (`src/fuzz/musig.c:4388`).
+
+This reiterates `bbca5a72`, which already contains the production fix and
+deterministic regression. Severity is **Medium for the direct library opaque
+state contract** and **Low/Medium for current Bitcoin Core**: the state must
+be locally corrupted, copied unsafely, or otherwise manufactured outside the
+normal keypair constructor. The result misbinds cryptographic nonce state to
+different secret and public keys, but this replay did not prove nonce reuse,
+secret disclosure, forgery, key compromise, invalid-block or invalid-witness
+acceptance, consensus impact, or a remote trigger. It is therefore not
+Critical on the surveyed Core caller path. The repaired mismatch control used
+`bbca5a72`'s prerequisite shared loader; it must not be credited to the
+separate `084013b2` public-output cleanup.
+
+These are reiterations, not new production changes. The clean/repaired source
+hashes, exact probes, backend pairs, first-stop ordering, and Core severity
+decisions are recorded so a later minor fix cannot accidentally mask either
+master behavior without amending its commit message.
