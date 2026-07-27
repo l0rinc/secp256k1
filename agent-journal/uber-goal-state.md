@@ -378,6 +378,21 @@ AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, formal erasure proof, or
 unusual scalar ABI. Goal 78 remains active with another distinct uncovered
 scalar helper queued.
 
+The thirty-third hypothesis was selected by draw seed `1493336985` from the
+eligible queue `scalar_reduce_512 scalar_from_signed scalar_to_signed` at index
+0: `scalar_reduce_512`. A direct byte-wise C reduction oracle and an
+independent Boost `cpp_int` modulo oracle covered 2,566 full-width 512-bit
+inputs with matching `digest=d2748d46a2df4b00`. All 24 C compiler/backend/
+optimization runs, six C++ bridge runs, six LTO runs, six ASan/UBSan/VERIFY
+runs, native and forced CMake scalar/corpus selections, and 16 Clang AArch64
+compile-only objects passed. Isolated x86 and AArch64 reducer symbols had no
+conditional or loop branches. Changing the first portable reduction constant
+in isolated native and forced source copies caused both independent oracles to
+fail at value 5. The translation hypothesis was dismissed; no production
+change was made. Limitations remain no AArch64 runtime, GCC AArch64,
+ARMv7/RISC-V, Alive2, formal translation proof, or unusual scalar ABI. Goal
+78 remains active with `scalar_from_signed scalar_to_signed` queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

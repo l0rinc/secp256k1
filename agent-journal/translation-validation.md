@@ -3344,6 +3344,110 @@ layouts. The next queue is another distinct uncovered scalar helper; do not
 repeat this wrapper or the generic memzero predicate unless new source,
 compiler, architecture, or caller evidence changes.
 
+## Cycle 33: scalar 512-bit reduction translation validation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at
+`178557bca631f27449967424095cfc7f92e540bd`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The controller draw
+used seed `1493336985` over the eligible queue
+`scalar_reduce_512 scalar_from_signed scalar_to_signed`, selected index 0,
+and chose `scalar_reduce_512`. Clang 22.1.7, GCC 16.1.0, CMake 3.31.6,
+Ninja 1.12.1, and GNU AArch64 objdump 2.45 were available. There was no
+AArch64 runtime, GCC AArch64, ARMv7/RISC-V runner, or Alive2/formal
+translation validator.
+
+### Scope and hypothesis
+
+The target is `secp256k1_scalar_reduce_512`: the native 4x64 definition is at
+`src/scalar_4x64_impl.h:351`, its portable body begins at line 608, and the
+forced 8x32 definition is at `src/scalar_8x32_impl.h:407`. The callers are
+`secp256k1_scalar_mul` at lines 865 and 650 respectively. The contract is to
+accept a raw 512-bit little-limb value and leave the scalar equal to that
+value modulo the secp256k1 order, with the representation's bounds and
+verification invariants preserved.
+
+The implementation history reaches the constant-time scalar arithmetic
+introduced by `1d52a8b155661c2bce4cfcb993c5d43a4b663d0c`; the current static
+function placement was later recorded by `a4a43d75`. The previous
+`scalar_mul_512` cycle tested this reducer only indirectly through products.
+The falsifiable hypothesis was that a backend-specific carry, complement
+constant, limb ordering, or compiler lowering error could produce a wrong
+modular residue for a direct 512-bit input while product-only tests missed it.
+
+### Independent oracle evidence
+
+The C harness uses a byte-wise long-division reference reducer over a 33-byte
+remainder and does not call production arithmetic for its expected value. It
+tests 2,566 inputs: zero, one, `n-1`, `n`, `n+1`, all ones, every 512-bit
+power and predecessor, `n << shift` and its successor for shifts 0 through
+255, and 1,024 deterministic full-width random values. It converts each
+input independently into native 4x64 or forced 8x32 limbs, checks the complete
+32-byte result, and guards the scalar with prefix/suffix canaries. All C
+runs printed:
+
+    ok values=2566 digest=d2748d46a2df4b00
+
+The independent C++17 bridge uses Boost `cpp_int` to compute `input % n` for
+the identical schedule and calls production through a C shim. All six
+Clang++/G++ native, inline-assembly, and forced-int64 runs printed the same
+digest. Scratch harness hashes are:
+
+    d6ee04fcd22dab214240e415ee75aa801dced1e7eddcce0aaca9ddb29aa8781d  scalar-reduce512-harness.c
+    17c9541d99c9e8e13487162b6fbc32446b5d90afcc839b837e3b100bcc45b785  scalar-reduce512-c-shim.c
+    cd65046d8aa3f351b01a059aed755033e1fc0ebae27b2f057e5f4beba583f4ca  scalar-reduce512-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+The C matrix covered Clang and GCC, x86_64 inline assembly, portable native
+C, and forced 8x32 at O0/O2/O3/Os: 24 executions, all with the C digest.
+Six additional O2 `-flto` executions matched. Six C++ bridge executions
+matched. Six `-DVERIFY -DVALGRIND` O1 ASan/UBSan executions with leak
+detection and halt-on-error settings matched without diagnostics.
+
+The existing native and forced-int64 CMake/Ninja builds required no rebuild
+and each ran `ctest --output-on-failure -R 'scalar|fuzz.scalar'`: seven tests,
+`100% tests passed, 0 tests failed out of 7`, including scalar tests, bad
+scalar tests, ElligatorSwift bad-scalar tests, and `fuzz.scalar.seeds`.
+
+With `-fno-inline`, isolated x86 reducer symbols had zero conditional or loop
+branches in all six Clang/GCC selector objects. The branch reports are
+`c023887d30212210e0f3ec814a7ba506874dff226bdcd4ecef1dd5714ce1f5ba` for
+Clang and `777f3cfb9458849049df5afcb9cacf7d727f98a724006997d0d3cafdd9f474df`
+for GCC. Clang AArch64 compile-only coverage included native and forced 8x32,
+normal and `-DVERIFY`, at O0/O2/O3/Os: 16 objects compiled and every isolated
+reducer had zero `b.cond`, `cbz`, `cbnz`, `tbz`, or `tbnz` instructions. The
+AArch64 manifest hash is
+`edc8c48d9643958d8e30c86182b6a1ea7184f8ba19d0ee787f21e3034e152e96` and its
+object-list hash is
+`9d6a28bcb2d99d12d0b89abe2c2387d62c660715d6ca660ff6c6274498b64778`.
+
+### Mutation controls
+
+In isolated copies of the portable 4x64 and forced 8x32 source trees, the
+first `muladd_fast(n0, SECP256K1_N_C_0)` term was changed to use
+`SECP256K1_N_C_1`. The C byte oracle and the C++ `cpp_int` oracle both rejected
+each mutation at value 5. These controls demonstrate that the independent
+expected-value checks detect a wrong reduction constant in both
+representations; the inline-assembly paths were separately covered by the
+baseline matrix.
+
+### Finding and verdict
+
+The direct-reduction translation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No wrong residue, canary overwrite, undefined behavior,
+backend disagreement, suspicious lowering, or reachable production defect was
+found. No production code, regression test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal translation proof, and no unusual scalar ABI outside the tested
+layouts. The next queue is `scalar_from_signed scalar_to_signed`; do not
+repeat this reducer unless new source, compiler, architecture, or caller
+evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
