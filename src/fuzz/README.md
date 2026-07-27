@@ -38465,9 +38465,11 @@ production failure.
 This is negative differential evidence. No new clean-master failure,
 production bug, invalid-block or invalid-witness acceptance, sigop impact,
 consensus divergence, signature forgery, key compromise, or severe remote
-memory/concurrency failure was found. Bitcoin Core's relevant paths use the
-validated EllSwift, Schnorr, recovery, MuSig, and Silent Payments compositions
-surveyed in the earlier caller review; the assembly backend introduced no new
+memory/concurrency failure was found. The current Bitcoin Core checkout's
+surveyed production paths use validated EllSwift, Schnorr, recovery, and
+MuSig compositions; it has no `secp256k1_silentpayments` production caller.
+The Silent Payments rows are therefore direct-library evidence only, not
+current-Core or consensus evidence. The assembly backend introduced no new
 master-reachable admission consequence. Existing finding severities are
 unchanged, and no High/Critical rating is justified. No production mutation,
 fix, regression test, or cherry-pick is claimed for this campaign. Future
