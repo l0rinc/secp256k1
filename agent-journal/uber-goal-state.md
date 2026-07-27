@@ -363,6 +363,21 @@ made. Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
 formal translation proof, or unusual non-32-bit unsigned-int ABI. Goal 78
 remains active with another distinct uncovered scalar helper queued.
 
+The thirty-second hypothesis was selected by draw seed `913401491` from the
+remaining helper queue at index 3: `scalar_clear`. This wrapper-level cycle
+was distinct from the earlier generic memzero dead-store check. Guarded C and
+independent C++ oracles covered 4,102 secret patterns and all 32 scalar bytes
+plus canaries, agreeing on `digest=46d5db336e4be564`. All 24 C O0/O2/O3/Os
+runs, six C++ bridge runs, six LTO runs, six ASan/UBSan/VERIFY runs, native
+and forced CMake scalar/corpus selections, and 16 Clang AArch64 compile-only
+objects matched. The wrapper had only an unconditional transfer and no
+conditional or loop branches. A `sizeof(scalar)-1` mutation failed in both C
+and C++ controls for both representations. The compiler/representation
+hypothesis was dismissed; no production change was made. Limitations are no
+AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, formal erasure proof, or
+unusual scalar ABI. Goal 78 remains active with another distinct uncovered
+scalar helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

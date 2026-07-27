@@ -3249,6 +3249,101 @@ ABI used by the supported builds tested here. The next queue is another
 distinct uncovered scalar helper; do not repeat this predicate unless new
 source, compiler, architecture, or caller evidence changes.
 
+## Cycle 32: scalar clear wrapper translation validation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at
+`6101be7c93b59f4111e6562d33a6fce25567a6b7`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The controller draw
+used seed `913401491` over the remaining helper queue
+`scalar_reduce_512 scalar_from_signed scalar_to_signed scalar_clear`,
+selected index 3, and chose `scalar_clear`. Clang 22.1.7, GCC 16.1.0,
+CMake 3.31.6, and GNU objdump 2.45 were available. No AArch64 runtime,
+GCC AArch64, ARMv7/RISC-V runner, or formal translation validator was
+available.
+
+### Scope and hypothesis
+
+I audited `secp256k1_scalar_clear` at `src/scalar_impl.h:30-32`. Its wrapper
+contract is to pass the complete `sizeof(secp256k1_scalar)` object to
+`secp256k1_memclear_explicit`, leaving all scalar bytes zero and surrounding
+memory unchanged. Callers include ecmult generator/constant/multi paths,
+ECDSA, ECDH, Schnorr, MuSig, ElligatorSwift, silent payments, extra keys,
+secret-key operations, scalar fuzzing, and tests. The wrapper was introduced
+by `97c57f42`; the current explicit-clear call is from `399b582a5`.
+
+This is distinct from the earlier generic `secp256k1_memzero_explicit`
+dead-store campaign: the present hypothesis targets wrapper object size and
+the native 4x64 versus forced 8x32 scalar layout. A compiler or wrapper
+translation error could clear only part of a scalar, leave secret bytes, or
+write through a canary boundary while still passing a first-byte check.
+
+### Independent oracle evidence
+
+The C harness initialized a guarded scalar with 4,102 patterns, including
+zero, alternating bytes, all-ones, and 4,096 deterministic 32-bit patterns.
+It checked all 32 scalar bytes after clearing and 16-byte prefix/suffix
+canaries. All 24 Clang/GCC assembly, portable, and forced-int64 O0/O2/O3/Os
+runs printed:
+
+    ok patterns=4102 digest=46d5db336e4be564
+
+The separate C++17 driver called the production wrapper through a C shim and
+used an independent `std::array` zero oracle over the same patterns. All six
+Clang++/G++ selector runs accepted the same digest. Six additional O2 LTO
+runs also matched. Scratch harness hashes are:
+
+    1de421c78ee3f5f6844bf0c33fb48b62729559eb24c1452b3ad04335ae20ed15  scalar-clear-harness.c
+    6fe02e9f4d2bb005381863fd3879eee04440f1f8545918a2d9eb361c148db6a1  scalar-clear-c-shim.c
+    356afadd8e2e9880689c176afc24613926e81a6204254bac73cb087b8adca841  scalar-clear-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+Six `-DVERIFY -DVALGRIND` Clang/GCC O1 ASan/UBSan runs with leak detection
+and halt-on-error settings matched without diagnostics. The native and
+forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --output-on-failure -R 'scalar|fuzz.scalar'`; each reported
+`100% tests passed, 0 tests failed out of 7`.
+
+With `-fno-inline`, all six x86 helper objects contained one unconditional
+tail jump from `secp256k1_scalar_clear` to `secp256k1_memclear_explicit` and
+no conditional or loop jumps. Clang AArch64 compile-only commands covered
+native and forced-int64 selectors at O0/O2/O3/Os with and without `-DVERIFY`;
+all 16 objects compiled. Each isolated wrapper had only the corresponding
+unconditional transfer and no conditional or loop branch. The AArch64
+object manifest hash is
+`66420d538f73953a9a6f20dbbe38b0b3d2d641a682fb1be66000074a0542f85f`.
+The x86 no-inline object hashes were stable by compiler/selector:
+Clang native/portable `ad598df63d80867ebcff70b6533206f87298b91421e0b9f74174b02858205d9a`,
+Clang forced `0a6fb936502068e0562ae8ec0ae8d7cec13e5bb88628262b7898edf3f8a9e73e`,
+GCC native/portable `078dfa40e630ec2802961f304eb55cca5a063d9003596c484f7fbd51e7f0d1c3`,
+and GCC forced `c69d989d517ffcfa778f2253dbe927873b367659b1372c0be81a624f6ba349f1`.
+
+### Mutation controls
+
+Scratch native and forced copies changed the clear size from
+`sizeof(secp256k1_scalar)` to `sizeof(secp256k1_scalar) - 1`. Both C runners
+reported a mismatch in the final byte (`byte=31 value=84`), and both C++
+runners rejected the mutation at `index=0 pattern=00000000`. The controls
+prove that the full-object oracle detects a partial wipe in both scalar
+representations.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No partial clear, canary overwrite, undefined behavior,
+lowering anomaly, or reachable production defect was found. No production
+code, regression test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal secret-erasure proof, and no unusual scalar ABI outside the tested
+layouts. The next queue is another distinct uncovered scalar helper; do not
+repeat this wrapper or the generic memzero predicate unless new source,
+compiler, architecture, or caller evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
