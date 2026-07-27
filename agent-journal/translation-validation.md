@@ -71,6 +71,33 @@ all constant-time helpers; Alive2 and cross-architecture execution were not
 available. The next distinct hypotheses are `secp256k1_memzero_explicit`
 dead-store preservation and a backend-specific constant-time helper check.
 
+## Cycle 2026-07-27: `secp256k1_memzero_explicit` dead-store check
+
+The second bounded hypothesis was that optimization or LTO could remove the
+actual wipe of a local secret buffer because the buffer was otherwise dead.
+The scratch harness
+`/tmp/secp256k1-translation-78/wipe_harness.c` (hash
+`d79e4dc674c4748319761f6ba9ee076cbb1efd87d2221ba4752c5c53f1d81550`)
+initialized a 32-byte local buffer, called
+`secp256k1_memzero_explicit`, then copied the first post-clear byte into a
+volatile global. Every Clang/GCC `O0`, `O2`, `O3`, `Os`, and `O2+LTO` build
+printed `ok post-clear=0`; every run output had hash
+`21467fdbcb65fb0ce6ba2d9c0f14b8a73d7689ffb547b883fe66fd6edb0bfb6b`.
+
+Assembly inspection found concrete clearing operations in every optimized
+body. Clang O2/LTO emitted `xorps` followed by two `movaps` zero stores;
+GCC O2/O3/LTO emitted `pxor` followed by two `movaps` zero stores; GCC Os
+emitted `rep stos`. The O0 builds retained the explicit helper call. The
+optimized compilers removed the immediately-dead secret initialization, which
+is unrelated to clearing and does not weaken the observed wipe. No production
+source change or regression test is justified.
+
+This hypothesis is **dismissed** for the tested x86_64 compiler/toolchain
+matrix. The combined goal remains active because cross-architecture code
+generation, `VERIFY` instrumentation, and the backend-specific constant-time
+helper queue remain untested. No compiler bug, secret disclosure, or
+constant-time regression was demonstrated.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -81,4 +108,7 @@ oracle. Separate source undefined behavior, test failure, inline-assembly
 contract, and compiler defect. Keep any reduction and generated artifacts in
 `/tmp`, record exact commands and hashes, and do not claim a compiler bug from
 an optimization difference without a minimized reproducer and independent
-verification.
+verification. The next queue is a backend-specific constant-time helper
+comparison, starting with the portable versus forced-int64 field/scalar
+conditional-move paths; do not repeat the two dismissed helper hypotheses
+unless compiler, source, or architecture evidence changes.

@@ -38,13 +38,14 @@ titles, slugs, and campaign scope.
 
 ## Latest Cycle
 
-Goal `78` tested `secp256k1_int_cmov` under Clang/GCC `O0`, `O2`, `O3`, `Os`,
-and `O2+LTO`. One million valid deterministic vectors matched the independent
-reference in every build, and all extracted helper bodies were branch-free.
-The hypothesis was dismissed; no production finding or fix commit resulted.
-The goal remains active with `secp256k1_memzero_explicit` dead-store
-preservation as the next distinct hypothesis. Scratch artifacts are under
-`/tmp/secp256k1-translation-78`.
+Goal `78` tested `secp256k1_int_cmov` and
+`secp256k1_memzero_explicit` under Clang/GCC `O0`, `O2`, `O3`, `Os`, and
+`O2+LTO`. One million valid deterministic cmov vectors matched the reference,
+all cmov helper bodies were branch-free, and all wipe builds retained concrete
+zero stores or `rep stos`. Both hypotheses were dismissed; no production
+finding or fix commit resulted. The goal remains active with a
+portable-versus-forced-int64 backend constant-time helper comparison queued.
+Scratch artifacts are under `/tmp/secp256k1-translation-78`.
 
 ## Handoff
 
