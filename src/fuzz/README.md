@@ -39553,3 +39553,57 @@ fix, or cherry-pick is claimed. A nonce or retry counter without standalone
 cryptographic meaning is not Critical merely because it is uncleared. Future
 compiler or backend changes must state whether they preserve, change, or mask
 this cross-compiler result and the clean-master findings.
+
+## 2026-07-27 Clang 22 -O2 assembly-off sanitizer corpus matrix
+
+This final optimizer cell repeats the explicit Clang `-O2` campaign with the
+portable backend, after the GCC and Clang x86_64 assembly-on runs. It started
+from audit state `eed8c31f074aadef98799f0dd08c9d2c828b112c`, with
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`. Both refs are
+ancestors of the audit branch; no fork commit was cherry-picked.
+
+The Debug build used Clang 22.1.7, CMake 3.31.6, explicit `-O2`,
+`SECP256K1_ASM=OFF`, all seven optional modules, and the non-libFuzzer file
+runner. The instrumentation was `-g -fsanitize=address,undefined
+-fno-omit-frame-pointer` with
+`ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:allocator_may_return_null=1`
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The complete tracked
+corpus remained 357 files and 14,239 bytes, with sorted `filename size`
+manifest `dab189531a6573868decd215e3d3ba258a4afe0a71ffe048c7793c32690973ed`.
+Per-target counts were: `api_roundtrip` 62/2901, `context` 12/693,
+`ecdh` 9/283, `ecmult_const` 11/406, `ecmult_multi` 29/1028, `ellswift`
+20/820, `field` 21/742, `group` 23/837, `hash` 10/446, `musig` 81/3054,
+`recovery` 17/783, `scalar` 10/349, `schnorrsig` 18/670,
+`silentpayments` 14/515, and `xonly_tweak` 20/712.
+
+Two independent workers per target first ran the empty input and then every
+file from a private corpus copy. All 30 workers exited 0 and wrote
+`complete=0`; there was no assertion, ASan/UBSan diagnostic, runtime error,
+timeout, OOM, crash, or artifact. The path-independent sorted worker-log
+manifest is `7ef4fbb2d8d25c1035a4fcca89ae550a9b09eb19fbd6bf499ac767e228bff0b1`.
+The path-independent sorted target-binary manifest is
+`80b7f947cae90f72e5995fe0c88a2244d5f14cc97bafe5ea30a4181a3f32d1be`; the
+shared library hash is `7f897c3252ad5debb9004e1e233b9798344fdb20dcac45929d30204a18a3fbde`.
+
+Clang emitted only the expected deprecated-API warning for the explicit
+`secp256k1_schnorrsig_sign` coverage at `src/fuzz/schnorrsig.c:341`. The
+portable backend produced no GCC-style harness warning and no runtime
+divergence from the assembly-on matrix.
+
+The same build passed `tests -i=1 -j=2 -log=1` and
+`noverify_tests -i=1 -j=2 -log=1`. Their log hashes are
+`369bf5d3557dc7a6700c787ba99c49bc6d346cc2f6da1a836b3bcb4f0a148619` and
+`f48f39194e04646fdefa9d9c4da493fa31d271c71ee26e21425b58d3164dc747`.
+
+This closes the explicit Clang `-O2` assembly-on/assembly-off comparison. It
+is negative compiler/backend evidence, not a new production finding. No
+invalid-block or invalid-witness acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, or severe remote
+memory/concurrency impact was demonstrated. Existing master-relative
+Informational/Low through Low/Medium ratings remain unchanged, with no
+High/Critical rating. No mutation, deterministic regression, production fix,
+or cherry-pick is claimed. A nonce or retry counter without standalone
+cryptographic meaning is not Critical merely because it is uncleared. Future
+backend changes must state whether they preserve, change, or mask this result
+and the clean-master findings.
