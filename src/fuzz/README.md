@@ -37723,3 +37723,55 @@ This is verification evidence only. It does not prove invalid-block or
 invalid-witness rejection beyond the tests exercised, does not change any
 master-relative severity, and supplies no production bug, fix, cherry-pick,
 or nonce-erasure claim.
+
+## 2026-07-27 Isolated ecmult-multi allocator/Pippenger campaign
+
+The current audit tree `958439ca` was rebuilt before an extended
+`fuzz_ecmult_multi` replay; freshly fetched `origin/master` and `l0rinc/master`
+both remained `d2d04864ef9b056151603a3ced7980958b058028`. Both builds used
+Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules,
+and libFuzzer. The native binary hash was
+`2480db1f2e646547f603e5db1a302ac355b291012791daf71cbb1c23c18848ef`; the
+forced-int64/10x26 binary hash was
+`97c19efabddf8c2ae769731e6b5ed778cca17081e2af188b16c017566d0d66e9`.
+
+The tracked corpus had 29 files, 1,028 bytes, and sorted filename/size
+manifest hash `5ca3510f05b14c9555abd220d28a71cedacdb70925a24e2dfe5e580cc549ce5c`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_ecmult_multi <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 169 and 173 seconds, with final reported
+coverage/features of 3,761/13,122 and 3,761/13,463. Forced-int64 workers
+exited zero after 124 and 127 seconds, with final reported coverage/features
+of 5,600/22,305 and 5,601/22,246. Every reported `oom/timeout/crash` counter
+was `0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`fc9c3d4a5115a95bb371c17eb4f4ba57e95c005908ea0c00ed8df939795c6ae6` (native)
+and `647a7f737fd11836bca46fbfebde9306dd302b8447ca2d654de9c25d3c66e969`
+(forced-int64). The private corpora and artifacts were removed afterward.
+
+The slow Pippenger boundary input `pippenger-window-1261` was present in the
+tracked corpus with SHA-256
+`4fc6f788771c52d6cf80186f9dd6763a35acb0d37c4e3912d5974a63fc5aeda9`. It
+completed inside the strict per-input timeout in both isolated campaigns.
+This distinguishes the input's real computational cost from the prior
+all-target CPU-contention artifact; no production timeout or allocator failure
+was reproduced.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised Strauss/Pippenger selection, empty and
+filtered batches, callback failure, scratch allocation, repeated points, and
+large windows without demonstrating invalid-block or invalid-witness
+acceptance, sigop impact, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure. Current Bitcoin Core
+does not feed untrusted block/witness bytes directly into this internal batch
+planner, so no High/Critical rating is justified and no existing finding is
+downgraded. No production mutation, fix, cherry-pick, or nonce-erasure claim
+is made. Future ecmult, scratch, or worker changes must state whether they
+preserve, change, or mask this isolated result and the earlier clean-master
+first stops.
