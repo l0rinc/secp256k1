@@ -2767,6 +2767,104 @@ justified. The next queue is another distinct scalar compiler/architecture
 helper; do not repeat this predicate unless new source, compiler,
 architecture, or performance evidence changes.
 
+## Cycle 27: scalar overflow translation validation
+
+### Scope and hypothesis
+
+I audited `secp256k1_scalar_check_overflow` in the 4x64 and forced 8x32
+implementations (`src/scalar_4x64_impl.h:64-74` and
+`src/scalar_8x32_impl.h:76-90`). The contract is a raw-limb comparison: return
+one exactly when the represented 256-bit value is at least the secp256k1
+group order, without reducing the input. Callers include scalar parsing,
+overflow normalization, multiplication, public-key recovery, and the test
+overflow boundary cases. The hypothesis was that a compiler or representation
+translation could mishandle the chained `yes`/`no` masks, limb comparison
+ordering, or the final inclusive boundary in one backend or optimization
+configuration.
+
+### Independent oracles
+
+The C harness constructed scalar limbs directly from bytes, avoiding the
+project's byte decoder in the oracle path. Its byte-level reference compared
+the raw 32-byte value with the order and covered 648 values: zero, one,
+`n-1`, `n`, `n+1`, `n+2`, the maximum value, `n/2`, every 256-bit power of
+two, order-minus-power values, and 128 deterministic full-width values. The
+accepted digest was `1c44e430fc548543`.
+
+The C++ verifier used a separate `boost::multiprecision::cpp_int` decoder and
+covered 326 values: the principal order boundaries, every power of two, and
+64 deterministic full-width values. Its accepted digest was
+`40c92813f144e2f5`. Both oracles agreed in native and forced configurations.
+The scratch harnesses were:
+
+    ad6ec1b76fdd642d9fbb831a945c321187f585e57e7f76daac1930a800a617cc  scalar-overflow-harness.c
+    c101e8bd63290e06bb183dd26cf08a6e0e798340b0ae1621ddf17169493befa9  scalar-overflow-c-shim.c
+    3a78cd42eb00f316249aca248001d17db6a18d6e4db61d00ba81d190683d5ce2  scalar-overflow-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+The C oracle passed all 24 Clang/GCC x86_64 combinations of assembly,
+portable, and forced-int64 selectors at O0, O2, O3, and Os, with the same
+648-value digest. Six O2 LTO runs (both compilers and all selectors) also
+matched. Six C++17 O2 bridge runs (both compilers and all selectors) matched
+the C++ digest. Six `-DVERIFY -DVALGRIND` ASan/UBSan O1 runs, using leak
+detection and halt-on-error settings, matched without diagnostics.
+
+The native and forced-int64 CMake/Ninja builds were rebuilt and reran with
+`ctest --output-on-failure -R 'scalar|fuzz.scalar'`; each configuration
+reported `100% tests passed, 0 tests failed out of 7`, including scalar,
+malformed-scalar, ElligatorSwift bad-scalar, and scalar fuzz-seed tests.
+
+At O2, `objdump --disassemble=probe_overflow` found zero conditional or loop
+jumps in all six Clang/GCC x86_64 assembly, portable, and forced probes. The
+Clang native probe lowered the comparison to `set*`, arithmetic masks, and
+conditional moves. This is lowering evidence, not a formal constant-time
+proof.
+
+Clang AArch64 compile-only commands covered native and forced-int64 selectors,
+O0/O2/O3/Os, and normal/`-DVERIFY` modes: 16 objects compiled successfully.
+`aarch64-linux-gnu-objdump --disassemble=probe_overflow` found no conditional
+or loop branch mnemonic in any probe. Normal and VERIFY object hashes were
+identical within each setting; the native hashes in O0/O2/O3/Os order were:
+
+    e5126633fc37bb810e061229c0292f0755f0d372494bb685f82ac6dd6e13b6cf
+    b635a3a06c50b61aa0470244635ab784833ebefe29c3facfebab5d1f7f46ea77
+    f23c75df93a9fd4e327ded615aef0b2ce870a04f6cca735f01d4e5f754cfe421
+    7ba2206cb1b1d02f6c5a01f4001626f84d9fdd6c77bd3b5761707469e2fa17f2
+
+The forced-int64 hashes in the same order were:
+
+    ff20e633fb18b1666c3b2609a6e567fc09d180ec1fc965504a869ce5e9bee0fb
+    e65dc2756144072f18aceb3346322ef8227fb1be94358c571b367f2efe78063a
+    9056c02461a5ada07ae93701cb4598672a4e4803092df3ef43c7cc6e40e24f61
+    014881958430ec14b7b840bcefa2e8823895a7c708df069a17ed160b425be741
+
+### Mutation controls
+
+Scratch copies changed only the final native and forced-backend comparison
+from `>= SECP256K1_N_0` to `> SECP256K1_N_0`. Both C runners and both C++
+runners rejected the mutation at the exact order value:
+
+    overflow mismatch case=3 expected=1 actual=0
+    cpp overflow mismatch case=3 expected=1 actual=0
+
+This proves both independent oracles distinguish the inclusive boundary and
+that the direct-limb harness is sensitive to the relevant defect shape.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No incorrect result, undefined behavior, lowering anomaly,
+or reachable production defect was found. No production code, regression
+test, or fix commit is justified.
+
+Limitations are no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2, or
+formal constant-time proof. The next queue is another distinct scalar
+compiler/architecture helper; do not repeat this predicate unless new source,
+compiler, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
@@ -2780,5 +2878,5 @@ an optimization difference without a minimized reproducer and independent
 verification. The next queue is a compiler/architecture matrix around another
 small constant-time arithmetic helper, followed by a cross-architecture or
 Alive2 reduction if the required toolchain is available. Do not repeat the
-seventeen dismissed hypotheses unless compiler, source, or architecture
-evidence changes.
+dismissed hypotheses unless compiler, source, or architecture evidence
+changes.
