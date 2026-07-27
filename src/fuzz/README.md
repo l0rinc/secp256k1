@@ -38473,3 +38473,99 @@ unchanged, and no High/Critical rating is justified. No production mutation,
 fix, regression test, or cherry-pick is claimed for this campaign. Future
 backend or module changes must state whether they preserve, change, or mask
 this result and the earlier master-relative findings.
+
+## 2026-07-27 remaining x86_64 assembly-on target campaign
+
+This is the second half of the x86_64 assembly differential pass, covering the
+remaining API, context, ECDH, arithmetic, hash, and x-only targets. It started
+from audit tree `13038da2`; `origin/master` and `l0rinc/master` were still
+`d2d04864ef9b056151603a3ced7980958b058028`. The build configuration and
+strict controls were identical to the preceding assembly-on section:
+Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=x86_64`, all optional modules,
+libFuzzer, two isolated workers, `-max_total_time=60`, `-timeout=180`, zero
+ignore flags, `-rss_limit_mb=0`, and private artifact directories. The source
+hashes were:
+`api_roundtrip.c` `f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5`,
+`context.c` `2a6600270e4b1d3a8b27d42ff8f3c440e3d497a0f27468771334b7bb4fd609e9`,
+`ecdh.c` `034a5420a35466f41defa7da20a1c031f316c5f987b6ba9fd7d4f60d8cca1d79`,
+`ecmult_const.c` `7b0bcbb7da144048fce0773eca8bfe3a970f3553c7ae02f811e5f047419e33bf`,
+`ecmult_multi.c` `aa77917e3e23f6d584e22d210f566ba310c5c800ab7eaff5a09a785f19ee5c21`,
+`field.c` `2153ea88334cd47330c6f9e2308871e2834a23e70de13419fdab612aa1ac18f9`,
+`group.c` `c8b122ad7a011834ad7ef3a23d9ab57e006a5be903c17783f66dfdc059aa98b3`,
+`hash.c` `f6654c54e56c4b54027b2e05e20d8fadcea04e45118ee4f27b1f25814b2169bc`,
+`scalar.c` `6dd32e857d391677503a63c21e44b1279bde646b7574c22f5f78e809863dd305`,
+and `xonly_tweak.c`
+`0ea640e205c208e60a728fc154e84163261622034dee9dec66fb78e2eef55f05`.
+
+All tracked corpus files were copied before replay. LibFuzzer's startup corpus
+reducer retained 61 of 63 API-roundtrip files and 7 of 10 hash files; the
+other targets loaded every tracked file. The manifest is the SHA-256 of sorted
+`filename size` records. Coverage/features are the final values from workers
+one and two, and every worker reported `oom/timeout/crash: 0/0/0`; all ten
+artifact directories were empty.
+
+| target | tracked / loaded; manifest | assembly-on binary | final coverage/features; elapsed | log SHA-256 |
+| --- | --- | --- | --- | --- |
+| `api_roundtrip` | 63 / 61; `afedffeda4796ca76afec8113b8f72c22a8d7995714cec375955376e01f350d2` | `d5434448396d65a51563448f7fc33a4c83da303092c83aada79589595054acdc` | `4137/11423`, `4135/11465`; 66/66 s | `2e6b864491596f9c3512ec077d9817c7c647f865694e3ffa9937538496da52cb` |
+| `context` | 13 / 13; `e370981b6929cfb3699b5978cb1bcda1cb1383ae91dcfda293852086e8dda1a2` | `94044852b0aaea545f92b24891652a10b5120acd86474920345af14cea6bd848` | `2962/5933`, `2962/6433`; 64/64 s | `fb8bbe65f9f2f20e439ce855a71d1655d5fea27fe3abc5dd9901b8242c8890a3` |
+| `ecdh` | 9 / 9; `2c73102405b309935533dc1c3c0195afda3f0f30031ff99bbabc9f47c994ad38` | `f70d524e1e60783da86fb332a34368ff6abe164b172da01cfd4d13e6317b4fa4` | `2506/5256`, `2506/5148`; 61/61 s | `d70274fb092701da7b779a8ef70d9fdc04bac04eeb3a465c4968cc25d956ab61` |
+| `ecmult_const` | 11 / 11; `bc74a8ce6e8fb3792a1900738ce737e74b1e602063ae1b694a70cc617e5a6b13` | `d72a47c87189974ddd2bf9a337a2f55302c8659998d66435f172e066bd61b5d9` | `2538/7342`, `2538/7119`; 60/62 s | `be6206bbc6d35c5aa357735b35a0257e4809322714d66107f698a3144ab4ee11` |
+| `ecmult_multi` | 29 / 29; `83da45a0324a861424c79208f4a6a376edd5c4238249ddb7481e394c4ead4ed2` | `08055454b725c93e6c143978d767b98d9bc7785761f16ce532873dca894beed6` | `3635/12276`, `3634/12001`; 65/68 s | `3083b0abad685565687af26bbd9d477439bfb5b5f7e80c7f217a31387eae3186` |
+| `field` | 21 / 21; `d6d68033e77f18a2ffd6ed7be0c886db5d4f7ce90b897fa74130bd98b7169f90` | `415e92072a4df059a6091a187679abdb60d4d36b8f6022ae40256bdc94c5b357` | `1602/2318`, `1602/2319`; 61/61 s | `7441b8cd8636e1b022456590d9ad4c47b1bd8c48c50791b27f4312b62ed0ea2e` |
+| `group` | 23 / 23; `7aa67d1533a11c4c94e716fcff6b446bcb5896e8608e71eba791a6fad147bcff` | `0aeee6fa18dbad71cead52834ae5c53b06e000ac366b2f628a09cea67519c1b2` | `2765/5019`, `2765/5110`; 60/60 s | `783ee1751d0748e62b7f24e940ccc3480ea12ff2ad214fa02fd83e24a49fec2f` |
+| `hash` | 10 / 7; `807ad928bb26669e3420f1e87f3a230375d5cdd0f5348d5ae8975ffceb6b438d` | `367a8b74deb2377c41ac4425b18b1a7b33ec6c3d6a6621da1058f1e70e34253c` | `511/1376`, `511/1376`; 63/63 s | `b2874ddb3942ccb06f74b7bce9e22501c87fc61bf7b064a1852a3b04716f5484` |
+| `scalar` | 10 / 10; `0ce3005b4d145506f0af17c23a459acdf452d5bda93f86e25b3b7cdc2b50755b` | `9fa6ca7f1cfaaa26f7b04bc4d950ca17ae3055bbe4c185155614aa90d02db8a2` | `2008/4990`, `2008/4933`; 66/67 s | `bfe160bca57a7b9d041a69d5a6baebf957ef4a9306894ac6438c9edc91561fb5` |
+| `xonly_tweak` | 20 / 20; `c9b31913ee7674853c05dbad504a6c4af9ebb52baf073c199d7f1eda98298dfc` | `cca6b4d7cba8f09c30b73987857ea706ce9b08affe8de274a51cfe908f6b08d9` | `3104/7942`, `3103/7751`; 63/65 s | `de10fbbf831b3e7ee6845a8e13defa50e04e4f340c50c0b3c29e89ffbdfcef35` |
+
+The corresponding focused suites passed under both assembly-on test binaries:
+
+    bin/tests -i=1 -j=2 -t=ecdsa -t=extrakeys \
+      -t=all_proper_context_tests -t=all_static_context_tests \
+      -t=deprecated_context_flags_test -t=ecdh -t=ecmult_const_tests \
+      -t=ecmult_multi_tests -t=field_half -t=field_misc \
+      -t=fe_equal_magnitude_boundaries -t=fe_equal_magnitude \
+      -t=fe_normalize_max_magnitude -t=field_convert -t=field_be32_overflow \
+      -t=fe_mul -t=sqr -t=sqrt -t=ge -t=gej -t=gej_rescale_alias \
+      -t=gej_zinv_in_place -t=group_decompress -t=scalar_tests \
+      -t=sha256_known_output_tests -t=sha256_counter_tests -t=hmac_sha256_tests \
+      -t=rfc6979_hmac_sha256_tests -t=tagged_sha256_tests \
+      -t=sha256_initialize_midstate_tests -t=test_xonly_pubkey \
+      -t=test_xonly_pubkey_tweak -t=test_xonly_pubkey_tweak_check \
+      -t=test_xonly_pubkey_tweak_recursive -t=test_xonly_pubkey_comparison \
+      -t=test_keypair -t=test_keypair_add -log=1
+    bin/noverify_tests -i=1 -j=2 -t=ecdsa -t=extrakeys \
+      -t=all_proper_context_tests -t=all_static_context_tests \
+      -t=deprecated_context_flags_test -t=ecdh -t=ecmult_const_tests \
+      -t=ecmult_multi_tests -t=field_half -t=field_misc \
+      -t=fe_equal_magnitude_boundaries -t=fe_equal_magnitude \
+      -t=fe_normalize_max_magnitude -t=field_convert -t=field_be32_overflow \
+      -t=fe_mul -t=sqr -t=sqrt -t=ge -t=gej -t=gej_rescale_alias \
+      -t=gej_zinv_in_place -t=group_decompress -t=scalar_tests \
+      -t=sha256_known_output_tests -t=sha256_counter_tests -t=hmac_sha256_tests \
+      -t=rfc6979_hmac_sha256_tests -t=tagged_sha256_tests \
+      -t=sha256_initialize_midstate_tests -t=test_xonly_pubkey \
+      -t=test_xonly_pubkey_tweak -t=test_xonly_pubkey_tweak_check \
+      -t=test_xonly_pubkey_tweak_recursive -t=test_xonly_pubkey_comparison \
+      -t=test_keypair -t=test_keypair_add -log=1
+
+The `tests` and `noverify_tests` log hashes were
+`0df093df83193f69d60dbad736660b54b2c6da0802f8742175873a7f60e26076` and
+`94d3f097b7810c9a1566eec07cff0ef321f1312c7fef0f4678eea25d146335ae`.
+At `-i=1`, the million-iteration SHA-256 known-output loop was explicitly
+skipped by the test runner; the named test still passed. The long
+`ecmult_multi_tests` slice passed in 66.080 seconds for `tests` and 47.329
+seconds for `noverify_tests`.
+
+This completes the assembly-on matrix for all fifteen built fuzz targets.
+It is negative differential evidence: no clean-master failure, invalid-block
+or invalid-witness acceptance, sigop consequence, consensus divergence,
+signature forgery, key compromise, sanitizer failure, or severe remote
+memory/concurrency bug was found. Core's direct consensus-facing signature
+checks and BIP324 EllSwift path remain unaffected; the internal arithmetic
+targets are not fed untrusted block/witness bytes as a public batch-planner
+contract. Standalone ECDH still has no surveyed Bitcoin Core production caller.
+Existing master-relative severities are unchanged, with no High/Critical
+rating justified. No production mutation, fix, regression test, or
+cherry-pick is claimed, and no nonce-clearing severity is inferred. Future
+assembly, arithmetic, context, or wrapper changes must state whether they
+preserve, change, or mask this result and the earlier clean-master findings.
