@@ -41168,3 +41168,108 @@ caller-aware scale. A High/Critical claim would require a minimized
 consensus-relevant Core trigger, not a direct library callback or a
 sanitizer-only assertion. No new production fix, deterministic regression
 test, corpus seed, cherry-pick, or severity upgrade is claimed here.
+
+## 2026-07-27 Current-origin Context First-stop Revalidation
+
+The `context` target was replayed against refreshed `origin/master`
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` from audit commit `61aaaedd`.
+`l0rinc/master` was `d2d04864ef9b056151603a3ced7980958b058028` and had no
+commit outside the current origin range, so there was no additional fork
+commit to cherry-pick for this target. The clean disposable tree copied only
+the current fuzzer sources, fuzz CMake wiring, the 12 context corpus files,
+and the test-only definition
+`SECP256K1_SHA256_MAX_SIZE=2305843009213693952ULL`; production behavior was
+otherwise clean master. The clean production `src/secp256k1.c` hash was
+`7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb`; the
+overlaid `src/fuzz/context.c` hash was
+`3521ca77a064048e6a5f81cd70509528a8ce90f5bdfda5553734b3f8957b4ec8`.
+
+The corpus was 693 bytes across `flag-matrix`, `invalid-context-flags`,
+`null-prealloc`, `randomize-clone-reset`, `randomize-null-schnorr-signature`,
+`randomize-null-signature`, `sha256-impossible-lengths`,
+`sha256-independent-tagged`, `sha256-multiblock`, `sha256-secret-operations`,
+`static-context-lifecycle`, and `tagged-sha256-null-inputs`. The sorted
+`sha256sum` manifest hash was
+`69bb02acce33ae8d120225e2cdaf23a09ad47370ca4a06ff261e18e5115eb591`.
+
+### Clean-master first stops
+
+The first clean replay was intentionally retained as a control rather than
+being interpreted as twelve independent bugs. In the Debug/VERIFY control all
+12 inputs stopped at `src/secp256k1.c:130`,
+`VERIFY_CHECK(prealloc != NULL)`, while the harness called
+`secp256k1_context_preallocated_create(NULL, SECP256K1_CONTEXT_NONE)`. The
+status log hash was
+`9927ecc1f0d6eec23197f67aa89e9ca51869af561eadcbeed791a59570c693f4`.
+The Release/non-VERIFY control reached the same invalid write and all 12
+inputs exited 139; its status log hash was
+`bb59987848a6b30f2424cb2505f20d479eac974fb5c6002e21eece7190fd814d`.
+
+Applying only the existing `2fbf119e` preallocated-creation guard changed the
+ordering as expected: the NULL prealloc call invoked the non-aborting illegal
+callback and returned NULL. The next release first stop was the existing
+impossible-SHA-length path. The `flag-matrix` O0 trace reached
+`secp256k1_fuzz_check_tagged_sha256_impossible_lengths` at
+`src/fuzz/context.c:133`, then `secp256k1_tagged_sha256` and
+`secp256k1_sha256_write` with `taglen == 2^61`; the callback saw a huge block
+count because clean master had not rejected the length. This is not a SHA
+callback ABI finding. The post-`2fbf119e` status hash was
+`8304b264a5eb6aba42b42fafc8dc6307897f8b1b6f1ad548b16e18c73943f6bf`.
+
+Applying the existing `0cd51280` SHA length guards advanced every ordinary
+seed. The remaining `static-context-lifecycle` stop was the prefilled
+`secp256k1_ecdsa_signature` after `secp256k1_ecdsa_sign` rejected the static
+context at `src/fuzz/context.c:492`. Applying the relevant fixed-output
+cleanup from `27cc01dc` made all 12 seeds pass. This ordering matters when
+replaying the findings: `27cc01dc` depends on the prior tagged-SHA length
+guard for its tagged-hash cleanup, while `2fbf119e` is independent. A later
+repair making the complete harness green must not be treated as evidence that
+the earlier clean-master stop never existed.
+
+These are reiterations of existing findings, with master-relative severity:
+
+1. `2fbf119e` is **Low direct-API availability/correctness** for invalid NULL
+   preallocated storage. Bitcoin Core does not pass NULL storage through its
+   block, witness, signing, or key-validation paths, so current Core impact is
+   **Informational/Low**. No invalid-block acceptance, witness-sigop issue,
+   consensus divergence, or cryptographic compromise is shown.
+2. `0cd51280` is **Medium direct-library memory-safety/availability** at the
+   demonstrated incoherent pointer/length boundary, with low practical
+   exploitability. Bitcoin Core's relevant callers use fixed-size 32-byte
+   hashes and do not forward attacker-controlled `taglen`/`msglen` to this
+   API; current Core impact is **Informational/Low**.
+3. `27cc01dc` is **Low/Medium fail-closed API state hygiene** for a fixed
+   signature output left stale after a rejected static-context signing call.
+   Core checks signing results and this is not a block or witness admission
+   primitive; current Core impact is **Informational/Low**. A nonce or retry
+   counter without standalone cryptographic meaning is not a Critical erasure
+   finding.
+
+None of these context findings is High or Critical. In particular, no replay
+accepted an invalid block or witness, changed consensus behavior, undercounted
+witness sigops, forged a signature, disclosed key material, or established a
+remote concurrency primitive. A High/Critical rating would require a minimized
+Bitcoin Core consensus-relevant trigger, not merely a direct library caller,
+an incoherent public pointer/length pair, or a sanitizer-only assertion.
+
+### Repaired control
+
+Fresh Clang 22.1.7 ASan/UBSan file-driver builds of the current branch used
+assembly off, external default callbacks, and all optional modules. Native
+5x52 and forced-int64/10x26 each passed all 12 seeds and `/dev/null`; both
+status logs had hash
+`862644d011785db6cbd381a708c39a47df46b6e81cc9cca7cb4ea4219e9ed694`, with
+zero diagnostic bytes. The fuzzer binary hashes were
+`88564256456ec36cb6c6501dcf1efead12569a68541b6fb5826af4e309305f46` for
+native and `3a541ddd0a3026fa92736d13236e631c167725e20d5b50a44f57370ddf409070`
+for forced int64.
+
+The same corpus then ran under Clang ASan/UBSan libFuzzer with
+`-fork=2 -jobs=2 -max_total_time=10 -timeout=180 -rss_limit_mb=0` and all
+failure classes enabled. Both jobs per arithmetic backend exited zero; every
+worker reported `oom/timeout/crash: 0/0/0`, and both artifact directories were
+empty. Campaign log hashes were
+`ebd6d277763dbcad0d86a2bfda212658413a13f270c6662f7925c9da0a22332f` for
+native and
+`9b95e95e27cf1b54fe930c1cd15babebb44df3da917b28916a72fa737b10b7e0` for
+forced int64. No fuzz or sanitizer process remained after the replay.
