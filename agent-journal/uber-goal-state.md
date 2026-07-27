@@ -158,6 +158,22 @@ failed immediately in both backends. The compiler hypothesis was dismissed.
 The goal remains active with another compiler/architecture constant-time or
 overflow-sensitive helper queued.
 
+The eighteenth hypothesis then tested `secp256k1_scalar_mul` with two
+independent modular-product oracles: a base-2^16 C reducer covering 645
+values and 7,474 aliased pairs (`digest=739447fca5d13916`), and a Boost
+`cpp_int` verifier covering 581 values and 5,810 aliased pairs
+(`digest=79f3943e75212f57`). Native assembly, native portable C, and
+forced-int64 Clang/GCC optimization/LTO matrices, ASan/UBSan/VERIFY runs,
+focused tests, scalar corpus replays, mutation controls, and Clang AArch64
+compile-only code generation all matched; the deliberate scalar-order
+constant mutation failed at case 22 in every backend. The correctness and
+compiler hypothesis was dismissed. The cycle also reproduced the open
+Clang assembly performance observation from issue #1682: local Release
+`scalar_mul` averaged 0.0411 us with Clang x86_64 assembly versus 0.0336 us
+without it, while GCC measured 0.0376 versus 0.0412 us. This is an open
+performance lead for goal 70, not a proven compiler defect or automatic
+production fix. Goal 78 remains active with another distinct helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

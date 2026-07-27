@@ -1516,6 +1516,163 @@ The next queue is another compiler/architecture constant-time or
 overflow-sensitive helper. Do not repeat the seventeen dismissed compiler
 hypotheses unless compiler, source, or architecture evidence changes.
 
+### Cycle 2026-07-27: scalar multiplication translation and Clang assembly performance
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `691c5be7`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, CMake/Ninja, `aarch64-linux-gnu-objdump`, and the existing ASan and
+recovery/no-VERIFY builds were available. No AArch64 runtime or sysroot,
+GCC AArch64, ARMv7/RISC-V runner, Alive2, CBMC, or KLEE was available.
+The scalar multiplication contract, native and forced-width reducers and
+products, the independent scalar fuzzer oracle, history, and related GitHub
+issues were read before selecting this distinct kernel.
+
+### Hypothesis and contract
+
+The eighteenth bounded hypothesis was that compiler transformation, the
+4x64 versus forced 8x32 scalar representation, or the x86_64 assembly
+product path could miscompute `secp256k1_scalar_mul`, mishandle aliasing, or
+introduce an unexpected data-dependent branch at product/reduction
+boundaries. The contract at `src/scalar.h:55` is multiplication modulo the
+group order. The native implementation uses the 4x64 reducer and product
+paths in `src/scalar_4x64_impl.h:351-868`, including the optional x86_64
+assembly product; the forced implementation uses the 8x32 paths in
+`src/scalar_8x32_impl.h:407-653`. The existing independent fuzzer oracle in
+`src/fuzz/scalar.c:30-51,381-435,517-536` computes a full base-2^16 product
+and reduces it independently.
+
+### Independent oracle evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/scalar-mul-harness.c` has SHA-256
+`75fc7a299b70865e89a5c88dfc2a17cd8050902a4a6f8326f56178186b7b802a`. It
+contains an independent base-2^16 full-product and binary long-division
+reducer. It covers 645 canonical values including zero, one, `n-1`, `n-2`,
+`n/2`, all powers of two and their order complements, and 128 deterministic
+values. It checks 7,474 selected pairs, including boundary/self/reverse
+pairs and 1,024 cross-boundary power/complement pairs. Every pair checks the
+normal result and both left and right in-place aliases. Native assembly,
+native portable C, and forced-int64 clean runs printed exactly:
+
+    ok values=645 cases=7474 digest=739447fca5d13916
+
+The second harness
+`/tmp/secp256k1-translation-78/scalar-mul-cpp-harness.cpp` has SHA-256
+`7f915b43c613343ac3b89711892bfa4bc3a9a5732f1d1e20f09a435a83a0bbf7`. It
+uses Boost `cpp_int` only for the expected product modulo the order and
+calls production code through the C shim
+`scalar-mul-c-shim.c` (SHA-256
+`d25dbe26cf07472fdd341a4011c1482b76698c5ee98fd9ece3a66dd62d971475`). The
+C++ harness covers 581 values and 5,810 pairs, including both aliases. Clang
+and GCC native-assembly and forced-int64 runs all printed:
+
+    ok cpp-values=581 cpp-cases=5810 digest=79f3943e75212f57
+
+The C shim was necessary because the internal C headers are not directly
+C++-clean; this is a harness limitation, not a repository finding.
+
+### Compiler, sanitizer, and project evidence
+
+Clang and GCC built and ran the C harness for native assembly, native
+portable C, and forced-int64 at `O0`, `O2`, `O3`, and `Os` (24 executions).
+Clang and GCC native/forced `O2 -flto` builds (six executions) matched the
+same digest. Clang and GCC native-assembly, native-portable-C, and
+forced-int64 `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined`
+executions (six executions) also matched without diagnostics. The existing
+ASan and recovery/no-VERIFY binaries passed the focused scalar/field tests
+with fixed seed `0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`.
+All ten files in `src/fuzz/corpora/scalar` ran once under both sanitized
+scalar fuzzers with fixed seed `3923475549`, without diagnostics or
+artifacts.
+
+The six Clang/GCC O2 non-LTO probe bodies for native assembly, native C, and
+forced-int64 had no conditional or loop jumps. The six corresponding O2 LTO
+probe bodies also had none; the generated code used conditional moves,
+`set` instructions, and carry operations. This is code-generation evidence,
+not a proof of constant-time behavior.
+
+The Clang AArch64 compile-only matrix used native and forced-int64 selectors
+at `O0`, `O2`, `O3`, and `Os`, with and without VERIFY. All 16 builds
+completed. The non-VERIFY object hashes were:
+
+    native: O0 817dea28c9933ac49036ff976704a97b5c965aaaf8a847d32716ec5b316b57b2
+            O2 6c23665b19b935b4391a0b76e6e2ef147008a309d27746d95d0f6f9fa60dd8bd
+            O3 bbdc83732734cafe3eb18e7ed26b102be44eeb0146f4b8c320a26e4fc908fa97
+            Os 7409fc94b384cdff45a3545be29e3e1502919a6013b7ea97c5b39e0f4dcf216d
+    forced: O0 48946eaf3d5b29c6f24738040ea5e46c1983ab6e29da8152448251fc5c208fd7
+            O2 2e3458561bbd7c1364a8199cf95a23dc6215743a74b68bf0cb78239be49f8a57
+            O3 a32f4edff5f5da6b49d909062be1cd6b4d711695c9d47ba31743f076f3a42a91
+            Os e43da63afb1a907ac716511b4bad861ef1e3afb896e65e18ac4111b3dc632bf3
+
+The VERIFY hashes, in native O0/O2/O3/Os then forced O0/O2/O3/Os order,
+were:
+
+    2c5d8e7b746eac93ae306e1b4906dea2e5948552245594527ad2d38e3a8c8f5b
+    e0eefce580f2cc2b22093193859684b89aba8e16d1f5f312228da84638b67c07
+    60ce276f511bb5463f5782208082a6b16f0fd275b13cb42d5d4ccb2faf71f8cd
+    e8514c1b39e51c581fcba332533d0f0324566d6b3f44ba30371223b50cc5c6fe
+    1ae661a5a37ce4c2099b2b82c9f447e2227b1d9a239ef9894ff0a4d587afe3c3
+    c6363c1304c5598823ec6bb34dc7d91b7d36530545c66ac43f731d947ff6d711
+    6ba1c64ddbfc006ea48a2ea553a950901e4e354e9be826bfd0c601929f7588bb
+    e656162735a399133f26e26a3b6249319b7721557aabb90a892f928702e70044
+
+No AArch64 runtime, GCC AArch64, ARMv7/RISC-V build, or formal translation
+validation was possible.
+
+### Mutation controls
+
+Scratch copies of `src/` and `include/` changed
+`SECP256K1_N_C_0` from `(~SECP256K1_N_0 + 1)` to
+`(~SECP256K1_N_0 + 2)` in both scalar backend implementations. Clean Clang
+O2 runners rejected the wrong result at `mul mismatch case=22` for native
+assembly, native portable C, and forced-int64. The independent `cpp_int`
+verifier also rejected both mutated native and forced builds at
+`cpp mul mismatch case=22`. The oracle therefore distinguishes a shared
+reduction-constant defect.
+
+### Related performance lead
+
+GitHub issue [#1682](https://github.com/bitcoin-core/secp256k1/issues/1682)
+reports a current Clang x86_64 assembly `scalar_mul` slowdown relative to
+the portable path and a GCC speedup. The issue is open and its discussion
+already contains compiler/version comparisons. A local Release CMake
+reproduction on Linux x86_64 (Intel Core i9-9900K, 16 CPUs, Linux
+6.17.0-23-generic, Clang 22.1.7, GCC 16.1.0) used
+`SECP256K1_BENCH_ITERS=300000 .../bin/bench_internal mul` with otherwise
+matching builds:
+
+    compiler  assembly scalar_mul min/avg/max (us)  noasm scalar_mul min/avg/max (us)
+    Clang     0.0411/0.0411/0.0412                0.0336/0.0336/0.0337
+    GCC       0.0376/0.0376/0.0377                0.0411/0.0412/0.0417
+
+`field_mul` was 0.0190 us for both Clang variants and 0.0168/0.0168 us for
+both GCC variants. A process-level `perf stat` run at 100,000 iterations
+also showed Clang assembly at about 2.181 billion cycles and 0.6077 seconds
+versus 1.897 billion cycles and 0.5289 seconds for noasm; it included the
+whole benchmark process, so it is supporting evidence rather than a
+function-isolated profile. The observation is reproducible performance
+behavior, not a proven compiler defect or a new correctness finding. It is
+handed to the pending compiler/optimization campaign (goal 70) with exact
+builds and issue provenance; no automatic dispatcher change is justified
+without a causal profile, portability policy, and broader benchmark data.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native assembly/native C/forced-int64 paths, LTO,
+ASan/UBSan/VERIFY execution, focused tests and scalar corpus, and Clang
+AArch64 code generation. Both independent modular-product oracles found no
+arithmetic, reduction, aliasing, or lowering mismatch, and the mutation
+controls prove that they detect a shared scalar-order constant defect. No
+production code or regression test change is justified. The separate Clang
+assembly performance observation remains an open, reproducible lead for
+goal 70, with no root cause established here. The next queue is another
+compiler/architecture constant-time or overflow-sensitive helper; do not
+repeat the eighteen dismissed compiler hypotheses unless compiler, source,
+architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and
