@@ -37775,3 +37775,60 @@ downgraded. No production mutation, fix, cherry-pick, or nonce-erasure claim
 is made. Future ecmult, scratch, or worker changes must state whether they
 preserve, change, or mask this isolated result and the earlier clean-master
 first stops.
+
+## 2026-07-27 Recovery and compact-signature dual-backend campaign
+
+The current audit tree `f6fecc20` was rebuilt before a longer
+`fuzz_recovery` campaign; freshly fetched `origin/master` and `l0rinc/master`
+both remained `d2d04864ef9b056151603a3ced7980958b058028`. Both builds used
+Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules,
+and libFuzzer. The native binary hash was
+`dce60049ca184a26964e2d2cff5612928092883902650a089acfedbb23098f7c`; the
+forced-int64/10x26 binary hash was
+`4b43230edee04b11905758c74789f9feb8459b8e6291e8bf4fe1a330ab866c2d`.
+
+The tracked corpus had 18 files, 821 bytes, and sorted filename/size manifest
+hash `a98f0ca8b7409989baeba446ad67ff92dafd197d54af595441120b8f1fd9bb09`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_recovery <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 120 and 130 seconds, with final reported
+coverage/features of 3,175/7,917 and 3,175/8,025. Forced-int64 workers exited
+zero after 125 seconds each, with final reported coverage/features of
+5,137/15,955 and 5,137/16,183. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`c455b270bf634fdc8f106b332f8f47116589c7a3ad495fc550b30e862f781276` (native)
+and `9c76c6d0902c979a4746d8039cbfbcb9367b73fde4ada3c57c0118ec4f17ba0d`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The matching recovery tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=test_ecdsa_recovery_api \
+      -t=test_ecdsa_recovery_end_to_end \
+      -t=test_ecdsa_recovery_edge_cases -log=1
+
+The native and forced-int64 test-log hashes were
+`98cd344342e62f4e1d144ff17c62ee4a3718babc9427a266752aed920bb1baeb` and
+`43964d4932767888995d5e3fda055ddec7b09e834a6b41199db4d1feb4d2fdcc`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised compact-signature header mapping, recovery-ID
+boundaries, high-S and invalid opaque states, recovery equations, nonce retry
+paths, static/dynamic contexts, Core signing/recovery compositions, and
+failure cleanup without demonstrating invalid-block or invalid-witness
+acceptance, sigop impact, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure. Current Core reaches
+this API through wallet/message compact signing and `CPubKey::RecoverCompact`,
+not consensus block or witness admission. Existing compact-header and opaque
+recovery observations therefore retain their **Informational/Low current-Core**
+ratings, with at most Low/Medium direct-API robustness; no High/Critical rating
+is justified and no finding is downgraded. No production mutation, fix,
+cherry-pick, or nonce-erasure claim is made. Future recovery or Core-wrapper
+changes must state whether they preserve, change, or mask this result and the
+earlier clean-master first stops.
