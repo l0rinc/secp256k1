@@ -1808,6 +1808,145 @@ overflow-sensitive helper; do not repeat the nineteen dismissed compiler
 hypotheses unless compiler, source, architecture, or performance evidence
 changes.
 
+### Cycle 2026-07-27: scalar byte decoding and overflow reduction
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at `3529d3b3`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Clang 22.1.7, GCC
+16.1.0, CMake/Ninja, `aarch64-linux-gnu-objdump`, and the existing ASan and
+recovery/no-VERIFY builds were available. No AArch64 runtime or sysroot,
+GCC AArch64, ARMv7/RISC-V runner, Alive2, CBMC, or KLEE was available.
+The `scalar_set_b32` contract, both representation-specific decoders and
+reducers, the fuzzer reduction reference, boundary tests, blame/history,
+and prior scalar translation cycles were read before selecting this distinct
+representation boundary.
+
+### Hypothesis and contract
+
+The twentieth bounded hypothesis was that byte order, overflow detection, or
+single-subtraction reduction could diverge between native 4x64 and forced
+8x32 code, especially at `n-1`, `n`, `n+1`, `2^256-1`, carry boundaries,
+or compiler optimization boundaries. The contract at `src/scalar.h:35-39`
+loads a 32-byte big-endian integer, reduces it modulo the group order, and
+reports whether the unreduced input was at least `n`; the output must be a
+canonical scalar. The native decoder/reducer is at
+`src/scalar_4x64_impl.h:64-155`, and the forced decoder/reducer is at
+`src/scalar_8x32_impl.h:76-187`. The existing fuzzer reference at
+`src/fuzz/scalar.c:129-140` independently relies on the fact that every
+256-bit input is below twice the order and subtracts `n` at most once.
+Historical edge hardening in `104f53ea` was also checked, including the
+explicit carry-width casts and final reduction bounds.
+
+### Independent oracle evidence
+
+The standalone C harness
+`/tmp/secp256k1-translation-78/scalar-set-b32-harness.c` has SHA-256
+`9439124da8f90e78aa68b376cff7b5251e03959686dbf749239b17d1701dcc74`. It
+computes the expected overflow bit with an independent big-endian compare
+and performs the one permitted byte subtraction itself. It covers 395 raw
+32-byte values: zero, one, `n-1`, `n`, `n+1`, `n+2`, `2^256-1`, the two
+near-maximum values, `n/2`, `n/2+1`, all 256 powers of two, and 128 full-width
+deterministic values. Each case checks both a non-NULL overflow output and
+the NULL-output form. Clang and GCC native assembly, native portable C, and
+forced-int64 O2 runs all printed:
+
+    ok values=395 cases=395 digest=98dd70c0a3477278
+
+The independent high-level verifier
+`/tmp/secp256k1-translation-78/scalar-set-b32-cpp-harness.cpp` has SHA-256
+`581440ca50f197ca74a0f6ac4e591e3b591c9206630e1865be3f5a544399e7de`. It
+uses Boost `cpp_int` for the compare and subtraction and calls production
+code through `scalar-set-b32-c-shim.c` (SHA-256
+`0e8f3ad3952a00072bda06995e6e37bd52ab2fe0ce1a99463f5d03016e540738`). It
+covers the same 395-value structure and both overflow-pointer forms. Clang
+and GCC native-assembly and forced-int64 runs all printed:
+
+    ok cpp-values=395 cpp-cases=395 digest=98dd70c0a3477278
+
+### Compiler, sanitizer, and project evidence
+
+Clang and GCC built and ran the C oracle for native assembly, native
+portable C, and forced-int64 at `O0`, `O2`, `O3`, and `Os` (24 executions).
+Clang and GCC native/portable/forced `O2 -flto` builds (six executions)
+matched the same digest. Clang and GCC native-assembly, native-portable-C,
+and forced-int64 `O1 -DVERIFY -DVALGRIND -fsanitize=address,undefined`
+executions (six executions) also matched without diagnostics. The existing
+ASan and recovery/no-VERIFY binaries passed `scalar_tests`, `field_half`,
+and `field_misc` for four iterations and two jobs with fixed seed
+`0fedcba9876543210fedcba9876543210fedcba9876543210fedcba987654321`. All ten
+files in `src/fuzz/corpora/scalar` ran once under both sanitized scalar
+fuzzers with fixed seed `3923475549`, without diagnostics or artifacts.
+
+The production-function disassembly was checked separately from the
+no-inline wrapper. Each Clang/GCC x86 O2 and O2-LTO native/portable/forced
+`secp256k1_scalar_set_b32` body had exactly one conditional jump, the final
+`overflow` output-pointer NULL check. The input comparisons lowered to
+`set`/conditional-move operations; no branch depended on input bytes. The
+same held for all eight Clang AArch64 O2-family production bodies: exactly
+one `cbz` checked the optional output pointer, with no input-dependent
+conditional or loop branch. This is code-generation evidence, not a formal
+constant-time proof, and the pointer check is an intentional public API
+shape rather than a secret-dependent branch.
+
+The Clang AArch64 compile-only matrix used native and forced-int64 selectors
+at `O0`, `O2`, `O3`, and `Os`, with and without VERIFY. All 16 builds
+completed. The non-VERIFY object hashes were:
+
+    native: O0 a4fc0b7848032cd6d6fa73592409d9e880b26a34ded98730cc4e4368be4e3819
+            O2 2705d2760f5c76320816f894c76382ba7ffc50f56018132ddf6c4beafab50829
+            O3 b1b56927472f6571a9d871a3509628a47823e9402d0c99d6d1b748beed718b52
+            Os 82d975ade349f7084fb3d5b204726db3f99fb51ba9ad3966a3acc974f7c3b4ac
+    forced: O0 7932f530311fb994b1066f372ce52311b9d0672139da98eb421c579f3b593482
+            O2 6a01d8f2588b45f732e078f3ca7e52e5fe4bfacec954a7a17194c385e29a9ed7
+            O3 e28df14a7674422554840915661c9afb518a634db4418ffbe1343ff053c57c28
+            Os 5c4ff18b775d042ca11da1bdc88d2e015fddf1f019cfa075e0434697bdec5549
+
+The VERIFY hashes, in native O0/O2/O3/Os then forced O0/O2/O3/Os order,
+were:
+
+    ba77fb83db0bdd126a7c9cff18618467ec9af0fc902df78dbfe501a791c80029
+    816fc13c3a5b5fb7d317a604647991b7f2266a55f8d53f677d4961c7c1d14abc
+    5c7f452d9e9b9ad1321822508a25f61ad9a4e753d249d58c090070bfb101e3cb
+    cf232902502251337bb7dc0323b3bded08103ebba1422c67e2d95f09eed9f9f0
+    8e2437c508e52345dd09ea93f420873ba1529ce5153558cff43ca6a46c8ebee6
+    fcb2b482e6f5114aae8d7945cbdec05a3106282aad691612aed223db284ee2a1
+    8216396c4aa8476ccc7e2fb8f862ae96a029620cb372cd0dbc485371b77b4cb4
+    c0521b60f33e723a80e4ad26bc6be571aa9c2c955b9c9999d45014eb49a641c6
+
+No AArch64 runtime, GCC AArch64, ARMv7/RISC-V build, or formal translation
+validation was possible.
+
+### Mutation controls
+
+Scratch copies of `src/` and `include/` changed
+`SECP256K1_N_C_0` from `(~SECP256K1_N_0 + 1)` to
+`(~SECP256K1_N_0 + 2)` in both backend implementations. Clean Clang O2
+runners rejected the wrong reduction at the exact `n` input:
+
+    set mismatch case=3
+    set mismatch case=3
+
+The independent `cpp_int` verifier likewise rejected both mutated native and
+forced builds with `cpp set mismatch case=3`. The mutation proves that the
+boundary oracle detects a wrong reduction constant rather than only
+replaying the production comparison.
+
+### Finding and verdict
+
+The compiler/representation hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 matrix, native assembly/native C/forced-int64 paths, LTO,
+ASan/UBSan/VERIFY execution, focused tests and scalar corpus, and Clang
+AArch64 code generation. Both independent decoders found no byte-order,
+overflow-bit, reduction, NULL-output, or representation mismatch. No
+production code, regression test, or finding commit is justified. The one
+observed branch is the explicit optional-output-pointer check and is not
+input-dependent. This does not provide AArch64 runtime execution, GCC
+AArch64, ARMv7/RISC-V, or a formal constant-time proof. The next queue is
+another compiler/architecture constant-time or overflow-sensitive helper;
+do not repeat the twenty dismissed compiler hypotheses unless compiler,
+source, architecture, or performance evidence changes.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and

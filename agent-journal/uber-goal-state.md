@@ -187,6 +187,21 @@ nonzero value in both backends and both verifiers. The compiler hypothesis
 was dismissed; no production change was made. Goal 78 remains active with
 another distinct helper queued.
 
+The twentieth hypothesis then tested `secp256k1_scalar_set_b32` with an
+independent byte compare/subtract oracle covering 395 raw values, including
+`n-1`, `n`, `n+1`, maximum 256-bit inputs, powers of two, half-order
+boundaries, full-width random values, both overflow-pointer forms, and
+`digest=98dd70c0a3477278`, plus a Boost `cpp_int` verifier with the same
+digest. Native assembly, native portable C, and forced-int64 Clang/GCC
+optimization/LTO matrices, ASan/UBSan/VERIFY runs, focused tests, scalar
+corpus replays, mutation controls, and Clang AArch64 compile-only code
+generation all matched. Production disassembly showed only the intentional
+NULL check for the optional overflow output pointer; input comparisons used
+conditional selects. The deliberate reduction-constant mutation failed at
+the exact `n` case in both backends and both verifiers. The compiler
+hypothesis was dismissed; no production change was made. Goal 78 remains
+active with another distinct helper queued.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
