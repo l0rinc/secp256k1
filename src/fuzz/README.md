@@ -39998,3 +39998,72 @@ finding's relevance because HMAC/RFC6979 state carries key/nonce-derived
 material; it does mean that a separate public retry-counter lifetime issue
 must not be conflated with this one. `5cfe7f7c` remains the fix with the
 strongest deterministic proof; no severity upgrade is claimed by this replay.
+
+## 2026-07-27 Current-origin custom ECDSA retry-boundary replay
+
+The existing `aab3a680` custom-nonce retry-counter finding was replayed against
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Its earlier causal
+proof used `d2d04864ef9b056151603a3ced7980958b058028`; the relevant ECDSA,
+recovery, and test files are byte-identical between that snapshot and current
+origin. `l0rinc/master` remains
+`d2d04864ef9b056151603a3ced7980958b058028`, so no later upstream change
+alters this boundary. This is a current-origin reiteration, not a new fix.
+
+The disposable source archive contained clean current origin plus one public
+probe. No branch production repair or fuzzer source was copied. The Clang
+22.1.7 Debug ASan/UBSan build used `-O1`, `SECP256K1_ASM=OFF`, and recovery
+enabled. The clean production `src/secp256k1.c` hash was
+`7f9516a7854e8f67012b8f66c7ec7131c50b7887cd61d0a780acacee33eb93eb`; the
+clean library hash was
+`fa925ab914dfec35c30ebcda4ccfad1d9abfa4d9345466e91cbfc997d7028b97`.
+The probe source hash was
+`a603756ba5bc58ee1a84f9afc037de908f2ce1674dcbef3303cd0a9cd1fc107a` and its
+binary hash was
+`0a5a0e96303ae90bfb187bf5352882a012629e3f8797a61ecdbbee671f95fd7f`.
+
+The probe calls both public signing entry points with a custom nonce callback.
+The callback returns failure at attempt 0, and returns one invalid all-zero
+nonce only at `UINT_MAX`; it requires one callback invocation and a failed
+signature from each entry point. Unmodified current origin returned status 0:
+
+    ret=0 normal_calls=1 recoverable_ret=0 recoverable_calls=1
+
+For causal separation, the only disposable production mutation changed
+`src/secp256k1.c:547` from
+
+    unsigned int count = 0;
+
+to
+
+    unsigned int count = UINT_MAX;
+
+The mutated clean library returned status 1 and printed
+
+    ret=0 normal_calls=2 recoverable_ret=0 recoverable_calls=2
+
+The second callback is the wrapped counter at zero. A callback that continues
+returning invalid candidates after that wrap can therefore avoid the existing
+failure boundary; the probe intentionally returns failure at zero so this
+control proves the transition without attempting 2^32 calls. The mutation was
+restored before the remaining controls.
+
+The repaired native and forced-int64 libraries passed the same dual-entry
+probe with one callback each. Their hashes were
+`093307150f44393860dfb55b3720f62076b72be861924ba80334847a01f3bd0e` and
+`0691028d065e23114aa3763d8a3987242551607246f593b856a10e9d5cb258ad`.
+Focused repaired `tests -i=1 -j=2 -t=ecdsa -t=recovery -log=1` runs passed
+with log hashes
+`2d52e86f8584a4cc84c5bd244b5e15ef00c860dbb84bd4fb1a963e74212a1cb6` and
+`8c41195028e3464229daee2d2a9ad300be76efcdf13d50119a4397103948674a`.
+
+Severity remains **Low direct-API retry-state availability robustness** and
+**Informational/Very Low for current Bitcoin Core**. Core's `CKey::Sign` and
+`CKey::SignCompact` paths use the library-owned RFC6979 callback, which has a
+separate maximum-counter rejection; no Core path supplies an attacker-owned
+custom callback. This is not reachable from an invalid block or witness and
+does not demonstrate invalid-block acceptance, witness-sigop undercount,
+consensus divergence, signature forgery, key compromise, memory safety, or
+remote concurrency impact. It is not High/Critical. The retry candidate has
+no standalone cryptographic meaning, so nonce clearing is not the severity
+driver. `aab3a680` remains the fix with the deterministic private-boundary
+test; no new production change or severity upgrade is claimed.
