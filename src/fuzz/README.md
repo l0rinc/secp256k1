@@ -37652,3 +37652,54 @@ High/Critical rating is justified, and no existing finding is downgraded.
 No production mutation, fix, cherry-pick, or nonce-erasure claim is made.
 Future API or arithmetic changes must state whether they preserve, change, or
 mask this result and the earlier clean-master first stops.
+
+## 2026-07-27 Context lifecycle dual-backend campaign
+
+The current audit tree `ada39d21` was rebuilt before a longer
+`fuzz_context` campaign; freshly fetched `origin/master` and `l0rinc/master`
+both remained `d2d04864ef9b056151603a3ced7980958b058028`. Both builds used
+Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules,
+and libFuzzer. The native binary hash was
+`c621c7b4fc499e4bc0442a95da390445de83c8f5ccca75b7f0e562f659b6c7cf`; the
+forced-int64/10x26 binary hash was
+`11501c9ed82442549967b5bf51130e910d3c4748d49e2e3538a1694ccee5d648`.
+
+The tracked corpus had 13 files, 722 bytes, and sorted filename/size manifest
+hash `ae4ddda6621879381d48e7679f839d5e6c12fe44a87f8dcfc5522b28779e1cf7`.
+Each backend used an isolated corpus copy and these controls:
+
+    bin/fuzz_context <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Both native workers exited zero after 128 and 129 seconds; their final
+reported coverage/features were 3,089/6,271 and 3,089/6,812. Both
+forced-int64 workers exited zero after 123 and 124 seconds; their final
+coverage/features were 5,043/12,221 and 5,043/13,180. Every reported
+`oom/timeout/crash` counter was `0/0/0`, no sanitizer or assertion diagnostic
+appeared, and both artifact directories were empty. Complete log hashes were
+`74f504e478c26c9c9d98ed1b4041df3fac38d364cd7c8b9c0f565bcf22089cad` (native)
+and `3525af7f97cb4c0b8af1b906206fe95a98a2dfcc7581888cabc224a7c94b014c`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The matching lifecycle tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=all_proper_context_tests \
+      -t=all_static_context_tests -t=deprecated_context_flags_test -log=1
+
+The native and forced-int64 test-log hashes were
+`74ae7c486d1d263a28be35f98017739fe782fef1b4f6633d8af86f2d1055f10b` and
+`1ad5461674c3b796ac17faf6e79b7116fcab55b47f11e0b7e902a7e3bb5a53cb`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised context creation/destruction, preallocated
+storage, cloning, randomization, callbacks, flag compatibility, and static
+context boundaries without demonstrating invalid-block or invalid-witness
+acceptance, sigop impact, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure. No High/Critical
+rating is justified, and no existing finding is downgraded. No production
+mutation, fix, cherry-pick, or nonce-erasure claim is made. Future context or
+callback changes must state whether they preserve, change, or mask this
+result and the earlier clean-master first stops.
