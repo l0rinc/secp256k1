@@ -37888,3 +37888,62 @@ no High/Critical rating is justified and no existing finding is downgraded.
 No production mutation, fix, cherry-pick, or nonce-erasure claim is made.
 Future Schnorr, x-only, or Core checker changes must state whether they
 preserve, change, or mask this result and the earlier clean-master first stops.
+
+## 2026-07-27 EllSwift/BIP324 dual-backend campaign
+
+The current audit tree `72e310a6` was rebuilt before a longer
+`fuzz_ellswift` campaign; freshly fetched `origin/master` and `l0rinc/master`
+both remained `d2d04864ef9b056151603a3ced7980958b058028`. Both builds used
+Clang 22.1.7, Debug, ASan/UBSan, `SECP256K1_ASM=OFF`, all optional modules,
+and libFuzzer. The native binary hash was
+`3856f9c8799fbdfe0e0cd5615d4308feee660e5d4ea644e58bd712228e588d1e`; the
+forced-int64/10x26 binary hash was
+`33a84b0b0b8f8534dfc6beac6f3e1e0d673049a01ad3d837e0069d964437e4bc`.
+
+The tracked corpus had 20 files, 820 bytes, and sorted filename/size manifest
+hash `3ae8ffa06a9e3247408592d24c9d8f04db2c08327b428f948add1e8a23654d64`.
+Each backend used an isolated corpus copy and these strict controls:
+
+    bin/fuzz_ellswift <private-corpus> -fork=2 -jobs=2 \
+      -max_total_time=120 -timeout=180 -rss_limit_mb=0 \
+      -ignore_crashes=0 -ignore_ooms=0 -ignore_timeouts=0 -handle_abrt=0 \
+      -verbosity=0 -print_final_stats=1 \
+      -artifact_prefix=<private-artifacts>/
+
+Native workers exited zero after 123 seconds each, with final reported
+coverage/features of 3,068/9,101 and 3,068/9,054. Forced-int64 workers exited
+zero after 124 and 129 seconds, with final reported coverage/features of
+4,944/17,036 and 4,943/17,017. Every reported `oom/timeout/crash` counter was
+`0/0/0`, no sanitizer or assertion diagnostic appeared, and both artifact
+directories were empty. Complete log hashes were
+`88c86a833ebe5249d1ba4fb637916724bd893c7611f6c086bb3620b82e80097d` (native)
+and `f114c5e022a5247ac7c174febcaf974bc0f6964aed62908c2872542d0afd94b3`
+(forced-int64). The temporary corpora and artifacts were removed afterward.
+
+The complete EllSwift unit/vector tests passed in both backends:
+
+    bin/tests -i=1 -j=2 -t=ellswift_encoding_test_vectors_tests \
+      -t=ellswift_decoding_test_vectors_tests -t=ellswift_xdh_test_vectors_tests \
+      -t=ellswift_encode_decode_roundtrip_tests -t=ellswift_create_tests \
+      -t=ellswift_zero_u_tests -t=ellswift_compute_shared_secret_tests \
+      -t=ellswift_xdh_correctness_tests -t=ellswift_hash_init_tests \
+      -t=ellswift_xdh_bad_scalar_tests -t=ellswift_xdh_ctx_sha256_tests -log=1
+
+The native and forced-int64 test-log hashes were
+`b07fdda244b665946f9e16dc6ca5537ff1a572d93605dd7ac193f1840f6312e5` and
+`609148a8fd812d580ec5c399dee5bc10a533faaa431a5de26eb5a79568a523af`.
+
+This is extended negative evidence, not a new production bug or deterministic
+regression. The target exercised ElligatorSwift encoding/decoding, inverse
+branches, zero-`u` handling, randomizer influence, BIP324 transcript hashing,
+party selection, invalid-secret cleanup, alias/reference cases, and callback
+data barriers without demonstrating invalid-block or invalid-witness
+acceptance, sigop impact, consensus divergence, signature forgery, key
+compromise, or severe remote memory/concurrency failure. Bitcoin Core reaches
+this through the BIP324 transport handshake with fixed-size peer wire data,
+not block or witness validation; standalone ECDH remains outside current Core
+production callers. No High/Critical rating is justified and no existing
+finding is downgraded. No production mutation, fix, cherry-pick, or
+nonce-erasure claim is made. Future EllSwift, ECDH, or BIP324 wrapper changes
+must state whether they preserve, change, or mask this result and the earlier
+clean-master first stops.
