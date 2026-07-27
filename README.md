@@ -16565,3 +16565,101 @@ finding. It is unrelated to clearing a nonce or retry counter without
 standalone cryptographic meaning. Later Taproot, field, group, or parser
 changes must state whether they preserve, change, or mask these exact clean
 master boundary replays.
+
+## 2026-07-27 Current-origin ECDSA and compact-recovery composition revalidation
+
+The remaining serialized legacy-signature and compact-recovery fixtures were
+replayed against `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`.
+The clean fuzzer overlays were
+`f4fb9cb008d731945743e03b576cf6940fec967aecdfc2e23b277a487ba858e5` for
+`api_roundtrip` and
+`ecdfb380801c2c20be6079d968166f2c5b5528b1f185d8160982f2855d234ae0` for
+`recovery`. The corresponding audit-branch overlays were
+`a4a17b26cd8dcc606a53015173403579e528082d1c8105fa86a38a81c0bf28cc` and
+`d75f5bcdc726f6bae87138b0425d8aa26275d9a098a5da39f3d0143652267362`.
+The clean production source was current origin; no audit production fix was
+copied into it.
+
+The exact seed content hashes, in replay order, were:
+
+    api/core-ecdsa-serialized-composition       1cb48c460ecd14eb8bb0355e0f3e4469f692c05af677e3ac3facec819cf2a9d9
+    api/core-ecdsa-r-plus-order-composition     9cda38d1d472bfb924e1e72fa3d1708b3f6ee7556cca79c4df47fc94d197d348
+    api/core-ecdsa-sec1-encoding-composition    6701090d5eddb328217cf64f00fc23539f53615bee6781091ab582b7f23ece9c
+    api/core-ecdsa-signing-composition          6367f448431416d0934088ceb4642e925524fbe862ae9eefe0c732d1156b1435
+    api/core-ecdsa-low-S-encoding-composition   cc8d6abd0006fd049391f667256cc68436e227e19cc19cdb46979b486250d5c5
+    recovery/core-recover-compact-composition   dbf91e55346805236b2490d0be619ea441bcc63f118def5a151dfd05a3a1498d
+    recovery/core-sign-compact-composition      8a7b84f86221963fc068fd05472c2353a0a7d4116c60be1c3878abf9c8534d34
+
+The full fuzzer entry points contain older independent boundary checks that
+can stop before a selected Core composition. A disposable exact-trigger gate
+routed only these seven strings to their existing helpers; it changed no
+production code, was removed before rebuilding the clean binaries, and was
+not used for the repaired controls. This is the same isolation rule used for
+the Taproot revalidation above: the helper result is clean-master evidence,
+while an unrelated earlier oracle is not attributed to the Core boundary.
+
+All 14 clean/repaired native and forced-int64 Clang 22.1.7 ASan/UBSan
+replays exited 0 with no sanitizer diagnostic or artifact. The clean binary
+SHA-256 values were:
+
+    api_roundtrip native  ec2758188d28239beb326f55d68b36d83fc6161690c4f684aa072cf9c74bc3a4
+    api_roundtrip int64   5e48bb06c8fb203ee4d54d9ef1ec76715278b7d0e806758c53136cb37018af48
+    recovery native       a5ea9d0099ae902876f30c63b45159d5167939018bf36d911ee86284c101581e
+    recovery int64        739c1a81cf77f724b4421f73ae137f55c7b29f7801887eb52212d9e10884b6d1
+
+The repaired binary SHA-256 values were:
+
+    api_roundtrip native  f646716030a495bd390c5baecc7e23b10a33c9a359289e29d4adde33faa865dd
+    api_roundtrip int64   e53013f338277cf1753baec76c14514f177eea5585cd19b0360792001061af02
+    recovery native       588f40698dd25be63f5cd00a22a78ce0e32a191ec76a18d5a12b4beecd715d52
+    recovery int64        343d370e3070b058849ba7f9b74988ac36064f3938169583f5d97e6e4397fc93
+
+For the five API fixtures, clean native log hashes were, in order,
+`7749a9c3b345a7c656fade33fefb9953a27171e0ca79813c79ccf050a5fbfdcf`,
+`77e3e431decaa854db0da903dd2184dd921f52974093efc198132203a276eec5`,
+`6abd8a44aa5ba8e1cf2bf0ac9d2484f9ce871e6e1d39a4ada4ddb592500d3ebb`,
+`f61db106d67cb0b1e9e519059338fffd6d291dede7c51a7435971b7341321b7e`, and
+`10fa292775de15051b871b39704f69c7e1659edd28a1b418a04e1dcaceb9dcb2`;
+clean forced-int64 hashes were
+`cad293a43e87692a8698212d3ac7ad3fb149b0fb323faae78cc9c944586f21a6`,
+`ed3adf90c6d88d543b684cab0cb2c90e67376a861993379d9d5fcde0d4277c85`,
+`fe29448e479e32e1b3c4cad7e72d5b10f8e3bb67120a9411b96a4de908ae2cd7`,
+`eb973676650e312255cdfb94094265d269fcc056d098b3c68e60b9a5302ac236`, and
+`36fbaca79841d734ffd706b7fbab9b43caba0969ac1ea9db93ee7b7b981bde52`.
+The repaired native hashes were
+`5ac5a88605d5bc9ccdc48d26eb9f2f525e14b31e42a0a5fdd975c4710495bc49`,
+`340a474cf0228eb89b62c0fa0f340a30a1234b4cf4c57cf979cff6a565a7b92a`,
+`18bc5058c1fdb20cba888e309777a8cbd798d520ec67234c5d5942adfadebb13`,
+`9388c7641e327f1e4da27b9ec7dc71d1089a6146425cd100310d233e18a4ac09`, and
+`ff2b3843af01e57d7f0baed1b8f0994da1c302015104b10a461e0c4616cd04d0`;
+the repaired forced-int64 hashes were
+`a1d51412d23fe6d9b46bc972ec480cf29c78429131102ddf3b256287c3e27232`,
+`50b91d083210d0e6d5b8cb09387ff3ee94ad16373926d35ea6e47757a81c8af9`,
+`03b8728de8b24c1ca8a4906344e813178ba5d64fb59e7798f36b6d7e86387613`,
+`9b85b640b3f12effa127c18c6a0f3c60592b376dc79c2a683d8408dfd527dd88`, and
+`8af6e4c265595137fcb53bec030d8d883d966ed7f1f584809bc46519696c3203`.
+For recovery, the clean native/int64 hashes were respectively
+`0a278ac591980713e05af162467993d3a97e8d18f3d63d7308db9bb897cab793` /
+`82473c687a0cce5d35c59f0488394aada3c692e33a3c07244849f16aef0f8bc3` and
+`a13797c44370f5517a56daf6e3ac0dd99addbe9386c5e932f608220b00db63fc` /
+`37fdd67e6683b1064c05ed64a133af14b055afeeaa3847a3d2c131ad998dca97`.
+The repaired pairs were
+`c58cbaae3dd38df8839f85c6f7cd0d3c57c4ba1c0d67b5ebbddebde1edbd1ee5` /
+`f5fc691b712988c20aa585370823d5ac8171ee8230754a09fcf0b8fb519c4d72` and
+`9cd44f4621c4500c2f40f9201a7138b58b85b3c9d71eae99aaf3c9d241b63871` /
+`5fe67c02f66824c620dec1289449036a3cbe59cdef0d81a56e8f7afdb54832e8`.
+
+The ECDSA fixtures model Core's bounded `CPubKey::Verify` path, including
+serialized SEC1 keys, lax DER plus low-S normalization, the `r+n` field
+boundary, and the wallet signing composition. Compact recovery models
+`CPubKey::RecoverCompact` and `CKey::SignCompact`, which are message-signature
+and wallet paths rather than block or witness validation. A clean mismatch in
+the legacy verifier's serialized contract could become High/Critical only
+after an actual transaction/block reproducer demonstrates consensus impact;
+no mismatch, invalid-block acceptance, invalid-witness acceptance,
+witness-sigop undercount, consensus divergence, forgery, key compromise, or
+remote memory/concurrency failure was reproduced. This is negative evidence,
+not a production finding or fix. It is unrelated to clearing a nonce or retry
+counter without standalone cryptographic meaning. Future parser, signer, or
+recovery changes must state whether they preserve, change, or mask these
+current-master controls.
