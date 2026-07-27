@@ -227,6 +227,23 @@ made. Goal 78 remains active with another distinct helper queued.
 
 ## Handoff
 
+The twenty-third hypothesis then tested `secp256k1_scalar_is_zero` with an
+independent byte-level reduction oracle covering 648 values, including `n`,
+`n+1`, all ones, every power of two, order complements, and deterministic
+values (`digest=17cf173f2d144c3b`), plus a Boost `cpp_int` modulo oracle
+covering 327 values (`digest=c1bacbbe8c75b942`). Native assembly, portable C,
+and forced-int64 Clang/GCC optimization/LTO matrices, six ASan/UBSan/VERIFY
+runs, fresh native and forced CMake scalar tests/corpus runs, and Clang
+AArch64 compile-only normal/VERIFY code generation all matched. The direct
+probe had no conditional or loop branches in the tested optimized x86 and
+AArch64 objects. The deliberate OR-to-AND mutation failed at the first
+nonzero input in both backends and both verifiers. The compiler/representation
+hypothesis was dismissed; no production change was made. Limitations are no
+AArch64 runtime, GCC AArch64, ARMv7/RISC-V, or formal constant-time proof.
+Goal 78 remains active with another distinct scalar helper queued.
+
+## Handoff
+
 The active cycle must verify the worktree and remotes, read the selected goal
 journal and prior evidence, perform a bounded experiment, and record a verdict
 before drawing another pending or reopened goal.
