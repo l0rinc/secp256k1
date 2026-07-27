@@ -39691,3 +39691,57 @@ cryptographic meaning. No new production fix, regression test, cherry-pick, or
 severity upgrade is claimed by this replay; the existing `ebae8e82` and
 `f826e9fb` commits remain the fixes with the deterministic tests and mutation
 proofs.
+
+## 2026-07-27 Post-import group alias and infinity preservation replay
+
+After importing the l0rinc group cleanup commits `a80b126d` and `7dee1d31`
+with their companion coverage commits `4abff5d7` and `4ebe5513`, the group
+transition controls were rerun against the current audit tree
+`fdda2c86af2386bbcc4606a4849bf0f3bcb31d16`. The remote refs at replay were
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` and
+`l0rinc/master=d2d04864ef9b056151603a3ced7980958b058028`; both are recorded
+so a later optimization cannot be mistaken for the clean-master baseline.
+
+The focused deterministic command was:
+
+    bin/tests -i=1 -j=2 -t=ge -t=gej -t=gej_rescale_alias -log=1
+
+It passed in native 5x52 and forced-int64/10x26 Clang ASan/UBSan builds. The
+log hashes were `f6c287f45a3afb79a5e32cb6594b872c15affbad288a3482ad156ee959abe2de`
+and `6ef93a18e987502c487f9ab5a1b42b4e27f3d92b2908c8b7ea3817a0836a470b`.
+These tests cover finite Jacobian-to-affine conversion into a destination
+previously marked infinity, and the documented in-place output aliases for
+`gej_add_ge_var`, `gej_add_zinv_var`, and `gej_rescale`.
+
+The 23-file tracked group corpus was unchanged. Its sorted `filename size`
+manifest is `7aa67d1533a11c4c94e716fcff6b446bcb5896e8608e71eba791a6fad147bcff`.
+The native and forced-int64 `fuzz_group` binary hashes were
+`a422cee12e92f7b49ed72db1c0f234121b94309c4c9910962551d1ad63ac42e1` and
+`93282245e871a61237928cc8eba4720ddb75d802df0a49e8c2d4f14181bd96fc`.
+Private copies of all seeds then ran with two libFuzzer workers and two jobs:
+
+    -fork=2 -jobs=2 -max_total_time=15 -timeout=60 -rss_limit_mb=0
+    -ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0
+    -handle_abrt=0 -print_final_stats=1 -verbosity=0
+
+Both backends returned status 0; every worker reported
+`oom/timeout/crash: 0/0/0`, and both artifact directories were empty. The
+worker log hashes were native
+`78a532643fa815d89490dab8472c92a694db9298f82468e5c1dcaf2d042f5c36` and
+forced-int64
+`04c768dfd5d865a493a6135fd9824eb079370b3d34bbd702e9b65f835d699d60`.
+
+This is post-import negative evidence, not a new production finding. The
+optimization removes only coordinate copies after the aliased input has been
+read, and the infinity assignment is unreachable after the existing early
+return; the replay confirms that the active fuzzer and deterministic tests
+still fail closed if either transition changes. The existing Low internal
+`gej_rescale` alias finding remains separate. These helpers are internal and
+current Bitcoin Core does not receive their opaque alias states from blocks or
+witnesses. No invalid-block or invalid-witness acceptance, witness-sigop
+undercount, consensus divergence, forgery, key compromise, or remote
+memory/concurrency failure was shown. Severity therefore remains
+Informational/Low for this preservation control, with no High/Critical rating.
+The result is unrelated to clearing a nonce or retry counter without
+standalone cryptographic meaning. No production fix or new corpus seed is
+claimed, and the l0rinc imports do not mask an existing master finding.
