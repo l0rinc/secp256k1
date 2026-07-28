@@ -1069,3 +1069,36 @@ repair, limitations, and reopen cells are in
 `agent-journal/filesystem-crash-consistency.md`. The next queue is
 `74,77,81,82,84,87,89,95,97`, retaining separate goal-72 directory/rename/
 recovery cells.
+
+## Cycle 67 - goal 84 (`secp-nonce-session`)
+
+Draw seed `862797388` selected index 4 from the distinct-cell pool
+`74,77,81,82,84,87,89,95,97`. The prior goal-84 repeated-participant map
+cardinality hypothesis was excluded. This cycle audited the public
+`musig_nonce_gen_counter` lifecycle at counter zero, 32-bit rollover, and both
+64-bit extremes, including equivalence with the explicit nonce API.
+
+Audit base was `319d56edbc85f0c71b28ffd11efd689e8dc0874c`; protected secp remained
+clean at `e153e2681f7bf1dd74894e2170213e3983030989`, and protected Core remained
+at `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` with only its recorded dirty
+files. The source writes the big-endian counter into the first eight bytes of
+a zeroed 32-byte transcript. Counter zero is intentionally distinct from
+explicit `nonce_gen`, which rejects an all-zero session-random buffer.
+
+An independent public-API probe covered 8 edge counters x 8 combinations of
+message/cache/extra-input presence. It required success, repeat determinism,
+boundary separation, and exact explicit-API equivalence for every nonzero
+counter. Audit native ASan/UBSan, audit forced-int64 Clang and GCC release
+builds, and a clean-origin release build each printed
+`PASS counter-boundary cases=64 combinations=8`. The audit MuSig test binary
+also passed 16 iterations with all 12 tests passing. Initial wrong-oracle
+controls failed at counter zero and at counter one with trailing-byte encoding,
+then passed after correction.
+
+Verdict: **dismissed**, no master-relative defect or production change. The
+evidence is x86_64-only with one fixed keypair and does not cover external
+wrappers or big-endian execution. The exact source trace, probe hash, commands,
+outputs, limitations, and reopen conditions are in
+`agent-journal/secp-nonce-session.md`. The next queue remains
+`74,77,81,82,84,87,89,95,97`, excluding this exact goal-84 counter cell while
+retaining explicit lifecycle/error-output and wrapper cells.

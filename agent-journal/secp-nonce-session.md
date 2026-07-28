@@ -105,3 +105,94 @@ The next distinct goal-84 cells are explicit public API lifecycle/error-output
 contracts, Core PSBT duplicate-slot semantics after a specification decision,
 and cross-wrapper parity. Preserve the source links, exact reproducer shape,
 and the safe-failure verdict when reopening this goal.
+
+## Cycle 67: nonce counter boundary and API-equivalence matrix
+
+- Timestamp: `2026-07-28T09:02:00Z` draw recorded by the controller.
+- Draw seed: `862797388`.
+- Eligible pool: `74 77 81 82 84 87 89 95 97`.
+- Selected index: `4`; selected goal: `84` (`secp-nonce-session`).
+- Audit branch/base: `codex/fuzz-oracles`, base `319d56edbc85f0c71b28ffd11efd689e8dc0874c`.
+- Protected secp checkout: `/mnt/my_storage/secp256k1`, detached clean at
+  `e153e2681f7bf1dd74894e2170213e3983030989`.
+- Protected Core checkout: `/mnt/my_storage/bitcoin`, branch
+  `codex/btc-fuzz-oracles`, HEAD `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`,
+  with only its pre-existing `src/test/blockencodings_tests.cpp` modification
+  and `fuzz-0.log`/`fuzz-1.log` untracked files.
+
+### Hypothesis and trust boundary
+
+The fresh hypothesis was that `secp256k1_musig_nonce_gen_counter` could mishandle
+zero, 32-bit rollover, or the two 64-bit extremes, or could disagree with the
+equivalent explicit nonce transcript. A failure could create repeated public
+nonces for distinct counters or make the counter API derive different secret
+nonce state from the documented byte transcript. The trust boundary is a
+caller-provided unique counter and optional public message/cache/extra-input
+transcript paired with a valid opaque keypair; the caller, not the library,
+must prevent counter reuse.
+
+The source writes the big-endian counter into the first eight bytes of a
+zero-initialized 32-byte buffer at `src/modules/musig/session_impl.h:516-542`.
+The existing fuzz helper mirrors that encoding at `src/fuzz/musig.c:2823-2832`.
+Counter zero is an intentional special case: its 32-byte transcript is all
+zero and `nonce_gen` rejects an all-zero `session_secrand32`, while the counter
+API requires a keypair and can safely bind counter zero to that keypair.
+
+### Verification
+
+The independent probe `agent-journal/goal84-counter-boundary-probe.c`
+enumerated counters `0, 1, 2, 2^32-2, 2^32-1, 2^32, 2^64-2, 2^64-1` across all
+eight combinations of absent/present message, keyagg cache, and extra input.
+For each of 64 cases it required counter generation success, deterministic
+repeat output, distinct serialized output from the preceding boundary case,
+and exact equivalence to `nonce_gen` with the same leading-eight-byte explicit
+transcript for every nonzero counter. It separately required explicit
+`nonce_gen` rejection for counter zero and checked that successful explicit
+calls zeroed the session-random buffer.
+
+The probe source SHA-256 is
+`0c61dfe7c385c778d1b31f356eb66b22484ec1d47cadc1ef2e70b86cbfaee6c8`.
+Commands and key output:
+
+```text
+ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
+  /mnt/my_storage/goal84-counter-probe/audit-native-sanitized
+PASS counter-boundary cases=64 combinations=8
+
+ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
+  /mnt/my_storage/goal84-counter-probe/audit-int64-clang
+PASS counter-boundary cases=64 combinations=8
+
+ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
+  /mnt/my_storage/goal84-counter-probe/audit-int64-gcc
+PASS counter-boundary cases=64 combinations=8
+
+/mnt/my_storage/goal84-counter-probe/clean-origin-release
+PASS counter-boundary cases=64 combinations=8
+
+/mnt/my_storage/secp256k1-build-next/bin/tests -t=musig -log=1
+16 iterations; all 12 MuSig tests passed; total execution time 0.976 sec
+```
+
+The initial probe also supplied useful negative controls: it failed at counter
+zero when it incorrectly expected the explicit all-zero transcript to succeed,
+and it failed at counter one when it incorrectly placed the counter in the
+trailing eight bytes. Correcting those independent oracle mistakes produced
+the four passing matrices above. No production mutation was needed because
+the existing explicit-equivalence check and the edge matrix are both sensitive
+to either encoding error.
+
+### Verdict
+
+**Dismissed.** No counter collision, endian/placement error, repeat
+nondeterminism, sanitizer finding, or clean-master behavioral discrepancy was
+found. Counter zero is a documented/API-compatible distinction rather than a
+nonce-reuse defect. Master-relative severity is none and no production source
+change is justified.
+
+This evidence is x86_64-only and uses one fixed valid keypair plus fixed
+optional values. It does not prove behavior on a big-endian host or cover
+external language wrappers. Reopen with a wrapper mismatch, a non-x86
+execution result, or a new caller that violates the unique-counter contract.
+Keep explicit lifecycle/error-output and cross-wrapper cells eligible for later
+goal-84 draws; exclude this exact counter-boundary cell.
