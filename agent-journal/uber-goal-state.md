@@ -673,3 +673,20 @@ made. Full evidence is in `agent-journal/critical-history-sweep.md`. The next
 draw must exclude `a39c2b09`, the CMOV/uninitialized family, and the semantic
 callback-cleanup/constant-multiplication oracles, then choose a distinct
 unindexed production-impact history seed.
+The fifty-fifth controller cycle continued catalog goal 49,
+critical-history-sweep, with draw seed 9687478665518611701. After
+semantic deduplication, the eligible pool contained only
+2241ae6d14df187e2c8d6fe5b44e3d850474af38, the historical
+ecmult_const secret-dependent sign-branch fix, so it was selected. Parent
+and fixed disposable worktrees both built with ECDH and passed ./tests 0.
+GCC production assembly independently showed a parent jg on the signed
+WNAF digit in the -O2 multiplier and fixed cmovs/arithmetic; a small GCC
+and Clang expression probe showed that compiler context matters. Current Core
+uses the newer branchless x-only multiplier through EllSwift XDH for BIP324,
+and current native/forced-int64 ecmult/EllSwift/ECDH controls passed. The
+historical standalone-library timing defect is confirmed in its parent but is
+repaired on current master; no production source change was made. Full
+evidence is in agent-journal/critical-history-sweep.md. The next draw must
+exclude this constant-time branch family and the already indexed current
+constant-multiplication oracles, then widen to a fresh unindexed
+production-impact history seed.

@@ -2198,3 +2198,173 @@ does not cover every architecture, compiler, CMOV backend, or callback
 failure. The next draw must exclude `a39c2b09`, this CMOV/uninitialized-state
 family, and the already indexed callback-cleanup and constant-multiplication
 oracles, then select a distinct unindexed production-impact history seed.
+## Cycle 20: historical constant-time ecmult_const sign branch
+
+### Selection and deduplication
+
+The controller draw used seed 9687478665518611701. After excluding
+a39c2b09, its uninitialized-CMOV/signing-failure family, the already
+indexed callback-cleanup and current constant-multiplication oracles, and
+other historical candidates whose behavior was already represented in the
+ledger, the eligible pool had one entry:
+
+~~~text
+2241ae6d14df187e2c8d6fe5b44e3d850474af38
+~~~
+
+The selected commit is 2241ae6d14df187e2c8d6fe5b44e3d850474af38, parent
+f45d897101cf39f74bc5b7fdfcce32a26e5af24f, authored by Gregory Maxwell on
+2020-01-08, with subject "Remove secret-dependant non-constant time
+operation in ecmult_const." The exact hash was absent from the current
+finding ledger and fuzz README. Its semantic area is adjacent to, but not a
+duplicate of, the prior uninitialized-CMOV cycle: this candidate is a
+secret-dependent control-flow defect in a historical signed-digit table
+lookup.
+
+### Historical contract and reachability
+
+The parent defines ECMULT_CONST_TABLE_GET_GE as:
+
+~~~c
+int abs_n = (n) * (((n) > 0) * 2 - 1);
+int idx_n = abs_n / 2;
+~~~
+
+n is the signed WNAF digit selected from wnaf_1[i] in
+src/ecmult_const_impl.h:201-204 and is derived from the secret scalar.
+The n > 0 test therefore controls a branch in code advertised as
+constant-time. The direct historical ECDH caller reaches this multiplier at
+src/modules/ecdh/main_impl.h:29-64, specifically line 51, for a valid
+standalone-library secret scalar and public point. The commit's second change
+rewires secp256k1_gej_double_var around a non-infinity helper; its commit
+message explicitly describes that as fragile API structure rather than a
+constant-time defect, so it was audited separately and found to be covered by
+the historical tests.
+
+The later follow-up 34a67c773b0871e5797c7ab506d004e80911f120 confirms that
+this was part of a broader constant-time hardening pass: it removes branches
+on invalid ECDH scalar inputs with a scalar CMOV and restores the failure
+status at return. That follow-up is related historical context, not a second
+claim against current source.
+
+### Independent reproduction and machine-code evidence
+
+Disposable parent and fixed worktrees were created at
+/tmp/critical-history-55/old-ct and /tmp/critical-history-55/fixed-ct.
+Both were configured and built independently with:
+
+~~~sh
+./autogen.sh
+./configure --enable-experimental --enable-module-ecdh \
+    --disable-shared --enable-tests --disable-benchmark
+make -j2
+~~~
+
+Both configurations selected x86_64 assembly, the 5x52 field backend, the
+4x64 scalar backend, GMP, and ECDH; both builds exited zero. Both ./tests 0
+runs printed "no problems found" and exited zero. The historical runtime suite
+therefore found no functional divergence, as expected for a timing-only
+change.
+
+The stronger proof is the generated production assembly. The source was
+compiled in each worktree with GCC using:
+
+~~~sh
+gcc -O0 -g -fno-inline -DHAVE_CONFIG_H -DSECP256K1_BUILD \
+    -I. -Iinclude -Isrc -S src/secp256k1.c -o /tmp/production.s
+gcc -O2 -g -fno-inline -DHAVE_CONFIG_H -DSECP256K1_BUILD \
+    -I. -Iinclude -Isrc -S src/secp256k1.c -o /tmp/production.s
+~~~
+
+In the parent -O0 body, the signed-digit conversion contains a conditional
+jle around the sign choice. In the parent -O2 body at
+/tmp/critical-history-55/old-gcc-o2.s:19466-19477, the relevant sequence is:
+
+~~~text
+testl  %r10d, %r10d
+jg     .L715
+setne  %r11b
+negl   %r10d
+~~~
+
+%r10d holds the WNAF digit, so jg is secret-dependent. The fixed -O2 body at
+/tmp/critical-history-55/fixed-gcc-o2.s:19488-19496 instead uses:
+
+~~~text
+movl   %ebp, %r11d
+negl   %r11d
+cmovs  %ebp, %r11d
+sarl   %r10d
+~~~
+
+with no secret conditional branch in that conversion. A small disposable
+probe containing exactly the two arithmetic expressions was also compiled by
+GCC and Clang at -O0 and -O2. At -O0, GCC emits a branch for the parent
+expression while the fixed expression is arithmetic; Clang emits setg for
+the parent and arithmetic for the fixed expression. At -O2, both compilers
+lower this isolated expression to neg/cmov for both forms. This is useful
+negative evidence: the parent source is not guaranteed safe merely because a
+small compiler probe happens to optimize it branchlessly; the full historical
+production context did emit jg, while the fixed source expresses the
+constant-time operation directly.
+
+The exact source diff is only eight lines in the macro: sign-mask absolute
+value, arithmetic right shift for the table index, and the existing constant-
+time CMOV table selection. The algebra is valid for the documented bounded
+odd WNAF digit domain; the subsequent VERIFY_CHECK bounds remain unchanged.
+
+### Current master and Bitcoin Core reachability
+
+The current audit branch at 00409781eba2c0f23081fe2e822fbcf254e34c7a
+retains the repaired operation in its current constant-multiplication code,
+but the current vendored Core tree has since moved the table representation to
+the branchless bit-derived ECMULT_CONST_TABLE_GET_GE at
+/mnt/my_storage/bitcoin/src/secp256k1/src/ecmult_const_impl.h:61-101.
+Bitcoin Core's CKey::ComputeBIP324ECDHSecret calls secp256k1_ellswift_xdh at
+/mnt/my_storage/bitcoin/src/key.cpp:327-344; that path loads the secret with
+a CMOV and calls secp256k1_ecmult_const_xonly at the vendored module's
+src/modules/ellswift/main_impl.h:534-561. CKey::Sign uses the separate
+validated ECDSA signing path at src/key.cpp:208-233. Thus the old optional
+public secp256k1_ecdh entry point is not a current Bitcoin Core caller, and
+the current BIP324 path does not reproduce the historical macro.
+
+The prebuilt current native and forced-int64 Core-vendored test binaries both
+passed:
+
+~~~sh
+.../bin/tests --target=ecmult_const_tests \
+    --target=ellswift_xdh_correctness_tests --iterations=1 --seed=2241AE6D
+.../bin/tests --target=ecdh --iterations=1 --seed=2241AE6D
+~~~
+
+Each target exited zero in both backends. The Core checkout remained at its
+pre-existing dirty state (src/test/blockencodings_tests.cpp modified plus
+fuzz-0.log and fuzz-1.log untracked); it was not edited.
+
+### Verdict
+
+Historical parent side-channel defect confirmed; current master-relative
+defect dismissed as repaired hardening. Source/history, the direct ECDH
+caller trace, and the parent/fixed production machine-code comparison are
+independent evidence forms. The confirmed impact is a secret-dependent timing
+branch for standalone callers of the historical constant-time multiplier; no
+key-recovery claim was made because this cycle did not run a timing-statistical
+attack. Current Core's active BIP324 path uses the newer branchless x-only
+multiplier, and current focused tests pass. No production source change or
+new regression test is justified.
+
+### Limitations and handoff
+
+The machine-code comparison is GCC/x86_64 and does not prove all compilers,
+architectures, or microarchitectural timing behavior. The isolated Clang
+probe was intentionally treated as compiler-context evidence, not as proof
+that all Clang production builds are safe. valgrind_ctime_test was not
+available under this historical configure: invoking
+./libtool --mode=execute valgrind --quiet --error-exitcode=99
+./valgrind_ctime_test failed because that target does not exist, so no
+Valgrind result is claimed. The current Core test binaries are prebuilt, and
+the dirty Core checkout was not rebuilt. The next draw must exclude
+2241ae6d, its 34a67c77 invalid-input constant-time follow-up, the old
+ecmult_const secret-branch family, and already indexed current
+constant-multiplication/callback-cleanup oracles, then widen to a distinct
+unindexed production-impact history seed.
