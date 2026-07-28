@@ -196,3 +196,127 @@ external language wrappers. Reopen with a wrapper mismatch, a non-x86
 execution result, or a new caller that violates the unique-counter contract.
 Keep explicit lifecycle/error-output and cross-wrapper cells eligible for later
 goal-84 draws; exclude this exact counter-boundary cell.
+
+## Cycle 78: randomized and cloned MuSig context matrix
+
+- Timestamp: `2026-07-28T10:06:08Z`.
+- Draw seed: `1056055882`.
+- Eligible pool: `74 77 81 82 84 87 89 95 97`.
+- Selected index: `4`; selected goal: `84` (`secp-nonce-session`).
+- Audit branch/base: `codex/fuzz-oracles`, cycle-start HEAD
+  `1a638d64919979fe0a5ae28647524f2dc615048e`.
+- Protected secp checkout: `/mnt/my_storage/secp256k1`, detached clean at
+  `e153e2681f7bf1dd74894e2170213e3983030989`.
+- Protected Core checkout: `/mnt/my_storage/bitcoin`, branch
+  `codex/btc-fuzz-oracles`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, with only the pre-existing
+  `src/test/blockencodings_tests.cpp` modification and `fuzz-0.log`/
+  `fuzz-1.log` untracked files.
+
+### Hypothesis and trust boundary
+
+The context contract says generator blinding and context cloning/randomization
+must not change public results. The existing context campaign compares ECDSA
+and ordinary Schnorr signing across randomized, cloned, and preallocated
+contexts, while the MuSig campaign checks complete nonce/session/signing
+transcripts and custom SHA backends separately. The fresh hypothesis was that
+MuSig could use a blinded generator table or cloned context state incorrectly,
+producing different public nonces, partial signatures, or final signatures
+for the same transcript. The trust boundary is a caller-created, full
+signing context and valid keypairs, not malformed opaque state or concurrent
+mutation of a context.
+
+The relevant contract and implementation evidence is in
+`include/secp256k1.h:28-52,286-292,313-326,427-445`,
+`src/secp256k1.c:63-76,226-239`, `src/ecmult_gen_impl.h:300-340`, and the
+MuSig state machine at `src/modules/musig/session_impl.h:350-470,580-790`.
+The existing comparison boundaries are `src/fuzz/context.c:209-283,530-590`
+and `src/fuzz/musig.c:3861-4000`; neither supplied this cross-campaign
+randomized/clone MuSig matrix. The earlier MuSig cleanup, malformed-opaque,
+counter-boundary, duplicate-key, and final-output investigations in this
+journal and `src/fuzz/README.md` were searched and excluded from this cell.
+
+### Verification
+
+A disposable public-API C probe used fixed valid secret keys 1 and 2. Each
+round used a 32-byte message filled with `0x30 + variant`, extra input filled
+with `0x70 + variant`, and a nonzero session random filled with `0x10 +
+variant`. Signer 0 used `musig_nonce_gen` with the message, cache, and extra
+input; signer 1 used `musig_nonce_gen_counter` with counter `17 + variant`
+and the same optional inputs. The probe then performed key aggregation,
+nonce aggregation, nonce processing, both partial signs, both independent
+partial-signature verifications, final aggregation, static-context Schnorr
+verification, and serialization of the aggregate key, public nonces,
+aggregate nonce, partial signatures, and final signature.
+
+Four variants compared a context randomized with `seed_a` against a clone
+randomized with a different `seed_b`. Four more variants compared the same
+pair after both contexts were reset with `secp256k1_context_randomize(ctx,
+NULL)`. The full serialized result was compared byte-for-byte for every
+variant. The disposable probe source was removed after verification.
+
+Commands and key output:
+
+```text
+ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+UBSAN_OPTIONS=halt_on_error=1 /mnt/my_storage/goal84-musig-context-matrix-native-clang
+PASS randomized-clone variant=0 digest=bc3280984d63da4c
+PASS randomized-clone variant=1 digest=e43a9e3ace4d1307
+PASS randomized-clone variant=2 digest=5a8003777f985cd1
+PASS randomized-clone variant=3 digest=b2c4a46839dca473
+PASS reset-clone variant=4 digest=54ccdd10d5c0d610
+PASS reset-clone variant=5 digest=4964bd6f6c555dad
+PASS reset-clone variant=6 digest=d00a49934dbd2182
+PASS reset-clone variant=7 digest=f54cb68413539ab9
+PASS musig-context-matrix cases=8
+```
+
+The same eight-case probe passed with the native and forced-int64 shared
+libraries under Clang 22.1.7 and GCC 16.1.0 ASan/UBSan probe builds. The
+optimized forced-int64 Clang RelWithDebInfo and GCC RelWithDebInfo libraries
+also produced the identical eight digest sequence. Library artifact hashes
+were `e950bcbaa242a7456689db7e15f10e631095bab98d8e14c95343138cbc6a2b40`
+(native Debug), `4cb8d553730beacf6b5926cc341a430686bfb9caeb3e9a4a9af78b2a7a3cbd73`
+(forced-int64 Debug), `da0de5ec30a5da409c1be0a3e33f790662b20dec666008af133d45832896e849`
+(forced-int64 Clang RelWithDebInfo), and
+`668bee4dd71f2c1a76ef2fcf2ccdabc529012f84cf6450e13b6c094c159ef865`
+(forced-int64 GCC RelWithDebInfo).
+
+The existing MuSig test suite independently passed all 12 test groups and 16
+iterations in native Clang, forced-int64 Clang, and forced-int64 GCC builds.
+The three runs reported `*** PASSED` for every group and total times of
+0.978, 1.670, and 0.305 seconds respectively; no sanitizer or diagnostic
+was emitted.
+
+For mutation sensitivity, a disposable source overlay added one to the
+partial-signature scalar immediately after its correct MuSig response was
+computed. After `cmake --build /tmp/secp256k1-oracles-next-build-native
+--target secp256k1 -j4`, the focused matrix exited 1 with
+`FAIL partial_sig_verify`. The overlay was restored, the library rebuilt, and
+the clean matrix passed again. This proves the independent partial/final
+verification is sensitive to a real signing-state mutation; it is not a
+claim that clean master contains that mutation.
+
+### Verdict
+
+**Dismissed.** No context-dependent MuSig output, clone divergence,
+serialization mismatch, invalid final signature, or sanitizer finding was
+observed. The result is informational negative evidence and no production
+source change or repair commit is justified. There is no Bitcoin Core
+consensus or invalid-block caller for this MuSig signing state; a real
+regression would affect an authorized/application signing workflow rather
+than block validation.
+
+Limitations are x86_64-only execution, two signers, fixed keys, and the
+public default SHA backend. The matrix exercises both random and counter
+nonce APIs, optional transcript inputs, context reset, and a cloned context,
+but not a non-x86 runtime or concurrent context use. Reopen this cell only
+for a new context/backend/architecture change, a wrapper mismatch, or a
+caller-specific failure. Keep remaining goal-84 lifecycle and cross-wrapper
+cells eligible, but exclude this exact randomized/clone matrix.
+
+### Handoff
+
+No scratch probe, mutation, library rebuild, sanitizer, or test process
+remains running. The next cycle should draw another eligible goal rather than
+repeat the completed context matrix.

@@ -1414,3 +1414,38 @@ excluded. This goal stays active for deterministic WAL/MANIFEST fault and
 crash recovery, snapshot lifetime, comparator/seek, and backend-portability
 cells. Scratch artifacts were removed and no relevant process remains. The
 next queue remains `74,77,81,82,84,87,89,95,97`.
+
+## Cycle 78 Summary
+
+Cycle 78 continued goal `84`, `secp-nonce-session`, with draw seed
+`1056055882`, index `4`, from `74 77 81 82 84 87 89 95 97`. The distinct
+hypothesis was that MuSig nonce generation, session processing, partial
+signing, or final aggregation could depend on generator blinding or diverge
+across cloned/randomized contexts. Existing context evidence covered ECDSA
+and ordinary Schnorr; existing MuSig evidence covered transcript and custom
+SHA behavior, but not this cross-campaign context lifecycle.
+
+A disposable public-API matrix used fixed keys 1 and 2, eight deterministic
+message/extra/session-random variants, `musig_nonce_gen` for one signer,
+`musig_nonce_gen_counter` for the other, full nonce/session/partial/final
+signing, independent partial verification, static Schnorr verification, and
+byte-for-byte serialization comparisons. Four cases compared separately
+randomized contexts and four compared both contexts after NULL randomization
+reset. Clang and GCC ASan/UBSan probe builds, native and forced-int64
+libraries, and optimized Clang/GCC forced-int64 libraries all passed with the
+same digest sequence:
+`bc3280984d63da4c`, `e43a9e3ace4d1307`, `5a8003777f985cd1`,
+`b2c4a46839dca473`, `54ccdd10d5c0d610`, `4964bd6f6c555dad`,
+`d00a49934dbd2182`, `f54cb68413539ab9`.
+
+The existing MuSig suite passed all 12 groups and 16 iterations in native
+Clang, forced-int64 Clang, and forced-int64 GCC builds. A temporary partial
+response mutation caused the focused matrix to fail at `partial_sig_verify`,
+then was restored and rebuilt before the clean replay. No production source
+change or repair commit resulted.
+
+Verdict: **dismissed**. No context divergence, invalid signature, sanitizer
+finding, or current Bitcoin Core consensus/invalid-block impact was shown.
+The selected goal remains active for other lifecycle and wrapper cells; this
+exact randomized/clone context matrix is excluded. Scratch artifacts and
+processes were cleaned. The next draw remains `74,77,81,82,84,87,89,95,97`.
