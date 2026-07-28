@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 81 (`spec-vector-drift`)
+- Current status: active rotating cycle goal 82 (`secp-field-scalar-matrix`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -29,20 +29,28 @@
 - Previous selected index: `3`
 - Previous draw: `87`
 - Previous draw timestamp: `2026-07-28T10:52:17Z`
-- Current draw seed: `13671422447867256256`
-- Current eligible pool: `77 81 82 95 97`
+- Previous cycle draw seed: `13671422447867256256`
+- Previous cycle eligible pool: `77 81 82 95 97`
+- Previous cycle selected index: `1`
+- Previous cycle draw: `81`
+- Previous cycle draw timestamp: `2026-07-28T11:16:51Z`
+- Completed cycle draw seed: `13671422447867256256`
+- Completed cycle: goal 81, BIP341 annex/spend-type and hash-type drift
+  hypothesis, dismissed by an independent serialization model, a direct Core
+  probe, rejection cases, and a mutation sensitivity control.
+- Current draw seed: `14643566124539001421`
+- Current eligible pool: `77 82 95 97`
 - Current selected index: `1`
-- Current draw: `81`
-- Current draw timestamp: `2026-07-28T11:16:51Z`
-- Previous completed cycle: goal 87, unbroadcast mempool-memory accounting
-  hypothesis, confirmed by source trace, a set-usage model, and a runtime
-  relay probe. The source fix awaits a disposable rebuild after filesystem
-  space is restored.
+- Current draw: `82`
+- Current draw timestamp: `2026-07-28T11:31:30Z`
 
 ## Selection rules
 
-The current selected cycle is goal 81 (spec-vector-drift), drawn with seed
-13671422447867256256 from pool 77 81 82 95 97 at index 1.
+The current selected cycle is goal 82 (secp-field-scalar-matrix), drawn with
+seed 14643566124539001421 from pool 77 82 95 97 at index 1. The completed
+Goal81 cycle remains pending for distinct BIP342, vector-provenance, and
+future-specification cells; its annex/hash-type cell is excluded from
+immediate rediscovery.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -76,24 +84,24 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 81. The exact unbroadcast-memory cell of goal 87 is
-excluded from immediate rediscovery, while its remaining package, RBF, graph,
+rotating cycle is goal 82. The exact annex/hash-type cell of goal 81 and the
+exact unbroadcast-memory cell of goal 87 are
+excluded from immediate rediscovery. Goal87's remaining package, RBF, graph,
 fee, eviction, reorg, and expiry cells remain pending. The catalog is the
 source of titles, slugs, and campaign scope.
 
 ## Latest Cycle Summary
 
-Goal 87 confirmed that `CTxMemPool::DynamicMemoryUsage()` omits the live
-`m_unbroadcast_txids` `std::set`. A runtime probe submitted 1,100 local
-transactions, then observed the set fall from 1,100 to 1,024 while reported
-usage stayed exactly `1234736` bytes. The independent repository allocator
-model estimated 88,000 bytes for 1,100 set nodes. The finding is a local
-resource-accounting and maxmempool/cache-sizing defect, not a remote DoS or
-consensus issue. A one-line source fix and regression test were prepared in a
-disposable worktree, but its build stopped at 11% with `No space left on
-device`; no protected Core source changed. Full evidence is in
-`agent-journal/bitcoin-mempool-accounting.md`; the next randomized goal is
-81.
+Goal 81 tested a fresh BIP341 specification/vector-drift cell: annex
+serialization, spend_type, all four applicable hash-type families, the
+CompactSize boundary, undefined hash types, and SIGHASH_SINGLE without an
+output. An independent structured Python model matched all five component
+hashes and seven official vector sigmsgs/sighashes, and generated four annex
+hashes. A disposable Core probe matched all four and rejected all three
+invalid cases. A zero-annex-hash mutation failed the first positive case with
+exit code 3. The current Core script_tests suite passed all 21 script cases;
+no production bug or fix commit is claimed. Full evidence is in
+`agent-journal/spec-vector-drift.md`; the next randomized goal is 82.
 
 ## Historical Cycle Summaries
 
