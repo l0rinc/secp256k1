@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 87 (`bitcoin-mempool-accounting`)
+- Current status: active rotating cycle goal 81 (`spec-vector-drift`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -24,18 +24,25 @@
 - Latest selected index: `0`
 - Latest draw: `74`
 - Latest draw timestamp: `2026-07-28T10:09:34Z`
-- Current draw seed: `10788815325715498911`
-- Current eligible pool: `77 81 82 87 95 97`
-- Current selected index: `3`
-- Current draw: `87`
-- Current draw timestamp: `2026-07-28T10:52:17Z`
-- Previous completed cycle: goal 89, outbound transaction-inventory queue
-  admission hypothesis, confirmed by source trace and a deterministic probe.
+- Previous draw seed: `10788815325715498911`
+- Previous eligible pool: `77 81 82 87 95 97`
+- Previous selected index: `3`
+- Previous draw: `87`
+- Previous draw timestamp: `2026-07-28T10:52:17Z`
+- Current draw seed: `13671422447867256256`
+- Current eligible pool: `77 81 82 95 97`
+- Current selected index: `1`
+- Current draw: `81`
+- Current draw timestamp: `2026-07-28T11:16:51Z`
+- Previous completed cycle: goal 87, unbroadcast mempool-memory accounting
+  hypothesis, confirmed by source trace, a set-usage model, and a runtime
+  relay probe. The source fix awaits a disposable rebuild after filesystem
+  space is restored.
 
 ## Selection rules
 
-The current selected cycle is goal 87 (bitcoin-mempool-accounting), drawn
-with seed 10788815325715498911 from pool 77 81 82 87 95 97 at index 3.
+The current selected cycle is goal 81 (spec-vector-drift), drawn with seed
+13671422447867256256 from pool 77 81 82 95 97 at index 1.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -69,24 +76,24 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 87; the catalog is the source of titles, slugs, and
-campaign scope.
+rotating cycle is goal 81. The exact unbroadcast-memory cell of goal 87 is
+excluded from immediate rediscovery, while its remaining package, RBF, graph,
+fee, eviction, reorg, and expiry cells remain pending. The catalog is the
+source of titles, slugs, and campaign scope.
 
 ## Latest Cycle Summary
 
-Goal 89 confirmed an outbound transaction-inventory queue admission and
-retention defect on the current Bitcoin Core branch. The per-peer
-TxRelay::m_tx_inventory_to_send is an unbounded std::set<Wtxid> populated
-from accepted transactions, while the existing SendMessages path drains at
-most 1,000 entries per relay call. A scratch functional probe froze mock time,
-submitted 1,100 accepted independent transactions to an unmodified binary,
-and observed getpeerinfo()["inv_to_send"] grow from 200 through 1,100,
-including the full over-cap queue. The existing p2p_tx_download.py control
-suite passed. The protected Core and secp256k1 trees were unchanged apart
-from their documented pre-existing state; no speculative source fix was
-committed because the upstream line contains a later redesign with behavior
-and backport tradeoffs. Full evidence is in
-agent-journal/bitcoin-p2p-accounting.md; the next selected goal is 87.
+Goal 87 confirmed that `CTxMemPool::DynamicMemoryUsage()` omits the live
+`m_unbroadcast_txids` `std::set`. A runtime probe submitted 1,100 local
+transactions, then observed the set fall from 1,100 to 1,024 while reported
+usage stayed exactly `1234736` bytes. The independent repository allocator
+model estimated 88,000 bytes for 1,100 set nodes. The finding is a local
+resource-accounting and maxmempool/cache-sizing defect, not a remote DoS or
+consensus issue. A one-line source fix and regression test were prepared in a
+disposable worktree, but its build stopped at 11% with `No space left on
+device`; no protected Core source changed. Full evidence is in
+`agent-journal/bitcoin-mempool-accounting.md`; the next randomized goal is
+81.
 
 ## Historical Cycle Summaries
 
