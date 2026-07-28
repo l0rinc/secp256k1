@@ -323,13 +323,15 @@ SECP256K1_API secp256k1_context *secp256k1_context_clone(
  *  behaviour is undefined. In that case, secp256k1_context_preallocated_destroy must
  *  be used instead.
  *
+ *  If ctx is NULL, this function is a no-op.
+ *
  *  Args:   ctx: pointer to a context to destroy, constructed using
  *               secp256k1_context_create or secp256k1_context_clone
  *               (i.e., not secp256k1_context_static).
  */
 SECP256K1_API void secp256k1_context_destroy(
     secp256k1_context *ctx
-) SECP256K1_ARG_NONNULL(1);
+);
 
 /** Set a callback function to be called when an illegal argument is passed to
  *  an API call. It will only trigger for violations that are mentioned
