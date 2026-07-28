@@ -1033,3 +1033,39 @@ limitations, and reopen conditions are in
 `agent-journal/timing-side-channel.md`. This is a focused journal-only cycle.
 The next queue is `53,72,74,77,81,82,84,87,89,95,97`, excluding this exact
 randomized Schnorr signing cell and the prior cycle-62 timing cells.
+
+## Cycle 66 - goal 72 (`filesystem-crash-consistency`)
+
+Draw seed `3445880270` selected index 0 from the distinct-cell pool
+`72,74,77,81,82,84,87,89,95,97`. The prior goal-72 active block-file flush
+ordering cell was excluded. This cycle audited short-write behavior for the
+Bitcoin Core banlist persistence path at protected Core HEAD
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+
+`CBanDB::Write` passed the final `banlist.json` directly to
+`common::WriteSettings`, whose `std::ofstream::open` truncates an existing
+file before output. `BanMan::DumpBanlist` clears `m_is_dirty` before the write
+and restores it only after failure. A deterministic Linux `LD_PRELOAD`
+interposer returned `EIO` from `write`/`writev` for the banlist descriptor. A
+temporary focused test wrote valid prior JSON, injected the failure, and
+observed the destination become empty; the clean-source run failed with the
+exact assertion `actual_contents == old_contents` and one Boost failure.
+
+Actual callers include RPC `setban`, the node interface, startup/destructor
+dumps, and the periodic scheduled dump. The clean-source build completed all
+`543/543` Ninja steps in `/mnt/my_storage/bitcoin-goal72-banlist-build`.
+The disposable repair wrote `banlist.json.tmp`, removed it on write failure,
+and called `RenameOver` only after successful close. The repaired injected test
+and the existing `banman_tests/file` parser test both ended with
+`*** No errors detected`. Disposable repair commit:
+`3d49e2ee12cd2be6ce50ebaf47c53df357297997`.
+
+Verdict: **confirmed Medium local persistence-integrity defect** in current
+Core. It can destroy the last valid persisted peer-ban policy on an I/O
+failure and subsequent restart; no consensus, key/funds, privacy, or remote
+primitive was shown. No source change was made in the protected Core tree or
+the secp256k1 audit branch. The full evidence, commands, interposer hashes,
+repair, limitations, and reopen cells are in
+`agent-journal/filesystem-crash-consistency.md`. The next queue is
+`74,77,81,82,84,87,89,95,97`, retaining separate goal-72 directory/rename/
+recovery cells.
