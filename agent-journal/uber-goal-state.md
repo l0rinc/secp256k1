@@ -845,3 +845,33 @@ did not cover every-byte EOF, network reordering, platform socket semantics,
 or a full V2 CConnman handshake fixture. The per-goal evidence and limitations
 are in `agent-journal/network-state-machine.md`. The next eligible queue is
 `52,53,72,74,77,81,82,84,87,89,95,97`.
+
+The sixtieth controller cycle selected catalog goal `84`,
+`secp-nonce-session`, with draw seed `3695385067` over the 12-entry eligible
+pool `52,53,72,74,77,81,82,84,87,89,95,97`; index 7 selected goal 84. The
+distinct hypothesis was that Core accepts a valid repeated-key `musig()`
+descriptor but cannot represent all participant slots because signing and PSBT
+nonce/partial-signature maps are keyed by `CPubKey`. The source and caller
+trace covered `src/script/descriptor.cpp`, `src/musig.cpp`,
+`src/script/sign.cpp`, PSBT serialization, and wallet functional callers.
+
+BIP327 v1.0.3 says duplicate individual-key support is optional at the
+application layer, while BIP390 v0.2.0 permits repeated participant keys in a
+descriptor; BIP373's keydata structure is keyed by participant public key. A
+disposable clean-Core Release build completed all `543/543` Ninja steps. Its
+temporary `bip328_tests/duplicate_participant_state` expanded
+`rawtr(musig(key1,key1,key2))`, generated valid nonces for the two unique keys,
+and confirmed that partial signing returned null at the map-cardinality check.
+The full four-case temporary `bip328_tests` suite passed with `*** No errors
+detected`. No crash, partial signature, nonce consumption, or nonce reuse was
+observed.
+
+The verdict is inconclusive as a compatibility contract question but dismissed
+as a current security/correctness defect: this is a safe application
+limitation, not a cryptographic failure. No production source change or fix
+commit resulted. The exact evidence and reopen conditions are in
+`agent-journal/secp-nonce-session.md`; exclude this map-cardinality hypothesis
+until a BIP/Core contract decision or a real duplicate-slot caller appears.
+The audit branch remains the only modified worktree, with the journal commit
+pending. The next queue is `52,53,72,74,77,81,82,84,87,89,95,97`, excluding the
+completed duplicate-participant cell while retaining other goal-84 cells.
