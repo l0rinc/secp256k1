@@ -412,3 +412,87 @@ The temporary probe and mutation are gone, the audit checkout is clean, and no
 process remains running. Exclude this exact six-input permutation/cancellation
 cell. Keep Goal 84 eligible for a distinct public signing or cross-wrapper
 lifecycle hypothesis; otherwise draw another controller goal.
+
+## Cycle 113: Core MuSig2 partial-sign failure nonce lifecycle
+
+### Selection and scope
+
+The controller selected Goal `84`, `secp-nonce-session`, with seed
+`1104874022`, index `2`, from the eligible pool `77 82 84 87 95`, at
+`2026-07-28T17:18:33Z`. Prior Goal84 cells for nonce retry, session cleanup,
+counter boundaries, randomized/cloned contexts, and six-input public-nonce
+permutation/cancellation were excluded.
+
+This cycle tested a fresh cross-wrapper lifecycle hypothesis in Bitcoin Core:
+`CreateMuSig2PartialSig` might return an error after libsecp has consumed a
+secret nonce while leaving the Core `MuSig2SecNonce` wrapper marked valid. A
+caller could then retain a stale nonce object, misread its state, or attempt a
+reuse through a different path. The trust boundary is malformed or
+mis-associated public nonce data supplied to the Core MuSig2 wrapper; the
+secret key and secret nonce remain local.
+
+### Source tracing
+
+The protected Bitcoin Core checkout was inspected at base
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. In `src/musig.cpp:234-243`, the
+wrapper calls `secp256k1_musig_partial_sign`, immediately calls
+`secnonce.Invalidate()` on success at line 238, and only then performs its
+defensive `secp256k1_musig_partial_sig_verify` at line 241. Thus a verification
+failure cannot leave the wrapper valid. The `git blame` result traces this
+ordering to the original MuSig2 helper commit `8ba5f68b1df`, rather than to a
+recent incidental change.
+
+The libsecp implementation in `src/modules/musig/session_impl.h` loads the
+opaque nonce and explicitly zeroes the full nonce object before checking the
+remaining partial-sign arguments and key/cache/session state. Therefore every
+valid call that reaches the partial-sign operation is one-use even when that
+operation returns failure. The Core wrapper's explicit invalidation also frees
+its secure allocation and makes `IsValid()` false.
+
+### Reproducer and verification
+
+A disposable Bitcoin Core worktree was created at
+`/tmp/bitcoin-goal84-113`, with build directory
+`/tmp/bitcoin-goal84-113-build`; the protected checkout was not modified. A
+temporary `bip328_tests` case created two valid keypairs and MuSig2 nonces,
+swapped the two serialized public nonces while preserving a valid aggregate,
+then called `CreateMuSig2PartialSig` for key 1. The expected behavior was a
+missing partial signature plus an invalidated `MuSig2SecNonce`.
+
+The disposable Release build was configured with Ninja, wallet enabled, tests
+enabled, GUI/bench/fuzz binaries disabled, and ZMQ disabled. After correcting
+the temporary harness to use this checkout's `uint256::FromHex` API, the
+following commands passed:
+
+    /tmp/bitcoin-goal84-113-build/bin/test_bitcoin --run_test=bip328_tests/partial_sig_failure_invalidates_secret_nonce --log_level=all
+    /tmp/bitcoin-goal84-113-build/bin/test_bitcoin --run_test=bip328_tests --log_level=message
+
+The focused run reported both `!partial_sig.has_value()` and
+`!secnonce1.IsValid()` as passed. The full BIP328 suite reported `*** No
+errors detected` and `Running 4 test cases...`.
+
+As an independent oracle-sensitivity control, a disposable source mutation
+moved `secnonce.Invalidate()` below the verification call. The same focused
+test then exited 201 with:
+
+    error: ... check !secnonce1.IsValid() has failed
+    *** 1 failure is detected in the test module
+
+The mutation and temporary test were restored and removed. `git diff --check`
+and `git status --short` are clean in the disposable Core worktree. The
+protected Core checkout still has exactly its pre-existing paths:
+`src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log`.
+
+### Verdict and handoff
+
+**Dismissed.** The suspected stale wrapper state is prevented by the existing
+ordering, libsecp's unconditional nonce zeroization, and the focused failure
+fixture. No production change, regression test, or finding commit is
+justified. The mutation demonstrates that the test would detect a real
+ordering regression instead of merely accepting the failure result.
+
+Exclude this exact Core post-sign-verification nonce-lifecycle cell from future
+Goal84 work. Keep separate, contract-driven investigation of moved-from
+`MuSig2SecNonce` behavior or reachable pre-sign failure paths only if their
+public ownership contract can be established; do not treat invalid opaque
+state or an undocumented moved-from call as a confirmed defect.

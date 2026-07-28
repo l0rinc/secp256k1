@@ -2010,3 +2010,30 @@ The controller drew Goal `84`, `secp-nonce-session`, with random seed
 MuSig, ECDH, or session-state cell, excluding its prior nonce-retry and
 session-cleanup evidence. It must use an independent oracle or state-machine
 check where practical and must not repeat Goal82 or Goal97's closed cells.
+
+## Cycle 113 Summary
+
+Goal `84`, `secp-nonce-session`, dismissed a fresh Bitcoin Core cross-wrapper
+MuSig2 nonce-lifecycle hypothesis. `CreateMuSig2PartialSig` invalidates its
+secure nonce immediately after libsecp partial signing and before its
+defensive partial-signature verification. A disposable swapped-public-nonce
+fixture therefore returned no partial signature and `MuSig2SecNonce::IsValid()`
+was false. Libsecp independently zeroes the opaque nonce before every
+partial-sign return. Moving the invalidation below verification in a temporary
+mutation made the focused test fail on the nonce-validity assertion; the
+focused and full BIP328 suites passed after restoration. No production change
+was justified. Full evidence is in `agent-journal/secp-nonce-session.md`
+Cycle 113; exclude this exact Core post-sign-verification lifecycle cell.
+
+The protected Bitcoin Core checkout was not modified and retains exactly its
+three pre-existing dirty paths.
+
+## Cycle 114 Selection
+
+The controller drew Goal `77`, `symbolic-model-checking`, with random seed
+`10179737623739671668`, index `0`, from the eligible pool `77 82 87 95`, at
+`2026-07-28T17:42:46Z`. Goal77 must choose a fresh bounded CBMC/KLEE or
+symbolic-execution kernel, state explicit production-domain assumptions, and
+require a concrete counterexample or a bounded proof with unwind limitations.
+Exclude all prior Goal77 cells recorded in its journal and do not repeat the
+recent Goal82, Goal84, Goal87, or Goal95 evidence cells.
