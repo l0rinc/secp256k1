@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 74 (`memory-pressure-allocator`)
+- Current status: active rotating cycle goal 77 (`symbolic-model-checking`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,10 +19,10 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `3097406016`
+- Latest draw seed: `7234767300004701769`
 - Latest eligible pool: `74 77 81 82 84 87 89 95 97`
-- Latest selected index: `0`
-- Latest draw: `74`
+- Latest selected index: `1`
+- Latest draw: `77`
 - Latest draw timestamp: `2026-07-28`
 
 ## Selection rules
@@ -1271,7 +1271,7 @@ is excluded; the goal remains active for distinct batch, snapshot, WAL,
 comparator, corruption, and alternate-backend cells. The next queue remains
 `74,77,81,82,84,87,89,95,97`.
 
-## Latest Cycle
+## Cycle 73 Summary
 
 Cycle 73 selected goal `74`, `memory-pressure-allocator`, with draw seed
 `3097406016`, index `0`, from `74 77 81 82 84 87 89 95 97`. The distinct
@@ -1297,3 +1297,34 @@ commands, outputs, limitations, and reopen conditions are in
 
 The next queue is `74,77,81,82,84,87,89,95,97`, with this exact wallet corpus
 cell excluded.
+
+## Latest Cycle
+
+Cycle 74 selected goal `77`, `symbolic-model-checking`, with draw seed
+`7234767300004701769`, index `1`, from `74 77 81 82 84 87 89 95 97`. The
+distinct hypothesis was a boundary, overflow, truncation, or size mismatch in
+Core's VarInt encoder/decoder used by undo, chainstate, block-index, flat-file,
+compressed-object, and database-key serialization.
+
+An independent `cpp_int` model checked all eight unsigned and documented
+nonnegative-signed integer modes. Each mode covered 116,152 raw byte inputs,
+including every one- and two-byte sequence, continuation/termination patterns
+through length 12, and 50,000 deterministic random inputs, plus up to 20,031
+boundary/random value round trips. Clang O2 ASan/UBSan, GCC 16.1.0 O2
+ASan/UBSan, and Clang O0 controls all printed
+`PASS varint-bounded digest=a6e66cc80af7db40`. The repository's 15-case
+`serialize_tests` suite passed with no errors.
+
+A disposable mutation changing `n++` to `n += 2` failed at `u8 value=128`,
+proving oracle sensitivity. The mutation was restored and its worktree
+removed. The GCC generic `DataStream` byte-write warning is recorded as an
+unrelated goals-12/97 static-analysis lead.
+
+Verdict: **dismissed** for this bounded VarInt cell. No current Core source
+defect or repair is justified. Goal 77 remains active for distinct bounded
+kernels; this VarInt cell is excluded along with its prior CompactSize and
+SHA-256 cells. Detailed evidence is in
+`agent-journal/symbolic-model-checking.md`.
+
+The next queue is `74,77,81,82,84,87,89,95,97`, with the exact goal-77 VarInt,
+CompactSize, and SHA-256 cells excluded.

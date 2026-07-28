@@ -263,3 +263,127 @@ divergence; do not repeat this same short streaming cell.
 Next queue: retain `74,77,81,82,84,87,89,95,97`, excluding this goal-77
 SHA-256 streaming/padding cell and the prior CompactSize cell. No production
 commit was made; this cycle is a focused journal-only evidence snapshot.
+
+## Cycle 74
+
+Status: dismissed for the selected VarInt encoder/decoder hypothesis.
+
+Controller draw:
+
+- Draw seed: `7234767300004701769`.
+- Eligible pool: `74 77 81 82 84 87 89 95 97`.
+- Selected index: `1`.
+- Selected goal: `77`, `symbolic-model-checking`.
+
+Repository state:
+
+- Audit worktree: `/tmp/secp256k1-oracles-next`, branch
+  `codex/fuzz-oracles`, HEAD `f5f595726cbc53b8c21b45f7abda1665e8567c8c`.
+- Protected Bitcoin Core: `/mnt/my_storage/bitcoin`, branch
+  `codex/btc-fuzz-oracles`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. Its only dirty entries were
+  the pre-existing `M src/test/blockencodings_tests.cpp`, `?? fuzz-0.log`, and
+  `?? fuzz-1.log`.
+- Protected secp256k1 remained clean at
+  `e153e2681f7bf1dd74894e2170213e3983030989`.
+- `cbmc`, `klee`, and `esbmc` remain unavailable; this is an explicit finite
+  bounded proof, not a symbolic-tool or unbounded-proof claim.
+
+Hypothesis and trust boundary:
+
+`ReadVarInt` or `WriteVarInt` might mishandle a base-128 continuation,
+overflow boundary, size calculation, truncation, or signed nonnegative mode.
+The trust boundary is serialized bytes from disk, network, undo, chainstate,
+index, and compressed-object records. Production caller shapes include
+`src/undo.h:27-48`, `src/coins.h:79-89`, `src/txdb.cpp:48-54`,
+`src/node/blockstorage.h:70-78`, `src/chain.h:344-351`,
+`src/compressor.h:72-108`, and `src/flatfile.h:19-20`.
+
+Source, history, and existing-test evidence:
+
+- `src/serialize.h:365-387` defines the one-to-one MSB base-128 format and
+  subtract-one rule. `:401-465` implements mode checks, size computation,
+  writing, overflow checks, and decoding.
+- Existing `src/test/serialize_tests.cpp:106-157` checks 100,000 small signed
+  values, sparse large unsigned values, and representative bit patterns, but
+  it does not compare an independent arbitrary-precision model against raw
+  malformed/truncated byte sequences across all integer widths.
+- History seeds include `45f09618f2` (the prior ReadVarInt integer-overflow
+  fix), `d4fce93fa2` (inline reads), `2e907f0393` (size shortcut),
+  `2d4518f1ab` (VarInt specializations), and `34a3f7b374` (SizeComputer
+  specialization merge). No current journal contained this exact cross-mode
+  bounded oracle.
+
+Independent bounded proof:
+
+A disposable C++20 harness at `/tmp/goal77-varint-harness.cpp` used a
+`boost::multiprecision::cpp_int` model independent of Core's integer type and
+stream implementation. Its source SHA-256 was
+`6a1d9f163404c5b0505d064ae3bdab912d220a3008430554c34e7c5647ec4991`.
+For each of `uint8/16/32/64_t` and nonnegative `int8/16/32/64_t`, it checked
+the independent encoding, Core encoding, `GetSizeOfVarInt`, wrapper size,
+decoded value, and complete consumption. It also compared success/failure,
+decoded value, and consumed prefix for every one-byte and two-byte sequence,
+fixed continuation/termination patterns through length 12, and 50,000
+deterministic random raw inputs per type. Each mode covered 116,152 raw cases.
+
+Value counts were `256, 20013, 20030, 20031` for unsigned 8/16/32/64-bit
+types and `128, 20008, 20026, 20031` for signed nonnegative 8/16/32/64-bit
+types. The Clang O2 ASan/UBSan/pointer-overflow run printed:
+
+`PASS varint-bounded digest=a6e66cc80af7db40`
+
+It exited 0 in 9.27 seconds with 299,132 KiB maximum RSS. The same harness
+under GCC 16.1.0 O2 with the same sanitizers printed the same digest and
+exited 0 in 7.64 seconds with 304,008 KiB maximum RSS. Clang O0 without
+sanitizers printed the same digest and exited 0 in 2.19 seconds with 4,372
+KiB maximum RSS. The Clang O2, GCC O2, and Clang O0 harness hashes were,
+respectively, `5fa19025c42c6fab2867a931a6f55efa3ae754c71cfc0d62c4462735141e601a`,
+`630fd052c4be5d31a26afbbd683ddc7861c08d12e714722e3ac9273897d1dcbb`, and
+`2d015f5f33ed54508366936074d1ca4f3a9368a20096ab3102324727b5e5509d`.
+
+The first scratch run reported `s8 value=-128`; investigation showed the
+harness had converted out-of-domain candidate values above the signed
+maximum instead of filtering them. The harness was corrected, and the clean
+matrix above was rerun from the corrected source. No production failure was
+hidden by that correction.
+
+Mutation and repository controls:
+
+- A disposable Core worktree from protected HEAD changed `n++` at
+  `src/serialize.h:460` to `n += 2`. The sanitized mutant failed immediately
+  at `u8 value=128` with `ReadVarInt(): size too large: iostream error`.
+  The mutant binary SHA-256 was
+  `2985aed236781820a3e657a9e84ac0b9d3a65e7fb2a16a299e1eec60fdb8c06a`.
+- The mutation was restored, `git diff --check` and a zero source diff passed,
+  and the disposable worktree was removed. The clean Core header SHA-256 was
+  `a6f778a2e3d0638d88651798f498488d746caf939d08cc148ca23b7d39ba987b`.
+- `./build/bin/test_bitcoin --run_test=serialize_tests --log_level=test_suite`
+  ran all 15 serialization test cases and ended with `*** No errors detected`.
+
+GCC emitted one `-Wstringop-overread` warning while instantiating the generic
+`DataStream` byte-write path from `ser_writedata8`; the sanitized execution
+was clean and the warning was not in VarInt control flow. It is recorded as
+an unrelated static-analysis lead for goals 12/97, not as a VarInt finding.
+
+Verdict:
+
+The hypothesis is dismissed on current Core. The independent model matched
+the encoder, decoder, size calculation, signed nonnegative mode, overflow and
+truncation outcomes, and consumed-prefix behavior across the bounded matrix.
+The mutation control failed immediately and the repository serialization
+suite passed. No production source change, regression test, or severity
+finding is justified.
+
+Limitations and handoff:
+
+This is a bounded proof, not CBMC/KLEE coverage. It does not exhaust every
+three-through-ten-byte sequence, every full-width 32/64-bit value, negative
+`NONNEGATIVE_SIGNED` inputs (explicitly outside its documented domain), or
+non-Linux/32-bit execution. Reopen with a distinct caller-level allocation or
+state-transition contract, compiler/architecture evidence, or a new formal
+kernel; do not repeat this VarInt cell.
+
+Next queue: retain goal `77` for other bounded kernels and the distinct cells
+in `74,81,82,84,87,89,95,97`, excluding this VarInt cell and the earlier
+CompactSize and SHA-256 cells.
