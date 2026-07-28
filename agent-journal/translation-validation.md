@@ -3448,6 +3448,113 @@ layouts. The next queue is `scalar_from_signed scalar_to_signed`; do not
 repeat this reducer unless new source, compiler, architecture, or caller
 evidence changes.
 
+## Cycle 34: scalar signed-limb conversion translation validation
+
+### Pre-cycle audit
+
+The worktree was clean on `codex/fuzz-oracles` at
+`49f149d93cf961524540ea71cb5c87ff81003153`, based on
+`origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The controller draw
+used seed `1475233831` over the remaining queue
+`scalar_from_signed scalar_to_signed`, selected index 1, and chose
+`scalar_to_signed`. Clang 22.1.7, GCC 16.1.0, CMake 3.31.6, Ninja 1.12.1,
+and GNU AArch64 objdump 2.45 were available. There was no AArch64 runtime,
+GCC AArch64, ARMv7/RISC-V runner, or Alive2/formal translation validator.
+
+### Scope and hypothesis
+
+The target is the internal signed-limb conversion used by scalar inversion:
+`secp256k1_scalar_to_signed62` at `src/scalar_4x64_impl.h:957` and
+`secp256k1_scalar_to_signed30` at `src/scalar_8x32_impl.h:767`. The native
+4x64 conversion emits five nonnegative radix-2^62 limbs, with only eight
+valid bits in the final limb. The forced 8x32 conversion emits nine
+nonnegative radix-2^30 limbs, with only sixteen valid bits in the final limb.
+The actual callers are both constant-time and variable-time scalar inverse
+paths at lines 981/996 and 796/811. The conversion must preserve every
+canonical scalar bit, obey those limb bounds, and not modify the input scalar
+or surrounding output memory.
+
+The code entered the current modinv-backed inverse path in
+`1e0e885c8ac814c3621d9e43e66d60f25e324e8e`. The falsifiable hypothesis was
+that a shift boundary, backend-specific limb width, top-limb mask, or
+compiler lowering could lose or duplicate bits while the two representations
+still agreed with each other.
+
+### Independent oracle evidence
+
+The C harness extracts each expected limb bit-by-bit from the canonical
+big-endian scalar and independently reconstructs the 256-bit value from the
+returned limbs. It checks output canaries and all unused top-limb bits. The
+67,075-value schedule contains all 65,536 low 16-bit values, `n-1`, `n-2`,
+`n/2`, every power of two through bit 255 and its order complement, and 1,024
+deterministic random values reduced by a standalone byte-wise reducer. The
+native 4x64 and forced 8x32 runs printed:
+
+    ok values=67075 limbs=5 digest=8bc3373654bfbae5
+    ok values=67075 limbs=9 digest=34b50c7803289a6f
+
+The independent C++17 bridge uses Boost `cpp_int` bit extraction and exact
+reconstruction for the same schedule, called through a C shim. All six
+Clang++/G++ assembly, portable, and forced-int64 runs matched the respective
+digest. Scratch harness hashes are:
+
+    1cbf7d3c817f6498ab1979305c8adb605df85abb11912ec3e5b8e95ebdae3fde  scalar-to-signed-harness.c
+    84c9b801dbb5f002012e492cd26fecc63ec8cc1cb77bc50c1a3ba8ff6272b27a  scalar-to-signed-c-shim.c
+    06c8e3471cc815698d9c9f07ff52a83beb877628fc316429d858218635c643e1  scalar-to-signed-cpp-harness.cpp
+
+### Matrix and lowering evidence
+
+The C matrix covered Clang and GCC, x86_64 inline assembly, portable native
+C, and forced 8x32 at O0/O2/O3/Os: 24 executions, all with the expected
+representation-specific digest. Six additional O2 `-flto` executions and
+six `-DVERIFY -DVALGRIND` O1 ASan/UBSan executions with leak detection and
+halt-on-error settings matched without diagnostics.
+
+The existing native and forced-int64 CMake/Ninja builds required no rebuild
+and each ran `ctest --output-on-failure -R 'scalar|fuzz.scalar'`: seven tests,
+`100% tests passed, 0 tests failed out of 7`, including scalar tests, bad
+scalar tests, ElligatorSwift bad-scalar tests, and `fuzz.scalar.seeds`.
+
+With `-fno-inline`, isolated x86 `scalar_to_signed62` and
+`scalar_to_signed30` symbols had zero conditional or loop branches for both
+Clang and GCC. The branch report hashes are
+`9f2c8b67a59bbdb3970a94d776eb91edb5a3077e40b900ce83517331b0561b00` for
+Clang and `9eb92b0c3b3798406c3413c9e8ed22de737d81bdc37adde9b8397743db83a6c6`
+for GCC. Clang AArch64 compile-only coverage included native and forced 8x32,
+normal and `-DVERIFY`, at O0/O2/O3/Os: 16 objects compiled and every isolated
+conversion had zero `b.cond`, `cbz`, `cbnz`, `tbz`, or `tbnz` instructions.
+The AArch64 manifest hash is
+`3cc6ee83c3612637de5e47b6eb530b73963d149824f1aab14c459a70f4916215` and its
+object-list hash is
+`7f3b0ff133acab56fa95d31c266c01a66ac5c25d282720d6dbf2fc4f5e80b637`.
+
+### Mutation controls
+
+In isolated native and forced source copies, the first carry boundary was
+mutated from `a0 >> 62` to `a0 >> 61`, and from `a0 >> 30` to `a0 >> 29`.
+Both C and C++ independent oracles rejected their mutation at value 65,536:
+the native limb changed from `2abb739abd2280ee` to `2abb739abd2280ed`, and
+the forced limb changed from `000000003f497a33` to `000000003f497a36`.
+
+### Finding and verdict
+
+The signed-limb conversion hypothesis is **dismissed** for the tested
+Clang/GCC x86_64 assembly, portable, and forced-int64 paths; O0/O2/O3/Os,
+LTO, ASan/UBSan/VERIFY, project scalar tests and corpus, and Clang AArch64
+code generation. No lost bit, invalid top limb, input mutation, canary
+overwrite, undefined behavior, backend disagreement, suspicious lowering, or
+reachable production defect was found. No production code, regression test,
+or fix commit is justified.
+
+This exhausts the current scalar conversion subqueue for goal 78: both
+`scalar_from_signed` and `scalar_to_signed` have independent conversion
+oracles, backend matrices, project tests, lowering checks, and sensitive
+mutations recorded. Limitations remain no AArch64 runtime, GCC AArch64,
+ARMv7/RISC-V, Alive2, formal translation proof, or unusual scalar ABI. The
+controller should now draw another catalog goal rather than repeat these
+conversion formulas without new source, caller, compiler, architecture, or
+specification evidence.
+
 ## Handoff
 
 Start by checking the worktree, compiler versions, supported optimization and

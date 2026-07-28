@@ -393,6 +393,22 @@ change was made. Limitations remain no AArch64 runtime, GCC AArch64,
 ARMv7/RISC-V, Alive2, formal translation proof, or unusual scalar ABI. Goal
 78 remains active with `scalar_from_signed scalar_to_signed` queued.
 
+The thirty-fourth hypothesis was selected by draw seed `1475233831` from the
+remaining queue `scalar_from_signed scalar_to_signed` at index 1:
+`scalar_to_signed`. Independent bit-by-bit C and Boost `cpp_int` oracles
+covered 67,075 canonical scalars. Native 4x64 matched
+`8bc3373654bfbae5`; forced 8x32 matched `34b50c7803289a6f`. All 24 C
+compiler/backend/optimization runs, six C++ bridge runs, six LTO runs, six
+ASan/UBSan/VERIFY runs, native and forced CMake scalar/corpus selections, and
+16 Clang AArch64 compile-only objects passed. Isolated x86 and AArch64
+conversion symbols had no conditional or loop branches. Mutating the first
+62-bit or 30-bit boundary shift caused both independent oracles to fail at
+value 65,536. The hypothesis was dismissed with no production change. The
+goal-78 scalar conversion subqueue is exhausted for the tested contract;
+limitations remain no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
+formal translation proof, or unusual scalar ABI. The controller should draw a
+new catalog goal.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
