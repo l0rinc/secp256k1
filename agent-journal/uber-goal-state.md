@@ -942,7 +942,36 @@ with Medium branch-local constant-time hygiene risk if the short-circuit code
 were retained. No remote timing primitive or key disclosure was shown. The
 per-goal evidence, source/history trace, exact commands/output, limitations,
 and reopen conditions are in `agent-journal/timing-side-channel.md`. The
-source repair and this state update are pending as one self-contained audit
-commit. The next queue remains
+source repair and this state update were committed as `5f3bee9c`,
+`ctime: preserve secret declassification boundaries`. The next queue remains
 `52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact goal-53 cell while
 retaining other goal-53 secret-operation cells.
+
+The sixty-third controller cycle selected catalog goal `82`,
+`secp-field-scalar-matrix`, with draw seed `3687378918` over the 12-entry
+eligible pool `52,53,72,74,77,81,82,84,87,89,95,97`; index 6 selected goal
+82. Prior field normalization, `fe_half`, negation, zero-predicate, and
+scalar-helper cells were excluded from this fresh cycle because their
+independent evidence is already recorded in `translation-validation.md` and
+the preceding field commits. The distinct hypothesis was a native 5x52 versus
+forced 10x26 mismatch in canonical `secp256k1_fe_storage` packing/unpacking.
+
+The standalone `/tmp/secp256k1-goal82-storage.c` harness used an independent
+32-byte little-endian storage oracle, guarded storage canaries, canonical
+edge values, every power of two through bit 255, and 1,024 deterministic
+random values: 1,283 cases. Clang 22.1.7 and GCC 16.1.0 native and forced
+10x26 O2 runs, Clang O0/O3/Os runs, and Clang/GCC LTO runs all printed
+`ok values=1283 digest=3835fa7c29cf43ce`. Four VERIFY/Valgrind/ASan/UBSan
+runs matched without diagnostics. Flipping one expected byte caused the
+negative control to fail at value 0. The rebuilt native and forced-int64
+project builds each passed all 8 focused field tests.
+
+The hypothesis is dismissed: no cross-backend mismatch, lost bit, endian
+packing error, canary overwrite, undefined behavior, or reachable production
+defect was found. Master-relative severity is none. This does not cover
+big-endian execution or noncanonical raw storage; those remain reopenable
+cells. The exact source/history trace, commands, outputs, limitations, and
+handoff are in `agent-journal/secp-field-scalar-matrix.md`. This is a focused
+journal-only cycle with no production source change. The next queue remains
+`52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact goal-82 storage
+cell while retaining other field/scalar representation cells.
