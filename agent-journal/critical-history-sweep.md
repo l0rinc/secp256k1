@@ -1322,7 +1322,7 @@ make -j2
 Both x86_64 GMP-backed builds exited `0`; the only notable output was the
 repository's obsolete-autoconf-macro warning. A standalone `tweak_probe.c`
 used signing and verification contexts, secret key `1`, an overflowing
-group-order tweak, and a zero tweak. It compared private and public opaque
+scalar-domain tweak, and a zero tweak. It compared private and public opaque
 outputs with their pre-call state and checked all-zero cleanup.
 
 The historical parent printed:
@@ -1440,3 +1440,132 @@ probe sources are disposable and must be removed after this entry is
 committed. The next draw must exclude this private/public tweak-output family
 and its direct descendants, then choose `354ffa33`, `d907ebc0`, or a fresh
 unindexed production-impact history seed after duplicate search.
+
+## Cycle 14: historical oversized secret public-key creation
+
+### Selection and provenance
+
+The forty-ninth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `0dc70543532c46ccc5803076fba252c3ec766715`
+on branch `codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Before drawing, the controller
+searched the catalog journal, `src/fuzz/README.md`, current source, history,
+and the Bitcoin Core caller tree for exact, hash, and semantic duplicates.
+The ordered eligible pool was:
+
+```text
+354ffa33e6b0d6c1270a6d9d228f692b70ad7ff4
+d907ebc0e386ea17a96d34cd3008be9207b6f94f
+```
+
+Random seed `2987336874` selected index `0`,
+`354ffa33e6b0d6c1270a6d9d228f692b70ad7ff4`, whose parent is
+`3b7ea633fb1abe75c0ddcb99d903b3ea665462a2`. The selected commit is dated
+2015-02-17 with subject `Make secp256k1_ec_pubkey_create reject oversized
+secrets.` Its patch adds the scalar-setter overflow result to
+`secp256k1_ec_pubkey_create`; an oversized secret now sets `*pubkeylen=0`
+and returns failure instead of being reduced modulo the curve order.
+
+The exact selected hash was not previously journaled. Later invalid-secret,
+opaque-key cleanup, and fuzz controls in current history are descendants or
+semantic duplicates, so they were retained as verification evidence rather
+than additional candidates.
+
+### Historical parent/fix reproduction
+
+Disposable worktrees `/tmp/critical-history-52/old-pub-create-parent` and
+`/tmp/critical-history-52/old-pub-create-fixed` were built independently with:
+
+```sh
+./autogen.sh
+./configure --disable-tests --disable-benchmark
+make -j2
+```
+
+Both x86_64 GMP-backed builds exited `0`. The builds emitted the repository's
+obsolete autoconf-macro warnings and old compiler maybe-uninitialized warnings,
+but no build failure. A standalone probe used the exact secp256k1 group order
+plus one as `seckey`, a valid secret of one as a control, and prefilled the
+65-byte output with `0xa5`. It initialized the historical signing context and
+compared the returned serialized key and length:
+
+```text
+parent:
+oversized ret=1 len=65 unchanged=0 same_as_one=1
+one ret=1 len=65 prefix=04
+
+selected fix:
+oversized ret=0 len=0 unchanged=1 same_as_one=0
+one ret=1 len=65 prefix=04
+```
+
+The parent therefore accepted `order + 1`, returned the public key for secret
+one, and overwrote the output. The selected fix rejected it and preserved the
+prefilled output while retaining the valid-secret behavior. This is a direct
+parent/fix proof of the historical API contract change, independent of the
+modern test suite.
+
+### Current implementation and tests
+
+Current `src/secp256k1.c` routes public-key creation through the checked secret
+key scalar setter and zeroes the opaque output on failure. Current
+`src/tests.c` edge cases around `6621-6751` cover order-overflow and invalid
+secret creation, including zeroized opaque output. The scratch modern probe
+linked against both `/mnt/my_storage/secp256k1-build/oracles-next-int64/lib`
+and `/mnt/my_storage/secp256k1-build/current-full-native-20260726/lib` and
+printed exactly on both:
+
+```text
+oversized ret=0 seckey_valid=0 pub_zero=1 valid_ret=1
+```
+
+The forced-int64 library and native ASan/UBSan library each passed:
+
+```sh
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=eckey_edge_case_test --target=ecdsa_edge_cases --iterations=2 --seed=2987336874
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=eckey_edge_case_test --target=ecdsa_edge_cases --iterations=2 --seed=2987336874
+```
+
+Both exited `0`. Native and forced-int64 `fuzz_api_roundtrip` replays of
+`src/fuzz/corpora/api_roundtrip/pubkey-create-vectors` and
+`src/fuzz/corpora/api_roundtrip/invalid-seckey-nonce-domain` each exited `0`.
+Native and forced-int64 `fuzz_xonly_tweak` replays of
+`keypair-create-invalid-cleanup` also exited `0`. The native runs used the
+ASan/UBSan build; no sanitizer, fuzz, daemon, or profiling process remained.
+
+### Bitcoin Core caller audit
+
+The surveyed `/mnt/my_storage/bitcoin` checkout was dirty and was not
+modified. Invalid raw key material is rejected by `src/key.cpp:78-80` during
+DER import and cleared on failure; `src/key.cpp:99-103` handles public-key
+creation failure during DER export. `CKey::Set` in `src/key.h:105-115` stores
+only material that passes `Check`, while `src/key.cpp:187-191`, `229`, and
+`263` call public-key creation only for an already-valid `CKey` and assert the
+established invariant. The generic BIP32 and x-only/MuSig callers separately
+check tweak failures and discard or clear failed child state. No current Core
+path exposes the old arbitrary-byte modulo reduction as a usable key.
+
+The Core checkout retained unrelated `M src/test/blockencodings_tests.cpp`
+and untracked `fuzz-0.log`/`fuzz-1.log` files; none were touched. No direct
+Core test was run because modifying or cleaning that checkout would violate
+the campaign's workspace boundary.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening.** The parent had a real
+oversized-secret acceptance and output-contract defect, and the selected fix
+correctly rejected the invalid scalar. Current scalar validation, zeroized
+opaque output, edge-case tests, focused fuzz inputs, and Bitcoin Core caller
+contracts cover the same boundary. This is not a current consensus,
+cryptographic, memory-safety, or remotely reachable Bitcoin Core finding, so
+no production source change is justified.
+
+### Limitations and handoff
+
+Historical reproduction used the 2015 API and GMP-backed builds; current
+controls used modern native and forced-int64 sanitizer builds. The current
+Core caller audit was static because its checkout is intentionally dirty.
+The historical worktrees and probe sources are disposable and must be removed
+after this entry is committed. The next draw must exclude the oversized-secret
+and public-key-creation family, then choose `d907ebc0` or a fresh unindexed
+production-impact history seed after duplicate search.

@@ -568,3 +568,19 @@ with no source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the next draw must exclude this
 tweak-output family and select `354ffa33`, `d907ebc0`, or a fresh unindexed
 production-impact history seed after duplicate search.
+
+The forty-ninth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `2987336874` over the ordered
+two-entry pool `354ffa33`, `d907ebc0`, selecting
+`354ffa33e6b0d6c1270a6d9d228f692b70ad7ff4`, the historical oversized-secret
+public-key creation fix. The legacy parent accepted exact group-order plus
+one with `ret=1 len=65` and emitted the same public key as secret `1`; the
+fix returned `ret=0 len=0` and preserved the prefilled output. Current
+native/forced-int64 probes rejected the same secret and zeroed opaque output,
+current edge-case tests and focused invalid-secret/keypair fuzz inputs exited
+0, and Bitcoin Core validates CKey storage and checks creation failures. Its
+dirty checkout remained untouched. The seed is dismissed as obsolete
+historical hardening with no source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the next draw must exclude this
+oversized-secret/public-key creation family and select `d907ebc0` or a fresh
+unindexed production-impact history seed after duplicate search.
