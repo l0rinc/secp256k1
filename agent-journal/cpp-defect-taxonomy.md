@@ -375,3 +375,99 @@ Next queue: retain Goal97 for a different C/C++ defect class and subsystem;
 exclude this ASMap lifetime cell, the DataStream warning, and the hsort cell.
 Retain Goals `77`, `82`, `84`, `87`, and `95` in the immediate rotation. Keep
 the unrelated Boost warning as a separate dependency/toolchain lead.
+
+## Cycle 109
+
+### Cell and hypothesis
+
+This cycle selected the C/C++ **unchecked-result** class in Bitcoin Core's
+chainstate/UTXO database cursor. The fresh hypothesis was that
+`CCoinsViewDB::Cursor()` in `src/txdb.cpp:240-257` ignores the boolean result of
+the initial `CDBIterator::GetKey(entry)` call. `CoinEntry::key` defaults to the
+valid database tag `DB_COIN` (`'C'`), so a malformed key beginning with `C` but
+ending before the hash and output index could leave `keyTmp.first == DB_COIN`.
+That would make `Valid()` and `GetKey()` report a usable cursor even though the
+key was not decoded.
+
+The static path review found that `CDBIterator::GetKey()` catches parse
+exceptions and returns false, while `CCoinsViewDBCursor::Valid()` is only
+`keyTmp.first == DB_COIN`. The cursor is consumed by UTXO statistics, script
+lookup, UTXO-set copying, and snapshot paths, so this was an externally
+observable persistence/error-contract issue rather than a dead pattern. The
+recent `9972242ce4` `dbwrapper: surface iterator read errors` change was
+reviewed: it added LevelDB status handling and iterator tests but did not cover
+the higher-level `CCoinsViewDB::Cursor()` decode result.
+
+### Independent reproduction
+
+In disposable current-HEAD Core worktree `/tmp/bitcoin-goal97-109` at base
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, a test-only `TruncatedCoinKey`
+serialized exactly one byte, `C`, as a LevelDB key and wrote a valid `Coin`
+value. The protected checkout `/mnt/my_storage/bitcoin` was not modified and
+retained its pre-existing `src/test/blockencodings_tests.cpp`, `fuzz-0.log`,
+and `fuzz-1.log` paths.
+
+The disposable Release test binary was configured with CMake/Ninja and built
+successfully. Before the product change:
+
+```text
+/tmp/bitcoin-goal97-109-build/bin/test_bitcoin --run_test=coins_tests/coins_cursor_rejects_truncated_key --log_level=test_suite
+./test/coins_tests.cpp(1105): error: in "coins_tests/coins_cursor_rejects_truncated_key": check !cursor->Valid() has failed
+*** 1 failure is detected in the test module "Bitcoin Core Test Suite"
+```
+
+This is the first-invalid-operation proof: the one-byte key reaches the
+production cursor, `GetKey()` fails while parsing the missing hash/index, and
+the ignored result leaves the default valid tag cached. The same fixture is
+independent of the implementation test's expected state and exercises the
+actual LevelDB serialization/deserialization boundary.
+
+### Repair and verification
+
+Disposable Core commit `78bea7f913` (`fix: reject malformed initial coins
+cursor key`), authored as `Lőrinc <pap.lorinc@gmail.com>`, checks the return of
+the initial `GetKey()` and invalidates the cached key on failure. It adds the
+minimal regression test without changing the protected checkout.
+
+After the repair, the exact focused test passed:
+
+```text
+/tmp/bitcoin-goal97-109-build/bin/test_bitcoin --run_test=coins_tests/coins_cursor_rejects_truncated_key --log_level=message
+*** No errors detected
+```
+
+The complete `coins_tests` suite also passed:
+
+```text
+/tmp/bitcoin-goal97-109-build/bin/test_bitcoin --run_test=coins_tests --log_level=message
+Running 14 test cases...
+*** No errors detected
+```
+
+`git diff --check` passed before the disposable commit. The Core worktree was
+clean after the commit; the audit worktree remained clean before this journal
+update. The build emitted an existing GCC/Boost `bucket_array` warning in
+`txmempool.cpp` and related test translation units; it was unrelated to this
+cell and did not fail the build.
+
+### Verdict and limits
+
+Verdict: **confirmed and repaired** for the initial cursor key. A malformed
+persistent key could be exposed as a valid UTXO cursor entry because a failed
+decode was ignored. The repair converts the failed decode into an invalid
+cursor, preventing callers from treating the partially decoded outpoint as
+valid. The test covers an on-disk malformed-key fixture, but this cycle did
+not fuzz arbitrary LevelDB corruption, exercise every caller under a damaged
+database, or change `Next()`'s existing failure-as-end behavior. Those remain
+separate hypotheses and must not be conflated with this finding.
+
+### Coverage ledger and next queue
+
+Goal97 class coverage now includes: GCC serialization warning (dismissed),
+hsort heap arithmetic (dismissed), NetGroupManager non-owning span lifetime
+(confirmed/repaired), and CCoinsViewDB initial cursor key unchecked result
+(confirmed/repaired). Exclude all four exact cells. Keep the unchecked-result
+class eligible for a different subsystem and retain data race, deadlock,
+iterator invalidation, error cleanup, format mismatch, and checked-arithmetic
+cells for later cycles. The next controller draw must select a fresh goal or
+fresh cell and preserve this exclusion ledger.

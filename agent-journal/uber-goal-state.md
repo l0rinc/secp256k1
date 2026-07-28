@@ -1888,3 +1888,32 @@ at `2026-07-28T15:23:22Z`. Goal97 must choose a fresh C/C++ defect class and
 subsystem cell, using semantic reachability and an independent proof rather
 than repeating the completed broad scans, DataStream warning, hsort arithmetic,
 or NetGroupManager lifetime work.
+
+## Cycle 109 Summary
+
+Goal `97`, `cpp-defect-taxonomy`, confirmed and repaired a fresh unchecked
+result defect in Bitcoin Core's `CCoinsViewDB::Cursor()`. A disposable
+LevelDB fixture wrote a one-byte `C` key followed by a valid coin value. Before
+the fix, the initial `CDBIterator::GetKey()` failure was ignored, the default
+`CoinEntry::key` remained `DB_COIN`, and `Valid()` incorrectly reported the
+cursor as usable. The focused regression failed before the fix and passed after
+disposable Core commit `78bea7f913`, authored as `Lőrinc
+<pap.lorinc@gmail.com>`. The full 14-case `coins_tests` suite passed after the
+repair. The protected Bitcoin checkout was not modified and retains exactly
+its pre-existing dirty paths. Full evidence is in
+`agent-journal/cpp-defect-taxonomy.md` Cycle 109.
+
+Verdict: **confirmed and repaired in a disposable validation worktree**.
+Exclude this initial malformed-key cursor cell, the earlier Goal97 DataStream
+warning, hsort arithmetic, and NetGroupManager lifetime cells. Goal97 remains
+eligible for other C/C++ classes and subsystems.
+
+## Cycle 110 Selection
+
+The controller drew Goal `82`, `secp-field-scalar-matrix`, with seed
+`11779137628743502051`, index `1`, from the eligible pool `77 82 84 87 95 97`,
+at `2026-07-28T15:58:02Z`. Goal82 must choose a fresh field/scalar
+representation, backend, exhaustive, magnitude, normalization, or
+cross-architecture hypothesis. Exclude its completed `scalar_low_impl.h`
+exhaustive cell and all prior Goal82 cells; do not repeat Goal97's cursor
+finding.
