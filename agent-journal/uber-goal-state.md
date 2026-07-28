@@ -1675,3 +1675,32 @@ The controller drew Goal `89`, `bitcoin-p2p-accounting`, with seed
 outbound transaction-inventory queue admission cell remains excluded; this
 cycle must choose a distinct transport, permission, partial-I/O, shutdown, or
 peer-accounting hypothesis.
+
+## Cycle 101 Summary
+
+Goal `89`, `bitcoin-p2p-accounting`, confirmed a test-framework-only split-read
+accounting defect in `test/functional/test_framework/v2_p2p.py`. The responder
+stores a persistent V1-prefix probe but returns its cumulative length to a
+caller that slices only the current receive chunk. An independent execution
+with four prefix bytes followed by a mismatching byte reported `5` consumed
+when the current chunk consumed `1`; a full-prefix split reported `16` when it
+consumed `12`. In both cases four subsequent bytes were demonstrably lost.
+
+The existing `p2p_v2_misbehaving.py` and `p2p_v2_transport.py` functional tests
+passed, but neither asserts byte conservation across this split. The
+recommended fix is a local per-call consumed counter plus a regression test;
+the protected Core source was not modified. The earlier Goal89 outbound
+transaction-inventory queue admission cell remains excluded. Details are in
+`agent-journal/bitcoin-p2p-accounting.md`.
+
+Verdict: **confirmed test-framework defect**, not a production C++ transport
+finding. No repair commit was created because the Core checkout is protected
+and dirty with unrelated user files; the report-ready handoff is journal-only.
+
+## Cycle 102 Selection
+
+The controller drew goal `87`, `bitcoin-mempool-accounting`, with seed
+`6852785394712412509`, index `4`, from the eligible pool `77 81 82 84 87 95 97`,
+at `2026-07-28T13:03:27Z`. Exclude Goal89's completed split-read responder
+cell and the prior outbound-inventory queue cell. The next cycle must choose a
+distinct Goal87 package, replacement, eviction, or accounting hypothesis.
