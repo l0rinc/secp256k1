@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 95 (`database-semantics-differential`)
+- Current status: active rotating cycle goal 81 (`spec-vector-drift`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -43,17 +43,21 @@
 - Completed cycle: goal 97, hsort heap-index and stride arithmetic, dismissed
   by an independent insertion-sort oracle, canaries, sanitizer/static
   controls, in-tree caller tests, and a heap-child mutation.
-- Current draw seed: `13524800685825278971`
-- Current eligible pool: `77 95`
+- Previous completed cycle draw seed: `13524800685825278971`
+- Previous completed cycle: goal 95, WAL sync boundary, crash replay, and
+  injected sync failure, dismissed by a durable-file model, release and
+  ASan/UBSan replays, and an unsynced-byte mutation.
+- Current draw seed: `234100655729448865`
+- Current eligible pool: `77 81 82 84 87 89 95 97`
 - Current selected index: `1`
-- Current draw: `95`
-- Current draw timestamp: `2026-07-28T12:00:09Z`
+- Current draw: `81`
+- Current draw timestamp: `2026-07-28T12:18:00Z`
 
 ## Selection rules
 
-The current selected cycle is goal 95 (database-semantics-differential), drawn
-with seed 13524800685825278971 from pool 77 95 at index 1. Goal97 remains
-pending for distinct C/C++ defect classes; its hsort index/stride cell is
+The current selected cycle is goal 81 (spec-vector-drift), drawn with seed
+234100655729448865 from pool 77 81 82 84 87 89 95 97 at index 1. Goal97
+remains pending for distinct C/C++ defect classes; its hsort index/stride cell is
 excluded from immediate rediscovery. The completed Goal82 cycle remains
 pending for distinct field/scalar representation cells; its normalized
 comparison cell is excluded from immediate rediscovery. Goal81
@@ -76,7 +80,7 @@ shutdown, and accounting cells. Its outbound transaction-inventory queue
 admission cell is excluded from immediate rediscovery.
 
 Goals `0` through `48` and `50` through `60`, plus `62` through `72`, `74`
-through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; the immediate draw pool is now `77 95` after the Goal97 hsort cell exclusion. Goal `61` is
+through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; the immediate draw pool is now `77 81 82 84 87 89 95 97` after the Goal95 WAL cell exclusion. Goal `61` is
 `exhausted` for its bounded stateful-fuzzer cycle. Goal
 `78` is `exhausted` for the completed scalar compiler/representation helper
 queue, with its journal at `agent-journal/translation-validation.md`; reopen
@@ -91,7 +95,7 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 97. The exact annex/hash-type cell of goal 81 and the
+rotating cycle is goal 81. The exact annex/hash-type cell of goal 81 and the
 exact unbroadcast-memory cell of goal 87 are
 excluded from immediate rediscovery. Goal87's remaining package, RBF, graph,
 fee, eviction, reorg, and expiry cells remain pending. The catalog is the
@@ -1564,3 +1568,30 @@ The controller drew goal `95`, `database-semantics-differential`, with seed
 `13524800685825278971`, index `1`, from the immediate pool `77 95`, at
 `2026-07-28T12:00:09Z`. Goal95 is now the active rotating cycle. The Goal97
 hsort cell is excluded while other C/C++ defect classes remain eligible.
+
+## Cycle 98 Summary
+
+Goal `95`, `database-semantics-differential`, tested whether CDBWrapper's
+`fSync` and custom LevelDB Env boundary preserved the expected WAL durability
+across repeated crash/reopen cycles. A disposable POSIX Env wrapper tracked
+each file's appended and last-synced positions; an independent string map
+model retained only sync-covered operations. Six fixed-seed plain/obfuscated
+runs covered mixed puts/deletes, 1 KiB SST files, periodic `CompactFull()`,
+and 24 crash cycles each. Release GCC and Clang ASan/UBSan builds matched the
+model. An injected sync failure threw on the failed and subsequent writes,
+preserved the prior synced record, and lost the failed record on replay. A
+temporary mutation that retained all unsynced bytes failed six model checks
+and the failure check.
+
+Verdict: **dismissed** for this exact WAL sync/recovery cell, with no source
+change or repair commit. The detailed source trace, commands, output, hashes,
+limitations, and excluded cells are in
+`agent-journal/database-semantics-differential.md`.
+
+## Cycle 99 Selection
+
+The controller drew goal `81`, `spec-vector-drift`, with seed
+`234100655729448865`, index `1`, from the eligible pool
+`77 81 82 84 87 89 95 97`, at `2026-07-28T12:18:00Z`. The exact Goal95 WAL
+sync cell is excluded; remaining Goal95 comparator, snapshot, partial-I/O,
+MANIFEST, and alternate-backend cells remain pending.

@@ -295,3 +295,149 @@ removed after hashing; no relevant process remains. The goal stays active for
 distinct WAL/MANIFEST recovery, snapshot lifetime, comparator/seek, and
 backend-portability cells. Next queue remains
 `74,77,81,82,84,87,89,95,97`.
+
+## Cycle 98 - WAL sync boundary, crash replay, and injected sync failure
+
+Status: **dismissed for this bounded persistence cell**. The CDBWrapper
+sync/recovery behavior matched an independent durability model. No current
+Core source defect or repair is justified.
+
+### Selection and scope
+
+- Catalog goal: `95`, `database-semantics-differential`.
+- Controller draw seed: `13524800685825278971`.
+- Eligible pool: `77 95`; zero-based index `1`; selected goal `95`.
+- Audit branch at cycle start: `codex/fuzz-oracles`, HEAD
+  `4865bfa132c6e607bc8f467ef1013c832e72fa18`.
+- Protected Core: `/mnt/my_storage/bitcoin`, branch
+  `codex/btc-fuzz-oracles`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. Its pre-existing dirty state
+  remained exactly `M src/test/blockencodings_tests.cpp`, `?? fuzz-0.log`, and
+  `?? fuzz-1.log`.
+- No protected checkout was modified. No real fuzz, daemon, sanitizer,
+  benchmark, or profiling process remained running after the cycle.
+
+The fresh hypothesis was that the CDBWrapper `fSync` path or its injected
+`DBParams::testing_env` boundary could misclassify WAL durability across a
+crash: an unsynchronized put/delete might survive when it should not, a
+synchronized operation might be lost, or a failed `Sync()` might be accepted
+or leave the wrapper usable for later writes. The trust boundary is local
+filesystem/database state and the LevelDB environment. This is not an
+untrusted parser or a consensus oracle.
+
+### Source and contract trace
+
+At the protected Core HEAD:
+
+- `src/dbwrapper.h:234-256` passes the caller's `fSync` choice through both
+  single-key writes and erases to `WriteBatch()`.
+- `src/dbwrapper.cpp:223-233` enables checksum-verified reads and selects the
+  caller-provided LevelDB environment; `src/dbwrapper.cpp:288-296` submits
+  the batch with `syncoptions` when `fSync` is true and routes a non-OK status
+  through `HandleError()` as `dbwrapper_error`.
+- `src/leveldb/include/leveldb/db.h:63-78` documents that callers should
+  consider `WriteOptions::sync=true` for puts, deletes, and batches. The
+  implementation at `src/leveldb/db/db_impl.cc:1180-1225` appends the batch,
+  calls `logfile_->Sync()` for a sync write, and records a background error
+  when that sync fails because the log state is indeterminate.
+- `src/leveldb/util/env.cc:34-63` distinguishes ordinary and synchronous
+  file writes. `src/leveldb/db/filename.cc:123-138` uses the synchronous form
+  before renaming `CURRENT`, so the MANIFEST/CURRENT boundary is included in
+  the trace.
+- `src/test/fuzz/dbwrapper.cpp:40-105,184-279` currently controls background
+  compaction with a deterministic environment, but its in-memory target does
+  not exercise persistent WAL loss. That is a coverage limitation, not proof
+  of a wrapper defect.
+
+The apparent alternative lead that `CDBWrapper::CompactFull()` drops a
+LevelDB status was dismissed during source inspection: this embedded LevelDB
+version declares `DB::CompactRange()` as `void` at
+`src/leveldb/include/leveldb/db.h:138-147`, so there is no return status for
+the wrapper to preserve.
+
+### Independent durability model
+
+A disposable C++20 harness at `/mnt/my_storage/goal95_wal_recovery.cpp`
+wrapped the production POSIX `leveldb::Env` and tracked every writable file's
+appended position and last successful `Sync()` position. After each bounded
+operation window it destroyed `CDBWrapper`, truncated scratch database files
+to the last successful sync boundary, reopened through the same public
+`CDBWrapper` API, and compared every known key with an independent
+`std::map<std::string, std::string>` model. The model updates its durable map
+only at sync operations, while the working map tracks all operations. It
+included 64 binary-safe string keys, 24 initial synchronous writes, 24 cycles
+of nine mixed puts/deletes with one-third sync probability, 1 KiB SST files,
+periodic `CompactFull()`, repeated close/crash/reopen, and both obfuscation
+modes.
+
+The final harness source hash was
+`9a5bef0e8bcec0e125964315a5ddb764400639329977ab6c1f8a5b49b40bf0ea` and the
+release binary hash was
+`27bc80a45ea521061e3f8998883d0553b006cd7ef9894d9d26e29b6b5a5f62b2`. The
+release command was:
+
+```text
+timeout 240 /mnt/my_storage/goal95-wal-recovery
+```
+
+It passed all six persistence runs:
+
+```text
+WAL_RESULT seed=2632763952203560 obfuscate=0 keys=30 digest=37d64ffd95d009d pass=1
+WAL_RESULT seed=2632763952203560 obfuscate=1 keys=30 digest=37d64ffd95d009d pass=1
+WAL_RESULT seed=3512640997 obfuscate=0 keys=20 digest=7778b9090f3a1df7 pass=1
+WAL_RESULT seed=3512640997 obfuscate=1 keys=20 digest=7778b9090f3a1df7 pass=1
+WAL_RESULT seed=1327405879 obfuscate=0 keys=30 digest=2a87c74d644cbaf1 pass=1
+WAL_RESULT seed=1327405879 obfuscate=1 keys=30 digest=2a87c74d644cbaf1 pass=1
+```
+
+The failure variant armed one injected `Sync()` error after a durable seed
+write. The first write threw `dbwrapper_error`, a later write also threw due
+to LevelDB's recorded background error, the seed survived the simulated
+restart, and the failed record was absent:
+
+```text
+SYNC_ERROR_RESULT seed=2512049637 first_threw=1 later_threw=1 base_ok=1 fault_lost=1 pass=1
+```
+
+The independent Clang sanitizer build used the existing `build_fuzz` Core
+and LevelDB archives with ASan and UBSan. Its object hash was
+`eb7b197ace3b4b2e1f6969574a47357581bb0cc47457816f151e2057e25a45f9` and its
+binary hash was
+`28607fef7f9952f6d0912f813bcd2c207f14ba9bbbbeacb5691f29d754f13119`.
+With `ASAN_OPTIONS=detect_leaks=0:halt_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1`, it reproduced all seven passing results with
+no sanitizer diagnostic. The protected Core control also passed:
+
+```text
+git diff --check
+./build/bin/test_bitcoin --run_test=dbwrapper_tests --log_level=message
+Running 9 test cases...
+*** No errors detected
+```
+
+### Oracle sensitivity, verdict, and limitations
+
+To test the model rather than merely trust it, a disposable mutation changed
+`CrashToLastSync()` to truncate to the full current file position instead of
+the last synced position. The mutated binary failed six WAL model checks and
+the injected failure check, including `fault_lost=0`, and exited `1`. The
+mutation binary hash was
+`4827b7dc10393c5de27cce52c10aef67531f85a8118e74cd96b3c2b517c65883`.
+
+The hypothesis is **dismissed**. The public CDBWrapper sync flag, custom Env
+injection boundary, WAL replay, obfuscation, deletes, and compacted-table
+recovery matched the independent model. No production source change, test
+change, or audit repair commit is warranted.
+
+Evidence is Linux x86_64 using the embedded LevelDB 1.22 implementation. The
+crash model truncates data files rather than emulating every filesystem power
+loss behavior; it does not yet drop directory entries, inject a partial
+`Append()`, or fail a MANIFEST rename. No RocksDB/Pebble installation was
+available, and no Windows, 32-bit, or full-node chainstate/wallet recovery run
+was performed. Those remain distinct future cells. Scratch sources, binaries,
+database directories, and mutation artifacts were removed after hashing.
+
+Next queue remains `74,77,81,82,84,87,89,95,97`; exclude this exact
+sync-boundary model and the earlier Goal95 iterator-status and ordered-batch
+cells.
