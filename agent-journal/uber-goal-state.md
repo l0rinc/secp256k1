@@ -33,8 +33,8 @@
 
 ## Goal ledger
 
-Goals `0` through `48` and `50` through `60`, plus `62` through `77`, `79`
-through `87`, `89` through `91`, and `94` through `98`, remain `pending`; this was the eligible
+Goals `0` through `48` and `50` through `60`, plus `62` through `72`, `74`
+through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; this was the eligible
 set used for the latest draw after prior-cycle exclusions. Goal `61` is
 `exhausted` for its bounded stateful-fuzzer cycle. Goal
 `78` is `exhausted` for the completed scalar compiler/representation helper
@@ -45,6 +45,9 @@ and Linux RPC-cookie fault hypotheses; reopen them only for new ABI/platform,
 caller, or partial-I/O evidence. Goal `88` is `exhausted` for its current
 SQLite master-key write-failure hypothesis; reopen it for new wallet
 descriptor, keypool, backup, migration, recovery, or fault-injection evidence.
+Goal `73` is `exhausted` for the current socket-level zero/short-write
+hypothesis; reopen it only for new transport, platform, or state-machine
+evidence.
 Goal `49` is `active`; its cycle journal is
 `agent-journal/critical-history-sweep.md`. The catalog is the source of
 titles, slugs, and campaign scope.
@@ -805,3 +808,40 @@ and interposer are removed after handoff. Goal 88 is exhausted only for this
 passphrase-write hypothesis; descriptor/keypool/backup/migration/recovery
 cells remain reopenable. The next eligible queue is
 `52,53,72,73,74,77,81,82,84,87,89,95,97,98`.
+
+The fifty-ninth controller cycle selected catalog goal `73`,
+`network-state-machine`, with draw seed `1209637965` over the 13-entry
+eligible pool `52,53,72,73,74,77,81,82,84,87,89,95,97`; index 3 selected
+goal 73. The distinct hypothesis was that a zero-byte nonblocking socket
+write followed by a short positive write could lose or duplicate V1/V2 wire
+bytes, clear transport state incorrectly, corrupt `nSendBytes`, or cause the
+receive side to disconnect or deadlock. Prior malformed net-message queue
+oracles from `d93e4f7e26` were excluded as duplicate evidence.
+
+The current Core source trace in `src/net.cpp:1607-1684` shows that positive
+writes call `MarkBytesSent` for exactly the returned count and stop on short
+writes, while zero and accepted nonblocking errors retain the transport state.
+`SocketHandlerConnected` at `src/net.cpp:2147-2247` suppresses receiving only
+after positive send progress with data remaining. A disposable Core test
+worktree added a scripted socket returning zero, one byte, then full chunks;
+it sent a V1 PING through the actual `CConnman::PushMessage` and
+`SocketHandlerPublic` path, independently constructed expected V1 wire bytes,
+and checked exact output, empty transport state, and `nSendBytes`.
+
+The first `/tmp` build reached the final link but failed with
+`final link failed: No space left on device`; the disk-backed Release build
+then completed all `543/543` Ninja steps. The focused oracle exited `0` with
+`*** No errors detected`. Existing `net_tests/v2transport_test` exited `0`,
+and the full `net_tests` suite exited `0` after `19` cases. The first oracle
+version expected three sends; mock instrumentation showed lengths
+`24,24,23,8`, which is normal V1 header/payload framing rather than a
+duplicate. After correcting the test expectation to four calls, all checks
+passed.
+
+The cycle is dismissed for this socket-level hypothesis. No production Core
+source change or Core fix commit resulted. The custom socket control is V1;
+V2 was exercised by the existing deterministic transport test, and this cycle
+did not cover every-byte EOF, network reordering, platform socket semantics,
+or a full V2 CConnman handshake fixture. The per-goal evidence and limitations
+are in `agent-journal/network-state-machine.md`. The next eligible queue is
+`52,53,72,74,77,81,82,84,87,89,95,97`.
