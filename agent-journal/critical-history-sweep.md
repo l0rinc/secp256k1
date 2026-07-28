@@ -242,6 +242,51 @@ critical-fix queue. Prefer a seed with a current public, persistence,
 concurrency, crypto, or untrusted-input caller; retain this probe and the
 existing NULL/zero unit assertions as duplicate-search evidence.
 
+## Cycle 3: duplicate search for MuSig counter-nonce cleanup
+
+### Selection and duplicate result
+
+The next draw used seed `3611919104` over the remaining candidate prefixes
+`8479eafa c6306238 d7125e51 89a54b5a`, selecting index 0:
+`8479eafa5720421d4b7f4b524a35e0a7edf291c7`, “musig: always clear out secret
+key in `secp256k1_musig_nonce_gen_counter`”. The historical patch moves
+`secp256k1_memclear_explicit(seckey, sizeof(seckey))` after the internal nonce
+generator and returns its result, covering the internal failure branch.
+
+This candidate is an exact duplicate of an existing current-branch finding,
+not an unexamined variant. `src/fuzz/README.md:4095-4131` records the
+“Partial Keypair MuSig Counter-Nonce Oracle” against clean master
+`ebf594320dc838b9de1abb54d5ba98cef84f4297`; it explicitly identifies the
+same `keypair_load` rejection, the same `nonce_gen_counter` consumer, and the
+same cleanup contract. The current fuzzer's
+`secp256k1_fuzz_check_musig_nonce_gen_counter_failure_cleanup` at
+`src/fuzz/musig.c:4273-4292` covers invalid keyagg-cache failure, while the
+partial-keypair helper at `:4356-4391` covers both invalid secret and invalid
+public opaque halves. Both require failure, one illegal callback, and zeroed
+caller-owned nonce outputs. `git blame` traces the first helper to
+`620fc269`, and the partial-keypair extension to `a2788b9d`; both are already
+in the prior-finding ledger.
+
+The current implementation at `src/modules/musig/session_impl.h:541` already
+clears the derived `seckey` after every reachable
+`secp256k1_musig_nonce_gen_internal` return. The pre-load `keypair_load`
+failure path cannot have populated `seckey`, and the public wrapper rejects
+NULL output/keypair arguments before deriving it. Reopening the historical
+patch would duplicate an existing finding and test oracle, so no new
+reproduction, source change, or finding commit is justified.
+
+### Verdict
+
+**Deduplicated and dismissed from this campaign queue.** Preserve the README
+entry, fuzzer seeds, and current cleanup line as the authoritative evidence;
+do not count this historical commit as a new defect.
+
+### Next history slice
+
+Redraw from `c6306238 d7125e51 89a54b5a` and the broader critical-fix queue,
+requiring a current caller and a mechanism not already indexed by the fuzz
+README or existing journals.
+
 ## Handoff
 
 Verify the current worktree, remotes, history range, existing findings, and
