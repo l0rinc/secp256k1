@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 95 (`database-semantics-differential`)
+- Current status: active rotating cycle goal 84 (`secp-nonce-session`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,10 +19,10 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `565229968`
+- Latest draw seed: `1056055882`
 - Latest eligible pool: `74 77 81 82 84 87 89 95 97`
-- Latest selected index: `7`
-- Latest draw: `95`
+- Latest selected index: `4`
+- Latest draw: `84`
 - Latest draw timestamp: `2026-07-28`
 
 ## Selection rules
@@ -55,7 +55,7 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal `95`; the catalog is the source of titles, slugs, and
+rotating cycle is goal `84`; the catalog is the source of titles, slugs, and
 campaign scope.
 
 ## Historical Cycle Summaries
