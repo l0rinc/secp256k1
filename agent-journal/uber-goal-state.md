@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 74 (`memory-pressure-allocator`)
+- Current status: active rotating cycle goal 89 (`bitcoin-p2p-accounting`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -24,6 +24,11 @@
 - Latest selected index: `0`
 - Latest draw: `74`
 - Latest draw timestamp: `2026-07-28T10:09:34Z`
+- Current draw seed: `4015881993`
+- Current eligible pool: `77 81 82 87 89 95 97`
+- Current selected index: `4`
+- Current draw: `89`
+- Current draw timestamp: `2026-07-28T10:39:38Z`
 
 ## Selection rules
 
@@ -1447,6 +1452,13 @@ was not edited and its pre-existing dirty files remain untouched. Goal 74
 stays active for allocation-failure, recovery, full-node, and other workload
 cells; this exact per-client HTTP queue cell is excluded from future draws.
 Detailed evidence is in `agent-journal/memory-pressure-allocator.md`.
+
+## Cycle 80 Selection
+
+Cycle 80 selected goal `89`, `bitcoin-p2p-accounting`, with draw seed
+`4015881993`, index `4`, from `77 81 82 87 89 95 97`. The exact goal-74
+per-client HTTP queue cell is excluded from this immediate draw; goal 74
+remains pending for distinct memory-pressure workloads.
 
 ## Cycle 78 Summary
 
