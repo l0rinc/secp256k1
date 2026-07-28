@@ -1138,3 +1138,35 @@ IBD/mempool/wallet profiles. The exact commands, source evidence, limits, and
 reopen conditions are in `agent-journal/memory-pressure-allocator.md`. This
 is a focused journal-only cycle. The next queue retains goal 74's separate
 fault-injection/live-workload cells, followed by `77,81,82,84,87,89,95,97`.
+
+## Cycle 69 - goal 77 (`symbolic-model-checking`)
+
+Draw seed `3820308283` selected index 1 from the distinct-cell pool
+`74,77,81,82,84,87,89,95,97`. CBMC, KLEE, and ESBMC were unavailable, so this
+cycle used a finite-state bounded proof rather than claiming symbolic-tool
+coverage. The selected hypothesis was a wrong discriminator, canonicality,
+range, byte-consumption, or truncation result in Bitcoin Core's
+`ReadCompactSize` parser at `src/serialize.h:326-363`.
+
+An independent byte-span oracle checked every one-byte prefix, all 65,536
+payloads under the 253 discriminator, all 65,536 low payloads under both 254
+and 255, all size/range thresholds, maximum values, and selected truncation
+lengths. It also checked `WriteCompactSize` and `GetSizeOfCompactSize` against
+the independent model. The Clang O2 run printed
+`PASS compactsize bounded-cases=393955 digest=bb07dc5cf1d0389f`.
+Clang O0, GCC 16.1.0 O2, and Clang ASan/UBSan produced the same result. The
+repository `serialize_tests` suite passed all 15 selected cases.
+
+A temporary scratch mutation changing `chSize == 253` to `chSize == 254`
+failed immediately at `prefix=253 expected=1:0 actual=3:0`. After restoring the
+source, the identical clean control passed again. The scratch worktree and
+mutation were removed; Core remains at its pre-existing dirty state.
+
+Verdict: **dismissed**. No parser defect or production change was found. This
+is a bounded proof, not an unbounded CBMC/KLEE result; alternate streams,
+platforms, untested full-width payload combinations, and caller-level resource
+effects remain outside scope. The exact source trace, caller scope, commands,
+hashes, mutation, limitations, and reopen conditions are in
+`agent-journal/symbolic-model-checking.md`. This is a focused journal-only
+cycle. The next queue retains `74,77,81,82,84,87,89,95,97`, excluding this exact
+CompactSize cell.
