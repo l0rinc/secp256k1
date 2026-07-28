@@ -1754,3 +1754,33 @@ The controller drew goal `95`, `database-semantics-differential`, with seed
 `2026-07-28T13:24:31Z`. Goal95's prior WAL sync/recovery cell remains
 excluded; the next cycle must choose a distinct comparator, snapshot,
 partial-I/O, MANIFEST, corruption, or alternate-backend semantics hypothesis.
+
+## Cycle 104 Summary
+
+Goal `95`, `database-semantics-differential`, confirmed a consumer-side
+chainstate cursor defect. A checksum-valid raw LevelDB key containing only the
+`C` namespace byte made `CCoinsViewDB::Cursor()` report `Valid=true` and return
+`GetKey=true` with a default outpoint because the initial `CDBIterator::GetKey`
+result was ignored. `Next()` already handled the same failure correctly. The
+standalone pre-fix probe reported `valid=1 key_ok=1`; the fixed probe reported
+`valid=0 key_ok=0`.
+
+The minimal repair and regression were committed in disposable current-HEAD
+Core worktree commit `91afd8627342903d86360e94f73ebd55bdfed71c`, authored as
+`Lőrinc <pap.lorinc@gmail.com>`. The isolated Release build completed, the
+focused regression passed, the nine-case `dbwrapper_tests` suite passed, and
+the full 14-case `coins_tests` suite passed. The protected Core checkout was
+not modified and retains its pre-existing dirty paths. Details and exact
+hashes are in `agent-journal/database-semantics-differential.md`.
+
+Verdict: **confirmed and repaired in disposable validation worktree**. Exclude
+this initial-key cell and the earlier Goal95 iterator-status, ordered-batch,
+and WAL sync/recovery cells.
+
+## Cycle 105 Selection
+
+The controller drew goal `95`, `database-semantics-differential`, with seed
+`10224859174495501171`, index `4`, from the eligible pool `77 82 84 87 95 97`,
+at `2026-07-28T14:01:15Z`. Goal95 remains active; the next cycle must choose a
+fresh comparator/seek, snapshot lifetime, partial-I/O, MANIFEST, corruption,
+or alternate-backend hypothesis and must not repeat the initial-key cell.

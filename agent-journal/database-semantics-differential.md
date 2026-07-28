@@ -441,3 +441,110 @@ database directories, and mutation artifacts were removed after hashing.
 Next queue remains `74,77,81,82,84,87,89,95,97`; exclude this exact
 sync-boundary model and the earlier Goal95 iterator-status and ordered-batch
 cells.
+
+## Cycle 104 - Initial chainstate cursor key failure
+
+Status: **confirmed Medium local persistence-integrity defect**, repaired in a
+disposable Core worktree. This is distinct from the earlier Goal95 LevelDB
+iterator-status cell: LevelDB returned a successful record here, but the
+serialized Core key was malformed and the consumer-side cursor ignored the
+initial decode result.
+
+### Selection, trust boundary, and contract
+
+The controller selected Goal `95`, `database-semantics-differential`, from the
+pool `77 82 84 87 95 97` with seed `1228823428`, index `4`, at
+`2026-07-28T13:24:31Z`. The protected Core checkout was at
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`; its only dirty paths remained
+`src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log`.
+
+The hypothesis was that `CCoinsViewDB::Cursor()` could expose a malformed
+initial chainstate key as a valid cursor entry because it ignored
+`CDBIterator::GetKey()`'s boolean result, while `CCoinsViewDBCursor::Next()`
+already invalidated the cursor when the same decode failed. The trust boundary
+is a locally persisted LevelDB record with a valid LevelDB checksum but an
+invalid Core serialization; this is not a network or consensus parser path.
+The public `CCoinsViewCursor` contract uses `Valid()` to gate `GetKey()` and
+`GetValue()` calls, so a false-valid cursor can make UTXO statistics, snapshot,
+scan, or copy callers process a default/stale key instead of stopping cleanly.
+
+The relevant code was `src/txdb.cpp:247-255` on the protected HEAD. The
+initial path constructed `CoinEntry` with its namespace byte defaulted to
+`DB_COIN`, called `GetKey(entry)` without checking it, and then copied that
+byte into `keyTmp.first`. `Next()` at `src/txdb.cpp:282-290` did check the
+result and set `keyTmp.first = 0`, establishing the intended failure
+contract. Production consumers include `src/kernel/coinstats.cpp:125-129`
+and `src/rpc/blockchain.cpp:2234-2237,3261-3266,3431-3437`.
+
+### Independent reproduction
+
+A standalone C++20 probe used the production `CDBWrapper` and `CCoinsViewDB`
+libraries. Its raw serializer wrote exactly one byte, `0x43` (`'C'`), as the
+database key and an empty value. The probe source hash was
+`a1f2387f6de6c5bec05f3b4ac00cd1dcd29cf8bdc98bbd083c2e1ea15830ebd4`.
+
+Against the protected pre-fix build, binary hash
+`06e94715e3cf1be373101fbdea435b4022f9bcf0b954bf13d9152312e8189dc7`, it
+reported:
+
+```text
+MALFORMED_KEY valid=1 key_ok=1 value_ok=0 outpoint=COutPoint(0000000000, 4294967295)
+```
+
+This proves that `GetKey()` failure was converted into a successful cached
+default outpoint. The minimal repair in disposable worktree commit
+`91afd8627342903d86360e94f73ebd55bdfed71c` checks the initial decode and
+invalidates `keyTmp` on failure. The fixed probe binary hash was
+`11303195990680a11adb706e529e35ca2fcdbc3d8ad75f8bfb66c76d9f799a4c` and
+reported:
+
+```text
+MALFORMED_KEY valid=0 key_ok=0 value_ok=0 outpoint=COutPoint(0000000000, 4294967295)
+```
+
+The fix commit was authored as `Lőrinc <pap.lorinc@gmail.com>` and changed
+only `src/txdb.cpp` plus the regression in `src/test/coins_tests.cpp`.
+
+### Regression and validation
+
+The isolated Release build was configured at
+`/mnt/my_storage/bitcoin-goal95-build` from the disposable worktree
+`/mnt/my_storage/bitcoin-goal95-current-fix` and completed
+`cmake --build ... --target test_bitcoin -j2` with 543/543 steps. The resulting
+`test_bitcoin` hash was
+`4cf80dbe6305b808781fc01a8371fa20a4f97fba8abfa0794430c111879c93b3`.
+
+The new focused test passed with `*** No errors detected`:
+
+```text
+TMPDIR=/mnt/my_storage/bitcoin-goal95-test-tmp /mnt/my_storage/bitcoin-goal95-build/bin/test_bitcoin --run_test=coins_tests/coins_db_cursor_rejects_malformed_initial_key --log_level=test_suite
+```
+
+The adjacent nine-case database suite passed:
+
+```text
+TMPDIR=/mnt/my_storage/bitcoin-goal95-dbwrapper-tmp /mnt/my_storage/bitcoin-goal95-build/bin/test_bitcoin --run_test=dbwrapper_tests --log_level=test_suite
+```
+
+The full 14-case coins suite passed:
+
+```text
+TMPDIR=/mnt/my_storage/bitcoin-goal95-coins-tmp /mnt/my_storage/bitcoin-goal95-build/bin/test_bitcoin --run_test=coins_tests --log_level=message
+```
+
+`git diff --check` passed before commit, the disposable worktree is clean,
+and no test process remains. No protected checkout was modified.
+
+### Verdict and limitations
+
+The hypothesis is **confirmed** and the smallest repair is validated in an
+isolated current-HEAD worktree. The malformed key requires database
+corruption, an incompatible writer, or an equivalent local fault; no remote
+attacker path was demonstrated. The cycle did not emulate full filesystem
+power loss, alternate database engines, Windows/32-bit execution, or a full
+node restart with a damaged chainstate. The earlier Goal95 iterator-status,
+ordered-batch, and WAL sync/recovery cells remain excluded.
+
+Next work must select a distinct Goal95 comparator/seek, snapshot lifetime,
+partial-I/O, MANIFEST, corruption, or alternate-backend contract rather than
+repeating this initial-key failure.
