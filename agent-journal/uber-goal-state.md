@@ -1229,3 +1229,38 @@ The detailed commands, source/history trace, hashes, mutation, limitations,
 and reopen conditions are in `agent-journal/symbolic-model-checking.md`.
 The next queue remains `74,77,81,82,84,87,89,95,97`, excluding this exact
 SHA-256 cell.
+
+## Cycle 72 - goal 95 (`database-semantics-differential`)
+
+Draw seed `3189239557` selected index `7` from the distinct-cell pool
+`74,77,81,82,84,87,89,95,97`. The selected hypothesis was that embedded
+LevelDB iterator read/checksum failures are silently treated as normal end of
+range because `CDBIterator::Valid()` forwards only `Valid()` and exposes no
+`Iterator::status()` contract.
+
+At protected Core HEAD `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, an
+independent raw-LevelDB oracle iterated a compacted 1,000-record table after a
+single-byte SSTable corruption and reported `count=806 valid=0 status=Corruption:
+block checksum mismatch`. The current CDBWrapper production-shaped loop
+reported `is_empty=0 count=806 decode_ok=1 first=key194 last=key999
+loop_returned=true`, whereas the clean control reported all 1,000 records and
+`status=OK`. Actual caller shapes include `BlockTreeDB::LoadBlockIndexGuts` at
+`src/node/blockstorage.cpp:123-157` and the chainstate/index cursors in
+`src/txdb.cpp` and `src/index`.
+
+The hypothesis is **confirmed Medium local persistence-integrity defect**. A
+clean detached Core worktree produced repair commit
+`9972242ce42a332c89565439e922c2d035e6e906` (`dbwrapper: surface iterator read
+errors`), which checks LevelDB status in `CDBIterator::Valid()` and adds a
+deterministic corruption regression test. The pre-repair test failed with
+`exception dbwrapper_error expected but not raised` and exit `201`; the
+repaired focused test passed, and all 10 `dbwrapper_tests` cases passed with
+`*** No errors detected`. No source change was made in the protected Core
+checkout; its pre-existing dirty files remain untouched.
+
+The detailed source/history trace, exact commands, hashes, raw and wrapper
+outputs, repair, limitations, and reopen conditions are in
+`agent-journal/database-semantics-differential.md`. The selected exact cell
+is excluded; the goal remains active for distinct batch, snapshot, WAL,
+comparator, corruption, and alternate-backend cells. The next queue remains
+`74,77,81,82,84,87,89,95,97`.
