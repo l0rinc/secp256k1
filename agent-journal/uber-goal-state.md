@@ -875,3 +875,38 @@ until a BIP/Core contract decision or a real duplicate-slot caller appears.
 The audit branch remains the only modified worktree, with the journal commit
 pending. The next queue is `52,53,72,74,77,81,82,84,87,89,95,97`, excluding the
 completed duplicate-participant cell while retaining other goal-84 cells.
+
+The sixty-first controller cycle selected catalog goal `72`,
+`filesystem-crash-consistency`, with draw seed `435702422` over the 12-entry
+eligible pool `52,53,72,74,77,81,82,84,87,89,95,97`; index 2 selected goal
+72. The distinct hypothesis was that current Core logs and ignores a failed
+active block-file durability operation in `Chainstate::FlushStateToDisk`,
+then calls `WriteBlockIndexDB`, allowing block-index metadata to be published
+after the block or undo file did not successfully flush. The source trace
+covered `src/validation.cpp:2899-2919`,
+`src/node/blockstorage.cpp:797-809`, and
+`src/util/fs_helpers.cpp:108-137`. Historical commit
+`f0207e00303a1030eca795ede231e3c0d94df061` explicitly identified the same
+ordering concern and left the current caller TODO unresolved.
+
+A disposable clean-Core Release build completed all `543/543` Ninja steps.
+A temporary chainstate test plus a Linux `LD_PRELOAD` interposer returned
+`EIO` from `fdatasync`/`fsync` for active `blocks/blk*.dat` files. On current
+master the focused test failed because `FlushStateToDisk` returned true after
+the injected failure; the interposer log contained `fdatasync fd=6`. The
+smallest disposable repair returned `FatalError` before `WriteBlockIndexDB`.
+The repaired no-fault `chainstate_write_tests` suite passed all 3 cases, and
+the identical injected focused test passed its 1 case with the expected fatal
+diagnostics. The production/test repair is disposable commit `3c2d36f1ab`,
+`validation: stop after block file flush failure`.
+
+This is a confirmed Medium local crash-consistency/integrity defect: after a
+real crash, index metadata can refer to block data that was not durable. It
+does not meet the High/Critical gates because no invalid-block acceptance,
+consensus divergence, key/funds/privacy loss, or remote primitive was shown.
+Existing tests did not inject block-file `EIO` and assert the publication
+ordering. The per-goal evidence, exact commands, caller scope, limitations,
+and reopen conditions are in `agent-journal/filesystem-crash-consistency.md`.
+No protected Core or libsecp256k1 file changed. The next queue is
+`52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact active-block
+flush-ordering cell while retaining other goal-72 durable-boundary cells.
