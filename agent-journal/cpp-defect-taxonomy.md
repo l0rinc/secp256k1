@@ -584,3 +584,121 @@ this exact `BitcoinUnit::operator>>` cell from future Goal97 scans; retain
 other format mismatches, checked arithmetic, iterator invalidation, error
 cleanup, data race, deadlock, and resource-lifetime cells. The next cycle
 must select a different subsystem or defect shape.
+
+## Cycle 112
+
+### Cell and hypothesis
+
+This cycle selected the C/C++ **iterator invalidation / deferred error-cleanup**
+class in Bitcoin Core's wallet transaction-removal path. The fresh hypothesis
+was that `CWallet::RemoveTxs` captures one `mapWallet` iterator for every
+element of its input vector, then erases those entries later from a transaction
+commit callback. If a valid transaction ID appears twice, both elements hold
+the same iterator; the first callback iteration invalidates it and the second
+iteration dereferences freed storage.
+
+The trust boundary is the public `CWallet::RemoveTxs(std::vector<Txid>&)` API
+and its overload accepting a `WalletBatch`. Its header comment says only that
+it erases the provided transactions and does not state that the vector must be
+unique. The current RPC caller `removeprunedfunds` supplies one ID, while
+`ApplyMigrationData` builds its list by walking `wtxOrdered`, so those current
+callers are unique by construction. This is therefore a local C++ API and
+integration correctness defect, not a remote or consensus claim. The valid
+duplicate vector is nevertheless directly reachable by any in-process caller
+of the public method and is a natural input for cleanup code that is expected
+to be idempotent.
+
+Source tracing found the iterator capture at `src/wallet/wallet.cpp:2447-2458`
+and the deferred callback at `:2461-2483`. History showed the batch/callback
+conversion in commit `aacaaaa0d3`; the existing `wallet_tests/RemoveTxs` test
+covered only one ID and did not exercise duplicate input. The protected
+Bitcoin Core checkout was used only for read-only tracing and retained its
+pre-existing `src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log`
+paths.
+
+### Independent reproduction
+
+In disposable current-HEAD Core worktree `/tmp/bitcoin-goal97-112` at base
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, the existing wallet regression
+fixture was changed only from
+`std::vector<Txid> vHashIn{block_hash}` to
+`std::vector<Txid> vHashIn{block_hash, block_hash}`. The Debug test target was
+configured and built with:
+
+```text
+cmake -S /tmp/bitcoin-goal97-112 -B /tmp/bitcoin-goal97-112-build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -DBUILD_GUI=OFF -DBUILD_DAEMON=ON -DWITH_BDB=OFF -DWITH_SQLITE=ON
+cmake --build /tmp/bitcoin-goal97-112-build --target test_bitcoin -j2
+/tmp/bitcoin-goal97-112-build/bin/test_bitcoin --run_test=wallet_tests/RemoveTxs --log_level=all
+```
+
+Before the repair, the test reached the production commit callback and
+terminated with:
+
+```text
+unknown location(0): fatal error: in "wallet_tests/RemoveTxs": signal: SIGSEGV, si_code: 128 (memory access violation at address: 0x0)
+```
+
+An independent Valgrind Memcheck run against the same pre-repair binary used:
+
+```text
+valgrind --tool=memcheck --track-origins=yes --error-exitcode=99 /tmp/bitcoin-goal97-112-build/bin/test_bitcoin --run_test=wallet_tests/RemoveTxs --log_level=message
+```
+
+It exited 99 and reported the first invalid read in
+`CWallet::RemoveTxs` at `wallet.cpp:2464`, with the 384-byte `mapWallet` node
+already freed by `mapWallet.erase` at `wallet.cpp:2478`. The trace went through
+`WalletBatch::TxnCommit`, `RunWithinTxn`, and the exact `wallet_tests/RemoveTxs`
+call. Memcheck reported 29 errors from 26 contexts before the test's memory
+access violation. This independently verifies iterator use-after-erase rather
+than merely observing a test assertion or a missing expected result.
+
+### Repair and verification
+
+Disposable Core commit `7ae90083f4` (`fix: make wallet transaction removal
+idempotent`), authored as `Lőrinc <pap.lorinc@gmail.com>`, adds an
+`unordered_set<Txid, SaltedTxidHasher>` to skip repeated IDs before capturing
+iterators. It keeps the smallest behavior-preserving contract: duplicate
+requests remove the transaction once and succeed, while unknown IDs and
+database failures retain their existing error paths. The duplicate regression
+input remains in `wallet_tests/RemoveTxs`.
+
+After the repair, the rebuilt focused test passed:
+
+```text
+/tmp/bitcoin-goal97-112-build/bin/test_bitcoin --run_test=wallet_tests/RemoveTxs --log_level=message
+*** No errors detected
+Running 1 test case...
+```
+
+The full 14-case wallet suite also passed after the repair:
+
+```text
+/tmp/bitcoin-goal97-112-build/bin/test_bitcoin --run_test=wallet_tests --log_level=message
+*** No errors detected
+Running 14 test cases...
+```
+
+The disposable fix commit is clean and has both author and committer set to
+`Lőrinc <pap.lorinc@gmail.com>`. `git diff --check` passed. The protected Core
+checkout was never edited and still has exactly its three pre-existing dirty
+paths.
+
+### Verdict and limits
+
+Verdict: **confirmed and repaired in a disposable validation worktree**. A
+valid duplicate transaction ID caused a deferred cleanup callback to read and
+erase an invalidated `unordered_map` iterator, producing a reproducible
+use-after-free and process crash. The fix makes the API idempotent before
+iterator capture. The evidence does not establish a remote attacker path or
+show that current RPC/migration callers can generate duplicates; those paths
+remain unique in the inspected source. It also does not cover concurrent
+wallet callers, database commit failures after listener registration, or
+non-duplicate iterator invalidation patterns. Keep those as separate future
+hypotheses rather than inflating this finding.
+
+Goal97 coverage now includes this distinct wallet iterator/use-after-erase cell
+as confirmed/repaired, in addition to the prior DataStream warning, hsort
+arithmetic, ASMap lifetime, malformed coins cursor key, and Qt invalid-enum
+cells. Exclude this exact `CWallet::RemoveTxs` duplicate-ID cell from future
+scans; retain other iterator, error-cleanup, data-race, deadlock,
+resource-lifetime, format-mismatch, and checked-arithmetic cells.

@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 89 (`bitcoin-p2p-accounting`)
+- Current status: active rotating cycle goal 84 (`secp-nonce-session`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,11 +19,11 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `12233973803523494861`
-- Latest eligible pool: `77 81 82 84 87 89 95 97`
-- Latest selected index: `5`
-- Latest draw: `89`
-- Latest draw timestamp: `2026-07-28T12:49:31Z`
+- Latest draw seed: `1104874022`
+- Latest eligible pool: `77 82 84 87 95`
+- Latest selected index: `2`
+- Latest draw: `84`
+- Latest draw timestamp: `2026-07-28T17:18:33Z`
 - Previous draw seed: `10788815325715498911`
 - Previous eligible pool: `77 81 82 87 95 97`
 - Previous selected index: `3`
@@ -57,22 +57,23 @@
 - Previous current selected index: `1`
 - Previous current draw: `81`
 - Previous current draw timestamp: `2026-07-28T12:35:56Z`
-- Current draw seed: `12233973803523494861`
-- Current eligible pool: `77 81 82 84 87 89 95 97`
-- Current selected index: `5`
-- Current draw: `89`
-- Current draw timestamp: `2026-07-28T12:49:31Z`
+- Current draw seed: `1104874022`
+- Current eligible pool: `77 82 84 87 95`
+- Current selected index: `2`
+- Current draw: `84`
+- Current draw timestamp: `2026-07-28T17:18:33Z`
 
 ## Selection rules
 
-The current selected cycle is goal 89 (bitcoin-p2p-accounting), drawn with seed
-12233973803523494861 from pool 77 81 82 84 87 89 95 97 at index 5. Goal97
-remains pending for distinct C/C++ defect classes; its hsort index/stride cell is
-excluded from immediate rediscovery. The completed Goal82 cycle remains
-pending for distinct field/scalar representation cells; its normalized
-comparison cell is excluded from immediate rediscovery. Goal81 remains pending
-for future-specification cells; its annex/hash-type, BIP342 code-separator,
-and BIP341 vector-provenance cells remain excluded.
+The current selected cycle is goal 84 (secp-nonce-session), drawn with seed
+1104874022 from pool 77 82 84 87 95 at index 2. Goal97 remains pending for
+distinct C/C++ defect classes; its hsort index/stride, malformed coins cursor,
+Qt invalid-enum, and wallet duplicate-ID cells are excluded from immediate
+rediscovery. Goal82 remains pending for distinct field/scalar representation
+cells; its normalized comparison and multiplier-domain cells are excluded from
+immediate rediscovery. Goal81 remains pending for future-specification cells;
+its annex/hash-type, BIP342 code-separator, and BIP341 vector-provenance cells
+remain excluded.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -85,12 +86,12 @@ and BIP341 vector-provenance cells remain excluded.
 
 ## Goal ledger
 
-Goal 89 is the active cycle for distinct transport, permission, partial-I/O,
-shutdown, and accounting cells. Its outbound transaction-inventory queue
-admission cell is excluded from immediate rediscovery.
+Goal 84 is the active cycle for distinct nonce, signing, Schnorr, MuSig, and
+session-state cells. Its previously checked nonce-retry and session-cleanup
+cells remain excluded from immediate rediscovery.
 
 Goals `0` through `48` and `50` through `60`, plus `62` through `72`, `74`
-through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; the immediate draw pool is now `77 81 82 84 87 89 95 97` after the Goal95 WAL cell exclusion. Goal `61` is
+through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; the immediate draw pool is now `77 82 84 87 95` after the Goal97 wallet duplicate-ID cell exclusion. Goal `61` is
 `exhausted` for its bounded stateful-fuzzer cycle. Goal
 `78` is `exhausted` for the completed scalar compiler/representation helper
 queue, with its journal at `agent-journal/translation-validation.md`; reopen
@@ -105,7 +106,7 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 89. The exact annex/hash-type, BIP342 code-separator,
+rotating cycle is goal 84. The exact annex/hash-type, BIP342 code-separator,
 and BIP341 vector-provenance cells of goal 81 and the
 exact unbroadcast-memory cell of goal 87 are
 excluded from immediate rediscovery. Goal87's remaining package, RBF, graph,
@@ -1978,3 +1979,34 @@ at `2026-07-28T16:47:05Z`. Goal97 must choose a different C/C++ defect class
 and subsystem from all five closed cells, use semantic reachability and an
 independent proof, and leave an exact handoff even if the candidate is
 dismissed. Do not repeat the Goal82 field multiplier cell.
+
+## Cycle 112 Summary
+
+Goal `97`, `cpp-defect-taxonomy`, confirmed and repaired a fresh wallet
+iterator invalidation/use-after-erase defect in disposable Bitcoin Core
+worktree commit `7ae90083f4`, authored as `Lőrinc <pap.lorinc@gmail.com>`. The
+public `CWallet::RemoveTxs` API captured the same `mapWallet` iterator twice
+when given a duplicate transaction ID, then its deferred commit callback
+erased the map entry on the first pass and dereferenced the freed iterator on
+the second. The focused duplicate-input test failed before repair with
+`SIGSEGV`; an independent Valgrind Memcheck run reported the first invalid read
+at `wallet.cpp:2464` after the node was freed by `mapWallet.erase` at
+`:2478`. The repair deduplicates IDs before iterator capture, preserving
+idempotent cleanup. The focused test and all 14 `wallet_tests` cases passed
+after repair, and `git diff --check` passed. The protected Bitcoin checkout was
+not modified and retains exactly its three pre-existing dirty paths. Full
+evidence is in `agent-journal/cpp-defect-taxonomy.md` Cycle 112.
+
+Verdict: **confirmed and repaired in a disposable validation worktree**.
+Exclude this exact `CWallet::RemoveTxs` duplicate-ID cell from future Goal97
+scans. Goal97 remains pending for other C++ defect classes and subsystems; no
+remote or consensus impact was claimed.
+
+## Cycle 113 Selection
+
+The controller drew Goal `84`, `secp-nonce-session`, with random seed
+`1104874022`, index `2`, from the eligible pool `77 82 84 87 95`, at
+`2026-07-28T17:18:33Z`. Goal84 must choose a fresh nonce, signing, Schnorr,
+MuSig, ECDH, or session-state cell, excluding its prior nonce-retry and
+session-cleanup evidence. It must use an independent oracle or state-machine
+check where practical and must not repeat Goal82 or Goal97's closed cells.
