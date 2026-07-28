@@ -444,6 +444,8 @@ The thirty-seventh cycle continued catalog goal `49`, `critical-history-sweep`, 
 
 The thirty-eighth controller cycle continued catalog goal `49` with draw seed `3611919104` and selected historical seed `8479eafa5720421d4b7f4b524a35e0a7edf291c7`, the MuSig counter-nonce secret cleanup fix. The prior-finding ledger at `src/fuzz/README.md:4095-4131` is an exact duplicate: it covers the same `keypair_load` failure, the same `nonce_gen_counter` path, and the same zeroized-output contract, with current fuzzer helpers for invalid caches and both partial keypair halves. Current `session_impl.h` already clears the derived secret after every reachable internal return. The candidate was deduplicated and dismissed without new source changes; the next draw must use `c6306238`, `d7125e51`, `89a54b5a`, or another unindexed critical history seed. Full evidence is in `agent-journal/critical-history-sweep.md`.
 
+The thirty-ninth controller cycle continued catalog goal `49` with draw seed `198155241` and selected merge seed `c63062380f9610084409ac445af723a057a90f6b`. The commit only adds and registers an exhaustive ECDH test for commutativity and an independent hash calculation; it changes no production code or API contract. The current tree already contains the helper and registration, so the seed was excluded as non-defect/test-only history without a reproduction or source change. The next draw must prefer `d7125e51`, `89a54b5a`, or a higher-risk unindexed historical fix. Full evidence is in `agent-journal/critical-history-sweep.md`.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

@@ -287,6 +287,41 @@ Redraw from `c6306238 d7125e51 89a54b5a` and the broader critical-fix queue,
 requiring a current caller and a mechanism not already indexed by the fuzz
 README or existing journals.
 
+## Cycle 4: exhaustive ECDH test-only history seed
+
+### Selection and scope
+
+The next draw used seed `198155241` over `c6306238 d7125e51 89a54b5a`,
+selecting index 0: merge commit
+`c63062380f9610084409ac445af723a057a90f6b`, “Merge
+bitcoin-core/secp256k1#1852: Add exhaustive test for ECDH module”. Its only
+changes add `src/modules/ecdh/tests_exhaustive_impl.h` and register that test
+in `src/tests_exhaustive.c`; the test enumerates reduced-order key pairs,
+checks ECDH commutativity, and compares the default hash result with a direct
+calculation.
+
+This is a test-coverage addition rather than a historical production defect
+fix. The current tree contains the same exhaustive helper and ECDH module
+registration, and the source diff has no parser, arithmetic, state, cleanup,
+or API behavior change to carry into a current trust-boundary hypothesis. The
+historical test's purpose is to detect future ECDH regressions, not to document
+a known invalid acceptance or security incident. Running it would therefore
+re-prove existing coverage rather than validate a must-fix candidate.
+
+### Verdict
+
+**Excluded as non-defect/test-only history.** No independent production
+reproduction, mutation, or source change is justified for this commit. It is
+retained in the campaign ledger only so later history sampling does not treat
+test additions as critical findings.
+
+### Next history slice
+
+Redraw from `d7125e51` and `89a54b5a` only if their diffs indicate a real
+behavioral defect; otherwise move to the broader high-risk history queue,
+prioritizing parser, scalar-bound, secret-handling, and remotely reachable
+protocol fixes not already indexed in `src/fuzz/README.md`.
+
 ## Handoff
 
 Verify the current worktree, remotes, history range, existing findings, and
