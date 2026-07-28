@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 97 (`cpp-defect-taxonomy`)
+- Current status: active rotating cycle goal 82 (`secp-field-scalar-matrix`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,10 +19,10 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `10507514901928514153`
+- Latest draw seed: `585213204`
 - Latest eligible pool: `74 77 81 82 84 87 89 95 97`
-- Latest selected index: `8`
-- Latest draw: `97`
+- Latest selected index: `3`
+- Latest draw: `82`
 - Latest draw timestamp: `2026-07-28`
 
 ## Selection rules
@@ -1355,3 +1355,37 @@ output, limitations, and reopen conditions are in
 The next queue is `74,77,81,82,84,87,89,95,97`, excluding this DataStream
 warning cell and the completed goal-74 wallet and goal-77 VarInt/CompactSize/
 SHA cells.
+
+## Cycle 76 Summary
+
+Cycle 76 selected goal `82`, `secp-field-scalar-matrix`, with draw seed
+`585213204`, index `3`, from `74 77 81 82 84 87 89 95 97`. The distinct
+hypothesis was a wrong-word, out-of-bounds, or backend/compiler-dependent
+result in `secp256k1_fe_storage_cmov`: native 5x52 uses four 64-bit words and
+an xor mask, while forced 10x26 uses eight 32-bit words and complementary
+and/or masks. The exact self-alias case was included; unsupported partial
+overlap was not treated as a bug.
+
+The independent scratch harness
+`/tmp/goal82-storage-cmov.c` (SHA-256
+`6524cbe2a2f4fea6f16bc1d500e06663470386f6a70fd02e680c51731059284b`)
+checked 20,000 deterministic arbitrary-storage pairs for both flags, full
+byte output, exact aliasing, and canary preservation. Clang 22.1.7 and GCC
+16.1.0 native and forced-int64 ASan/UBSan VERIFY builds passed at O0/O2/O3/Os
+with identical `ok pairs=20000 digest=53424292715b02f4`. Native and forced
+Clang/GCC LTO controls matched. An output-byte mutation failed immediately
+in both backend controls. x86_64 O2 and Clang AArch64 O2 helper disassembly
+showed mask arithmetic without conditional or loop branches.
+
+Clang Debug CMake controls with assembly disabled passed `cmov_tests` and the
+`ecmult_gen_ge`/`ecmult_gen_blind` storage consumers in both VERIFY and
+no-VERIFY native and forced-int64 builds. All disposable artifacts were
+removed and no relevant process remains.
+
+Verdict: **dismissed**. No backend mismatch, invalid write, undefined
+behavior, flag-dependent branch, or reachable current-master defect was
+found; no production source change is justified. Runtime AArch64/GCC-AArch64,
+big-endian, 32-bit, MSVC, and formal timing evidence remain unavailable.
+The exact storage-cmov cell is excluded, while malformed-storage validation,
+other field arithmetic, and new architecture/backend cells remain eligible.
+The selected-goal journal is `agent-journal/secp-field-scalar-matrix.md`.
