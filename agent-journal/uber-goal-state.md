@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 77 (`symbolic-model-checking`)
+- Current status: active rotating cycle goal 97 (`cpp-defect-taxonomy`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,10 +19,10 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `7234767300004701769`
+- Latest draw seed: `10507514901928514153`
 - Latest eligible pool: `74 77 81 82 84 87 89 95 97`
-- Latest selected index: `1`
-- Latest draw: `77`
+- Latest selected index: `8`
+- Latest draw: `97`
 - Latest draw timestamp: `2026-07-28`
 
 ## Selection rules
@@ -1298,7 +1298,7 @@ commands, outputs, limitations, and reopen conditions are in
 The next queue is `74,77,81,82,84,87,89,95,97`, with this exact wallet corpus
 cell excluded.
 
-## Latest Cycle
+## Cycle 74 Summary
 
 Cycle 74 selected goal `77`, `symbolic-model-checking`, with draw seed
 `7234767300004701769`, index `1`, from `74 77 81 82 84 87 89 95 97`. The
@@ -1328,3 +1328,30 @@ SHA-256 cells. Detailed evidence is in
 
 The next queue is `74,77,81,82,84,87,89,95,97`, with the exact goal-77 VarInt,
 CompactSize, and SHA-256 cells excluded.
+
+## Latest Cycle
+
+Cycle 75 selected goal `97`, `cpp-defect-taxonomy`, with draw seed
+`10507514901928514153`, index `8`, from `74 77 81 82 84 87 89 95 97`. The
+distinct hypothesis was that GCC 16.1.0's sanitizer/inlining warning in
+Core's one-byte `ser_writedata8` and `DataStream::write` path represented an
+actual bounds or lifetime defect.
+
+Standard-library and custom zero-after-free allocator reductions passed under
+GCC/Clang ASan/UBSan. The exact DataStream probe executed cleanly under ASan,
+UBSan, and Clang warnings-as-errors; GCC emitted `-Warray-bounds` only in the
+sanitizer/inlined form. The same GCC path was warning-free with
+`-Werror=array-bounds` in a non-sanitized Release-style compile. A disposable
+GCC CMake `CMAKE_COMPILE_WARNING_AS_ERROR=ON` build passed all serialization and
+node objects before stopping at an unrelated Boost.MultiIndex warning in
+`txmempool.cpp`; no DataStream warning was emitted there.
+
+Verdict: **dismissed** as a GCC false-positive diagnostic, with no current
+Core source change. The Boost warning remains a separate compiler/dependency
+lead. Detailed source/history evidence, reduction hashes, commands, build
+output, limitations, and reopen conditions are in
+`agent-journal/cpp-defect-taxonomy.md`.
+
+The next queue is `74,77,81,82,84,87,89,95,97`, excluding this DataStream
+warning cell and the completed goal-74 wallet and goal-77 VarInt/CompactSize/
+SHA cells.
