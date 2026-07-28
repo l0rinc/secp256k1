@@ -584,3 +584,19 @@ historical hardening with no source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the next draw must exclude this
 oversized-secret/public-key creation family and select `d907ebc0` or a fresh
 unindexed production-impact history seed after duplicate search.
+
+The fiftieth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `1785203785` over the remaining
+one-entry pool `d907ebc0`, selecting
+`d907ebc0e386ea17a96d34cd3008be9207b6f94f`, the historical field-setter
+bounds fix. The true parent `bb2cd94e` accepted a compressed `x = p + 1`
+wire coordinate and decompressed it to the same point as valid `x = 1`; the
+fix rejected it. Current native/forced-int64 direct probes, field-boundary
+tests, and SEC1 parser corpus inputs rejected `p + 1` and exited 0. Existing
+README mutation evidence already covers this modular-aliasing contract, and
+Bitcoin Core parses public keys before verification, decompression, derivation,
+and MuSig use. Its dirty checkout remained untouched. The seed is dismissed
+as already-covered historical hardening with no source change. Full evidence
+is in `agent-journal/critical-history-sweep.md`; the next draw must exclude
+the field-setter, `p + 1`, modular-aliasing, and SEC1 parser family and choose
+a fresh unindexed production-impact history seed after duplicate search.

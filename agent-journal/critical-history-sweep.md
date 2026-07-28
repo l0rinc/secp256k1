@@ -1274,6 +1274,151 @@ The next draw must exclude `bbe67d8b` and its direct infinity-serialization
 family. Continue from the remaining widened pool or add a fresh unindexed
 production-impact history seed after duplicate search.
 
+## Cycle 15: historical field-setter bounds and public-key aliasing
+
+### Selection and provenance
+
+The fiftieth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `673cbbf8` on branch
+`codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Duplicate search covered the
+critical-history journal, the current source, `src/fuzz/README.md`, history,
+and the Bitcoin Core caller tree. The remaining exact unchecked entry from
+the previous queue was:
+
+```text
+d907ebc0e386ea17a96d34cd3008be9207b6f94f
+```
+
+Random seed `1785203785` selected index `0`. The selected commit is dated
+2014-11-24 with subject `Add bounds checking to field element setters`; its
+direct parent is `bb2cd94e09f178159ee7d7e7b61ac9963ec22360`, not the later
+descendant `3b7ea633`. The patch changes field setters from silent modular
+reduction to a checked return value and threads rejection through compressed
+and uncompressed SEC1 parsing, ECDSA recovery, generator setup, and internal
+tests.
+
+The exact historical hash was not previously journaled, but the semantic
+contract is already represented by current field and SEC1 parser campaigns:
+`src/fuzz/README.md:30445-30453` records a modular-reduction mutation killed by
+the `field_p + 1` fixture, and `:41641` records the same noncanonical opaque
+state boundary. This cycle retained the historical seed long enough to
+independently reproduce the parent/fix behavior, then classified it as a
+duplicate rather than a new current finding.
+
+### Historical parent/fix reproduction
+
+Disposable worktrees `/tmp/critical-history-53/old-field-parent` at
+`bb2cd94e` and `/tmp/critical-history-53/old-field-fixed` at `d907ebc0` were
+built separately with:
+
+```sh
+./autogen.sh
+./configure --disable-tests --disable-benchmark
+make -j2
+```
+
+Both builds exited `0`, with only expected legacy autoconf/automake and old
+compiler warnings. A standalone probe used a compressed SEC1 key with
+`x = p + 1`, where the point equation's modulo-`p` image is the valid even
+point with `x = 1`, plus the valid `x = 1` control. Each probe was compiled
+and run with:
+
+```sh
+gcc -O0 -g -I. -Iinclude field_probe.c .libs/libsecp256k1.a -lgmp -o field_probe
+./field_probe
+```
+
+The true historical parent printed:
+
+```text
+field_overflow verify=1 valid_verify=1 decompress=1 len=65
+valid_decompress=1 valid_len=65 same_as_valid=1
+failed_output_zero=0
+```
+
+The selected fix printed:
+
+```text
+field_overflow verify=0 valid_verify=1 decompress=0 len=33
+valid_decompress=1 valid_len=65 same_as_valid=0
+failed_output_zero=0
+```
+
+The parent accepted the out-of-range wire coordinate, reduced it to `x = 1`,
+and decompressed the same point as the valid control. The fix rejected the
+input and left the decompression buffer unchanged at its compressed 33-byte
+form. The `failed_output_zero=0` result is expected for this old API and is
+not used as a cleanup claim; the decisive evidence is acceptance versus
+rejection and the parent/control alias equality.
+
+### Current implementation and controls
+
+Current `src/eckey_impl.h:18-32` uses `secp256k1_fe_set_b32_limit` for both
+compressed and uncompressed coordinates, so values at or above `p` fail
+before point construction. Current `src/secp256k1.c:300-314` clears the
+opaque output before parsing, returns failure for the rejected point, and
+saves only a successfully validated point.
+
+The direct modern probe linked against both
+`/mnt/my_storage/secp256k1-build/oracles-next-int64/lib` and
+`/mnt/my_storage/secp256k1-build/current-full-native-20260726/lib` and
+printed exactly on both:
+
+```text
+field_overflow ret=0 valid_ret=1 output_zero=1
+```
+
+The focused unit tests passed in both builds:
+
+```sh
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=field_be32_overflow --iterations=2 --seed=1785203785
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=field_be32_overflow --iterations=2 --seed=1785203785
+```
+
+The deterministic `set-b32-limit-boundaries` field corpus replay exited `0`
+on native ASan/UBSan and forced-int64. The
+`api_roundtrip/compressed-pubkey-parse-boundaries` replay also exited `0` on
+both builds. These were fixed-input corpus replays, not claims of open-ended
+fuzzing; no sanitizer, fuzz, daemon, or profiling process remained.
+
+### Bitcoin Core caller audit
+
+The surveyed `/mnt/my_storage/bitcoin` checkout remained dirty and was not
+modified. `CPubKey::Verify` at `src/pubkey.cpp:283-298`, `IsFullyValid` at
+`320-325`, `Decompress` at `327-338`, and public derivation at `341-362`
+parse serialized keys through libsecp before using or serializing the point.
+MuSig2 aggregation and signing paths at `src/musig.cpp:16-39`, `141-143`,
+`193-199`, and `281-289` likewise reject parse failure and return false or
+`std::nullopt`. A `CPubKey` can retain length-valid but mathematically invalid
+bytes until one of these checks, but the old modulo-aliasing behavior is not
+available through the current libsecp parser.
+
+The checkout still contains unrelated `M src/test/blockencodings_tests.cpp`
+and untracked `fuzz-0.log`/`fuzz-1.log` files; none were touched. No direct
+Bitcoin Core test was run because cleaning or modifying that checkout would
+cross the campaign's workspace boundary.
+
+### Verdict
+
+**Dismissed as already-covered historical hardening.** The parent accepted a
+noncanonical field coordinate and aliased it to a valid public key, while the
+selected fix rejected it. Current field-limit checks, direct parser probes,
+unit boundaries, the existing modular-reduction mutation oracle, and focused
+fuzz corpora all enforce the repaired contract. No current consensus,
+cryptographic, memory-safety, or remotely reachable Bitcoin Core defect was
+found, so no production source change is justified.
+
+### Limitations and handoff
+
+The historical builds used the 2014 GMP-backed API; current controls used
+native ASan/UBSan and forced-int64 libraries. The current Core audit was
+static because its checkout is intentionally dirty. The historical worktrees
+and probe sources are disposable and must be removed after this entry is
+committed. The next draw must exclude the field-setter, `p + 1`, modular
+aliasing, and SEC1 parser family, then choose a fresh unindexed
+production-impact history seed after duplicate search.
+
 ## Cycle 13: historical tweak failure-output consistency
 
 ### Selection and provenance
