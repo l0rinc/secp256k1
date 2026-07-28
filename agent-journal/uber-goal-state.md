@@ -1704,3 +1704,31 @@ The controller drew goal `87`, `bitcoin-mempool-accounting`, with seed
 at `2026-07-28T13:03:27Z`. Exclude Goal89's completed split-read responder
 cell and the prior outbound-inventory queue cell. The next cycle must choose a
 distinct Goal87 package, replacement, eviction, or accounting hypothesis.
+
+## Cycle 102 Summary
+
+Goal `87`, `bitcoin-mempool-accounting`, completed a bounded package/RBF/graph
+state-preservation cell. The focused `mempool_tests`, `txpackage_tests`, and
+`rbf_tests` suites passed 18 cases with `*** No errors detected`. The TxGraph
+model fuzzer completed 10,000 non-sanitized runs with no invariant failure; the
+existing `tx_package_eval`, `ephemeral_package_eval`, and `package_rbf` corpora
+completed 2,116, 1,672, and 1,000 executions respectively without failure. An
+ASan/UBSan replay of all 2,115 `tx_package_eval` corpus files completed 2,117
+executions without a diagnostic. No stale graph reference, invalid removal
+closure, fee-diagram mismatch, or package staging mutation was shown.
+
+Verdict: **dismissed** for this exact Goal87 cell, with no protected Core
+source change or repair commit. The earlier `m_unbroadcast_txids`
+dynamic-memory omission remains a confirmed Goal87 finding and is excluded
+from rediscovery until storage permits a disposable source-fix validation.
+Details and exact commands are in
+`agent-journal/bitcoin-mempool-accounting.md`.
+
+## Cycle 103 Selection
+
+The controller drew goal `81`, `spec-vector-drift`, with seed
+`8445943498763641849`, index `1`, from the post-Goal87 eligible pool
+`77 81 82 84 95 97`, at `2026-07-28T13:16:49Z`. Goal81's completed BIP341
+provenance, BIP342 code-separator, and annex/hash-type cells remain excluded;
+the next cycle must choose a distinct specification, vector, or formal-model
+drift hypothesis.

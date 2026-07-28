@@ -148,3 +148,119 @@ a disposable Core worktree, then run the focused mempool/package/RBF suites.
 If that passes, commit the source fix separately from this journal; otherwise
 retain this finding as a report-ready accounting defect and continue with the
 next distinct Goal 87 cell.
+
+## Cycle 82
+
+Status: dismissed for the bounded package, replacement, graph, and eviction
+state-preservation cell. The earlier `m_unbroadcast_txids` dynamic-memory
+finding remains confirmed; no protected Bitcoin Core source change was made.
+Goal 87 remains pending for independent eviction accounting, reorg symmetry,
+expiry cleanup, package fee deltas, and newly exposed cluster-limit paths.
+
+Controller cycle: 102.
+
+Repository state:
+
+- Audit worktree: `/tmp/secp256k1-oracles-next`, branch `codex/fuzz-oracles`,
+  clean after commit `905b68e2`.
+- Protected Core: `/mnt/my_storage/bitcoin`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, unchanged apart from its
+  pre-existing `M src/test/blockencodings_tests.cpp`, `?? fuzz-0.log`, and
+  `?? fuzz-1.log`.
+- Temporary test data used `/mnt/my_storage` because `/tmp` was full. No test,
+  fuzz, or daemon process remained at handoff.
+
+Hypothesis and trust boundary:
+
+Package acceptance, package RBF staging, or TxGraph trimming may leave the
+main mempool graph, fee diagram, removal set, or outpoint bookkeeping changed
+after a rejected or partially applicable operation. The trust boundary is a
+local package/RBF caller and the policy-only cluster-limit machinery. A
+failure would be a local correctness/accounting defect, not a consensus claim.
+
+Source and oracle trace:
+
+- `CTxMemPool::ChangeSet` starts TxGraph staging, stages removals/additions,
+  and its destructor aborts un-applied staging in `src/txmempool.h:595-635`.
+- `src/txgraph.cpp:2626-2679` marks staged locators missing and restores the
+  main graph on abort; `CommitStaging()` applies removals before moving staged
+  clusters to main.
+- The package evaluator asserts its acceptance result and then runs the
+  relevant mempool invariants at `src/test/fuzz/package_eval.cpp:534-555`.
+- The independent TxGraph model fuzzer compares counts, existence, ancestry,
+  descendants, clusters, diagrams, block-builder ordering, worst-chunk
+  removal, trim closure, and final `SanityCheck()` in
+  `src/test/fuzz/txgraph.cpp:575-1388`.
+- Package RBF unit tests check replacement chunk monotonicity and fee
+  diagrams; the focused suite includes `txpackage_tests` and `rbf_tests`.
+
+Independent verification:
+
+1. Focused unit suites, with temporary storage redirected:
+
+   `TMPDIR=/mnt/my_storage/bitcoin-goal87-tmp-mempool ./build/bin/test_bitcoin --run_test=mempool_tests --log_level=message`
+
+   passed 4 cases with `*** No errors detected`. The package/RBF replay:
+
+   `TMPDIR=/mnt/my_storage/bitcoin-goal87-tmp-tests ./build/bin/test_bitcoin --run_test=txpackage_tests,rbf_tests --log_level=test_suite`
+
+   passed 14 cases with `*** No errors detected`.
+
+2. The non-sanitized TxGraph model fuzzer ran
+
+   `FUZZ=txgraph ./build_fuzz_nosan/bin/fuzz -runs=10000 -max_len=4096 -print_final_stats=1`
+
+   to completion: 10,000 runs, coverage `1738`, feature count `3435`, corpus
+   `227/4172b`, average `109` executions/second, peak RSS `1831 MB`, and no
+   assertion or fuzzer failure.
+
+3. Existing package corpora were replayed in the non-sanitized build:
+
+   - `tx_package_eval`: 2,116 executions over 2,115 files, coverage `7158`,
+     features `40612`, peak RSS `1832 MB`, no failure.
+   - `ephemeral_package_eval`: 1,672 executions over 1,671 files, coverage
+     `6465`, features `40744`, peak RSS `1832 MB`, no failure.
+   - `package_rbf`: 1,000 executions, coverage `2635`, features `14147`, peak
+     RSS `1833 MB`, no failure.
+
+4. The broad `tx_package_eval` corpus was replayed in the ASan/UBSan build:
+
+   `FUZZ=tx_package_eval ./build_fuzz/bin/fuzz /mnt/my_storage/qa-assets/fuzz_corpora/tx_package_eval -runs=1 -max_len=4096 -print_final_stats=1`
+
+   completed 2,117 executions, coverage `14334`, features `84505`, corpus
+   `872/1293Kb`, peak RSS `1833 MB`, with no ASan, UBSan, assertion, or
+   invariant failure.
+
+The corpus inputs were the existing `qa-assets` sets: 2,115
+`tx_package_eval` files (77,567,620 bytes), 1,671 `ephemeral_package_eval`
+files (9,748,246 bytes), and 891 `package_rbf` files (78,899,303 bytes).
+The tested source snapshot was Core `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`;
+the relevant source hashes were `txmempool.cpp`
+`68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651`,
+`txgraph.cpp`
+`6019e0c9ece5c336874f25c6d9805b742c1e7c8103c2478bebc66e8a9a853ae9`, and
+the package/RBF/graph fuzzers
+`58d3bb90571153b0efda8003662755efb55c36bf4620de36a607d6d37d0039be`,
+`e8ce3d97f80ca1d10de79ef666ffedfd5c3e622b3a13a5e168ebe6035a3c2e85`, and
+`3b9a6b85800a39b0a62c23fe910f87e7b2a0bb46963fc54b9e81b2494fde20df`.
+
+Verdict:
+
+Dismissed for this exact package/RBF staging and graph-accounting cell. The
+independent model and production package paths agreed across the exercised
+state space; focused unit suites and the sanitizer replay found no changed
+state, stale graph reference, invalid removal closure, fee-diagram mismatch,
+or resource-accounting assertion. This does not prove all package behavior;
+expiry, reorg reinsertion, unbroadcast accounting, and larger or newly
+generated cluster-limit cases remain separate cells. Exclude this exact
+hypothesis from immediate rediscovery.
+
+Next queue:
+
+- Verify whether `Expire()` and `removeForReorg()` report and remove exactly
+  the same graph closure under shared ancestors, already-missing parents, and
+  repeated timestamps.
+- Recheck the confirmed unbroadcast-memory finding only after storage is
+  available for a disposable source fix and boundary regression test.
+- Continue with eviction fee/accounting and package fee-delta cells if the
+  next expiry/reorg cell is clean.
