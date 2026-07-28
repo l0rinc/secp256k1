@@ -516,3 +516,23 @@ with no source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`. The next draw must exclude this
 secret-key validation family and choose from `ad52495d` or `603c33bc` after a
 fresh duplicate/current-caller search.
+
+The forty-sixth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `830138877` over the ordered
+two-entry pool `ad52495d`, `603c33bc`, selecting
+`603c33bc8079f7e1a4851dbef629a2b91e13bbef`, the 2014 short-signing-buffer
+return fix. A historical parent/fix probe using the old raw-byte signing API
+returned `small_ret=1`/`small_ret=0` respectively for a 10-byte buffer, while
+both returned success for the 72-byte path. Current history later replaced
+that API with opaque signatures; current DER serialization returns failure,
+reports the required length, and zeroes the requested short buffer. The
+current direct probe printed `sign_ret=1 small_ret=0 small_len=70
+small_prefix=00`, and native/forced-int64 ECDSA tests plus focused sanitized
+API-fuzzer inputs exited 0. Bitcoin Core uses the modern API and a fixed
+72-byte DER capacity (`src/key.cpp:215-231`, `src/pubkey.h:39`), so its
+ignored serializer return cannot reach the short-buffer branch under the
+documented bound. The seed is dismissed as obsolete historical API hardening
+with no source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the immediate two-entry pool is
+exhausted and the next draw must widen to a new unindexed production-impact
+history pool.

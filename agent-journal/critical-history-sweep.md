@@ -998,3 +998,147 @@ and choose from:
 ad52495d723648948970850f01a9445d061e85f7
 603c33bc8079f7e1a4851dbef629a2b91e13bbef
 ```
+
+## Cycle 11: historical signing short-buffer return contract
+
+### Selection and provenance
+
+The forty-sixth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `aaf77724` on branch
+`codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The ordered eligible pool was:
+
+```text
+ad52495d723648948970850f01a9445d061e85f7
+603c33bc8079f7e1a4851dbef629a2b91e13bbef
+```
+
+Random seed `830138877` selected index `1` (`830138877 % 2`) and
+`603c33bc8079f7e1a4851dbef629a2b91e13bbef`, parent
+`6d1660663fd72da7d84e32de9606b393bb5edce4`, dated 2014-12-18, subject
+`Make signing fail if a too small buffer is passed`. The patch changed the
+old raw-byte `secp256k1_ecdsa_sign` wrapper to return the DER serializer's
+result instead of returning success from the signing operation alone, and
+added a 10-byte-buffer regression test.
+
+### Historical reproduction
+
+Disposable worktrees `/tmp/critical-history-49/old-sign-parent` and
+`/tmp/critical-history-49/old-sign-fixed` were built with:
+
+```sh
+./autogen.sh
+./configure --disable-tests --disable-benchmark
+make -j2
+```
+
+A shared scratch probe signed the same deterministic message, key `1`, and
+nonce `1` into a 10-byte buffer prefilled with `0xa5`, then repeated with a
+72-byte buffer. It was compiled with:
+
+```sh
+gcc -O0 -g -I. -Iinclude sign_buffer_probe.c .libs/libsecp256k1.a \
+  -lgmp -o sign_buffer_probe
+./sign_buffer_probe
+```
+
+The historical parent printed:
+
+```text
+small_ret=1 small_len=10 small_prefix=a5
+full_ret=1 full_len=70 full_prefix=30
+```
+
+The selected fix printed:
+
+```text
+small_ret=0 small_len=10 small_prefix=a5
+full_ret=1 full_len=70 full_prefix=30
+```
+
+The underlying serializer returns `0` when `*size < 6 + lenS + lenR`, but
+does not write the undersized buffer. The parent ignored that return value,
+so callers received a false success and an unchanged length/buffer. The
+historical test suite had only the successful 72-byte path; the selected
+commit's new 10-byte assertion is the first direct oracle found in that
+history slice. This is a real historical API correctness defect, although
+the immediate result is a false signing success rather than an overwrite.
+
+### Current API boundary and controls
+
+The old raw output API was later replaced. `a9b6595e` introduced explicit
+contexts, and `74a2acdb` added the opaque
+`secp256k1_ecdsa_signature` type, removed the `siglen` output from
+`secp256k1_ecdsa_sign`, and made DER serialization a separate operation. No
+current declaration or implementation contains the old
+`unsigned char *signature, int *signaturelen` signing signature.
+
+Current `src/secp256k1.c:704-722` signs into an opaque signature object.
+Current `src/secp256k1.c:488-512` calls the DER serializer, returns its
+failure result, updates `*outputlen` to the required length, and zeroes the
+caller-provided bytes when the buffer is too small. The public contract at
+`include/secp256k1.h:568-581` documents this behavior. A current public
+probe against the forced-int64 library used the same message/key and printed:
+
+```text
+sign_ret=1 small_ret=0 small_len=70 small_prefix=00
+full_ret=1 full_len=70 full_prefix=30
+```
+
+The current unit test at `src/tests.c:8047-8053` checks the 10-byte failure,
+required-length update, zeroed requested bytes, and subsequent successful
+retry. The reusable fuzzer oracle at `src/fuzz/fuzz.h:183-201` independently
+checks a one-byte-short DER request, the required length, zeroing, and the
+untouched byte immediately beyond the requested range.
+
+Native and forced-int64 current `ecdsa_edge_cases` plus `ecdsa_end_to_end`
+tests both exited `0` with two iterations and seed `830138877`. Focused
+native and forced-int64 ASan/UBSan `fuzz_api_roundtrip` replays of
+`src/fuzz/corpora/api_roundtrip/core-ecdsa-signing-composition` each executed
+one input and exited `0` (106 ms and 174 ms respectively). No sanitizer or
+fuzzer process remained.
+
+### Bitcoin Core caller audit
+
+Current Bitcoin Core does not call the historical raw-byte signing API.
+`src/key.cpp:215-225` calls the modern opaque `secp256k1_ecdsa_sign`, then
+serializes separately. It allocates `CPubKey::SIGNATURE_SIZE` bytes and sets
+the length to that capacity; `src/pubkey.h:39` defines the capacity as 72,
+the maximum DER signature size. It then resizes to the serializer's reported
+length and verifies the opaque signature at `src/key.cpp:227-231`. The Core
+caller does not inspect the serializer return, but its fixed 72-byte capacity
+proves the short-buffer branch is unreachable under the documented DER
+bound, and the later verification is an additional control. Compact signing
+uses its own fixed 65-byte path at `src/key.cpp:249-258`.
+
+The current Core checkout was dirty with unrelated user files and was not
+modified or used for a source patch. There is no current Core caller for the
+removed old API. The old API migration therefore masks the selected history
+site rather than leaving a current false-success path.
+
+### Verdict
+
+**Dismissed as obsolete historical API hardening.** The parent has a real
+false-success contract violation for undersized raw DER signing buffers, and
+the selected commit fixes it. The old entry point was subsequently replaced
+by the opaque-signature API; current serialization returns failure, reports
+the required size, and zeroes the short output. Current native/forced tests,
+the focused sanitized fuzzer input, and the direct public probe all pass.
+No current clean-master defect or source change is justified. Historical
+severity is API correctness and possible malformed-signature propagation,
+not a current consensus, cryptographic, or Bitcoin Core vulnerability.
+
+### Limitations and handoff
+
+The historical probe uses the 2014 API and GMP-backed build; current controls
+use the modern forced-int64 and native libraries. No direct Bitcoin Core test
+was run because its checkout is intentionally dirty and this cycle was scoped
+to the libsecp API migration boundary. The old-sign scratch worktrees and all
+probe sources are disposable and must be removed after this entry is
+committed. No production source change was made.
+
+The two-entry seed pool is now exhausted for this immediate history slice.
+The next draw must widen to an unindexed production-impact history pool after
+searching the finding ledger for duplicate short-buffer, signing, and API
+migration variants. Do not redraw `603c33bc` or `ad52495d` without new caller
+or source evidence.
