@@ -690,3 +690,28 @@ evidence is in agent-journal/critical-history-sweep.md. The next draw must
 exclude this constant-time branch family and the already indexed current
 constant-multiplication oracles, then widen to a fresh unindexed
 production-impact history seed.
+
+The fifty-sixth controller cycle selected catalog goal `92`,
+`abi-alignment-aliasing`, with draw seed `8541954469880052534` over the
+17-entry eligible pool
+`52,53,72,73,74,77,81,82,84,87,88,89,92,93,95,97,98`; index 12 selected
+goal 92. The distinct hypothesis was that x-only/public-key representation
+casts in `src/modules/extrakeys/main_impl.h`, keypair `data[32]` casts, or
+Bitcoin Core's `std::array<unsigned char, 96>` reinterpretation could produce
+an optimized-build aliasing, alignment, or object-lifetime defect. Current
+headers guarantee byte-only 64/96-byte opaque storage, the internal group
+serialization uses `memcpy`, and the source history shows these casts are the
+original intentional representation bridge. Clang and GCC O3/LTO Core-shaped
+probes compared 4096 deterministic keypairs and 4096 successful tweaks with
+no divergence; Clang ASan/UBSan also passed. Current native and forced-int64
+extrakeys tests passed all 7 cases each, and Bitcoin Core's 7 key tests passed.
+A GCC strict-aliasing/cast-alignment build completed without diagnostics at
+the audited sites; host layout probes passed, while -m32 was unavailable due
+missing libc headers. TypeSanitizer produced unrelated field-limb reports
+before these casts could be isolated, and the exact minimal byte-array cast
+passed it. The hypothesis is dismissed as no current defect: no production
+source change is justified. Full evidence is in
+`agent-journal/abi-alignment-aliasing.md`; the next draw excludes goal 92
+until new compiler/ABI evidence appears, along with active goals 49, 61, and
+78, and uses the fresh queue
+`52,53,72,73,74,77,81,82,84,87,88,89,93,95,97,98`.
