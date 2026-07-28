@@ -1170,3 +1170,33 @@ hashes, mutation, limitations, and reopen conditions are in
 `agent-journal/symbolic-model-checking.md`. This is a focused journal-only
 cycle. The next queue retains `74,77,81,82,84,87,89,95,97`, excluding this exact
 CompactSize cell.
+
+## Cycle 70 - goal 74 (`memory-pressure-allocator`)
+
+Draw seed `2229230088` selected index 0 from the distinct-cell pool
+`74,77,81,82,84,87,89,95,97`. The prior goal-74 CCoinsViewCache retained
+capacity and standalone PoolResource cells were excluded. This cycle tested
+whether production-like `tx_pool` state-machine replay retains live Core
+allocations or crosses realistic RSS limits after transaction acceptance,
+block removal/reorg, eviction, expiry, and cleanup.
+
+The release-like fuzzer completed all 5,659 corpus inputs at a 256 MiB limit
+with peak RSS 140 MiB. A deliberate 128 MiB limit failed at 131 MiB after
+5,629 inputs; the artifact was captured and removed. The same replay passed at
+160 MiB with 142 MiB peak, and passed at 160 MiB with `MALLOC_ARENA_MAX=1`
+and `MALLOC_TRIM_THRESHOLD_=131072` at 136 MiB peak. The Core `mempool_tests`
+suite passed all 4 cases.
+
+The default ASan/UBSan replay emitted a 538 MiB RSS-limit diagnostic caused by
+253 MiB of ASan quarantine versus 88 MiB live heap. With
+`ASAN_OPTIONS=quarantine_size_mb=0:detect_leaks=1:halt_on_error=1`, the same
+5,660-run replay completed cleanly at 208 MiB peak with no leak or sanitizer
+diagnostic. No Core source defect was shown.
+
+Verdict: **dismissed**. This is a focused journal-only cycle; no production
+change is justified. The exact source/history trace, binaries, corpus metadata,
+commands, RSS matrix, sanitizer diagnosis, limitations, and reopen conditions
+are in `agent-journal/memory-pressure-allocator.md`. The next queue retains
+goal 74's allocation-failure, wallet/RPC, recovery, and full-node cells,
+followed by `77,81,82,84,87,89,95,97`, excluding this `tx_pool` corpus
+threshold cell.

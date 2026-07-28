@@ -118,3 +118,147 @@ not a repeat of PoolResource lifecycle or CCoinsMap retained-capacity tests.
 Next queue: retain goal `74` for allocation-failure and live workload cells,
 then `77,81,82,84,87,89,95,97`; exclude this CCoinsViewCache retained-chunk
 cell and the already audited standalone PoolResource lifecycle cell.
+
+## Cycle 70
+
+Status: dismissed for the selected `tx_pool` sustained-memory hypothesis.
+
+Controller draw:
+
+- Draw seed: `2229230088`.
+- Eligible pool: `74 77 81 82 84 87 89 95 97`.
+- Selected index: `0`.
+- Selected goal: `74`, `memory-pressure-allocator`.
+- The prior CCoinsViewCache retained-chunk and standalone PoolResource
+  allocator cells remain excluded.
+
+Repository state:
+
+- Audit worktree: `/tmp/secp256k1-oracles-next`, branch
+  `codex/fuzz-oracles`, base `0cb41f2d6108de5999494789b37e508697555f75`.
+- Protected Bitcoin Core: `/mnt/my_storage/bitcoin`, branch
+  `codex/btc-fuzz-oracles`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. It retained only the
+  pre-existing `M src/test/blockencodings_tests.cpp`, `?? fuzz-0.log`, and
+  `?? fuzz-1.log` entries. The temporary `oom-ef48de26b68b84e0fd2222f49a0865c711782537`
+  artifact from the deliberate 128 MiB fuzzer-limit control was removed.
+- Protected secp256k1 remained clean at
+  `e153e2681f7bf1dd74894e2170213e3983030989`.
+- No fuzz, sanitizer, test, daemon, or profiling process remained running
+  after the cycle.
+
+Hypothesis and trust boundary:
+
+The production mempool/transaction-graph workload might retain allocations or
+fragment the allocator across repeated state-machine inputs, making a normal
+bounded mempool workload cross a realistic RSS limit even after each input's
+cleanup. The trust boundary is local Core mempool state exercised by transaction
+and package acceptance, block-template removal/reorg, eviction, expiry, and
+validation callbacks. This is a memory-pressure/allocator hypothesis, not a
+claim about graph accounting; goal 87 retains the separate graph, fee,
+ancestor/descendant, eviction, and recomputation campaign.
+
+Source and history evidence:
+
+- `src/test/fuzz/tx_pool.cpp:70-164` initializes a production-like chain and
+  executes `Finish`, which performs mempool checking, block assembly,
+  remove-for-block, reaccept-after-reorg, recursive removal, `TrimToSize`,
+  expiry, and a final check. `:429-489` drives up to 300 transaction
+  acceptance operations with package and bypass-limit paths.
+- `src/txmempool.cpp:778-781` includes transaction-entry, conflict-map,
+  priority/randomized, txgraph, and contained-transaction usage in
+  `DynamicMemoryUsage()`. `:861-906` evicts worst chunks, optionally copies
+  transactions for `pvNoSpendsRemaining`, removes entries, and releases the
+  temporary vectors. The live caller at `src/validation.cpp:273-287` passes
+  that vector and uncaches the returned outpoints.
+- Blame places the current trim loop at `50830796889` (2017), the
+  `pvNoSpendsRemaining` path at `b2e74bd292`, and the current chunk/vector
+  behavior at `1ad4590f638` (2023). Existing `mempool_tests` cover removal,
+  size limits, ancestry, and diamond topology but do not measure RSS across a
+  corpus or vary allocator settings. A journal search found no prior exact
+  `tx_pool` RSS/allocator campaign.
+
+Corpus and binaries:
+
+- Corpus: `/mnt/my_storage/qa-assets/fuzz_corpora/tx_pool`, 5,658 files,
+  41,820,925 bytes total, maximum input 840,495 bytes.
+- Release-like fuzzer: `build_fuzz_nosan/bin/fuzz`, SHA-256
+  `52aa9867035095964ff0491c51e63a9ee0b6405e168338d793e7ecbf7c1dd0ec`,
+  Clang RelWithDebInfo with `SANITIZERS=fuzzer`.
+- Sanitizer fuzzer: `build_fuzz/bin/fuzz`, SHA-256
+  `63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`,
+  Clang RelWithDebInfo with `SANITIZERS=undefined,address,fuzzer`.
+
+Verification matrix:
+
+1. Release-like baseline:
+
+   `FUZZ=tx_pool build_fuzz_nosan/bin/fuzz -runs=1 -timeout=30
+   -rss_limit_mb=256 -print_final_stats=1
+   /mnt/my_storage/qa-assets/fuzz_corpora/tx_pool`
+
+   All 5,659 runs completed with exit 0, coverage 8,881, feature count
+   55,171, and peak RSS 140 MiB. `/usr/bin/time -v` reported 143,944 KiB
+   maximum RSS and 28.49 seconds wall time.
+
+2. Deliberate low-limit control:
+
+   The same command with `-rss_limit_mb=128` reached 5,629 inputs, emitted
+   `libFuzzer: out-of-memory (used: 131Mb; limit: 128Mb)`, exited 71, and
+   wrote the minimized `oom-ef48de26b68b84e0fd2222f49a0865c711782537`
+   artifact. The artifact was removed after capture. This proves the
+   workload's current harness footprint crosses 128 MiB; it does not prove a
+   production allocation failure or a Core leak.
+
+3. Passing threshold control:
+
+   With `-rss_limit_mb=160`, all 5,659 runs completed with exit 0 and peak
+   RSS 142 MiB (`145,516` KiB maximum), in 28.57 seconds.
+
+4. Allocator variation:
+
+   `MALLOC_ARENA_MAX=1 MALLOC_TRIM_THRESHOLD_=131072` with the same 160 MiB
+   limit completed all 5,659 runs with exit 0, peak RSS 136 MiB (`139,608`
+   KiB maximum), and no artifact. The lower peak is consistent with glibc
+   arena/trim overhead rather than retained Core state.
+
+5. ASan/UBSan replay:
+
+   The default sanitizer run with `-rss_limit_mb=512` processed all 5,660
+   runs but emitted an OOM diagnostic at 538 MiB. The raw report showed
+   88,292,714 bytes in live allocations and 253,573,878 bytes in the ASan
+   quarantine, so the result was classified as sanitizer allocator pressure,
+   not a production leak. It did not produce an invalid-access diagnostic.
+
+   Replaying the corpus with
+   `ASAN_OPTIONS=quarantine_size_mb=0:detect_leaks=1:halt_on_error=1` and the
+   same fuzzer flags completed all 5,660 runs with exit 0, no diagnostic,
+   coverage 19,732, feature count 117,556, and peak RSS 208 MiB. Maximum RSS
+   was 213,576 KiB. Leak detection was enabled and reported no leak.
+
+6. Core correctness control:
+
+   `./build/bin/test_bitcoin --run_test=mempool_tests --log_level=test_suite`
+   ran all 4 mempool test cases and ended with `*** No errors detected`.
+
+Verdict:
+
+The hypothesis is dismissed for this bounded workload. The release-like
+replay has a stable 140-142 MiB peak, passes comfortably at 160 MiB, and
+shows a lower 136 MiB peak with constrained glibc arenas and trimming. The
+sanitizer-only 538 MiB event is explained by ASan quarantine and disappears
+when quarantine is disabled; the no-quarantine replay and leak detection are
+clean. No production defect, regression test, or source repair is justified.
+
+Limitations and reopen conditions:
+
+This is one Linux x86_64 host, one fixed corpus, and a fuzzer process rather
+than full IBD, wallet, RPC, cgroup, alternate allocator, or injected
+`operator new` failure. The 128 MiB result is a harness threshold and should
+not be reported as a Core DoS. Reopen goal 74 with a production-reachable
+allocation-failure seam, full-node/mempool RSS profile, wallet/RPC/recovery
+workload, or a minimized input that grows live Core allocations after ASan
+quarantine is disabled. Do not repeat this corpus threshold cell.
+
+Next queue: retain goal 74's separate allocation-failure, wallet/RPC,
+recovery, and full-node workload cells, followed by `77,81,82,84,87,89,95,97`.
