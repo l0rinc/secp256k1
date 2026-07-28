@@ -320,3 +320,95 @@ cells eligible, but exclude this exact randomized/clone matrix.
 No scratch probe, mutation, library rebuild, sanitizer, or test process
 remains running. The next cycle should draw another eligible goal rather than
 repeat the completed context matrix.
+
+## Cycle 107: MuSig public-nonce aggregation permutation and cancellation
+
+- **Controller selection:** Goal 84 (`secp-nonce-session`), selected by the
+  uber-goal state as cycle 107; this is a fresh aggregation/state-machine cell,
+  not the earlier repeated-participant, counter-boundary, or randomized-context
+  work.
+- **Timestamp:** 2026-07-28T15:09:25Z.
+- **Audit checkout:** `/tmp/secp256k1-oracles-next`, branch
+  `codex/fuzz-oracles`, clean source HEAD
+  `fcc11a4c65c766168583c75bb873f3a2331f0606`.
+- **Hypothesis and trust boundary:** `secp256k1_musig_nonce_agg` must produce
+  the same aggregate public nonce and processed session for every permutation of
+  valid, attacker-supplied public nonces. A Jacobian accumulation or exceptional
+  point-handling error could make the result depend on input order, especially
+  when an intermediate sum reaches infinity. The trust boundary is the public
+  nonce array supplied by an untrusted aggregator or signer; the check does not
+  assume that a public nonce is paired with a local secret nonce.
+
+### Source and oracle
+
+The implementation initializes both accumulators at infinity and adds every
+loaded nonce point in `src/modules/musig/session_impl.h:546-563`; it then batch
+converts both sums in `musig_nonce_agg` at `:565-585`. Session creation consumes
+the aggregate at `:642-681`, including the BIP327 finite fallback when the
+effective nonce is infinity. Existing fuzz coverage has targeted direct and
+intermediate cancellation, but the goal journal had no permutation matrix.
+
+A disposable C probe generated six valid counter-derived public nonces for
+fixed keypairs, replaced nonce 1 with the exact two-point inverse of nonce 0
+using public parse/negate/serialize APIs, and enumerated all `6! = 720` input
+orders. For each order it compared the serialized 66-byte aggregate and all
+133 session bytes against the baseline order. The inverse pair forces one
+intermediate cancellation in some orders and a later cancellation in others.
+The temporary probe was removed after execution; no source or production test
+file was changed.
+
+### Verification
+
+The sanitized native probe was compiled with Clang 22.1.7 and
+`-fsanitize=address,undefined`, linked to
+`build-integrated-asan/lib/libsecp256k1.so.6.0.2`, and run with
+`ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1` and
+`UBSAN_OPTIONS=halt_on_error=1`. It printed exactly:
+
+    PASS permutations=720 inverse_pair=1
+
+The same probe under the forced-`int64` Clang RelWithDebInfo library
+`/mnt/my_storage/secp256k1-build/oracles-next-int64/lib/libsecp256k1.so.6.0.2`
+printed the same line. SHA-256 hashes were
+`0e614e8603283b7918f0d7cb10e232ad24d679b017e1e54aec0d3cfa1fc3c877` for the
+sanitized native library and
+`da0de5ec30a5da409c1be0a3e33f790662b20dec666008af133d45832896e849` for the
+forced-`int64` library. The focused commands
+
+    ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./bin/tests -t=musig -log=1
+    ./bin/tests -t=musig -log=1
+
+passed all 12 MuSig test groups in the sanitized native and forced-`int64`
+builds; the native run took 6.949 seconds and the forced-`int64` run 0.316
+seconds, with no sanitizer diagnostics.
+
+### Mutation control and verdict
+
+In a disposable source mutation only, the aggregation loop condition at
+`session_impl.h:553` was changed from `i < n_pubnonces` to
+`i + 1 < n_pubnonces`, omitting the final input. After rebuilding the
+sanitized library, the probe failed at order `0,1,2,3,5,4` with
+`FAIL aggregate order=0,1,2,3,5,4` and exit status 1. The mutation was restored,
+the library rebuilt, and the clean probe passed again. This demonstrates that
+the metamorphic oracle detects a real aggregation-input defect rather than
+blindly accepting every output.
+
+**Dismissed.** No order-dependent aggregate, session divergence, infinity
+handling failure, sanitizer finding, or focused-test failure was observed. No
+production source change or finding commit is justified.
+
+The oracle is intentionally a permutation property: its baseline aggregate is
+the clean implementation's first order, so it does not independently prove
+the absolute group sum for arbitrary points. The exact inverse construction,
+the intermediate-infinity orders, the production test vectors, and the
+omitted-input mutation provide independent sensitivity for this cell. Evidence
+is x86_64-only, uses six fixed keypairs, and covers native and forced-`int64`
+representations but not other architectures, concurrent callers, or malformed
+opaque nonce objects (already covered by separate fuzz cells).
+
+### Handoff
+
+The temporary probe and mutation are gone, the audit checkout is clean, and no
+process remains running. Exclude this exact six-input permutation/cancellation
+cell. Keep Goal 84 eligible for a distinct public signing or cross-wrapper
+lifecycle hypothesis; otherwise draw another controller goal.

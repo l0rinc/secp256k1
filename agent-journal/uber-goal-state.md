@@ -1835,3 +1835,28 @@ The controller drew Goal `84`, `secp-nonce-session`, with seed
 DataStream warning, hsort arithmetic, and NetGroupManager lifetime cells are
 excluded; Goal84 must choose a fresh nonce, signing, Schnorr, MuSig, ECDH, or
 state-machine hypothesis.
+
+## Cycle 107 Summary
+
+Goal `84`, `secp-nonce-session`, tested permutation invariance of MuSig public
+nonce aggregation. A disposable C probe generated six valid public nonces,
+replaced one with the exact two-point inverse of another, enumerated all 720
+input orders, and compared serialized aggregate nonces plus processed session
+state. Sanitized native and forced-`int64` runs both printed
+`PASS permutations=720 inverse_pair=1`; the focused 12-group MuSig suite passed
+in both builds. A disposable mutation omitting the final aggregation input was
+caught at order `0,1,2,3,5,4`, then restored and rebuilt. No production defect,
+sanitizer finding, or source change resulted. The exact evidence and oracle
+limitations are in `agent-journal/secp-nonce-session.md`.
+
+Verdict: **dismissed** for this exact permutation/cancellation cell. Exclude
+it from future Goal84 work; keep other public signing and wrapper lifecycle
+cells eligible.
+
+## Cycle 108 Selection
+
+The controller drew Goal `82`, `secp-field-scalar-matrix`, with seed
+`11301387392826193687`, index `1`, from the eligible pool `77 82 84 87 95 97`,
+at `2026-07-28T15:10:30Z`. Goal82 must choose a fresh field/scalar
+representation, backend, exhaustive, magnitude, normalization, or
+cross-architecture hypothesis and exclude its completed cells.
