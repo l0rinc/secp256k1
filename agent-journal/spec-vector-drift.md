@@ -315,3 +315,143 @@ Keep Goal81 pending and exclude this BIP342 code-separator cell from immediate
 rediscovery. Candidate fresh cells are vector-generation provenance and
 future specification changes affecting sighash caching. The controller should
 draw again from the current eligible pool after committing this handoff.
+
+## Cycle 100: BIP341 wallet-vector provenance and regeneration
+
+### Cycle metadata
+
+- Selected by seed 16832264652730535945, pool 77 81 82 84 87 89 95 97,
+  index 1.
+- Cycle timestamp: 2026-07-28T12:35:56Z through 2026-07-28T12:49:31Z.
+- Audit branch: codex/fuzz-oracles, audit HEAD before this journal commit:
+  4135a61c873c2c75e74935084c77d9a98d35dfc5.
+- Bitcoin Core evidence base: protected branch codex/btc-fuzz-oracles,
+  HEAD 00c4bb06ae9bf903af6ff72dbd6b097f36830ce6.
+- The protected Core checkout retained its pre-existing dirty state only:
+  M src/test/blockencodings_tests.cpp, ?? fuzz-0.log, and ?? fuzz-1.log.
+
+### Hypothesis and trust boundary
+
+Hypothesis: the checked-in BIP341 wallet vectors could drift from the
+authoritative specification or the repository's deterministic generator, or
+could contain self-referential intermediary/expected fields that fail to
+exercise the actual Taproot construction. The trust boundary is wallet and
+offline-signing data consumed by Core's script and key-path tests. A mismatch
+could hide a wrong Taproot output key, Merkle path, sighash preimage, or
+Schnorr signature while the static test continues to pass.
+
+This is distinct from the completed BIP342 code-separator and annex/hash-type
+cells. Those cells remain excluded from immediate rediscovery.
+
+### Provenance and specification evidence
+
+The authoritative BIP341 specification identifies two wallet-vector sets:
+scriptPubKey/control-block construction and key-path spending. It describes
+the JSON tree encoding, byte-array hex convention, TapLeaf/TapBranch sorting,
+TapTweak, BIP350 address, and key-path witness requirements:
+
+https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki
+https://github.com/bitcoin/bips/blob/master/bip-0341/wallet-test-vectors.json
+
+The local vector file was introduced by f1c33ee4ac (`tests: implement BIP341
+test vectors`) and merged by 5ccab7187b. The deterministic functional
+generator was introduced by ac3037df11 (`tests: BIP341 test vector
+generation`). Its current source keeps `GEN_TEST_VECTORS = False` by default,
+but `gen_test_vectors()` retains the deterministic `SEED = 317`, seven
+Taproot trees, the nine-input/two-output transaction, and all vector fields.
+
+The local file has 7 scriptPubKey cases, 12 leaves/control blocks, one
+keyPathSpending transaction container, and 7 Taproot input-spending cases.
+The official raw file and local file are byte-for-byte identical:
+
+    official_sha=403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f
+    local_sha=403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f
+    BIP341_VECTOR_EXACT_MATCH=1
+
+### Independent cryptographic recomputation
+
+A disposable pure-Python verifier used no Bitcoin Core or functional-test
+Taproot helpers. It implemented secp256k1 point arithmetic, BIP340 even-Y
+lift and Schnorr verification, CompactSize and transaction serialization,
+tagged hashes, TapLeaf/TapBranch sorting, TapTweak, BIP350 Bech32m, and the
+BIP341 key-path signature-message matrix.
+
+The script-path oracle reported:
+
+    BIP341_SPK_ORACLE cases=7 checks=31 leaves=12 control_blocks=12
+
+It independently recomputed every leaf hash, Merkle root, tweak, output key,
+scriptPubKey, mainnet BIP350 address, control-block path, and branch replay.
+The key-path oracle reported:
+
+    BIP341_KEYPATH_ORACLE inputs=7 indexes=[0, 1, 3, 4, 6, 7, 8] precomputed=5 schnorr_verified=7
+
+It parsed the unsigned transaction, recomputed all five cached hashes and all
+seven epoch/hash-type/sighash messages, derived each normalized/tweaked
+secret key and output key, and independently verified every generated
+Schnorr witness. This covers default, ALL, SINGLE, NONE, ANYONECANPAY, and
+their valid combinations present in the vector.
+
+### Repository generator and Core consumers
+
+The existing generator was exercised without editing source: a Python parent
+imported `test/functional/feature_taproot.py`, set `GEN_TEST_VECTORS = True`
+on that module instance, ran `TaprootTest` with the normal scratch config,
+and parsed the emitted JSON. The deterministic run exited 0 and reported:
+
+    GENERATOR_JSON_EQUAL 1
+    GENERATED_CANONICAL_SHA256 403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f
+    COMMITTED_FILE_SHA256 403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f
+
+The successful consumer commands were:
+
+    ./build/bin/test_bitcoin --run_test=script_tests/bip341_keypath_test_vectors --log_level=message
+    ./build/bin/test_bitcoin --run_test=script_standard_tests/bip341_spk_test_vectors --log_level=message
+    ./build/bin/test_bitcoin --run_test=script_tests --log_level=message
+
+Each reported `*** No errors detected`; the broad script suite ran 21 test
+cases. The source/build hashes were:
+
+    src/test/data/bip341_wallet_vectors.json 403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f
+    test/functional/feature_taproot.py 07837cd34e9f26316ceec6f268870e9f7b5bf76dd3cd3e8dd85da7d973a7adeb
+    src/test/script_tests.cpp 6ff875e60d9966ecff0da811f419c535a0c3785f3db40c30e32f68af61906b4c
+    src/test/script_standard_tests.cpp 4f715477a8b42bcf5d21ee81cf617f1b7ab509b425c849db1a38470e4689250f
+    build/bin/test_bitcoin 05c3b35c89beb331b45974ba26299355a468572b35ac83a7b14e00f9dff389f5
+
+### Mutation control
+
+The independent script-path oracle was run against an in-memory copy with
+the first expected scriptPubKey's final byte changed to `00`:
+
+    MUTATION_ORACLE original_mismatches=0 mutated_mismatches=1 actual=512053a1f6e454df1aa2776a2814a721372d6258050de330b3c6d10ee8f4e0dda343
+
+The control proves that the recomputed output is not merely being accepted
+because the static vector field is copied through the verifier.
+
+### Verdict
+
+Dismissed for this vector-provenance cell. The official BIP341 vector file,
+Core's deterministic generator, an independent cryptographic recomputation,
+the consuming unit tests, and a mutation-sensitive oracle all agree. No
+production bug, test-oracle defect, consensus divergence, or fix commit is
+claimed.
+
+### Limitations and handoff
+
+- The generator replay used the current Linux x86_64 wallet-backed functional
+  environment and the existing build; it does not establish byte identity on
+  another Python, compiler, wallet backend, or architecture.
+- The pure verifier is independent of Core's code, but it is a bounded
+  implementation of the BIP341/BIP340 equations, not a formal proof.
+- The official remote comparison was made against the current BIP repository;
+  the local historical provenance is recorded through the introducing Core
+  commits above.
+- The protected Core checkout was not modified. Generator scratch directories
+  were cleaned, and no relevant process remains.
+
+### Next queue
+
+Keep Goal81 pending and exclude this BIP341 vector-provenance cell, the
+annex/hash-type cell, and the BIP342 code-separator cell from immediate
+rediscovery. Future-specification changes affecting sighash caching or new
+authoritative vector sets remain eligible.

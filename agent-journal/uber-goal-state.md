@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 81 (`spec-vector-drift`)
+- Current status: active rotating cycle goal 89 (`bitcoin-p2p-accounting`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,11 +19,11 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `2009882816`
-- Latest eligible pool: `74 77 81 82 87 89 95 97`
-- Latest selected index: `0`
-- Latest draw: `74`
-- Latest draw timestamp: `2026-07-28T10:09:34Z`
+- Latest draw seed: `12233973803523494861`
+- Latest eligible pool: `77 81 82 84 87 89 95 97`
+- Latest selected index: `5`
+- Latest draw: `89`
+- Latest draw timestamp: `2026-07-28T12:49:31Z`
 - Previous draw seed: `10788815325715498911`
 - Previous eligible pool: `77 81 82 87 95 97`
 - Previous selected index: `3`
@@ -52,22 +52,27 @@
 - Previous selected index: `1`
 - Previous draw: `81`
 - Previous draw timestamp: `2026-07-28T12:18:00Z`
-- Current draw seed: `16832264652730535945`
+- Previous current draw seed: `16832264652730535945`
+- Previous current eligible pool: `77 81 82 84 87 89 95 97`
+- Previous current selected index: `1`
+- Previous current draw: `81`
+- Previous current draw timestamp: `2026-07-28T12:35:56Z`
+- Current draw seed: `12233973803523494861`
 - Current eligible pool: `77 81 82 84 87 89 95 97`
-- Current selected index: `1`
-- Current draw: `81`
-- Current draw timestamp: `2026-07-28T12:35:56Z`
+- Current selected index: `5`
+- Current draw: `89`
+- Current draw timestamp: `2026-07-28T12:49:31Z`
 
 ## Selection rules
 
-The current selected cycle is goal 81 (spec-vector-drift), drawn with seed
-16832264652730535945 from pool 77 81 82 84 87 89 95 97 at index 1. Goal97
+The current selected cycle is goal 89 (bitcoin-p2p-accounting), drawn with seed
+12233973803523494861 from pool 77 81 82 84 87 89 95 97 at index 5. Goal97
 remains pending for distinct C/C++ defect classes; its hsort index/stride cell is
 excluded from immediate rediscovery. The completed Goal82 cycle remains
 pending for distinct field/scalar representation cells; its normalized
-comparison cell is excluded from immediate rediscovery. Goal81
-also remains pending for distinct vector-provenance and future-specification
-cells; its annex/hash-type and BIP342 code-separator cells remain excluded.
+comparison cell is excluded from immediate rediscovery. Goal81 remains pending
+for future-specification cells; its annex/hash-type, BIP342 code-separator,
+and BIP341 vector-provenance cells remain excluded.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -80,7 +85,7 @@ cells; its annex/hash-type and BIP342 code-separator cells remain excluded.
 
 ## Goal ledger
 
-Goal 89 remains pending for distinct transport, permission, partial-I/O,
+Goal 89 is the active cycle for distinct transport, permission, partial-I/O,
 shutdown, and accounting cells. Its outbound transaction-inventory queue
 admission cell is excluded from immediate rediscovery.
 
@@ -100,30 +105,29 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 81. The exact annex/hash-type and BIP342 code-separator
-cells of goal 81 and the
+rotating cycle is goal 89. The exact annex/hash-type, BIP342 code-separator,
+and BIP341 vector-provenance cells of goal 81 and the
 exact unbroadcast-memory cell of goal 87 are
 excluded from immediate rediscovery. Goal87's remaining package, RBF, graph,
 fee, eviction, reorg, and expiry cells remain pending. The catalog is the
 source of titles, slugs, and campaign scope.
 
-## Current Cycle Summary
+## Latest Completed Cycle Summary
 
-Goal `81`, `spec-vector-drift`, tested BIP342 tapscript code-separator
-serialization and execution positions. The deterministic feature_taproot
-functional test passed 2,800 generated spending cases plus two additional
-four-case post-activation sets, including branch-dependent OP_CODESEPARATOR
-and 700-operation sighash-cache scenarios. A direct Core matrix captured
-positions 0, 2, and 4 for direct, post-push, and unexecuted-branch cases, then
-matched an independent Python TaprootSignatureHash model for 84 hashes across
-both inputs, all valid hash types, and sentinel/boundary positions. The
-existing ASan/UBSan fuzz-build archives produced the same output with no
-diagnostics. Replacing the serialized code-separator field with the sentinel
-caused 70/84 model mismatches.
+Goal `81`, `spec-vector-drift`, completed its BIP341 wallet-vector provenance
+cell. The official raw wallet vector file matched Core's checked-in file
+byte-for-byte at SHA256
+`403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f`. The
+current deterministic generator, enabled only on an imported module instance,
+emitted JSON equal to the committed file and exited successfully. A pure
+Python secp256k1/BIP340/BIP341 oracle recomputed 31 script checks, 12 control
+blocks, five cached hashes, and seven Schnorr witnesses. The two consuming
+unit tests and the 21-case script suite passed, and a changed expected output
+was detected by the mutation control.
 
-Verdict: **dismissed** for this exact BIP342 code-separator cell. No source
-change or repair commit resulted. Details, commands, hashes, limitations, and
-the excluded-cell handoff are in `agent-journal/spec-vector-drift.md`.
+Verdict: **dismissed** for the vector-provenance cell. No source change or
+repair commit resulted. Details, commands, hashes, limitations, and the
+excluded-cell handoff are in `agent-journal/spec-vector-drift.md`.
 
 ## Prior Cycle Summary
 
@@ -1646,3 +1650,28 @@ The controller drew Goal `81`, `spec-vector-drift`, with seed
 `77 81 82 84 87 89 95 97`, at `2026-07-28T12:35:56Z`. The next distinct
 Goal81 cell is vector-generation provenance; the completed annex/hash-type and
 BIP342 code-separator cells remain excluded.
+
+## Cycle 100 Summary
+
+Goal `81`, `spec-vector-drift`, completed the BIP341 wallet-vector provenance
+cell. The official raw vector file and Core's checked-in file matched exactly
+at SHA256 `403e19fb81dd1f31e745699216308f61fb403774b2aafa87b631b8f7c042d37f`.
+The current deterministic generator, enabled only on an imported module
+instance, exited successfully and emitted JSON equal to the committed file.
+An independent pure secp256k1/BIP340/BIP341 verifier recomputed 31 script
+checks, 12 control blocks, five cached hashes, and seven Schnorr witnesses;
+the two vector consumers and the 21-case script suite passed. A mutated
+expected output was detected.
+
+Verdict: **dismissed**. No source change or repair commit resulted. Goal81
+remains pending for future specification cells; the BIP341 provenance,
+annex/hash-type, and BIP342 code-separator cells are excluded.
+
+## Cycle 101 Selection
+
+The controller drew Goal `89`, `bitcoin-p2p-accounting`, with seed
+`12233973803523494861`, index `5`, from the eligible pool
+`77 81 82 84 87 89 95 97`, at `2026-07-28T12:49:31Z`. Goal89's prior
+outbound transaction-inventory queue admission cell remains excluded; this
+cycle must choose a distinct transport, permission, partial-I/O, shutdown, or
+peer-accounting hypothesis.
