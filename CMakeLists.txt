@@ -59,8 +59,12 @@ if(SECP256K1_USE_EXTERNAL_DEFAULT_CALLBACKS)
   add_compile_definitions(USE_EXTERNAL_DEFAULT_CALLBACKS=1)
 endif()
 
-set(SECP256K1_ECMULT_WINDOW_SIZE 15 CACHE STRING "Window size for ecmult precomputation for verification, specified as integer in range [2..24]. The default value is a reasonable setting for desktop machines (currently 15). [default=15]")
-set_property(CACHE SECP256K1_ECMULT_WINDOW_SIZE PROPERTY STRINGS 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)
+set(SECP256K1_ECMULT_WINDOW_SIZE 15 CACHE STRING "Window size for ecmult precomputation for verification, specified as integer in range [2..15]. The default value is a reasonable setting for desktop machines (currently 15). [default=15]")
+# The checked-in src/precomputed_ecmult.c only covers window sizes up to 15,
+# and CMake (unlike autotools, see Makefile.am) has no rule to regenerate it.
+# Larger windows must therefore be rejected here instead of failing mid-build
+# on the #error in precomputed_ecmult.c.
+set_property(CACHE SECP256K1_ECMULT_WINDOW_SIZE PROPERTY STRINGS 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
 include(CheckStringOptionValue)
 check_string_option_value(SECP256K1_ECMULT_WINDOW_SIZE)
 add_compile_definitions(ECMULT_WINDOW_SIZE=${SECP256K1_ECMULT_WINDOW_SIZE})
