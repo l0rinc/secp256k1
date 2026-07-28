@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 82 (`secp-field-scalar-matrix`)
+- Current status: active rotating cycle goal 95 (`database-semantics-differential`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,10 +19,10 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
-- Latest draw seed: `585213204`
+- Latest draw seed: `565229968`
 - Latest eligible pool: `74 77 81 82 84 87 89 95 97`
-- Latest selected index: `3`
-- Latest draw: `82`
+- Latest selected index: `7`
+- Latest draw: `95`
 - Latest draw timestamp: `2026-07-28`
 
 ## Selection rules
@@ -55,7 +55,7 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal `74`; the catalog is the source of titles, slugs, and
+rotating cycle is goal `95`; the catalog is the source of titles, slugs, and
 campaign scope.
 
 ## Historical Cycle Summaries
@@ -1389,3 +1389,28 @@ big-endian, 32-bit, MSVC, and formal timing evidence remain unavailable.
 The exact storage-cmov cell is excluded, while malformed-storage validation,
 other field arithmetic, and new architecture/backend cells remain eligible.
 The selected-goal journal is `agent-journal/secp-field-scalar-matrix.md`.
+
+## Cycle 77 Summary
+
+Cycle 77 selected goal `95`, `database-semantics-differential`, with draw seed
+`565229968`, index `7`, from `74 77 81 82 84 87 89 95 97`. The fresh
+hypothesis was that Core's `CDBBatch` could diverge from LevelDB's ordered
+`WriteBatch` semantics under duplicate puts/deletes, empty and binary values,
+`Clear()` and reuse, obfuscation, alternating sync writes, disk reopen, or
+small-SST compaction boundaries.
+
+A disposable independent `std::map` model drove 600 batches per run over 32
+keys and compared every public `CDBWrapper::Read()` result after every batch
+and disk reopen. Three deterministic seeds covered disk/memory and plain/
+obfuscated modes, for 12 combinations. Release and ASan/UBSan-linked runs
+matched all expected states and digests; every deliberate expected-value
+mutation was detected. The current Core `dbwrapper_tests` suite passed all 9
+cases with `*** No errors detected`. No RocksDB or Pebble installation was
+available for an alternate-engine run.
+
+Verdict: **dismissed** for this bounded batch cell. No source change or repair
+commit resulted. The exact iterator-status defect from cycle 72 remains
+excluded. This goal stays active for deterministic WAL/MANIFEST fault and
+crash recovery, snapshot lifetime, comparator/seek, and backend-portability
+cells. Scratch artifacts were removed and no relevant process remains. The
+next queue remains `74,77,81,82,84,87,89,95,97`.
