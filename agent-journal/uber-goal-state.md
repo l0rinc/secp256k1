@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 89 (`bitcoin-p2p-accounting`)
+- Current status: active rotating cycle goal 87 (`bitcoin-mempool-accounting`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -24,13 +24,18 @@
 - Latest selected index: `0`
 - Latest draw: `74`
 - Latest draw timestamp: `2026-07-28T10:09:34Z`
-- Current draw seed: `4015881993`
-- Current eligible pool: `77 81 82 87 89 95 97`
-- Current selected index: `4`
-- Current draw: `89`
-- Current draw timestamp: `2026-07-28T10:39:38Z`
+- Current draw seed: `10788815325715498911`
+- Current eligible pool: `77 81 82 87 95 97`
+- Current selected index: `3`
+- Current draw: `87`
+- Current draw timestamp: `2026-07-28T10:52:17Z`
+- Previous completed cycle: goal 89, outbound transaction-inventory queue
+  admission hypothesis, confirmed by source trace and a deterministic probe.
 
 ## Selection rules
+
+The current selected cycle is goal 87 (bitcoin-mempool-accounting), drawn
+with seed 10788815325715498911 from pool 77 81 82 87 95 97 at index 3.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -42,6 +47,10 @@
    the per-goal journal and summarize them here.
 
 ## Goal ledger
+
+Goal 89 remains pending for distinct transport, permission, partial-I/O,
+shutdown, and accounting cells. Its outbound transaction-inventory queue
+admission cell is excluded from immediate rediscovery.
 
 Goals `0` through `48` and `50` through `60`, plus `62` through `72`, `74`
 through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; this was the eligible
@@ -60,8 +69,24 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal `74`; the catalog is the source of titles, slugs, and
+rotating cycle is goal 87; the catalog is the source of titles, slugs, and
 campaign scope.
+
+## Latest Cycle Summary
+
+Goal 89 confirmed an outbound transaction-inventory queue admission and
+retention defect on the current Bitcoin Core branch. The per-peer
+TxRelay::m_tx_inventory_to_send is an unbounded std::set<Wtxid> populated
+from accepted transactions, while the existing SendMessages path drains at
+most 1,000 entries per relay call. A scratch functional probe froze mock time,
+submitted 1,100 accepted independent transactions to an unmodified binary,
+and observed getpeerinfo()["inv_to_send"] grow from 200 through 1,100,
+including the full over-cap queue. The existing p2p_tx_download.py control
+suite passed. The protected Core and secp256k1 trees were unchanged apart
+from their documented pre-existing state; no speculative source fix was
+committed because the upstream line contains a later redesign with behavior
+and backport tradeoffs. Full evidence is in
+agent-journal/bitcoin-p2p-accounting.md; the next selected goal is 87.
 
 ## Historical Cycle Summaries
 
