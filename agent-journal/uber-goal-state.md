@@ -446,6 +446,8 @@ The thirty-eighth controller cycle continued catalog goal `49` with draw seed `3
 
 The thirty-ninth controller cycle continued catalog goal `49` with draw seed `198155241` and selected merge seed `c63062380f9610084409ac445af723a057a90f6b`. The commit only adds and registers an exhaustive ECDH test for commutativity and an independent hash calculation; it changes no production code or API contract. The current tree already contains the helper and registration, so the seed was excluded as non-defect/test-only history without a reproduction or source change. The next draw must prefer `d7125e51`, `89a54b5a`, or a higher-risk unindexed historical fix. Full evidence is in `agent-journal/critical-history-sweep.md`.
 
+The fortieth controller cycle continued catalog goal `49` with draw seed `3691603698` and selected `d7125e517d45507df4a3f19c8ca90393a8290480`. The commit only changes a MuSig test from evaluating and discarding `secp256k1_ge_is_infinity` to asserting it; current production code is unchanged and the corrected assertion is already present. The seed was excluded as test-only maintenance. The next draw must widen beyond `c6306238`, `d7125e51`, and the already indexed `89a54b5a` invariant to older production-impact history. Full evidence is in `agent-journal/critical-history-sweep.md`.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal

@@ -322,6 +322,39 @@ behavioral defect; otherwise move to the broader high-risk history queue,
 prioritizing parser, scalar-bound, secret-handling, and remotely reachable
 protocol fixes not already indexed in `src/fuzz/README.md`.
 
+## Cycle 5: MuSig dead assertion test repair
+
+### Selection and scope
+
+The next draw used seed `3691603698` over `d7125e51 89a54b5a`, selecting
+index 0: `d7125e517d45507df4a3f19c8ca90393a8290480`, “test: musig: fix dead
+`aggnonce` encodes two points at infinity check”. The one-line change adds
+`CHECK(... == 1)` around an existing `secp256k1_ge_is_infinity` call in
+`src/modules/musig/tests_impl.h`; it does not change library code, public
+outputs, or production validation.
+
+The current tree contains the corrected assertion. The original test already
+constructs the two infinity points, so the change only makes a failed
+expectation abort instead of discarding the predicate result. This is a test
+oracle-strengthening commit, not evidence of a current invalid acceptance,
+secret exposure, resource exhaustion, or protocol divergence. The adjacent
+`89a54b5a` seed is separately indexed in `src/fuzz/README.md` as latest-master
+x-only parity invariant hardening, so neither remaining recent candidate
+opens a critical current hypothesis.
+
+### Verdict
+
+**Excluded as test-only maintenance.** No production reproduction or source
+fix is justified. The corrected assertion remains useful regression coverage,
+but this campaign must not count test-oracle repairs as critical defects.
+
+### Next history slice
+
+Widen the random pool beyond the recent candidate prefixes and select from
+older production changes with concrete parser, arithmetic-bound, secret,
+protocol, persistence, or remote-caller impact. Exclude the already indexed
+`89a54b5a` VERIFY invariant and the test-only `c6306238`/`d7125e51` changes.
+
 ## Handoff
 
 Verify the current worktree, remotes, history range, existing findings, and
