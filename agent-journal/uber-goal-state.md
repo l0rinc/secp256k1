@@ -1860,3 +1860,31 @@ The controller drew Goal `82`, `secp-field-scalar-matrix`, with seed
 at `2026-07-28T15:10:30Z`. Goal82 must choose a fresh field/scalar
 representation, backend, exhaustive, magnitude, normalization, or
 cross-architecture hypothesis and exclude its completed cells.
+
+## Cycle 108 Summary
+
+Goal `82`, `secp-field-scalar-matrix`, completed the previously untested
+`scalar_low_impl.h` exhaustive representation. An independent probe checked
+all 65,536 `set_int` values, all ordered arithmetic pairs, predicates,
+inversion, halving, conditional moves, bit extraction, valid conditional-bit
+adds, 32-byte reductions, and split-128 behavior for exhaustive orders 7, 13,
+and 199. Clang and GCC O2 runs passed 151,916, 226,255, and 2,888,471 cases
+with stable digests; order-199 O0/O3/Os and Clang ASan/UBSan/VERIFY/VALGRIND
+also passed. Native order-7 and fresh forced-10x26 order-13 exhaustive group
+runs reported `no problems found`. A temporary `scalar_mul` mutation failed
+immediately at `0 * 0` in orders 7 and 199, then was restored. No production
+defect or test change was justified. Full evidence is in
+`agent-journal/secp-field-scalar-matrix.md` Cycle 108.
+
+Verdict: **dismissed** for this exact exhaustive scalar-low cell. Exclude it
+from future Goal82 work; retain other field metadata/backend and changed
+architecture/compiler cells.
+
+## Cycle 109 Selection
+
+The controller drew Goal `97`, `cpp-defect-taxonomy`, with seed
+`340673150427549755`, index `5`, from the eligible pool `77 82 84 87 95 97`,
+at `2026-07-28T15:23:22Z`. Goal97 must choose a fresh C/C++ defect class and
+subsystem cell, using semantic reachability and an independent proof rather
+than repeating the completed broad scans, DataStream warning, hsort arithmetic,
+or NetGroupManager lifetime work.

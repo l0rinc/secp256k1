@@ -307,3 +307,96 @@ comparison wrapper itself. Reopen this cell for a new backend/ABI, a changed
 normalization contract, or a failing caller. Remove the disposable harness
 and binaries after this journal commit; retain this exact command/output
 record as the handoff.
+
+## Cycle 108: exhaustive scalar-low arithmetic matrix
+
+### Selection and scope
+
+- The controller selected Goal 82 at `2026-07-28T15:10:30Z` with seed
+  `11301387392826193687`, index 1 from pool `77 82 84 87 95 97`. The audit
+  branch started clean at `60c6173a9bfd7d0e15f4152804ae3f5a00d86a1b`.
+  The protected libsecp256k1 checkout and the protected Bitcoin Core checkout
+  were not modified; the latter retained only its documented pre-existing
+  `src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log` state.
+- Prior Goal82 and translation-validation cycles exercised normal full-order
+  4x64 and 8x32 scalar arithmetic, but explicitly excluded the simplified
+  exhaustive implementation in `src/scalar_low_impl.h`. This cycle targets
+  that remaining representation and its interaction with exhaustive orders 7,
+  13, and 199. The production field selector is still exercised separately
+  through native 5x52 and forced 10x26 exhaustive binaries.
+- The falsifiable hypothesis was that the reduced scalar implementation could
+  disagree with its small-order arithmetic contract at a carry/reduction,
+  bit-extraction, inversion, halving, or conditional-move boundary. A defect
+  would make at least one independent expected value differ or cause an
+  assertion/sanitizer diagnostic in the exhaustive configuration.
+
+### Independent scalar oracle
+
+The disposable translation unit
+`/tmp/secp256k1-oracles-next/exhaustive-scalar-probe.c` had SHA-256
+`1a2b1227790ff70afd07b7d58057d54be8772f58d7d768ce1890b66d972314f5` before
+cleanup. It included the production scalar implementation only to invoke the
+operations under test. Expected values were computed with ordinary bounded
+`uint64_t` arithmetic and explicit small-order formulas, not with another
+libsecp field or scalar helper.
+
+For every order it tested all 65,536 `set_int` inputs and every ordered pair
+of reduced scalars for addition, multiplication, overflow reporting,
+equality, conditional moves, conditional negation, zero/one/even/high
+predicates, negation, halving, and both inverse variants. It also exercised
+all legal bit offsets and counts for `get_bits_limb32`/`get_bits_var`, every
+valid non-overflowing `cadd_bit` case, 128-byte boundary inputs plus one
+nonzero byte at every position for `set_b32`, split-128, and input/output
+state checks. The `cadd_bit` schedule deliberately stayed within its
+documented no-overflow domain; the exhaustive helper's `bit >= 32` VERIFY
+assertion is test-only behavior and was not treated as a production defect.
+
+Clang 22.1.7 and GCC 16.1.0 at `-DVERIFY -O2` both printed:
+
+    order=7:   PASS cases=151916 digest=6748598efcc4dcf8
+    order=13:  PASS cases=226255 digest=c202980c50466211
+    order=199: PASS cases=2888471 digest=96e7ae2f1b8d999d
+
+Clang and GCC order-199 runs at `O0`, `O3`, and `Os` repeated the same
+`96e7ae2f1b8d999d` digest. Clang `O1 -DVERIFY -DVALGRIND` with
+`-fsanitize=address,undefined -fno-omit-frame-pointer`, leak detection,
+halt-on-error, and the order-199 schedule also passed with the same digest
+and no diagnostics.
+
+### Exhaustive field/backend evidence
+
+The native CMake exhaustive order-7 binary at
+`/mnt/my_storage/secp256k1-build/oracles-next-exhaustive-7/bin/exhaustive_tests`
+completed one fixed-seed run with `no problems found`. A fresh Clang build
+with `SECP256K1_TEST_OVERRIDE_WIDE_MULTIPLY=int64`, `SECP256K1_ASM=OFF`, and
+`-DEXHAUSTIVE_TEST_ORDER=13` completed the same fixed-seed run from
+`/mnt/my_storage/secp256k1-build/oracles-next-exhaustive-13-int64/bin/exhaustive_tests`
+with `no problems found`. This provides native 5x52 and forced 10x26
+exhaustive field coverage around the scalar-low probe. A full order-199
+exhaustive group run was started but exceeded the bounded session budget and
+was terminated; its result is not counted. The independent scalar oracle
+does cover all scalar operations at order 199.
+
+### Mutation and verdict
+
+As an oracle-sensitivity control, `src/scalar_low_impl.h` was temporarily
+changed from `(*a * *b) % EXHAUSTIVE_TEST_ORDER` to
+`(*a * *b + 1) % EXHAUSTIVE_TEST_ORDER`. Clang `O2 -DVERIFY` order-7 and
+order-199 probes both failed immediately at `mul a=0 b=0 actual=1 expected=0`
+with exit 1. The source mutation was restored, the disposable translation
+unit was deleted, and the audit worktree returned clean.
+
+The exhaustive scalar-low representation hypothesis is **dismissed** for
+orders 7, 13, and 199 under the tested Clang/GCC optimization matrix,
+Clang ASan/UBSan/VERIFY/VALGRIND, and native/forced-10x26 exhaustive test
+configurations. No arithmetic mismatch, stale state, boundary error,
+undefined behavior, or reachable production defect was found. No production
+or regression-test commit is justified.
+
+Limits are no runtime AArch64, 32-bit, big-endian, MSVC, or GCC sanitizer
+coverage; no full order-199 group run; and no claim about the exhaustive
+helper's intentionally unsupported `cadd_bit` inputs at or above bit 32.
+Exclude this exact scalar-low schedule from future Goal82 work. Keep
+unexamined field metadata/backend cells and changed architecture or compiler
+evidence eligible; do not repeat the already-fixed malformed opaque-storage
+canonicality issue without new source evidence.
