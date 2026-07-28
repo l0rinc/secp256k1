@@ -262,3 +262,113 @@ quarantine is disabled. Do not repeat this corpus threshold cell.
 
 Next queue: retain goal 74's separate allocation-failure, wallet/RPC,
 recovery, and full-node workload cells, followed by `77,81,82,84,87,89,95,97`.
+
+## Cycle 73
+
+Status: dismissed for the selected wallet transaction-construction memory
+pressure hypothesis.
+
+Controller draw:
+
+- Draw seed: `3097406016`.
+- Eligible pool: `74 77 81 82 84 87 89 95 97`.
+- Selected index: `0`.
+- Selected goal: `74`, `memory-pressure-allocator`.
+
+Repository state:
+
+- Audit worktree: `/tmp/secp256k1-oracles-next`, branch
+  `codex/fuzz-oracles`, clean at cycle start, HEAD
+  `4fbd62f42889fd61c4c8ca2fbae41db6d2064410`.
+- Protected Bitcoin Core: `/mnt/my_storage/bitcoin`, branch
+  `codex/btc-fuzz-oracles`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`. It retained only the
+  pre-existing `M src/test/blockencodings_tests.cpp`, `?? fuzz-0.log`, and
+  `?? fuzz-1.log` entries.
+- Protected secp256k1 remained clean at
+  `e153e2681f7bf1dd74894e2170213e3983030989`.
+- No fuzz, sanitizer, test, daemon, or profiling process remained running
+  after the cycle.
+
+Hypothesis and trust boundary:
+
+The production wallet transaction-construction path might retain per-input
+wallet/map/recipient allocations, or allow fuzzer-controlled transaction
+construction to cross a realistic RSS limit. The trust boundary is fuzz input
+through `wallet_create_transaction` into the production `CreateTransaction`
+and `AvailableCoins` path. This is a local resource-pressure hypothesis; it
+is not a remote DoS claim and is distinct from the prior `tx_pool`,
+`CCoinsViewCache`, and standalone PoolResource cells.
+
+Source and history evidence:
+
+- `src/wallet/test/fuzz/spend.cpp` constructs a `FuzzedWallet`, adds up to
+  10,000 wallet transactions through a `LIMITED_WHILE` loop, creates up to
+  100 recipients, and calls the production transaction-construction path.
+  The wallet object is scoped to the input, so the corpus exercises teardown
+  between inputs rather than an intentionally shared global wallet.
+- `src/wallet/spend.cpp:316-492` traces `AvailableCoins` and its bounded
+  result construction into `CreateTransaction`; the source does not reserve
+  memory from the fuzzer's maximum input length.
+- The wallet-create corpus contains 1,186 files, 2,641,732 bytes total, and
+  a 43,345-byte maximum input. A journal and exact-command search found no
+  prior goal-74 wallet transaction RSS cell.
+- Release-like fuzzer binary SHA-256:
+  `52aa9867035095964ff0491c51e63a9ee0b6405e168338d793e7ecbf7c1dd0ec`.
+  Sanitizer fuzzer binary SHA-256:
+  `63d5f4daa9426ec776f6c988d03de980f688e4ae05ddbab1d1ec168e216327e5`.
+  Both are `RelWithDebInfo` builds from `/mnt/my_storage/bitcoin`; the
+  former uses `SANITIZERS=fuzzer` and the latter uses
+  `SANITIZERS=undefined,address,fuzzer`.
+
+Verification:
+
+1. Release-like corpus replay at a 512 MiB libFuzzer limit:
+
+   `FUZZ=wallet_create_transaction build_fuzz_nosan/bin/fuzz -runs=1
+   -timeout=60 -rss_limit_mb=512 -print_final_stats=1
+   /mnt/my_storage/qa-assets/fuzz_corpora/wallet_create_transaction`
+
+   All 1,187 runs completed with exit 0 in 65.5 seconds. LibFuzzer reported
+   `peak_rss_mb: 102`; `/usr/bin/time -v` reported 104,988 KiB maximum RSS.
+
+2. Release-like replay at a tighter 128 MiB limit:
+
+   The same command with `-rss_limit_mb=128` completed all 1,187 runs with
+   exit 0 in 65.5 seconds. LibFuzzer again reported 102 MiB peak RSS and
+   `/usr/bin/time -v` reported 105,100 KiB maximum RSS. No artifact was
+   produced.
+
+3. ASan/UBSan/LeakSanitizer replay with the quarantine disabled:
+
+   `ASAN_OPTIONS=quarantine_size_mb=0:detect_leaks=1:halt_on_error=1
+   UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 FUZZ=wallet_create_transaction
+   build_fuzz/bin/fuzz -runs=1 -timeout=60 -rss_limit_mb=1024
+   -print_final_stats=1
+   /mnt/my_storage/qa-assets/fuzz_corpora/wallet_create_transaction`
+
+   All 1,188 runs completed with exit 0 in 219.5 seconds. LibFuzzer reported
+   174 MiB peak RSS; `/usr/bin/time -v` reported 179,056 KiB maximum RSS.
+   There was no ASan, UBSan, or leak diagnostic. The earlier unbounded
+   `-runs=0` probe was terminated before this cycle's measurements and is not
+   used as evidence.
+
+Verdict:
+
+The hypothesis is dismissed for this production-shaped wallet workload. The
+full corpus stayed below a 128 MiB release-like RSS limit, and the sanitizer
+replay found no invalid access, undefined behavior, leak, or monotonic
+cross-input retention signal. No production defect, regression test, or
+source repair is justified.
+
+Limitations and handoff:
+
+This is one Linux x86_64 host, one fixed wallet corpus, and one fuzzer target.
+It does not cover injected allocation failure, cgroup pressure, alternate
+allocators, full-node IBD, long-running RPC sessions, wallet export/restore,
+or other wallet recovery cells. Reopen goal 74 with a distinct allocation-
+failure seam, recovery workload, full-node profile, or a new wallet/RPC
+caller; do not repeat this exact corpus replay.
+
+Next queue: retain goal 74's allocation-failure, recovery, full-node, and
+other wallet/RPC cells, followed by `77,81,82,84,87,89,95,97`.

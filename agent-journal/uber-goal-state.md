@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active goal 49 (`critical-history-sweep`)
+- Current status: active rotating cycle goal 74 (`memory-pressure-allocator`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -19,6 +19,11 @@
 - Third eligible slot: `49` of 97
 - Third draw: `49`
 - Third draw timestamp: `2026-07-28`
+- Latest draw seed: `3097406016`
+- Latest eligible pool: `74 77 81 82 84 87 89 95 97`
+- Latest selected index: `0`
+- Latest draw: `74`
+- Latest draw timestamp: `2026-07-28`
 
 ## Selection rules
 
@@ -48,11 +53,12 @@ descriptor, keypool, backup, migration, recovery, or fault-injection evidence.
 Goal `73` is `exhausted` for the current socket-level zero/short-write
 hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
-Goal `49` is `active`; its cycle journal is
-`agent-journal/critical-history-sweep.md`. The catalog is the source of
-titles, slugs, and campaign scope.
+Goal `49` remains recorded as active from its earlier long-running campaign;
+its cycle journal is `agent-journal/critical-history-sweep.md`. The current
+rotating cycle is goal `74`; the catalog is the source of titles, slugs, and
+campaign scope.
 
-## Latest Cycle
+## Historical Cycle Summaries
 
 Goal `78` tested `secp256k1_int_cmov` and
 `secp256k1_memzero_explicit` under Clang/GCC `O0`, `O2`, `O3`, `Os`, and
@@ -1264,3 +1270,30 @@ outputs, repair, limitations, and reopen conditions are in
 is excluded; the goal remains active for distinct batch, snapshot, WAL,
 comparator, corruption, and alternate-backend cells. The next queue remains
 `74,77,81,82,84,87,89,95,97`.
+
+## Latest Cycle
+
+Cycle 73 selected goal `74`, `memory-pressure-allocator`, with draw seed
+`3097406016`, index `0`, from `74 77 81 82 84 87 89 95 97`. The distinct
+hypothesis was that the production-shaped `wallet_create_transaction` fuzz
+path could retain wallet/map/recipient allocations across inputs or cross a
+realistic RSS limit while constructing up to 10,000 wallet transactions and
+100 recipients.
+
+The release-like wallet fuzzer replayed all 1,187 corpus runs at both 512 MiB
+and 128 MiB libFuzzer RSS limits, exited 0 in about 65.5 seconds each time,
+and reported 102 MiB peak RSS (104,988 and 105,100 KiB maximum RSS). The
+ASan/UBSan/LeakSanitizer replay with
+`quarantine_size_mb=0:detect_leaks=1` completed 1,188 runs at a 1 GiB limit,
+exited 0, reported 174 MiB peak RSS (179,056 KiB maximum RSS), and emitted no
+sanitizer or leak diagnostic. No artifact or process remained.
+
+Verdict: **dismissed** for this bounded wallet cell. No current Core source
+defect or repair is justified. The cell is excluded from future draws, while
+goal 74 remains active for distinct allocation-failure, recovery, full-node,
+and other wallet/RPC workload cells. The detailed source trace, binary hashes,
+commands, outputs, limitations, and reopen conditions are in
+`agent-journal/memory-pressure-allocator.md`.
+
+The next queue is `74,77,81,82,84,87,89,95,97`, with this exact wallet corpus
+cell excluded.
