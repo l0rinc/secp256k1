@@ -1946,3 +1946,35 @@ C/C++ defect-taxonomy class and subsystem, excluding its completed malformed
 coins cursor key, DataStream warning, hsort arithmetic, and NetGroupManager
 lifetime cells. It must use semantic reachability and an independent proof,
 and must not repeat the Goal82 multiplier cell.
+
+## Cycle 111 Summary
+
+Goal `97`, `cpp-defect-taxonomy`, confirmed and repaired a fresh Qt
+format-mismatch/invalid-enum decode defect in disposable Bitcoin Core
+worktree commit `2b6e66dbf8`, authored as `Lőrinc <pap.lorinc@gmail.com>`. The
+public `BitcoinUnit` QDataStream operator fed arbitrary `qint8` values to a
+helper that asserted and had no return path for invalid values; it also
+decoded after a failed read. A one-byte `04` fixture reached the production
+helper and aborted the pre-fix Qt test with `SIGABRT` at
+`src/qt/bitcoinunits.cpp:251`. Clang independently warned about the original
+non-void no-return path under `-DNDEBUG`. The repair sets
+`QDataStream::ReadCorruptData` for invalid units, preserves the destination,
+and avoids decoding truncated input. Debug and optimized GUI targets built;
+the focused invalid/truncated test and the complete optimized Qt test
+executable passed with `All tests passed.` The protected Bitcoin Core
+checkout was not modified and retains its three pre-existing dirty paths.
+Full evidence is in `agent-journal/cpp-defect-taxonomy.md` Cycle 111.
+
+Verdict: **confirmed and repaired in a disposable validation worktree**.
+Exclude this exact `BitcoinUnit::operator>>` cell plus Goal97's prior DataStream
+warning, hsort arithmetic, ASMap lifetime, and malformed coins cursor key.
+Goal97 remains eligible for other C/C++ classes and subsystems.
+
+## Cycle 112 Selection
+
+The controller drew Goal `97`, `cpp-defect-taxonomy`, with random seed
+`2104697230922440612`, index `5`, from the eligible pool `77 82 84 87 95 97`,
+at `2026-07-28T16:47:05Z`. Goal97 must choose a different C/C++ defect class
+and subsystem from all five closed cells, use semantic reachability and an
+independent proof, and leave an exact handoff even if the candidate is
+dismissed. Do not repeat the Goal82 field multiplier cell.

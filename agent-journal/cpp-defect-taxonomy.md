@@ -471,3 +471,116 @@ class eligible for a different subsystem and retain data race, deadlock,
 iterator invalidation, error cleanup, format mismatch, and checked-arithmetic
 cells for later cycles. The next controller draw must select a fresh goal or
 fresh cell and preserve this exclusion ledger.
+
+## Cycle 111
+
+### Cell and hypothesis
+
+This cycle selected the C/C++ **format-mismatch / invalid-enum decode** class in
+Bitcoin Core's Qt serialization boundary. The fresh hypothesis was that
+`BitcoinUnit::operator>>` in `src/qt/bitcoinunits.cpp:260-267` accepts an
+arbitrary serialized `qint8`, passes it to `FromQint8`, and has no safe
+failure contract. The old helper only handled values `0..3`, asserted for
+other values, and then fell off a non-void function. The stream operator also
+called it after every read without checking whether the stream had supplied a
+byte, so a truncated stream could pass an uninitialized byte to the same
+helper.
+
+The trust boundary is the public `QDataStream` operator declared in
+`src/qt/bitcoinunits.h`; callers can supply corrupted, truncated, or
+version-mismatched serialized GUI values. This is a local/API and persisted
+configuration boundary, not a consensus or network claim. History showed the
+operators were introduced with the QVariant/QSettings BitcoinUnit conversion
+in commit `75832fdc37`; no existing Qt test exercised malformed stream data.
+The completed Goal97 cells (DataStream warning, hsort arithmetic, ASMap
+lifetime, and malformed coins cursor key) were excluded before this scan.
+
+### Independent reproduction
+
+In disposable current-HEAD Core worktree `/tmp/bitcoin-goal97-111` at base
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`, a temporary Qt test fed a single
+byte `04` to the production `operator>>(QDataStream&, BitcoinUnit&)` with the
+destination initialized to `BitcoinUnit::SAT`. The pre-fix Debug GUI test
+binary was built with:
+
+```text
+cmake -B /tmp/bitcoin-goal97-111-build -DCMAKE_BUILD_TYPE=Debug -DBUILD_GUI=ON -DBUILD_GUI_TESTS=ON -DBUILD_TESTS=ON -DBUILD_DAEMON=ON -DWITH_BDB=OFF -DWITH_SQLITE=ON
+cmake --build /tmp/bitcoin-goal97-111-build --target test_bitcoin-qt -j2
+QT_QPA_PLATFORM=minimal /tmp/bitcoin-goal97-111-build/bin/test_bitcoin-qt bitcoinUnitStreamRejectsInvalidValue -v2
+```
+
+The test reached the production helper and terminated with exit 134:
+
+```text
+test_bitcoin-qt: ./qt/bitcoinunits.cpp:251: BitcoinUnit {anonymous}::FromQint8(qint8): Assertion `false' failed.
+Received signal 6 (SIGABRT)
+```
+
+This is a first-invalid-operation proof that a malformed serialized value is
+not rejected by the stream contract; it aborts the GUI test process instead.
+An independent static check of the original source, run from the protected
+Core checkout without modifying it, was:
+
+```text
+git show HEAD:src/qt/bitcoinunits.cpp | clang++ -std=c++20 -DNDEBUG -Wreturn-type -fsyntax-only -Isrc $(pkg-config --cflags Qt6Core Qt6Gui Qt6Widgets) -x c++ -
+```
+
+Clang reported:
+
+```text
+<stdin>:252:1: warning: non-void function does not return a value in all control paths [-Wreturn-type]
+```
+
+The project `Release` profile used for the executable still had assertions
+enabled, so the runtime release reproduction remained an abort rather than a
+runtime fall-through. The `-DNDEBUG` compiler diagnostic independently
+establishes the undefined return path when assertions are disabled. The
+truncated-byte branch was also covered in the repaired test; the old source
+unconditionally called `FromQint8` after a failed `QDataStream` read.
+
+### Repair and verification
+
+The minimal repair was made in disposable Core worktree commit
+`2b6e66dbf8`, authored as `Lőrinc <pap.lorinc@gmail.com>`. `FromQint8` now
+reports whether it decoded a valid value. `operator>>` checks the read status
+before decoding, sets `QDataStream::ReadCorruptData` for an invalid byte, and
+leaves the destination unchanged on both invalid and truncated input. The
+temporary regression test checks byte `04` and an empty stream.
+
+After the repair, both Debug and optimized GUI test targets built. The focused
+test passed in each build, including both malformed cases. The complete
+optimized Qt test executable also passed:
+
+```text
+cmake -B /tmp/bitcoin-goal97-111-release -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=ON -DBUILD_GUI_TESTS=ON -DBUILD_TESTS=ON -DBUILD_DAEMON=ON -DWITH_BDB=OFF
+cmake --build /tmp/bitcoin-goal97-111-release --target test_bitcoin-qt -j4
+QT_QPA_PLATFORM=minimal /tmp/bitcoin-goal97-111-release/bin/test_bitcoin-qt -silent
+```
+
+The final run reported `URITests::bitcoinUnitStreamRejectsInvalidValue()`
+passed, all AppTests, OptionTests, RPCNestedTests, WalletTests, and
+AddressBookTests passed, and `All tests passed.` `git diff --check` passed.
+The repaired source produced no Clang `-Wreturn-type` diagnostic under the
+same `-DNDEBUG` syntax check. The protected Bitcoin Core checkout was not
+modified and still has exactly its pre-existing
+`src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log` paths.
+
+### Verdict and limitations
+
+Verdict: **confirmed and repaired**. A malformed public stream value could
+abort the GUI in assertion builds and invoked undefined behavior in builds
+where assertions were disabled; truncated input additionally reached the
+decoder with no valid byte. The repair provides a conventional Qt stream
+failure status and preserves caller state. The tests cover the direct
+QDataStream API and the complete available Qt test executable, but this cycle
+did not fuzz actual QSettings files, exercise every external Qt consumer, or
+run Windows/32-bit GUI builds. The remaining `ToQint8` assertion is an
+internal invalid-enum guard and was not conflated with the untrusted decode
+cell.
+
+Goal97 coverage now includes this Qt invalid-enum/stream-status cell as
+confirmed/repaired in addition to the four previously closed cells. Exclude
+this exact `BitcoinUnit::operator>>` cell from future Goal97 scans; retain
+other format mismatches, checked arithmetic, iterator invalidation, error
+cleanup, data race, deadlock, and resource-lifetime cells. The next cycle
+must select a different subsystem or defect shape.
