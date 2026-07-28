@@ -1917,3 +1917,32 @@ representation, backend, exhaustive, magnitude, normalization, or
 cross-architecture hypothesis. Exclude its completed `scalar_low_impl.h`
 exhaustive cell and all prior Goal82 cells; do not repeat Goal97's cursor
 finding.
+
+## Cycle 110 Summary
+
+Goal `82`, `secp-field-scalar-matrix`, completed a fresh full-domain
+representation check for `secp256k1_fe_mul_int_unchecked`. An independent
+byte-level oracle tested 645 canonical field values, every legal
+multiplier/magnitude pair satisfying `a * magnitude <= 32`, and 97,428 total
+cases including zero, multiplier 32, and maximum-magnitude nonnormalized
+representations. Clang and GCC passed native 5x52 and forced 10x26 at O0/O2/O3/Os,
+LTO, and ASan/UBSan/VERIFY with the stable digest
+`36bd699b37d86dd8`. Native and forced integrated field/no-VERIFY suites also
+passed. A temporary low-limb multiplication mutation aborted on the focused
+probe's VERIFY invariant and was restored. No production defect or source
+change was justified. Full evidence is in
+`agent-journal/secp-field-scalar-matrix.md` Cycle 110; exclude this exact
+multiplier-domain cell from future Goal82 work.
+
+Verdict: **dismissed** for this exact field small-multiplier representation
+cell. Goal82 remains eligible for other backend, ABI, and architecture cells.
+
+## Cycle 111 Selection
+
+The controller drew Goal `97`, `cpp-defect-taxonomy`, with random seed
+`5747862383632621691`, index `5`, from the eligible pool
+`77 82 84 87 95 97`, at `2026-07-28T16:08:16Z`. Goal97 must choose a fresh
+C/C++ defect-taxonomy class and subsystem, excluding its completed malformed
+coins cursor key, DataStream warning, hsort arithmetic, and NetGroupManager
+lifetime cells. It must use semantic reachability and an independent proof,
+and must not repeat the Goal82 multiplier cell.

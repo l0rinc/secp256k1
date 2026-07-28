@@ -400,3 +400,95 @@ Exclude this exact scalar-low schedule from future Goal82 work. Keep
 unexamined field metadata/backend cells and changed architecture or compiler
 evidence eligible; do not repeat the already-fixed malformed opaque-storage
 canonicality issue without new source evidence.
+
+## Cycle 110: complete field small-multiplier domain
+
+### Selection and scope
+
+- The controller selected Goal `82`, `secp-field-scalar-matrix`, at
+  `2026-07-28T15:58:02Z` with seed `11779137628743502051`, index `1`, from
+  the eligible pool `77 82 84 87 95 97`. The audit branch was clean at
+  `c32a81c16322d3eca35addaf7f835199321ec527`; its base remained
+  `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The protected
+  libsecp256k1 checkout and protected Bitcoin Core checkout were not modified;
+  Core retained its documented pre-existing `blockencodings_tests.cpp`
+  modification and `fuzz-0.log`/`fuzz-1.log` files.
+- The prior Goal82 arithmetic work covered `fe_add_int`, `fe_half`,
+  normalization, inversion, comparison, storage, and a scalar-low exhaustive
+  implementation. Existing fuzz history also has the single multiplier-5
+  `small multiplication` oracle and uses `mul_int_unchecked` to construct
+  raised representations. This cycle therefore targeted the unclosed
+  representation contract for `secp256k1_fe_mul_int_unchecked`, rather than
+  repeating the multiplier-5 or add-int seeds.
+- The falsifiable hypothesis was that one backend could multiply only part of
+  its limb representation correctly, or mishandle a legal multiplier at the
+  maximum representation magnitude. The wrapper contract at
+  `src/field_impl.h:310-320` allows `0 <= a <= 32`, requires
+  `a * magnitude <= 32`, multiplies in place, sets the output magnitude to
+  that product, and leaves it nonnormalized. The backend loops are at
+  `src/field_5x52_impl.h:293-299` and `src/field_10x26_impl.h:364-375`.
+
+### Independent oracle and schedule
+
+The disposable translation unit
+`/tmp/secp256k1-oracles-next/field-mul-int-probe.c` had SHA-256
+`ad14008fafe06d95839a195743d2b105d61198272bc52abe973f89b52287db00` before
+cleanup. It includes the production field implementation only to invoke the
+operation under test. Expected values use a separate 32-byte big-endian
+algorithm: repeated modular additions of the canonical input, with explicit
+carry and subtraction of the field prime. The expected path does not use any
+field limb, normalization, or multiplication helper.
+
+The value schedule has 645 canonical inputs: zero, one, two, `p-1`, `p-2`,
+every power of two and its `p`-complement, and 128 deterministic random
+values below `p`. For magnitude zero it tests all multipliers `0..32` on the
+zero element. For each magnitude `1..32`, it constructs the same residue as
+the canonical input plus `m-1` independent prime representations using
+`fe_add`, then tests every multiplier `0..floor(32/m)`. This produces 97,428
+valid cases, including multiplier zero, multiplier 32 at magnitude one, and
+all magnitude/multiplier products at the limit 32. Every case checks the
+VERIFY metadata transition before normalization and the final canonical
+bytes after normalization.
+
+### Backend and compiler evidence
+
+Clang 22.1.7 and GCC 16.1.0 passed native 5x52 and forced 10x26 at `O0`,
+`O2`, `O3`, and `Os`. Every run printed:
+
+    MUL_INT_RESULT PASS values=645 cases=97428 digest=36bd699b37d86dd8
+
+Clang and GCC native/forced `O2 -flto` builds printed the same digest. The
+native and forced builds with `O1 -DVERIFY -fsanitize=address,undefined
+-fno-sanitize-recover=all -fno-omit-frame-pointer`, leak detection enabled,
+and halt-on-error also printed the same digest with no sanitizer diagnostic.
+
+The existing integrated Debug field suites were run in both
+`/mnt/my_storage/secp256k1-build/current-full-native-20260726` and
+`current-full-int64-20260726`, each with `bin/tests -t=field -i=1 -j=2` and
+`bin/noverify_tests -t=field -i=1 -j=2`. All four runs exited zero.
+
+### Mutation and verdict
+
+As an oracle-sensitivity control, the native 5x52 implementation was
+temporarily changed from `r->n[0] *= a` to
+`r->n[0] = r->n[0] * a + (a != 0)`. The focused Clang `O2 -DVERIFY` probe
+aborted at `src/field_5x52_impl.h:22` on the internal limb-bound check, so a
+single-limb arithmetic defect cannot silently pass the schedule. The source
+mutation was restored before the clean replay, which again printed the
+expected digest; `git diff --check` passed and no production source remained
+modified.
+
+The complete small-multiplier representation hypothesis is **dismissed**
+for the tested Clang/GCC x86_64 native 5x52 and forced 10x26 implementations,
+O0/O2/O3/Os, LTO, VERIFY, ASan/UBSan, and integrated field/no-VERIFY suites.
+No backend mismatch, incorrect magnitude transition, out-of-bounds write,
+undefined behavior, or reachable production defect was found. No production
+or regression-test commit is justified; master-relative severity is none.
+
+Limits are no runtime AArch64, 32-bit, big-endian, MSVC, or GCC
+cross-architecture execution. The independent fixture construction uses the
+separate field addition helper to create nonnormalized `m*p` representations,
+while the expected output and multiplier sweep are byte-level independent.
+Reopen this cell for a new backend, ABI, compiler diagnostic, or caller
+contract. Exclude this exact full-domain multiplier schedule from future
+Goal82 work and retain other untested architecture/backend cells.
