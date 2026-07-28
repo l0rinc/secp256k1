@@ -33,13 +33,16 @@
 
 ## Goal ledger
 
-Goals `0` through `48` and `50` through `60`, plus `62` through `77` and `79`
-through `98`, remain `pending`; this was the eligible set used for the third
-draw. Goal `61` is `exhausted` for its bounded stateful-fuzzer cycle. Goal
+Goals `0` through `48` and `50` through `60`, plus `62` through `77`, `79`
+through `91`, and `94` through `98`, remain `pending`; this was the eligible
+set used for the latest draw after prior-cycle exclusions. Goal `61` is
+`exhausted` for its bounded stateful-fuzzer cycle. Goal
 `78` is `exhausted` for the completed scalar compiler/representation helper
 queue, with its journal at `agent-journal/translation-validation.md`; reopen
 it only for new source, caller, compiler, architecture, or specification
-evidence. Goal `49` is `active`; its cycle journal is
+evidence. Goals `92` and `93` are `exhausted` for their current bounded ABI
+and Linux RPC-cookie fault hypotheses; reopen them only for new ABI/platform,
+caller, or partial-I/O evidence. Goal `49` is `active`; its cycle journal is
 `agent-journal/critical-history-sweep.md`. The catalog is the source of
 titles, slugs, and campaign scope.
 
@@ -715,3 +718,37 @@ source change is justified. Full evidence is in
 until new compiler/ABI evidence appears, along with active goals 49, 61, and
 78, and uses the fresh queue
 `52,53,72,73,74,77,81,82,84,87,88,89,93,95,97,98`.
+
+The fifty-seventh controller cycle selected catalog goal `93`,
+`system-fault-injection`, with draw seed `2318999372` over the 16-entry
+eligible pool `52,53,72,73,74,77,81,82,84,87,88,89,93,95,97,98`; index 12
+selected goal 93. Existing libsecp context-clone, scratch, ecmult callback,
+and rollback fault paths were already indexed, so the cycle selected the
+distinct Bitcoin Core RPC cookie path. `GenerateAuthCookie` in
+`src/rpc/request.cpp:100-146` checked only `is_open()` before writing and
+renaming `.cookie.tmp`, despite `src/rpc/request.h:32-43` defining `Ok` as
+auth data saved to disk. A deterministic Linux I/O interposer failed writes
+to the temporary cookie on the clean Core daemon: it created a zero-byte
+cookie, logged successful cookie authentication, kept HTTP RPC running, and
+returned HTTP `401` to a request using the on-disk cookie. The normal control
+created a 75-byte cookie and returned HTTP `200`; explicit libc close
+interposition did not trigger under this libstdc++ path and is not claimed as
+an independent finding.
+
+A disposable Core worktree applied the smallest local-pattern repair: check
+`file.fail()` after insertion and after `file.close()`, remove the temporary
+file on either failure, and return `AuthCookieResult::Error` before rename.
+Release `bitcoind` built successfully and the repair was recorded as
+disposable Core commit `34415a3962` (`rpc: reject failed cookie writes`). The
+no-fault repaired control authenticated successfully; the injected write
+case produced no pid, no `.cookie`, no `.cookie.tmp`, and logged the cookie
+failure followed by HTTP startup failure. This is a confirmed Low/Medium
+local RPC availability and contract defect, not a consensus, key/funds,
+privacy, or remote primitive. No source change was made in the audit
+checkout. Full evidence and limitations are in
+`agent-journal/system-fault-injection.md`.
+
+The next draw excludes active campaigns `49`, `61`, and `78`, goal 93 until
+new platform or partial-I/O evidence appears, and goal 92 until new ABI
+evidence appears. The next eligible queue is
+`52,53,72,73,74,77,81,82,84,87,88,89,95,97,98`.
