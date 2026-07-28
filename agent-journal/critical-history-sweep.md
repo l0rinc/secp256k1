@@ -1928,3 +1928,141 @@ outputs are to be removed after this journal entry is committed. The next
 draw must exclude the `765ef533` Jacobian-clear family, `_ecmult_gen_ge`, and
 the already covered Schnorr/MuSig/ECDH secret-lifetime family, then widen to a
 fresh unindexed production-impact history seed.
+
+## Cycle 18: Strauss scratch allocation failure
+
+### Selection and duplicate search
+
+This cycle continued catalog goal `49`, `critical-history-sweep`. The source
+screen covered the older ecmult and public-API candidates that were not already
+in the journal. `210ffed5` (separate input/output pointers for the removed
+`secp256k1_ec_pubkey_decompress` API) is obsolete because the current tree has
+no such API or caller. `84740acd` (reuse one field inverse in the old odd
+multiples storage path) is obsolete because that helper was later replaced by
+`efa783f8` and is absent from current source. `35399e08` is an old restrict
+macro/name typo; current field backends have the corrected signature and the
+seed is compiler/build hygiene rather than a current critical defect.
+
+The remaining eligible pool contained the unindexed historical production
+seed:
+
+```text
+7506e064d791e529d2e57bb52c156deb33b897ef
+```
+
+The fresh draw seed was `14158664958069679963`; with one eligible entry the
+selected index was `0`. The selected commit is `7506e064`, "Prevent arithmetic
+on NULL pointer if the scratch space is too small", with parent
+`ac05f61fcf639a15b5101131561620303e4bd808`.
+
+The semantic duplicate search found related current scratch controls, but no
+duplicate of this exact Strauss failure edge. The existing controls cover
+scratch-constructor size wrapping, invalid checkpoints, Pippenger allocation
+failure, callback failure, and scratch rollback. They do not use the removed
+`pre_a_lam` pointer computation as their trigger, so this historical seed was
+retained for an independent parent/fix probe.
+
+### Historical mechanism and trust boundary
+
+The parent allocated one combined `pre_a` array for two tables and then formed
+`state.pre_a_lam = state.pre_a + n_points * ECMULT_TABLE_SIZE(WINDOW_A)`
+before checking whether the allocation succeeded. A scratch arena that could
+hold the first four allocations but not `pre_a` therefore made
+`secp256k1_scratch_alloc` return NULL and immediately performed nonzero pointer
+arithmetic on that NULL value. The parent also omitted `pre_a_lam` and `ps`
+from the failure condition. The fix allocates `pre_a` and `pre_a_lam`
+separately and checks every allocation before entering Strauss arithmetic.
+
+This is an internal scratch-space contract. It is a real C undefined-behavior
+and failure-path memory-safety defect for callers that construct an undersized
+scratch arena, but it is not a Bitcoin Core wire-input primitive. Current Core's
+MuSig aggregation reaches the no-scratch `ecmult_multi_var` path and does not
+allow block, transaction, witness, or peer bytes to choose the scratch arena
+size. The current Core checkout remained dirty and untouched.
+
+### Independent historical reproduction
+
+Disposable parent and fixed worktrees were configured and built with:
+
+```sh
+./autogen.sh
+./configure --enable-experimental --enable-module-ecdh \
+    --disable-shared --enable-tests --disable-benchmark
+make -j2
+```
+
+The standard deterministic suites were run with `./tests 0`; both revisions
+printed `no problems found`. The old tree does not build a separate
+`noverify_tests` binary. Both Valgrind ctime binaries also passed:
+
+```sh
+./libtool --mode=execute valgrind --quiet --error-exitcode=99 \
+    ./valgrind_ctime_test
+```
+
+The broad randomized `./tests 1` invocation failed in the same legacy DER
+parser test on both revisions, at `src/tests.c:4996`, with different generated
+fixtures. That unrelated stochastic failure was not used as evidence for this
+seed; the deterministic count-zero suite and the isolated probe were used
+instead.
+
+The scratch probe was compiled separately against each source revision with
+Clang `undefined,pointer-overflow` instrumentation. It creates a one-point
+arena large enough for `points`, `scalars`, `prej`, and `zr`, but not `pre_a`,
+then calls the internal Strauss batch helper. The parent emitted:
+
+```text
+/tmp/critical-history-53/old-null-strauss/src/ecmult_impl.h:599:35:
+runtime error: applying non-zero offset 704 to null pointer
+```
+
+with `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The fixed revision
+returned failure and preserved the checkpoint without a sanitizer diagnostic:
+
+```text
+first_four=1504 before=0
+ret=0 after=0
+```
+
+The exact probe source was disposable and was not added to the repository.
+
+### Current source and independent controls
+
+Current `src/ecmult_impl.h:394-407` no longer has `pre_a_lam`; it allocates
+`aux`, `pre_a`, and `ps` independently, checks all five pointers, applies the
+scratch checkpoint on failure, and verifies that rollback restored the cursor.
+
+The current native and forced-int64 unit controls both passed:
+
+```sh
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests \
+    --target=ecmult_multi_tests --iterations=1 --seed=7506e064
+/mnt/my_storage/secp256k1-build/current-full-int64-20260726/bin/tests \
+    --target=ecmult_multi_tests --iterations=1 --seed=7506e064
+```
+
+Eight focused current `fuzz_ecmult_multi` corpus inputs covering direct and
+Pippenger allocation failures, scratch overflow/checkpoint/accounting
+boundaries, direct empty/single batches, and callback failure were replayed
+once in each backend. All 16 executions exited `0` with no sanitizer,
+assertion, timeout, or crash output.
+
+### Verdict
+
+**Dismissed as repaired historical hardening.** The selected parent has a
+direct UBSan witness for the NULL-derived pointer, and the fixed revision has
+the correct independent-allocation and complete-failure-check contract.
+Current source has since removed the affected temporary array, current native
+and forced-int64 tests and focused corpus controls pass, and the current Core
+caller graph does not expose scratch sizing to attacker-controlled wire data.
+No current production source change or regression test is justified.
+
+### Limitations and handoff
+
+The historical sanitizer proof is x86_64 Clang-only and covers one precise
+undersized-arena boundary; it does not prove all allocation-failure paths or
+all supported architectures. Current Core reachability was static because its
+checkout is intentionally dirty. The next draw must exclude `7506e064`, the
+removed `pre_a_lam`/Strauss allocation family, and the already indexed generic
+scratch-boundary findings, then widen to a distinct unindexed production-impact
+history seed.

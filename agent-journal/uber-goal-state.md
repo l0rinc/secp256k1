@@ -632,3 +632,23 @@ production source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the next draw must exclude the
 Jacobian-clear/helper and secret-lifetime family and choose a fresh unindexed
 production-impact history seed.
+
+The fifty-third controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with fresh draw seed `14158664958069679963` over a
+one-entry eligible pool after screening obsolete API, removed ecmult, and old
+restrict-typo candidates. It selected `7506e064d791e529d2e57bb52c156deb33b897ef`,
+the historical Strauss scratch-allocation NULL-arithmetic fix. Parent and fix
+worktrees configured and built successfully; deterministic count-zero tests
+and Valgrind ctime tests passed on both, while the broad randomized legacy DER
+test was an unrelated failure on both revisions. A dedicated Clang
+undefined/pointer-overflow probe reproduced the parent's `applying non-zero
+offset 704 to null pointer` at `src/ecmult_impl.h:599`; the fixed revision
+returned failure with the scratch cursor unchanged. Current native and
+forced-int64 `ecmult_multi_tests` plus eight focused allocation/checkpoint/
+callback corpus inputs per backend all passed. Current source separately
+allocates and checks the Strauss temporaries, and Bitcoin Core's MuSig path
+does not expose scratch sizing to wire data. The seed is dismissed as repaired
+historical hardening with no production source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the next draw must exclude
+`7506e064`, the removed `pre_a_lam` family, and generic scratch-boundary
+duplicates, then widen to a distinct unindexed production-impact history seed.
