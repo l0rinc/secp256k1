@@ -727,3 +727,127 @@ After the commit, search and draw from the remaining pool beginning with
 `603c33bc8079f7e1a4851dbef629a2b91e13bbef`, and
 `a5759c572ed4948c660a06430b074bbc913fafc6`, excluding any seed already
 covered by the finding ledger or a current-source duplicate.
+
+## Cycle 9: historical unchecked malloc hardening
+
+### Selection and provenance
+
+The forty-fourth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `8edf3d73` on branch
+`codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The ordered eligible pool was:
+
+```text
+ad52495d723648948970850f01a9445d061e85f7
+b0be6aba910392e06aa85a87d2240a1aadb2fff5
+603c33bc8079f7e1a4851dbef629a2b91e13bbef
+a5759c572ed4948c660a06430b074bbc913fafc6
+```
+
+Random seed `2504559595` selected index `3` (`2504559595 % 4`) and
+`a5759c572ed4948c660a06430b074bbc913fafc6`, parent
+`2b9388b647a68654186ff821c17426355850f39f`, dated 2014-12-07, subject
+`Check return value of malloc`. The patch changed eight low-level startup
+and batch-table allocations from raw `malloc` to a new `checked_malloc`
+helper that calls `CHECK(ret != NULL)`.
+
+### Historical reproduction
+
+Disposable worktrees were created at the historical parent and selected fix:
+`/tmp/critical-history-49/old-malloc` and
+`/tmp/critical-history-49/old-malloc-fixed`. Both were configured as static,
+test-disabled builds and compiled successfully. A small probe defined
+`malloc` to return NULL and called:
+
+```c
+secp256k1_start(SECP256K1_START_SIGN | SECP256K1_START_VERIFY);
+```
+
+The parent was compiled with:
+
+```sh
+gcc -O0 -g -fno-omit-frame-pointer -I. -Iinclude alloc_fail_probe.c \
+  .libs/libsecp256k1.a -lgmp -o alloc_fail_probe
+ulimit -c 0
+timeout 5 ./alloc_fail_probe
+```
+
+The parent exited `139` with a segmentation fault and no completion output:
+the first unchecked NULL allocation was dereferenced during startup. The
+selected fix was built with the same probe and exited `134`; stderr was:
+`src/util.h:66: test condition failed: ret != NULL`. This independently
+reproduces the historical defect and the intended local hardening behavior.
+
+### Current surface and duplicate search
+
+The current production core has no raw allocation at the historical sites.
+The equivalent startup/table paths use the callback-aware `checked_malloc` or
+`checked_malloc_array`. A current source inventory excluding tests, fuzzers,
+benches, and generators returned only the implementation's own
+`src/util.h:174: void *ret = malloc(size);`. Current
+`src/scratch_impl.h:20-24` checks the returned pointer before initialization.
+`secp256k1_context_create` uses the aborting default error callback, while
+`secp256k1_context_clone` passes a NULL result through
+`secp256k1_context_preallocated_clone`; its `ARG_CHECK(prealloc != NULL)` at
+`src/secp256k1.c:45-50,162-170` calls the illegal callback and returns before
+dereferencing it. The existing allocation-failure note at
+`src/fuzz/README.md:10173-10188` is the same context-clone contract area and
+already records the returning-callback mutation as a negative control, so no
+new finding is claimed from it.
+
+The hash and semantic search found no current unchecked production allocation
+variant for this seed. Remaining raw allocations are in test, fuzz, bench,
+or table-generator code and do not share the library's public runtime trust
+boundary. No Bitcoin Core checkout is part of this worktree, and there is no
+current Bitcoin Core caller evidence that reopens the historical startup
+path; the relevant current boundary is the public context API.
+
+### Current controls
+
+The current native ASan/UBSan context corpus replay was:
+
+```sh
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/fuzz_context \
+  -runs=1 -timeout=120 -rss_limit_mb=0 -ignore_timeouts=0 \
+  -ignore_ooms=0 -ignore_crashes=0 src/fuzz/corpora/context
+```
+
+It loaded 12 files, completed 13 runs with exit `0`, and reported
+`cov: 3074 ft: 4960`. The current ecmult-multi allocation corpus was replayed
+with the same controls; it loaded 29 files, completed 30 runs with exit `0`,
+and reported `cov: 3757 ft: 10784`. The forced-int64 context test also passed:
+
+```text
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests
+  --target=all_proper_context_tests --iterations=2 --seed=2504559595
+exit 0; total execution time 0.001 seconds
+```
+
+No fuzz, sanitizer, or test process remained after polling.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening.** The parent has a real NULL
+deref on an allocation-failure path, and the selected commit fixes it, but
+the fix is already present in current history and the affected core sites are
+now centralized through checked allocation or scratch-return checks. The
+current corpus and callback-failure controls found no clean-master defect.
+The historical failure is a local resource-exhaustion crash, not a remote
+primitive, consensus issue, key/funds/privacy loss, or current Bitcoin Core
+caller vulnerability. No production change is justified; this cycle requires
+only a focused journal handoff.
+
+### Next history slice
+
+Exclude `a5759c57` and its direct unchecked-malloc family. The next random
+draw must choose and re-check one of:
+
+```text
+ad52495d723648948970850f01a9445d061e85f7
+b0be6aba910392e06aa85a87d2240a1aadb2fff5
+603c33bc8079f7e1a4851dbef629a2b91e13bbef
+```
+
+Search the finding ledger and current callers again before drawing, because
+later allocation, callback, and arithmetic fixes may make a different
+historical variant reachable.

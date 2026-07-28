@@ -476,3 +476,22 @@ no runtime implementation change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the next draw must exclude this
 NULL-annotation family and continue from `ad52495d`, `b0be6aba`, `603c33bc`,
 or `a5759c57` after duplicate search.
+
+The forty-fourth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `2504559595` over the ordered
+four-entry history pool `ad52495d b0be6aba 603c33bc a5759c57`, selecting
+`a5759c572ed4948c660a06430b074bbc913fafc6` (`Check return value of malloc`).
+The 2014 parent was built in a disposable worktree and a malloc-always-NULL
+probe reproduced a startup segmentation fault (`139`); the selected fix
+converted the same probe to its checked `ret != NULL` abort (`134`). Current
+production core has no raw allocation at those sites: the only remaining
+raw `malloc` in the filtered core inventory is the implementation inside
+`src/util.h`'s checked allocator, with scratch and context callers handling
+its result or using the default aborting callback. The current context corpus
+(12 files, 13 runs, `cov: 3074 ft: 4960`), ecmult-multi allocation corpus (29
+files, 30 runs, `cov: 3757 ft: 10784`), and forced-int64 context tests all
+exited 0. The seed was dismissed as obsolete historical hardening with no
+production change; full evidence is in
+`agent-journal/critical-history-sweep.md`. The next draw must exclude this
+malloc family and select from `ad52495d`, `b0be6aba`, or `603c33bc` after a
+fresh duplicate/current-caller search.
