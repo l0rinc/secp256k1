@@ -3251,8 +3251,97 @@ static void test_fe_zero_predicates_high_magnitude(void) {
     CHECK(secp256k1_fe_normalizes_to_zero_var(&neg) == 0);
 }
 
+static void test_fe_zero_predicates_exact_p(void) {
+    /* An exact raw representation of p must be recognized as zero by both
+     * predicates. Only this input exercises the equality guard against p's
+     * top limb in the predicates' x computation: 4*p (above) has t9 =
+     * 0x0FFFFFC, and small elements have t9 == 0, so neither can detect a
+     * mutated top-limb comparison. Limbs are backend-specific. */
+    secp256k1_fe pfe;
+#if defined(SECP256K1_WIDEMUL_INT64)
+    /* 10x26 limbs of p = 2^256 - 2^32 - 977. */
+    static const uint32_t plimbs[10] = {
+        0x3FFFC2FUL, 0x3FFFFBFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL,
+        0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x03FFFFFUL
+    };
+    memcpy(pfe.n, plimbs, sizeof(plimbs));
+#else
+    /* 5x52 limbs of p. */
+    static const uint64_t plimbs[5] = {
+        0xFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFULL,
+        0xFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFULL
+    };
+    memcpy(pfe.n, plimbs, sizeof(plimbs));
+#endif
+#ifdef VERIFY
+    pfe.magnitude = 1;
+    pfe.normalized = 0;
+#endif
+    CHECK(secp256k1_fe_normalizes_to_zero(&pfe) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&pfe) == 1);
+}
+
+static void test_fe_normalize_value_preservation(void) {
+    /* fe_normalize{,_var,_weak} must preserve the field value. Max-bounds
+     * elements have every limb at its cap, so intermediate carry-chain high
+     * bits are set — the only inputs that can distinguish carry-shift
+     * mutations inside the normalize implementations (the rest of the suite
+     * either normalizes already-small elements or only checks self-
+     * consistency of repeated normalization). */
+    int m;
+    for (m = 1; m <= 30; m++) {
+        secp256k1_fe t, u, negu;
+        secp256k1_fe_get_bounds(&t, m);
+        u = t;
+        secp256k1_fe_normalize(&u);
+        /* diff = t - u must be zero mod p (magnitude m + 2 <= 32). */
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+        u = t;
+        secp256k1_fe_normalize_var(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+        u = t;
+        secp256k1_fe_normalize_weak(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+    }
+}
+
+static void test_fe_set_b32_limit_boundaries(void) {
+    /* Byte-encoding boundary coverage for secp256k1_fe_set_b32_limit:
+     * p - 1 must be accepted, p and 2^256 - 1 must be rejected. Only inputs
+     * whose top limb equals p's exercise the top-limb comparison; the
+     * existing suite has no such input. */
+    static const unsigned char pm1[32] = {
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xfc,0x2e
+    };
+    static const unsigned char peq[32] = {
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xfc,0x2f
+    };
+    static const unsigned char max[32] = {
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+    };
+    secp256k1_fe t;
+    CHECK(secp256k1_fe_set_b32_limit(&t, pm1) == 1);
+    CHECK(secp256k1_fe_set_b32_limit(&t, peq) == 0);
+    CHECK(secp256k1_fe_set_b32_limit(&t, max) == 0);
+}
+
 static void run_field_misc(void) {
     test_fe_zero_predicates_high_magnitude();
+    test_fe_zero_predicates_exact_p();
+    test_fe_normalize_value_preservation();
+    test_fe_set_b32_limit_boundaries();
     secp256k1_fe x;
     secp256k1_fe y;
     secp256k1_fe z;
