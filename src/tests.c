@@ -3229,7 +3229,49 @@ static void run_field_half(void) {
     }
 }
 
+static void test_fe_zero_predicates_boundaries(void) {
+    secp256k1_fe one, t;
+
+    /* Construct 4*p: a true-zero value whose top limb is not small, so the
+     * first reduction pass in both zero predicates is exercised. */
+    secp256k1_fe_set_int(&one, 1);
+    secp256k1_fe_negate(&t, &one, 1);
+    secp256k1_fe_add(&t, &one);
+    CHECK(secp256k1_fe_normalizes_to_zero(&t) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 1);
+    secp256k1_fe_add_int(&t, 1);
+    CHECK(secp256k1_fe_normalizes_to_zero(&t) == 0);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 0);
+
+    /* The exact raw representation of p exercises the equality guard against
+     * p's top limb in the zero predicates' reduction. */
+#if defined(SECP256K1_WIDEMUL_INT64)
+    {
+        static const uint32_t plimbs[10] = {
+            0x3FFFC2FUL, 0x3FFFFBFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL,
+            0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x03FFFFFUL
+        };
+        memcpy(t.n, plimbs, sizeof(plimbs));
+    }
+#else
+    {
+        static const uint64_t plimbs[5] = {
+            0xFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFULL,
+            0xFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFULL
+        };
+        memcpy(t.n, plimbs, sizeof(plimbs));
+    }
+#endif
+#ifdef VERIFY
+    t.magnitude = 1;
+    t.normalized = 0;
+#endif
+    CHECK(secp256k1_fe_normalizes_to_zero(&t) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 1);
+}
+
 static void run_field_misc(void) {
+    test_fe_zero_predicates_boundaries();
     secp256k1_fe x;
     secp256k1_fe y;
     secp256k1_fe z;
