@@ -253,3 +253,125 @@ Next queue: retain goal `97` for a different defect class/subsystem cell;
 retain goals `77` and `95` in the immediate rotation. Keep the old DataStream
 warning cell excluded, and keep the unrelated Boost compiler/dependency
 warning as a separate lead rather than merging it with hsort.
+
+## Cycle 106 - Non-owning ASMap lifetime
+
+### Scope and hypothesis
+
+The fresh Goal97 cell targeted lifetime misuse of non-owning views and
+iterators after the earlier DataStream diagnostic false positive and secp256k1
+heapsort arithmetic cell had been excluded. The concrete candidate was
+Bitcoin Core's `NetGroupManager::WithEmbeddedAsmap` in
+`src/netgroup.h:24-34`. Before the repair it accepted a `std::span` by value,
+stored that span in `m_asmap`, and returned a manager that could outlive the
+source container. `GetAsmapVersion()` at `src/netgroup.cpp:14-17` and
+`GetMappedAS()` at `src/netgroup.cpp:82-109` dereference that stored span.
+
+The protected Core checkout was at HEAD
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` with only its pre-existing dirty
+paths: `src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log`.
+The audit secp256k1 worktree was at `6cb967b5` before its journal updates.
+The protected Bitcoin source was not modified. History search found the
+factory introduced by `cf4943fdcdd167a56c278ba094cecb0fa241a8f8`,
+`refactor: Use span instead of vector for data in util/asmap`; that refactor
+deliberately split static embedded data from runtime-owned vectors, but left
+the generic span factory callable with a temporary vector. The current dynamic
+fuzz target was also calling the embedded factory for a vector, even though
+the vector happened to remain alive for that immediate use.
+
+### Independent reproduction
+
+The disposable C++20 probe used the production Core header and ASan/UBSan
+Core libraries. Its source hash was
+`38056394ace5bb11c5d38e6dac5e438cdfe697880c4d84a37b3e45d219bf154c`, the
+object hash was
+`3580825f01f94ef8e8ebcee593190ea7c7d240dc2a7aac4dc813a2d94fdfa91c`, and
+the linked probe hash was
+`56c9da87a0bb69c40b9301df9e6f6fe07cd5450e6adfb3bffcb940745b75e4e5`.
+The compile used `/usr/bin/clang++ -O1 -g -std=c++20
+-fsanitize=address,undefined -fno-sanitize-recover=all -fPIE` with the
+current `build_fuzz` headers and Core libraries. The safe control was:
+
+```text
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 timeout 15s /mnt/my_storage/goal97-netgroup-probe safe
+OWNED_VERSION f98c4e9736d8eb8bb46299798906695c755369a3df99a93ffdded1713f1cf6e2
+```
+
+The failing pre-fix invocation was:
+
+```text
+ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:detect_leaks=0 timeout 5s /mnt/my_storage/goal97-netgroup-probe
+OWNED_VERSION f98c4e9736d8eb8bb46299798906695c755369a3df99a93ffdded1713f1cf6e2
+=================================================================
+==2086585==ERROR: AddressSanitizer: heap-use-after-free
+READ of size 4
+```
+
+The source-level trace is `WithEmbeddedAsmap(std::vector<std::byte>(64))` ->
+`NetGroupManager(std::span, {})` -> destruction of the temporary vector ->
+`GetAsmapVersion()` -> `AsmapVersion(m_asmap)`. The ASan report was bounded
+without a symbolized stack by the disposable timeout, but the direct source
+trace and reproducible first read identify the dangling span. No probe or
+Core test process remained afterward.
+
+An independent compile probe using the patched header accepted lvalue
+`std::array` and lvalue `std::span` calls. Reintroducing the exact temporary
+vector expression produced this diagnostic and a nonzero status:
+
+```text
+error: no matching function for call to 'WithEmbeddedAsmap'
+note: candidate function [with T = std::vector<std::byte>] not viable: expects an lvalue for 1st argument
+NEGATIVE_COMPILE_STATUS=1
+```
+
+### Repair and verification
+
+The minimal repair was made in disposable Core worktree commit
+`781bc452ca37cf13e342361eed6369318ab46271`, authored as
+`Lőrinc <pap.lorinc@gmail.com>`. `WithEmbeddedAsmap` now takes `T&`, making
+temporary containers ill-formed while retaining lvalue static arrays and
+spans. The dynamic `src/test/fuzz/asmap.cpp` path now moves its vector into
+`WithLoadedAsmap`. A focused `asmap_loaded_data_lifetime` test computes the
+version before moving the vector and checks the manager after the source
+vector has been destroyed. The repaired source hashes were:
+
+```text
+src/netgroup.h             689f8447b50d250c1afa46123af183b4964307a90e9c3574a06bdc61bbed6f9f
+src/test/fuzz/asmap.cpp    255c1fb55c4c496f0cb27a6611399abc7e591d562d98e09f24c546f451c9b630
+src/test/netbase_tests.cpp ed88ca415ebdf2e63225eeb8028320da6956d3cd76d2928c69ccecdc01a73ea6
+```
+
+The exact project validation was:
+
+```text
+cmake -S . -B /mnt/my_storage/bitcoin-goal97-build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DBUILD_FUZZ_BINARY=OFF -DWITH_ZMQ=OFF -DWITH_QT=OFF -DWITH_GUI=OFF
+cmake --build /mnt/my_storage/bitcoin-goal97-build --target test_bitcoin -j2
+/mnt/my_storage/bitcoin-goal97-build/bin/test_bitcoin --run_test=netbase_tests --log_level=test_suite
+Running 17 test cases...
+*** No errors detected
+
+cmake -S . -B /mnt/my_storage/bitcoin-goal97-build -DBUILD_FUZZ_BINARY=ON
+cmake --build /mnt/my_storage/bitcoin-goal97-build --target fuzz -j2
+[100%] Built target fuzz
+```
+
+The release fuzz binary was not executed because it correctly requires
+`BUILD_FOR_FUZZING=ON` or a Debug build; the complete fuzz target did compile,
+including `asmap.cpp`. `git diff --check` passed. The protected checkout
+still has exactly its pre-existing dirty paths and no source change.
+
+### Verdict and limitations
+
+Verdict: **confirmed and repaired**. The old API admitted a directly
+reachable heap-use-after-free; the new API rejects the dangerous temporary at
+compile time and routes runtime fuzz data through the owning factory. The
+focused unit suite, complete Release test target, and complete Release fuzz
+target build passed. A Debug/`BUILD_FOR_FUZZING` runtime fuzz campaign,
+Windows/32-bit execution, and external callers outside the checked-out tree
+were not run. The API still requires callers using lvalue embedded storage to
+keep that storage alive, as documented by the factory's name and comment.
+
+Next queue: retain Goal97 for a different C/C++ defect class and subsystem;
+exclude this ASMap lifetime cell, the DataStream warning, and the hsort cell.
+Retain Goals `77`, `82`, `84`, `87`, and `95` in the immediate rotation. Keep
+the unrelated Boost warning as a separate dependency/toolchain lead.

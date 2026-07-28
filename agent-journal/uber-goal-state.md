@@ -1784,3 +1784,54 @@ The controller drew goal `95`, `database-semantics-differential`, with seed
 at `2026-07-28T14:01:15Z`. Goal95 remains active; the next cycle must choose a
 fresh comparator/seek, snapshot lifetime, partial-I/O, MANIFEST, corruption,
 or alternate-backend hypothesis and must not repeat the initial-key cell.
+
+## Cycle 105 Summary
+
+Goal `95`, `database-semantics-differential`, tested persistent LevelDB
+iterator lifetime across synchronous overwrites, deletes, additions, and
+full compaction. A standalone production-library probe ran four deterministic
+seeds in both obfuscation modes. The held iterator matched its creation-time
+snapshot, a fresh iterator matched an independent ordered model, and a
+deliberate key/value mutation was rejected by the oracle. The existing
+nine-case `dbwrapper_tests` suite also passed with no errors.
+
+Verdict: **dismissed** for this exact persistent-snapshot cell. No protected
+Core source changed and no repair commit was created. The next cell must not
+repeat the initial-key or snapshot-lifetime hypotheses; remaining Goal95
+options include comparator/seek, partial-I/O, MANIFEST, corruption, or
+alternate-backend semantics.
+
+## Cycle 106 Selection
+
+The controller drew goal `97`, `cpp-defect-taxonomy`, with seed
+`3343331427135473927`, index `5`, from the eligible pool `77 82 84 87 95 97`,
+at `2026-07-28T14:10:27Z`. Start a fresh C/C++ defect-class cell with a
+subsystem/class coverage ledger; do not repeat the completed broad scans or
+the excluded database and cursor findings.
+
+## Cycle 106 Summary
+
+Goal `97`, `cpp-defect-taxonomy`, confirmed and repaired a real non-owning
+ASMap lifetime defect in disposable current-HEAD Core worktree commit
+`781bc452ca37cf13e342361eed6369318ab46271`. Before the fix,
+`WithEmbeddedAsmap(std::vector<std::byte>(64))` stored a span into a destroyed
+temporary; an independent ASan/UBSan probe reproduced heap-use-after-free on
+`GetAsmapVersion()`. The repair makes the embedded factory lvalue-only,
+switches the dynamic fuzz path to `WithLoadedAsmap(std::move(asmap))`, and adds
+an owning-lifetime regression test. A compile probe rejected the exact
+temporary expression, the Release `test_bitcoin` target built, all 17
+`netbase_tests` cases passed, and the complete Release fuzz target built.
+
+Verdict: **confirmed and repaired in a disposable validation worktree**. The
+protected Core checkout was not modified and retains its pre-existing dirty
+paths. Exclude this NetGroupManager lifetime cell from future Goal97 scans;
+Goal97 remains active for a different C/C++ defect class.
+
+## Cycle 107 Selection
+
+The controller drew Goal `84`, `secp-nonce-session`, with seed
+`2517706328408825636`, index `2`, from the eligible pool
+`77 82 84 87 95 97`, at `2026-07-28T14:58:32Z`. Goal97's completed
+DataStream warning, hsort arithmetic, and NetGroupManager lifetime cells are
+excluded; Goal84 must choose a fresh nonce, signing, Schnorr, MuSig, ECDH, or
+state-machine hypothesis.

@@ -548,3 +548,86 @@ ordered-batch, and WAL sync/recovery cells remain excluded.
 Next work must select a distinct Goal95 comparator/seek, snapshot lifetime,
 partial-I/O, MANIFEST, corruption, or alternate-backend contract rather than
 repeating this initial-key failure.
+
+## Cycle 105 - Persistent iterator snapshot lifetime
+
+### Scope and hypothesis
+
+Goal95 selected the persistence-semantics cell for an iterator held across
+durable writes, deletes, overwrites, and full compaction. The hypothesis was
+that `CDBWrapper::NewIterator()` might not preserve the LevelDB creation-time
+view once the database had been reopened from disk, or that compaction could
+invalidate the view. This is a local persistence contract, distinct from the
+earlier memory-only iterator test and from the already-tested initial cursor
+decode failure.
+
+The protected Bitcoin Core checkout was at HEAD
+`00c4bb06ae9bf903af6ff72dbd6b097f36830ce6` with only its pre-existing dirty
+paths (`src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log`).
+No protected source or data directory was modified.
+
+### Source and model
+
+`CDBWrapper::NewIterator()` at `src/dbwrapper.cpp:380-382` passes the wrapper's
+checksum-verifying, non-cache-filling read options to LevelDB. LevelDB's
+`DBImpl::NewInternalIterator()` at `src/leveldb/db/db_impl.cc:1074-1090`
+captures `versions_->LastSequence()` and retains references to the active
+memtable, immutable memtable, and version. `src/test/dbwrapper_tests.cpp:337-375`
+checks the same semantic idea, but only with `memory_only = true` and without
+deletes, overwrites, or compaction.
+
+The independent model used fixed four-character string keys `k000` through
+`k127`, so `std::map` ordering matches the serialized LevelDB byte ordering.
+It retained an iterator after the initial 96 writes, performed three rounds of
+deterministic overwrites/deletes/additions with synchronous writes, compacted
+the full persistent database after each round, and compared both the held
+iterator with its saved snapshot and a fresh iterator with the model. It ran
+four seeds in both `obfuscate = false` and `obfuscate = true` modes. The probe
+also deliberately changed a saved key/value in memory to prove that the
+comparison oracle detects mutations.
+
+### Independent reproduction
+
+The standalone C++20 probe source hash was
+`74d18fd57c2a2e0ac033d18461e7646f23315e0ca2b19dbf7c488bed992a6961`; the
+Release-linked probe binary hash was
+`3a264a5c1a1eedf496b5418a52b18441b77dbc22e30fed57d79df76b8a67139f`.
+The exact execution was:
+
+```text
+TMPDIR=/mnt/my_storage/goal95-snapshot-tmp /mnt/my_storage/goal95-snapshot-probe
+```
+
+It produced:
+
+```text
+SNAPSHOT_RESULT seed=3 obfuscate=0 pass=1
+SNAPSHOT_RESULT seed=3 obfuscate=1 pass=1
+SNAPSHOT_RESULT seed=17 obfuscate=0 pass=1
+SNAPSHOT_RESULT seed=17 obfuscate=1 pass=1
+SNAPSHOT_RESULT seed=41 obfuscate=0 pass=1
+SNAPSHOT_RESULT seed=41 obfuscate=1 pass=1
+SNAPSHOT_RESULT seed=89 obfuscate=0 pass=1
+SNAPSHOT_RESULT seed=89 obfuscate=1 pass=1
+SNAPSHOT_MUTATION_ORACLE=pass
+```
+
+The protected current build's nine-case wrapper suite also passed with
+`*** No errors detected`:
+
+```text
+TMPDIR=/mnt/my_storage/goal95-snapshot-dbwrapper-tmp /mnt/my_storage/bitcoin/build/bin/test_bitcoin --run_test=dbwrapper_tests --log_level=test_suite
+```
+
+### Verdict and limitations
+
+The hypothesis is **dismissed** for the tested persistent LevelDB contract.
+The held iterator retained its original view across durable mutations and
+compaction in both wrapper obfuscation modes, and fresh iteration matched the
+independent model. No source fix or journal-only finding commit was created.
+
+This cycle did not exercise filesystem power loss, injected short writes or
+`EIO`, MANIFEST corruption, alternate database engines, 32-bit/Windows
+execution, or a full node restart between each mutation. Those remain valid
+distinct Goal95 cells. The earlier iterator-status, ordered-batch, WAL
+sync/recovery, and malformed initial-key cells remain excluded.
