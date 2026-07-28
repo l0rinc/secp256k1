@@ -34,7 +34,7 @@
 ## Goal ledger
 
 Goals `0` through `48` and `50` through `60`, plus `62` through `77`, `79`
-through `91`, and `94` through `98`, remain `pending`; this was the eligible
+through `87`, `89` through `91`, and `94` through `98`, remain `pending`; this was the eligible
 set used for the latest draw after prior-cycle exclusions. Goal `61` is
 `exhausted` for its bounded stateful-fuzzer cycle. Goal
 `78` is `exhausted` for the completed scalar compiler/representation helper
@@ -42,7 +42,10 @@ queue, with its journal at `agent-journal/translation-validation.md`; reopen
 it only for new source, caller, compiler, architecture, or specification
 evidence. Goals `92` and `93` are `exhausted` for their current bounded ABI
 and Linux RPC-cookie fault hypotheses; reopen them only for new ABI/platform,
-caller, or partial-I/O evidence. Goal `49` is `active`; its cycle journal is
+caller, or partial-I/O evidence. Goal `88` is `exhausted` for its current
+SQLite master-key write-failure hypothesis; reopen it for new wallet
+descriptor, keypool, backup, migration, recovery, or fault-injection evidence.
+Goal `49` is `active`; its cycle journal is
 `agent-journal/critical-history-sweep.md`. The catalog is the source of
 titles, slugs, and campaign scope.
 
@@ -752,3 +755,53 @@ The next draw excludes active campaigns `49`, `61`, and `78`, goal 93 until
 new platform or partial-I/O evidence appears, and goal 92 until new ABI
 evidence appears. The next eligible queue is
 `52,53,72,73,74,77,81,82,84,87,88,89,95,97,98`.
+
+The fifty-eighth controller cycle selected catalog goal `88`,
+`bitcoin-wallet-recovery`, with random seed `2193848575` over the 15-entry
+eligible pool `52,53,72,73,74,77,81,82,84,87,88,89,95,97,98`; index 10
+selected goal 88. The distinct hypothesis was that
+`CWallet::ChangeWalletPassphrase` in Core mutates the in-memory master-key
+record, ignores the boolean from `WalletBatch::WriteMasterKey`, logs success,
+and returns true after a failed SQLite write. The source contract trace
+covered `src/wallet/wallet.cpp:636-666`, `walletdb.cpp:151-154`,
+`sqlite.cpp:490-521`, and the RPC caller `wallet/rpc/encrypt.cpp:159-163`.
+History/blame found no existing current repair or direct database-failure
+test for this path.
+
+A deterministic Linux SQLite interposer returned `SQLITE_IOERR` once for the
+master-key `INSERT or REPLACE` statement. On clean Core, the faulted RPC
+returned success, the same process accepted the new passphrase and rejected
+the old one, and a restart accepted the old passphrase and rejected the new
+one. The log contained both the passphrase-change success message and
+`Unable to execute write statement: disk I/O error`. This proved a durable
+wallet passphrase split-brain, not a theoretical I/O concern.
+
+A disposable Core worktree/build applied the smallest repair: encrypt a
+`CMasterKey` copy, require `WriteMasterKey` to succeed, publish the copy only
+after the write, and restore the prior lock state on the new failure exits.
+Release `bitcoind` built successfully and the source repair was committed as
+Core commit `1c1300e8b7` (`wallet: preserve passphrase on database failure`).
+The identical fault against the repaired binary returned failure; the old
+passphrase worked in-process and after restart, while the new passphrase was
+rejected in both cases. The existing RPC mapping still labels the failure as
+incorrect passphrase, which is recorded as a separate API-contract lead. A
+no-fault repaired control logged a successful change, accepted the new
+passphrase in-process, and after restart returned `error:null` for
+`new-good-88` while rejecting `old-pass-88`.
+
+The finding is confirmed as a current Low/Medium local wallet integrity and
+persistence-contract defect. It is not a consensus, key/funds, privacy, or
+remote primitive and does not meet the controller's High/Critical gates.
+Evidence included source/caller/database contracts, clean-master behavior,
+restart differential, and repaired behavior under the same fault schedule.
+Existing tests missed it because they do not inject a failed SQLite master-key
+write and verify passphrase durability across restart. Full evidence is in
+`agent-journal/bitcoin-wallet-recovery.md`.
+
+Limitations are Linux/x86_64 dynamic SQLite interposition, no BDB or other
+platform coverage, and no integrated Core test because the user's Core tree
+was already dirty. The disposable daemon, wallet datadirs, worktree, build,
+and interposer are removed after handoff. Goal 88 is exhausted only for this
+passphrase-write hypothesis; descriptor/keypool/backup/migration/recovery
+cells remain reopenable. The next eligible queue is
+`52,53,72,73,74,77,81,82,84,87,89,95,97,98`.
