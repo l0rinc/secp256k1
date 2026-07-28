@@ -1200,3 +1200,32 @@ are in `agent-journal/memory-pressure-allocator.md`. The next queue retains
 goal 74's allocation-failure, wallet/RPC, recovery, and full-node cells,
 followed by `77,81,82,84,87,89,95,97`, excluding this `tx_pool` corpus
 threshold cell.
+
+## Cycle 71 - goal 77 (`symbolic-model-checking`)
+
+Draw seed `2791938646` selected index `1` from the distinct-cell pool
+`74,77,81,82,84,87,89,95,97`. The previous CompactSize parser proof was
+excluded. This cycle bounded Core's SHA-256 streaming and padding state at
+`src/crypto/sha256.cpp:699-731`, including `CSHA256::Write(nullptr, 0)`,
+empty spans forwarded by `CHash256`, exact block transitions, in-place
+double-hash output, and callers in hashing, script, witness, descriptor, and
+address paths.
+
+An independent OpenSSL 3.5.3 oracle checked every deterministic message length
+`0..1024`, every two-part split (`525825` cases), byte-wise streaming through
+length `256`, and one in-place alias case. Clang ASan/UBSan/pointer-overflow,
+GCC ASan/UBSan, and Core's auto-detected SSE4/SSE41/AVX2 implementation all
+printed `PASS ... lengths=1025 split_cases=525825 bytewise_lengths=257
+alias_case=1`. A temporary `>=64` to `>64` production mutation failed at
+`length=0` with `actual=6a09e667 expected=e3b0c442`, proving oracle
+sensitivity. Core `crypto_tests` ran all `17` cases and ended with
+`*** No errors detected`.
+
+Verdict: **dismissed**. No streaming, padding, empty-input, aliasing, or
+backend divergence was found, so no production repair is justified. This is a
+bounded proof rather than CBMC/KLEE coverage; large total lengths, 32-bit and
+non-x86 backends, and arbitrary message-byte exhaustive coverage remain open.
+The detailed commands, source/history trace, hashes, mutation, limitations,
+and reopen conditions are in `agent-journal/symbolic-model-checking.md`.
+The next queue remains `74,77,81,82,84,87,89,95,97`, excluding this exact
+SHA-256 cell.
