@@ -612,3 +612,118 @@ defect shape, state its trust boundary and severity gate, reproduce it on
 clean HEAD, and use an independent oracle or mutation/fixture control. Record
 exact commands, output, source commits, duplicate results, limitations, and
 the next unchecked history slice before drawing another goal or continuing.
+
+## Cycle 8: public NULL context-destroy contract
+
+### Selection and historical provenance
+
+The forty-third controller cycle continued catalog goal `49`,
+`critical-history-sweep`. The random draw used seed `3614493335` over this
+ordered pool of older, unindexed production-history candidates:
+
+```text
+adec5a16383f1704d80d7c767b2a65d9221cee08
+ad52495d723648948970850f01a9445d061e85f7
+b0be6aba910392e06aa85a87d2240a1aadb2fff5
+603c33bc8079f7e1a4851dbef629a2b91e13bbef
+a5759c572ed4948c660a06430b074bbc913fafc6
+f4edfc758142d6e100ca5d086126bf532b8a7020
+```
+
+`3614493335 % 6 = 5`, selecting
+`f4edfc758142d6e100ca5d086126bf532b8a7020`, parent
+`0440945fb5ce69d335fed32827b5166e84b02e05`, dated 2020-07-30, with subject
+`Improve consistency for NULL arguments in the public interface`. The seed
+updates public header comments and `SECP256K1_ARG_NONNULL` annotations across
+the API headers. The existing finding ledger has no exact context-destroy
+nonnull-contract entry; broad context NULL lifecycle entries and the earlier
+ecmult NULL-generator sweep are different code paths and trust boundaries.
+
+### Current contract and reachability
+
+Current `src/secp256k1.c:186-207` implements both
+`secp256k1_context_preallocated_destroy(NULL)` and
+`secp256k1_context_destroy(NULL)` as defined no-ops. Current
+`src/tests.c:366-368` labels the behavior `Defined as no-op` and directly
+executes both calls. Historical `9aac008038261ddd865d1461137ffc1b0a6c6646`
+is explicitly titled `secp256k1_context_destroy: Allow NULL argument as a
+no-op` and removed the nonnull annotation. Later
+`4b6df5e33` retained the NULL guard while forbidding destruction of the static
+context. In contrast, the current public declarations at
+`include/secp256k1.h:330-332` and
+`include/secp256k1_preallocated.h:126-128` still carry
+`SECP256K1_ARG_NONNULL(1)`. The macro is disabled for internal
+`SECP256K1_BUILD` consumers, which explains why the repository test does not
+expose the public-header mismatch.
+
+The trust boundary is an external C/C++ consumer compiling against the
+installed public headers. A caller may use a NULL-safe cleanup path, while
+the declaration rejects that valid call at compile time and gives the
+compiler a nonnull assumption. This is an API/toolchain contract defect, not
+a consensus, cryptographic, memory-safety, or remotely reachable defect.
+
+### Independent reproduction
+
+Before the patch, this external-consumer probe used the normal shared
+library in `/mnt/my_storage/secp256k1-build/oracles-next-int64/lib`:
+
+```sh
+printf '%s\n' '#include <secp256k1.h>' \
+  '#include <secp256k1_preallocated.h>' \
+  'int main(void) { secp256k1_context_destroy(NULL); secp256k1_context_preallocated_destroy(NULL); return 0; }' |
+  clang -std=c99 -O2 -Wall -Werror=nonnull -Iinclude \
+  -L/mnt/my_storage/secp256k1-build/oracles-next-int64/lib \
+  -Wl,-rpath,/mnt/my_storage/secp256k1-build/oracles-next-int64/lib \
+  -lsecp256k1 -x c - -o /tmp/f4ed-public-null-error
+```
+
+The command exited `1` with two `-Wnonnull` errors, one for each NULL
+destroy call. The same source compiled with `-Wno-error=nonnull` and ran
+against the normal library with exit `0`; an internal `-DSECP256K1_BUILD`
+strict compile and runtime also exited `0`. This isolates the failure to the
+external public declaration. The current ASan/UBSan context fuzzer corpus
+also passed before the header-only change (`-runs=1`, 13 runs, exit `0`), but
+the normal build did not provide a `fuzz_context` binary.
+
+### Fix and controls
+
+The minimal fix removes `SECP256K1_ARG_NONNULL(1)` from both destroy
+declarations and documents `If ctx is NULL, this function is a no-op.` in
+both public headers. No runtime implementation change was needed.
+
+After the patch, the same public probe compiled and ran with exit `0` under
+both Clang and GCC using `-Werror=nonnull`. `git diff --check` passed. The
+isolated forced-int64 build was regenerated and rebuilt with:
+
+```sh
+cmake --build /mnt/my_storage/secp256k1-build/oracles-next-int64 \
+  --target tests -j2
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests \
+  --target=all_proper_context_tests --iterations=2 --seed=3614493335
+```
+
+The build completed successfully and the focused context test exited `0`.
+The Clang and GCC public compile/runtime probes provide independent
+compiler-facing verification; the library runtime and internal context test
+provide the behavioral controls.
+
+### Verdict
+
+**Confirmed, Low severity.** The implementation and historical contract
+define NULL destruction as a no-op, but external users receive a contradictory
+nonnull diagnostic and potentially contradictory optimizer assumptions. The
+repair is limited to the two public declarations and their documentation.
+There is no production runtime behavior change and no broader test-suite
+expansion is justified for a header contract whose regression is directly
+exercised by the two external compiler probes. The result is not a duplicate
+of an existing finding.
+
+### Next history slice
+
+Do not redraw `f4edfc75` or its immediate NULL-annotation migration family.
+After the commit, search and draw from the remaining pool beginning with
+`ad52495d723648948970850f01a9445d061e85f7`, then
+`b0be6aba910392e06aa85a87d2240a1aadb2fff5`,
+`603c33bc8079f7e1a4851dbef629a2b91e13bbef`, and
+`a5759c572ed4948c660a06430b074bbc913fafc6`, excluding any seed already
+covered by the finding ledger or a current-source duplicate.

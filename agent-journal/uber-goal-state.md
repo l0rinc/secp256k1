@@ -457,3 +457,22 @@ The forty-second controller cycle continued catalog goal `49` with draw seed `23
 The active cycle must verify the worktree and remotes, read the selected goal
 journal and prior evidence, perform a bounded experiment, and record a verdict
 before drawing another pending or reopened goal.
+
+The forty-third controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with draw seed `3614493335` over the ordered pool
+`adec5a16 ad52495d b0be6aba 603c33bc a5759c57 f4edfc75`, selecting
+`f4edfc758142d6e100ca5d086126bf532b8a7020`, the 2020 public NULL-argument
+annotation migration. Current implementation and internal tests define both
+context destroy NULL calls as no-ops, while the public headers still mark
+both parameters nonnull. An external C probe failed under Clang
+`-Werror=nonnull` before the change, while the same calls ran successfully
+against the normal library; internal `SECP256K1_BUILD` compilation also
+passed. The minimal fix removed both contradictory attributes and documented
+the no-op behavior. Afterward, strict public probes passed under both Clang
+and GCC, both runtimes exited 0, the forced-int64 tests target rebuilt, and
+`all_proper_context_tests --iterations=2 --seed=3614493335` exited 0. The
+finding is confirmed Low-severity public API/toolchain contract drift, with
+no runtime implementation change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the next draw must exclude this
+NULL-annotation family and continue from `ad52495d`, `b0be6aba`, `603c33bc`,
+or `a5759c57` after duplicate search.
