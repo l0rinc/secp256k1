@@ -387,3 +387,101 @@ kernel; do not repeat this VarInt cell.
 Next queue: retain goal `77` for other bounded kernels and the distinct cells
 in `74,81,82,84,87,89,95,97`, excluding this VarInt cell and the earlier
 CompactSize and SHA-256 cells.
+
+## Cycle 114: script instruction parser bounds and failure state
+
+### Selection and scope
+
+The controller selected Goal `77`, `symbolic-model-checking`, with seed
+`10179737623739671668`, index `0`, from the eligible pool `77 82 87 95`, at
+`2026-07-28T17:42:46Z`. Goal77's previous CompactSize, SHA-256 streaming, and
+VarInt cells were excluded.
+
+This cycle selected the consensus-facing `GetScriptOp`/`GetOp` parser. The
+hypothesis was that a direct push or `OP_PUSHDATA1/2/4` instruction could
+misdecode a little-endian size, advance the cursor past a truncated prefix or
+payload, or leave a caller-visible opcode/data output dirty on failure. The
+trust boundary is serialized script bytes from transactions, P2SH redeem
+scripts, witness-related paths, indexes, and fuzz inputs. The tested kernel is
+the bounded parser at `src/script/script.cpp:313-363`, exposed through
+`src/script/script.h:497-505` and used by `HasValidOps`, sig-op counting, and
+P2SH script extraction.
+
+### Source and model
+
+The production function resets `opcodeRet` to `OP_INVALIDOPCODE` and clears the
+optional data output before checking for an instruction. It consumes the
+opcode, reads a one-, two-, or four-byte little-endian length only after the
+whole prefix is available, advances past a valid prefix before testing payload
+availability, and advances over the payload only on success. Non-push opcodes
+consume exactly one byte.
+
+A temporary `bip328`-independent test in disposable Bitcoin Core worktree
+`/tmp/bitcoin-goal84-113` implemented a separate byte-level model with explicit
+cursor, prefix, size, success, opcode, and data state. It checked every empty,
+one-byte, and two-byte input (`65,793` raw inputs), every direct-push size from
+0 through 75 with exact and one-byte-short payloads, `PUSHDATA1` sizes
+0/1/75/76/255, `PUSHDATA2` sizes 0/1/255/256/65535, and `PUSHDATA4` sizes
+0/1/256/0xffffffff with exact or truncated payloads where materializable.
+The total was `65,968` cases. Each invocation initialized the output vector to
+`aa` and the opcode to a non-invalid value, so output cleanup was part of the
+oracle. It also checked the exact cursor offset on prefix and payload failure.
+
+The first run found a harness-model error for `4c01`: the model returned the
+one-byte cursor when the length prefix was present but the payload was short,
+while the production parser correctly leaves the cursor after the prefix. The
+model was corrected to record that prefix position; the corrected matrix was
+rerun from scratch. No production failure was hidden by this correction.
+
+### Verification
+
+The test used the disposable Release build configured with GCC 16.1.0, tests
+and wallet enabled, and GUI/bench/fuzz binaries and ZMQ disabled. The focused
+command was:
+
+    /tmp/bitcoin-goal84-113-build/bin/test_bitcoin --run_test=script_tests/script_getop_bounded_model --log_level=message
+
+It passed with:
+
+    PASS getop-bounded cases=65968 digest=30df9d2086ec46a1
+    *** No errors detected
+
+An independent Valgrind Memcheck run of the same focused binary and matrix
+exited 0 with no diagnostics. The complete permanent `script_tests` suite
+passed all `21` cases with `*** No errors detected` both before the mutation
+control and after the production source was restored and rebuilt.
+
+As an oracle-sensitivity control, a disposable source mutation changed the
+production condition from `opcode <= OP_PUSHDATA4` to `opcode < OP_PUSHDATA4`.
+The focused matrix rejected the mutant at the one-byte `4e` input with:
+
+    error: ... GetOp status mismatch for 4e
+    *** 1 failure is detected in the test module
+
+The mutation and temporary test were removed with `apply_patch`. The restored
+`src/script/script.cpp` SHA-256 is
+`210b1720acce295de54c6a08c76b97fa4cfe835f64e0ff7e0730c57ebebb8c55`, matching
+the disposable worktree's `HEAD` blob. `git diff --check` and status are clean
+in that worktree. The protected Bitcoin Core checkout was not modified and
+still has exactly its three pre-existing dirty paths.
+
+### Verdict and limitations
+
+**Dismissed.** The independent bounded model, output/cursor checks, Memcheck
+run, permanent script suite, and boundary mutation found no parser defect. No
+production source change, regression-test commit, or severity finding is
+justified.
+
+`cbmc`, `klee`, and `esbmc` are unavailable in this environment. This is an
+explicit finite proof over the stated input set, not an unbounded symbolic
+proof. It does not cover arbitrary long scripts, every full-width payload
+allocation, concurrent callers, non-x86 execution, or downstream parser
+contracts beyond the exercised `GetOp` state. Reopen only for a distinct
+caller-level failure contract, platform/compiler divergence, or a newly
+available symbolic tool; do not repeat this exact short-input parser cell.
+
+### Handoff
+
+Exclude this exact `GetScriptOp` bounded parser matrix from future Goal77 work.
+Keep Goal77 eligible for other high-risk pure or state-machine kernels and
+continue with an explicit finite model or a real symbolic-tool result.

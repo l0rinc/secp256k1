@@ -2037,3 +2037,34 @@ symbolic-execution kernel, state explicit production-domain assumptions, and
 require a concrete counterexample or a bounded proof with unwind limitations.
 Exclude all prior Goal77 cells recorded in its journal and do not repeat the
 recent Goal82, Goal84, Goal87, or Goal95 evidence cells.
+
+## Cycle 114 Summary
+
+Goal `77`, `symbolic-model-checking`, dismissed a fresh bounded
+`GetScriptOp`/`GetOp` parser hypothesis. An independent byte-level model
+checked every empty, one-byte, and two-byte script plus direct-push and
+`PUSHDATA1/2/4` boundaries, totaling `65,968` cases. It validated status,
+opcode reset, output clearing, exact cursor advancement, truncation, and
+little-endian lengths. The focused matrix passed with digest
+`30df9d2086ec46a1`; Valgrind Memcheck and all 21 permanent `script_tests`
+cases passed. A temporary `OP_PUSHDATA4` boundary mutation failed on input
+`4e`, proving oracle sensitivity. The model's initial `4c01` cursor mistake
+was corrected and transparently rerun. No production change was justified.
+Full evidence is in `agent-journal/symbolic-model-checking.md` Cycle 114;
+exclude this exact short-input parser matrix. CBMC/KLEE/esbmc were unavailable,
+so this is a finite proof with explicit limitations, not an unbounded symbolic
+result.
+
+The protected Bitcoin Core checkout was not modified and retains exactly its
+three pre-existing dirty paths.
+
+## Cycle 115 Selection
+
+The controller drew Goal `95`, `database-semantics-differential`, with random
+seed `7059996709055303807`, index `2`, from the eligible pool `82 87 95`, at
+`2026-07-28T17:50:26Z`. Goal95 must choose a fresh database-engine or
+persistence-semantics differential, excluding its prior WAL sync-boundary and
+batch-operation cells. It must use an engine-neutral trace, explicit allowed
+backend differences, crash/corruption or iterator/snapshot evidence where
+relevant, and must not repeat the recent Goal77, Goal82, Goal84, or Goal87
+cells.
