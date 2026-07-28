@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active goal 78 (`translation-validation`)
+- Current status: active goal 49 (`critical-history-sweep`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -15,6 +15,10 @@
 - Second eligible slot: `77` of 98
 - Second draw: `78`
 - Second draw timestamp: `2026-07-27`
+- Third draw seed: `1744820529`
+- Third eligible slot: `49` of 97
+- Third draw: `49`
+- Third draw timestamp: `2026-07-28`
 
 ## Selection rules
 
@@ -29,11 +33,14 @@
 
 ## Goal ledger
 
-Goals `0` through `60` and `62` through `77`, plus `79` through `98`, remain
-`pending`; this is the eligible set used for the second draw. Goal `61` is
-`exhausted` for its bounded stateful-fuzzer cycle.
-Goal `78` is `active`; its cycle journal is
-`agent-journal/translation-validation.md`. The catalog is the source of
+Goals `0` through `48` and `50` through `60`, plus `62` through `77` and `79`
+through `98`, remain `pending`; this was the eligible set used for the third
+draw. Goal `61` is `exhausted` for its bounded stateful-fuzzer cycle. Goal
+`78` is `exhausted` for the completed scalar compiler/representation helper
+queue, with its journal at `agent-journal/translation-validation.md`; reopen
+it only for new source, caller, compiler, architecture, or specification
+evidence. Goal `49` is `active`; its cycle journal is
+`agent-journal/critical-history-sweep.md`. The catalog is the source of
 titles, slugs, and campaign scope.
 
 ## Latest Cycle
@@ -408,6 +415,30 @@ goal-78 scalar conversion subqueue is exhausted for the tested contract;
 limitations remain no AArch64 runtime, GCC AArch64, ARMv7/RISC-V, Alive2,
 formal translation proof, or unusual scalar ABI. The controller should draw a
 new catalog goal.
+
+The thirty-fifth cycle selected catalog goal `49`,
+`critical-history-sweep`, by seed `1744820529` at eligible slot 49 of 97.
+Goal 78's scalar compiler/representation queue was marked exhausted for its
+tested contract. The new goal journal is
+`agent-journal/critical-history-sweep.md`; its first bounded history slice
+must record a distinct seed, reachable trust boundary, severity gate,
+independent verification, and exact next queue.
+
+The thirty-sixth cycle tested historical seed `08d7d892` (subgroup checks in
+the public parsers). The current Silent Payments recipient-label parser still
+omits the check after its internal compressed-point parse, and an order-7
+scratch build accepted finite non-subgroup points with x=7 and x=8 while the
+public parser and label serializer rejected them. An independent Python
+big-integer affine calculation confirmed both points are on the order-7 test
+curve but `[7]P` is non-infinity. The normal native and forced-int64
+Silent Payments unit slices, 14-input ASan/UBSan fuzz corpus, and order-7
+exhaustive control passed. The production subgroup predicate is always true
+on secp256k1's cofactor-one curve, the exhaustive test runner does not
+register Silent Payments, and the surveyed Bitcoin Core checkout has no
+Silent Payments caller. The candidate was dismissed as a production defect
+and retained as test-mode hardening only; no source change was made. Full
+evidence and the scratch command are in
+`agent-journal/critical-history-sweep.md`.
 
 ## Handoff
 

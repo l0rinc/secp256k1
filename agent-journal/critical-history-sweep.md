@@ -1,0 +1,161 @@
+# Critical Whole-History Must-Fix Sweep
+
+## Selection
+
+- Catalog goal: `49`
+- Slug: `critical-history-sweep`
+- Draw seed: `1744820529`
+- Eligible slot: `49` of 97
+- Selected on: `2026-07-28`
+- Branch at selection: `codex/fuzz-oracles`
+- HEAD at selection: `555aef04`
+- Base: `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`
+- Status: active
+
+## Campaign Scope
+
+Progress from the repository's initial implementation to current HEAD for
+reachable critical defect shapes: undefined behavior, memory safety,
+remotely triggerable resource exhaustion, consensus or protocol divergence,
+funds/key/privacy loss, parser acceptance, races, secret handling, and
+critical-check bypasses. Historical commits and advisories are seeds, not
+proof. Every candidate needs a current caller/trust-boundary trace, a master-
+relative severity assessment, independent reproduction or a rigorous bounded
+proof, and a duplicate search before it can become a finding.
+
+This is a continuing bounded investigation, not a claim that the repository
+is complete. Use scratch data and fixed inputs, preserve unrelated work, and
+commit only a confirmed defect or one focused journal snapshot. High/Critical
+claims require a concrete invalid acceptance, consensus divergence, key/funds/
+privacy loss, or comparable remotely reachable primitive. A historical bug
+shape without current reachability remains a dismissed or inconclusive journal
+candidate.
+
+## Cycle 1: historical subgroup parser hardening
+
+### Seed and duplicate search
+
+The selected distinct historical seed was `08d7d89299a6492bf9388b4662b709d268c8ea29`,
+"Make pubkey parsing test whether points are in the correct subgroup". Its
+September 2020 patch added `secp256k1_ge_is_in_correct_subgroup` and placed
+the check in the public EC and x-only parsers. The current tree still has the
+same public checks, at `src/secp256k1.c:300-315` and
+`src/modules/extrakeys/main_impl.h`, and the current MuSig internal parser
+also checks at `src/modules/musig/session_impl.h:35-45`.
+
+The prior-finding search found no exact hash in `src/fuzz/README.md` or the
+journals, but it found the same semantic boundary in the existing negative
+coverage notes: the cofactor-one curve has no valid non-subgroup production
+input, and the Silent Payments opaque-state campaigns already validate
+stored labels with both curve and subgroup checks. The historical candidates
+`104f53ea` (vulnerability-review edge cases), `2277af5f` (large-count
+overflow), `03bfc07b` (uninitialized group doubling), and `4861f836`
+(recovered-key infinity) were excluded before this cycle because their
+current code paths and regression evidence are already represented by prior
+findings.
+
+### Current path and trust boundary
+
+`src/modules/silentpayments/main_impl.h:365-378`, introduced by the current
+Silent Payments label API, calls the internal `secp256k1_eckey_pubkey_parse`
+and saves the point without an immediate subgroup check. Its paired loader at
+lines 356-362 checks curve validity and subgroup membership before using an
+opaque label. This is a real contract asymmetry in reduced-order exhaustive
+builds, but the current `tests_exhaustive.c` does not register the Silent
+Payments test module. The exported code is present in the exhaustive library
+build, so it was exercised directly rather than mistaken for exhaustive test
+coverage.
+
+The production branch of `src/group_impl.h:926-946` returns true for every
+valid point because the real secp256k1 curve has cofactor one. The current
+Bitcoin Core checkout has no `silentpayments`, `BIP352`, or
+`secp256k1_silentpayments` caller. Its relevant production callers use the
+public EC/x-only parsers in `src/musig.cpp` and `src/pubkey.cpp`, which already
+apply the subgroup gate. Therefore the missing reduced-order check has no
+current network, consensus, wallet, key, or remote production reachability.
+
+### Independent reproduction
+
+The scratch probe was `/tmp/critical-history-49/subgroup_probe.c`; it included
+the current source directly with `EXHAUSTIVE_TEST_ORDER=7` and called the
+exported Silent Payments parser, the public parser, and the label serializer.
+The exact build and run were:
+
+```sh
+cc -O0 -g -std=c90 -Wall -Wextra -Wno-unused-function \
+  -DEXHAUSTIVE_TEST_ORDER=7 -DENABLE_MODULE_ECDH=1 \
+  -DENABLE_MODULE_ELLSWIFT=1 -DENABLE_MODULE_EXTRAKEYS=1 \
+  -DENABLE_MODULE_MUSIG=1 -DENABLE_MODULE_SCHNORRSIG=1 \
+  -DENABLE_MODULE_SILENTPAYMENTS=1 -DUSE_ASM_X86_64=1 \
+  -I/tmp/secp256k1-oracles-next/include -I/tmp/secp256k1-oracles-next/src \
+  /tmp/critical-history-49/subgroup_probe.c \
+  -o /tmp/critical-history-49/subgroup_probe
+/tmp/critical-history-49/subgroup_probe
+```
+
+Output:
+
+```text
+zero x=0 label=0 public=0 serialize=-1 illegal=0
+two x=2 label=0 public=0 serialize=-1 illegal=0
+order x=7 label=1 public=0 serialize=0 illegal=1
+order+1 x=8 label=1 public=0 serialize=0 illegal=1
+```
+
+For an independent arithmetic check, a separate Python big-integer affine
+implementation evaluated `y^2 = x^3 + 6` modulo the secp256k1 field and
+multiplied the even-parity points by 7. It reported:
+
+```text
+x=7 curve=1 parity=0 [7]P_infinity=0 [7]P_x=0x718c02d73752905cf697ddcc6b5d452c3d34cba60641ff67ff1cc475ae751f1
+x=8 curve=1 parity=0 [7]P_infinity=0 [7]P_x=0x8ef35be71d9d76fa4b2e39f2ae778d2862ec57b936514318d366b2cdd01cb232
+```
+
+This independently establishes that the two accepted label inputs are
+finite curve points outside the order-7 subgroup. The public parser rejects
+both, and the label serializer rejects the resulting opaque objects through
+its existing loader check.
+
+### Supported-build controls
+
+The native and forced-int64 Silent Payments unit slices passed one iteration
+each with a fixed seed:
+
+```text
+./bin/tests -t=silentpayments -i=1 --seed=0000000000000000000000000000000000000000000000000000000000000049
+Total execution time: 23.451 seconds
+Total execution time: 23.277 seconds
+```
+
+The Clang ASan/UBSan `fuzz_silentpayments` replay loaded all 14 tracked
+corpus files and completed 15 runs with exit status 0. The order-7
+`exhaustive_tests 1` control completed with `no problems found`; it does not
+exercise Silent Payments because that module is not registered in
+`tests_exhaustive.c`.
+
+### Verdict
+
+**Dismissed as a current production defect; retain as an exhaustive-only test
+mode hardening candidate.** The parser asymmetry is reproducible and would be
+worth closing if Silent Payments is added to exhaustive module coverage, but
+the production subgroup predicate is tautologically true for every valid
+secp256k1 point, and Bitcoin Core has no caller for this optional API in the
+surveyed checkout. Adding a production check would be speculative and would
+not change supported behavior. No source fix or finding commit is justified.
+
+### Next history slice
+
+Continue from the unexamined historical commits after the excluded parser and
+serialization seeds. Prioritize a distinct fix with a current caller before
+revisiting reduced-order-only subgroup paths. Preserve this exact probe and
+the two arithmetic witnesses if Silent Payments gains exhaustive coverage or
+Bitcoin Core adds a caller.
+
+## Handoff
+
+Verify the current worktree, remotes, history range, existing findings, and
+review precedent before the next cycle. Select one distinct history seed or
+defect shape, state its trust boundary and severity gate, reproduce it on
+clean HEAD, and use an independent oracle or mutation/fixture control. Record
+exact commands, output, source commits, duplicate results, limitations, and
+the next unchecked history slice before drawing another goal or continuing.
