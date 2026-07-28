@@ -355,6 +355,141 @@ older production changes with concrete parser, arithmetic-bound, secret,
 protocol, persistence, or remote-caller impact. Exclude the already indexed
 `89a54b5a` VERIFY invariant and the test-only `c6306238`/`d7125e51` changes.
 
+## Cycle 6: duplicate DER parser pointer-arithmetic seed
+
+### Selection and duplicate search
+
+The next history draw used seed `4201848889` over this widened seven-entry
+pool, with draw index `0` (`4201848889 % 7`):
+
+```text
+9be7b0f08340a063d961547b5d2663405f3fc162
+3cb057f8429c812b5dbfcd43299658463162b740
+ec8f20babd8595f119e642d3833ee90bacc12873
+2277af5ff07322dca6efb0474aea863b21d82279
+45f37b650635e46865104f37baed26ef8d2cfb97
+248f0466112c96b9851c662fa829f20d28d16344
+01ee1b3b3c665bf22e06b92afa832ccc54de5119
+```
+
+The selected commit `9be7b0f08340a063d961547b5d2663405f3fc162`, "Avoid
+computing out-of-bounds pointer", changes the old DER integer guard from
+`rlen == 0 || *sig + rlen > sigend` to the subtraction form
+`rlen == 0 || rlen > (size_t)(sigend - *sig)`. The source-level mechanism is
+valid: the old expression can form an out-of-bounds pointer before rejecting
+a malformed length, while the subtraction form tests the remaining range
+without pointer addition.
+
+This seed is already an exact semantic duplicate of the current-branch
+`cd8c9f17` DER-offset finding. `src/fuzz/README.md:982-989` records the
+clean-master `SIZE_MAX` witness, its Low direct-API severity, the caller
+array-length contract, and the offset-parser repair. The same witness is
+indexed again at `src/fuzz/README.md:31729-31732`. The current
+`src/ecdsa_impl.h:36-169` parser tracks `pos` and compares lengths against
+`size - pos`; no second production patch or new finding is justified.
+
+### Trust boundary and historical proof
+
+The public entry point is
+`secp256k1_ecdsa_signature_parse_der` at `src/secp256k1.c:445-460`. Its
+contract requires `input` to reference an array containing `inputlen` bytes.
+Therefore a one-byte `{0x00}` buffer paired with `(size_t)-1` violates the
+caller-owned array contract and is not a remote DER, memory-corruption, or
+cryptographic primitive. It still provides a useful direct-API UB regression:
+the historical parser formed `sig + size` before it inspected the first byte.
+Bitcoin Core's serialized-signature callers pass actual buffer lengths, and no
+invalid-block or invalid-witness acceptance follows from this witness.
+
+The historical parent was checked out in the isolated worktree
+`/tmp/critical-history-49/old-der`. Because that old tree generates its
+ecmult context, its setup was:
+
+```sh
+./autogen.sh
+./configure --disable-shared --enable-ecmult-static-precomputation
+make -j2 src/ecmult_static_context.h
+```
+
+The independent old/current probes were
+`/tmp/critical-history-49/der_size_max_probe_old.c` and
+`/tmp/critical-history-49/der_size_max_probe_current.c`. Both call the public
+parser with `{0x00}`, `(size_t)-1`, and a prefilled opaque signature. The old
+parent was compiled with:
+
+```sh
+clang -O1 -g -std=c99 -fsanitize=undefined,pointer-overflow \
+  -fno-omit-frame-pointer -Wno-unused-function \
+  -DECMULT_WINDOW_SIZE=15 -DECMULT_GEN_PREC_BITS=4 \
+  -I/tmp/critical-history-49/old-der/include \
+  -I/tmp/critical-history-49/old-der/src \
+  /tmp/critical-history-49/der_size_max_probe_old.c \
+  -o /tmp/critical-history-49/der_size_max_old
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  /tmp/critical-history-49/der_size_max_old
+```
+
+The historical execution emitted the independent sanitizer witness before
+the process was stopped after the diagnostic:
+
+```text
+/tmp/critical-history-49/old-der/src/ecdsa_impl.h:154:39: runtime error: addition of unsigned offset to 0x5800a39d1c44 overflowed to 0x5800a39d1c43
+```
+
+The fixed current probe was compiled with the current generated precomputed
+tables and the same sanitizer options. It returned:
+
+```text
+ret=0 zero=1
+```
+
+An earlier short-form DER fixture under GCC ASan/UBSan also returned
+`ret=0 zero=1` on both versions; it did not expose the pointer-overflow
+diagnostic because that form stays within the process address range. The
+one-byte/`SIZE_MAX` fixture is the sensitive witness and matches the prior
+finding exactly.
+
+### Current controls
+
+The focused DER test passed in both available representations:
+
+```text
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=ecdsa_der_parse --iterations=8 --seed=49
+Tests running silently. Use '-log=1' to enable detailed logging
+iterations = 8
+Total execution time: 0.012 seconds
+
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=ecdsa_der_parse --iterations=8 --seed=49
+Tests running silently. Use '-log=1' to enable detailed logging
+iterations = 8
+Total execution time: 0.039 seconds
+```
+
+The current API round-trip corpus also passed in both fuzzer builds with
+`-runs=1 -timeout=60 src/fuzz/corpora/api_roundtrip`. The int64 build loaded
+62 files and finished 63 runs with `cov: 6084`, exit 0, in 10 seconds. The
+native build loaded the same 62-file corpus and finished 63 runs with
+`cov: 4253`, exit 0, in 6 seconds. The corpus includes the existing
+`der-input-size-max`, `ecdsa-der-parser-boundaries`, and
+`privkey-der-overflow-length` fixtures.
+
+### Verdict
+
+**Deduplicated and dismissed from this campaign queue.** The historical
+parent reproduces the exact pointer-overflow UB, current source removes it,
+and the independent focused/fuzz controls pass. The mechanism, severity,
+trust-boundary qualification, regression oracle, and repair are already
+recorded by `cd8c9f17` and the README ledger. Do not create another source or
+duplicate finding commit for `9be7b0f0`.
+
+### Next history slice
+
+Continue with the remaining widened pool, but exclude the complete DER length
+family (`9be7b0f0`, `3cb057f8`, `ec8f20ba`, and `01ee1b3b`) unless a new caller
+or an unindexed contribution parser changes the trust boundary. Prefer
+`2277af5f`, `45f37b65`, or `248f0466` only after checking their current
+callers and exact semantic hashes against the finding ledger; otherwise draw
+from an older unindexed production-impact fix.
+
 ## Handoff
 
 Verify the current worktree, remotes, history range, existing findings, and

@@ -448,6 +448,8 @@ The thirty-ninth controller cycle continued catalog goal `49` with draw seed `19
 
 The fortieth controller cycle continued catalog goal `49` with draw seed `3691603698` and selected `d7125e517d45507df4a3f19c8ca90393a8290480`. The commit only changes a MuSig test from evaluating and discarding `secp256k1_ge_is_infinity` to asserting it; current production code is unchanged and the corrected assertion is already present. The seed was excluded as test-only maintenance. The next draw must widen beyond `c6306238`, `d7125e51`, and the already indexed `89a54b5a` invariant to older production-impact history. Full evidence is in `agent-journal/critical-history-sweep.md`.
 
+The forty-first controller cycle continued catalog goal `49` with draw seed `4201848889`. It selected historical `9be7b0f08340a063d961547b5d2663405f3fc162` from a widened seven-entry pool. The historical parent reproduced the exact DER `sig + SIZE_MAX` pointer-overflow diagnostic under Clang `undefined,pointer-overflow`; the current offset parser returned `ret=0 zero=1`. Both native and forced-int64 DER test slices and both current API-roundtrip fuzzer corpus replays passed. The seed is an exact duplicate of the already recorded `cd8c9f17` direct-API Low parser-robustness finding at `src/fuzz/README.md:982-989` and `31729-31732`, so it was deduplicated and dismissed without source changes. The next draw must exclude the full DER-length family unless a new caller changes its trust boundary, and should prioritize `2277af5f`, `45f37b65`, `248f0466`, or another unindexed production-impact history seed. Full evidence is in `agent-journal/critical-history-sweep.md`.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
