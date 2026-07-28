@@ -151,6 +151,97 @@ revisiting reduced-order-only subgroup paths. Preserve this exact probe and
 the two arithmetic witnesses if Silent Payments gains exhaustive coverage or
 Bitcoin Core adds a caller.
 
+## Cycle 2: ecmult NULL generator versus zero scalar
+
+### Selection and scope
+
+The next history draw used seed `2265895816` over the distinct candidate
+prefixes `8479eafa 3a403639 c6306238 d7125e51 89a54b5a`, selecting index 1:
+`3a403639dc07e39aa6dc48fbcecfe3cb77f09770`, “eckey: Call ecmult with NULL
+instead of zero scalar”. The historical patch changed the tweak-add path in
+`src/eckey_impl.h` from
+`secp256k1_ecmult(&pt, &pt, tweak, &secp256k1_scalar_zero)` to the semantically
+equivalent `... tweak, NULL`, avoiding WNAF setup for an absent generator
+term. This cycle tested whether that optimization remains correct and whether
+an adjacent caller still relies on the old representation.
+
+The current `src/eckey_impl.h:82-91` already uses `NULL`. In
+`src/ecmult_impl.h:253-376`, the generator term is constructed only under
+`if (ng)`; a non-NULL zero scalar reaches `secp256k1_wnaf_fixed`, whose zero
+case writes no generator digits and returns zero. Thus both inputs should
+produce the same result, with `NULL` avoiding the unnecessary setup. The
+existing direct internal callers and tests include intentional NULL/zero
+comparisons at `src/tests.c:4819-4831` and `6197-6200`; no adjacent current
+caller showed a different contract.
+
+### Independent reproduction
+
+The scratch probe `/tmp/critical-history-49/ecmult_null_probe.c` included the
+current implementation and linked the generated `precomputed_ecmult.c` and
+`precomputed_ecmult_gen.c` tables. It constructed nine point scalars
+`{0,1,2,3,7,13,31,127,255}` and ten generator scalars
+`{0,1,2,3,7,13,31,127,255,511}`. For every pair it compared
+`secp256k1_ecmult(..., scalar, NULL)` with
+`secp256k1_ecmult(..., scalar, &secp256k1_scalar_zero)` using the internal
+Jacobian equality oracle. The exact command was:
+
+```sh
+cc -O0 -g -std=c90 -Wall -Wextra -Wno-unused-function \
+  -DUSE_ASM_X86_64=1 \
+  -I/tmp/secp256k1-oracles-next/include -I/tmp/secp256k1-oracles-next/src \
+  /tmp/critical-history-49/ecmult_null_probe.c \
+  /tmp/secp256k1-oracles-next/src/precomputed_ecmult.c \
+  /tmp/secp256k1-oracles-next/src/precomputed_ecmult_gen.c \
+  -o /tmp/critical-history-49/ecmult_null_probe
+/tmp/critical-history-49/ecmult_null_probe
+```
+
+Output:
+
+```text
+ok pairs=90
+```
+
+This is independent of the historical test's random scalar generation and
+also covers the zero point and zero generator cases directly. The static
+`if (ng)`/zero-WNAF path inspection agrees with the equality result.
+
+### Supported-build controls
+
+Both the forced-int64 and native test binaries passed the relevant slices:
+
+```text
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests -t=point_times_order -i=1
+exit 0; Total execution time: 0.104 seconds
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests -t=ecmult -i=1
+exit 0; skipped test_ecmult_constants_sha 2048 and test_ecmult_constants_2bit; Total execution time: 6.777 seconds
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests -t=point_times_order -i=1
+exit 0; Total execution time: 0.381 seconds
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests -t=ecmult -i=1
+exit 0; skipped test_ecmult_constants_sha 2048 and test_ecmult_constants_2bit; Total execution time: 68.043 seconds
+```
+
+The skipped constant-table checks are iteration-count guards from the test
+binary, not failures or hidden errors. The native ecmult run completed after
+the full 68.043-second execution.
+
+### Verdict
+
+**Dismissed as a current defect.** The selected historical change is already
+present, the current implementation has an explicit NULL-versus-zero
+contract, the independent 90-case probe found no output difference, and both
+native and forced-int64 ecmult slices passed. No production or test change is
+justified. Preserve this cycle as evidence that future searches should focus
+on ecmult callers with a nonzero or conditionally initialized generator term,
+not reopen the fixed zero-term cleanup.
+
+### Next history slice
+
+Continue with a distinct unexamined historical seed from the remaining
+critical-fix queue. Prefer a seed with a current public, persistence,
+concurrency, crypto, or untrusted-input caller; retain this probe and the
+existing NULL/zero unit assertions as duplicate-search evidence.
+
 ## Handoff
 
 Verify the current worktree, remotes, history range, existing findings, and

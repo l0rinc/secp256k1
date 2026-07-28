@@ -440,6 +440,8 @@ and retained as test-mode hardening only; no source change was made. Full
 evidence and the scratch command are in
 `agent-journal/critical-history-sweep.md`.
 
+The thirty-seventh cycle continued catalog goal `49`, `critical-history-sweep`, using draw seed `2265895816`. It selected historical seed `3a403639dc07e39aa6dc48fbcecfe3cb77f09770`, which replaced a zero generator scalar with `NULL` in `ecmult` to skip unnecessary WNAF setup. Current `src/eckey_impl.h` already contains the change, and `src/ecmult_impl.h` explicitly skips the generator path for NULL while zero WNAF produces no digits. An independent direct-source probe compared both forms over 90 point/scalar pairs, including zero and boundary values, and reported `ok pairs=90`. Native and forced-int64 `point_times_order` and `ecmult` slices all passed; the ecmult slices skipped only their documented high-iteration constant-table checks. The candidate was dismissed as a current defect with no source change. Full commands, output, and next history slice are in `agent-journal/critical-history-sweep.md`.
+
 ## Handoff
 
 The active cycle must verify the worktree and remotes, read the selected goal
