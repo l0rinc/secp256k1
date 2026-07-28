@@ -2066,3 +2066,135 @@ checkout is intentionally dirty. The next draw must exclude `7506e064`, the
 removed `pre_a_lam`/Strauss allocation family, and the already indexed generic
 scratch-boundary findings, then widen to a distinct unindexed production-impact
 history seed.
+
+## Cycle 19: historical CMOV initialization repair
+
+### Selection and deduplication
+
+The controller draw used seed `10837087523217713569`. Before drawing, I
+screened out `08d54964` (modular-inverse bounds that only strengthen VERIFY
+checks), `a0e696fd` (old constant-multiplication infinity handling already
+represented by the current source and oracle ledger), `ebfa2058` (invalid
+context flags already covered by the public API oracle), and `8bcd78cd`
+(exhaustive scalar-low/recovery test-only behavior). The remaining semantic
+pool was:
+
+```text
+2241ae6d14df187e2c8d6fe5b44e3d850474af38
+a39c2b09de304b8f24716b59219ae37c2538c242
+```
+
+The selected index was `1`, selecting `a39c2b09de304b8f24716b59219ae37c2538c242`,
+whose parent is `3a6fd7f6` and whose subject is `Fixed UB(arithmetics on
+uninit values) in cmovs`. The unselected constant-time multiplication seed
+`2241ae6d` remains eligible for a later, distinct cycle.
+
+### Historical contract and reachability
+
+The parent has two related but independently reachable uninitialized-value
+uses. In `src/ecmult_const_impl.h`, `ECMULT_CONST_TABLE_GET_GE` declares
+`secp256k1_ge tmpa` without initialization. The normal library build does not
+define `VERIFY`, so its `VERIFY_SETUP(secp256k1_fe_clear(...))` statements
+expand to nothing. The first table iteration then calls `secp256k1_fe_cmov`
+on `tmpa.x` and `tmpa.y`; that CMOV reads the destination even when its flag
+is false. The fix initializes the first table entry directly, starts the
+constant-time loop at entry one, and documents that both CMOV operands must
+be initialized.
+
+In the same parent, `secp256k1_ecdsa_sign` declares `r` and `s` without
+initialization. A nonce callback returning zero reaches the terminal failure
+path and passes both through `secp256k1_scalar_cmov` before saving the failed
+signature. The fix initializes both to `secp256k1_scalar_zero`; the static
+analyzer independently reports the parent use at
+`src/secp256k1.c:517`/`src/scalar_4x64_impl.h:953` and reports no matching
+warning in the fixed revision.
+
+The ECDH module calls `secp256k1_ecmult_const` directly at
+`src/modules/ecdh/main_impl.h:53-54`, making the first defect reachable by a
+standalone library caller. Bitcoin Core's `CKey::Sign` uses a validated key
+and the built-in RFC6979 callback, and its transport key exchange uses
+`secp256k1_ellswift_xdh`, not the optional public `secp256k1_ecdh` module.
+This is therefore a historical library undefined-behavior defect, not a new
+consensus or wire-reachable Bitcoin Core finding.
+
+### Independent reproduction
+
+Disposable parent and fixed worktrees were configured and built separately
+with:
+
+```sh
+./autogen.sh
+./configure --enable-experimental --enable-module-ecdh \
+    --enable-module-schnorrsig --enable-module-musig \
+    --disable-shared --enable-tests --disable-benchmark
+make -j2
+```
+
+The old revision warned that the later Schnorr/MuSig configure options were
+unknown, as expected for that historical tree; both builds exited zero. Both
+`./tests 0` runs printed `no problems found`, and both
+`./libtool --mode=execute valgrind --quiet --error-exitcode=99
+./valgrind_ctime_test` runs exited zero.
+
+The final isolated MSan builds used Clang with `-O0 -g -fno-inline
+-fsanitize=memory -fsanitize-memory-track-origins=2`, with `-fPIE` and `-pie`.
+A public callback-failure/ECDH probe produced the same successful control
+output on both revisions (`ret=0 first=00 last=00` and `ecdh=1 first=8c
+last=ef`) without a differentiating report. A first direct-CMOV probe was
+discarded because it itself passed an uninitialized destination, violating
+the documented CMOV precondition; both revisions consequently reported it.
+An in-translation-unit ECDH probe produced a generic MSan warning in both
+revisions, and a narrower in-translation-unit `ecmult_const` probe with an
+initialized generator and scalar exited zero in both. These sanitizer results
+are non-discriminating and are not used as the primary proof.
+
+The stronger static evidence is reproducible with:
+
+```sh
+clang --analyze -O0 -DHAVE_CONFIG_H -DSECP256K1_BUILD \
+    -DENABLE_MODULE_ECDH -I./include -I./src -I. \
+    -Wno-everything -Xanalyzer -analyzer-output=text src/secp256k1.c
+```
+
+On the parent this reports `The left operand of '&' is a garbage value` at
+the scalar CMOV reached after nonce callback failure. Preprocessing the
+constant-multiplication helper shows `VERIFY_SETUP` removed and the exact
+first CMOV reading `tmpa` before any assignment. The fixed source instead
+copies `pre[0]` before the loop and has no corresponding scalar warning.
+
+### Current controls
+
+Current source has the repaired contracts at `src/ecmult_const_impl.h:90-100`
+and `src/secp256k1.c:644-646`. The current native and forced-int64 test
+binaries both passed `--target=ecmult_const_tests --target=ecdh
+--iterations=1 --seed=A39C2B09`. The current `fuzz_ecmult_const` corpus had
+11 inputs and the current `fuzz_ecdh` corpus had 9 inputs; replaying every
+input once in both backends resulted in 40 successful executions. Four
+current API signing/failure fixtures (`ecdsa-retry-failure-cleanup`,
+`ecdsa-sign-null-input-cleanup`, `invalid-seckey-nonce-domain`, and
+`core-ecdsa-signing-composition`) also passed once in each backend.
+
+The exact historical hash is absent from the current finding ledger, but its
+behavior is represented semantically by the current constant-multiplication
+oracles and ECDSA callback-failure cleanup fixtures. No current source path
+reproduces the parent contract.
+
+### Verdict
+
+**Historical parent defect confirmed; current defect dismissed as repaired
+hardening.** The parent has a static analyzer witness for the signing path
+and a direct preprocessed-source proof for the field CMOV path. The fix is
+correct, current source retains both initializations, current native and
+forced-int64 tests/corpora pass, and Core does not expose the parent optional
+ECDH entry point. No production source change or separate regression test is
+justified in this cycle.
+
+### Limitations and handoff
+
+The dynamic probes and static analyzer were x86_64 Clang runs; MSan did not
+provide a discriminating result for the field path, and the analyzer output
+contains unrelated historical null-dereference warnings. The reproduction
+does not cover every architecture, compiler, CMOV backend, or callback
+failure. The next draw must exclude `a39c2b09`, this CMOV/uninitialized-state
+family, and the already indexed callback-cleanup and constant-multiplication
+oracles, then select a distinct unindexed production-impact history seed.

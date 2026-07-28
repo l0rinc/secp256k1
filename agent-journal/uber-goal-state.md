@@ -652,3 +652,24 @@ historical hardening with no production source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the next draw must exclude
 `7506e064`, the removed `pre_a_lam` family, and generic scratch-boundary
 duplicates, then widen to a distinct unindexed production-impact history seed.
+
+The fifty-fourth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with draw seed `10837087523217713569`. After
+semantic screening of VERIFY-only inverse bounds, infinity/context API,
+exhaustive recovery-test, and already-oracled candidates, the two-entry pool
+was `2241ae6d14df187e2c8d6fe5b44e3d850474af38` and
+`a39c2b09de304b8f24716b59219ae37c2538c242`; index 1 selected the latter.
+The historical parent leaves constant-time field CMOV destinations and
+failed-signing scalars uninitialized. Parent/fix builds, deterministic tests,
+and Valgrind passed; Clang Static Analyzer reports the parent scalar garbage
+read and the preprocessed source proves the parent field CMOV reads an
+uninitialized `tmpa` because `VERIFY_SETUP` is empty in normal library builds.
+Current native/forced-int64 ecmult-constant and ECDH tests, all 11 and 9
+matching corpus inputs per backend, and four current ECDSA failure/signing
+fixtures per backend passed. Core uses validated ECDSA signing and EllSwift
+XDH, not the old optional ECDH entry point. The historical defect is confirmed
+in its parent but dismissed as repaired current hardening; no source change is
+made. Full evidence is in `agent-journal/critical-history-sweep.md`. The next
+draw must exclude `a39c2b09`, the CMOV/uninitialized family, and the semantic
+callback-cleanup/constant-multiplication oracles, then choose a distinct
+unindexed production-impact history seed.
