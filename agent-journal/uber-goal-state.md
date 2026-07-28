@@ -1102,3 +1102,39 @@ outputs, limitations, and reopen conditions are in
 `agent-journal/secp-nonce-session.md`. The next queue remains
 `74,77,81,82,84,87,89,95,97`, excluding this exact goal-84 counter cell while
 retaining explicit lifecycle/error-output and wrapper cells.
+
+## Cycle 68 - goal 74 (`memory-pressure-allocator`)
+
+Draw seed `1314649620` selected index 0 from the distinct-cell pool
+`74,77,81,82,84,87,89,95,97`. The standalone PoolResource lifecycle and
+fragmentation cell was excluded because Core commit `7ebd0c7962` already
+contains an independent 721-input lifecycle oracle and mutation proof. The
+fresh hypothesis was that reusable `CCoinsViewCache` pool chunks might be
+underreported or drift from `DynamicMemoryUsage()` after clear/flush/reset,
+causing cache sizing to miss retained memory during chainstate workloads.
+
+The source/history trace found the intentional contract: `src/coins.cpp:38-40`
+and `src/memusage.h:199-216` count allocated pool chunks, while
+`src/coins.cpp:260-289` retains or reconstructs the resource according to the
+caller-selected `reallocate_cache` policy. Existing tests at
+`src/test/coins_tests.cpp:957-965` explicitly require erased-cache usage not to
+increase and `:1088-1110` checks resource accounting. History `5e4ac5abf5`
+introduced explicit resource reallocation because pool-backed `clear()` keeps
+memory, and `3e0fd0e4ddd` clarified the current parameter semantics.
+
+Focused `pool_tests,coins_tests` passed all 17 selected cases. The release-like
+`coinscache_sim` replay passed 306 runs with peak RSS 58,716 KB; its
+AddressSanitizer/UndefinedBehaviorSanitizer replay passed 306 runs with peak
+RSS 217,840 KB. The release-like and sanitizer `coins_view` replays passed
+2,767 runs each with peak RSS 62,320 KB and 266,248 KB. The largest
+`coinscache_sim` input passed a 128 MiB RSS limit at 62,380 KB. Core remained
+at its pre-existing dirty state and no process or artifact remained.
+
+Verdict: **dismissed**. No undercount, monotonic retention defect, allocator
+fragmentation failure, or reachable OOM cleanup defect was found, and no
+production change is justified. This does not cover allocation-failure
+injection, alternate allocators, cgroup pressure, or long-running full-node
+IBD/mempool/wallet profiles. The exact commands, source evidence, limits, and
+reopen conditions are in `agent-journal/memory-pressure-allocator.md`. This
+is a focused journal-only cycle. The next queue retains goal 74's separate
+fault-injection/live-workload cells, followed by `77,81,82,84,87,89,95,97`.
