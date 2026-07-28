@@ -3270,8 +3270,40 @@ static void test_fe_zero_predicates_boundaries(void) {
     CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 1);
 }
 
+static void test_fe_normalize_preserves_value(void) {
+    int m;
+    /* Compare t and normalize(t) via t - normalize(t). The negated normalized
+     * value has magnitude 2, so m must stay at most 30. */
+    for (m = 1; m <= 30; ++m) {
+        secp256k1_fe t, u, negu;
+
+        secp256k1_fe_get_bounds(&t, m);
+        u = t;
+        secp256k1_fe_normalize(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+
+        u = t;
+        secp256k1_fe_normalize_var(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+
+        u = t;
+        secp256k1_fe_normalize_weak(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+    }
+}
+
 static void run_field_misc(void) {
     test_fe_zero_predicates_boundaries();
+    test_fe_normalize_preserves_value();
     secp256k1_fe x;
     secp256k1_fe y;
     secp256k1_fe z;
