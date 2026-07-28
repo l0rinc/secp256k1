@@ -264,3 +264,109 @@ Next queue:
   available for a disposable source fix and boundary regression test.
 - Continue with eviction fee/accounting and package fee-delta cells if the
   next expiry/reorg cell is clean.
+
+## Cycle 116
+
+Status: dismissed for the strict expiry-boundary and disconnected-parent
+reinsertion cell. The previously confirmed `m_unbroadcast_txids` accounting
+omission remains the only Goal 87 finding; no protected Bitcoin Core source
+change was made.
+
+Controller cycle: 116.
+
+Selection:
+
+- Draw seed: `15998097309927226073`.
+- Eligible pool: `82 87`.
+- Selected index: `1`.
+- Selected goal: `87`, `bitcoin-mempool-accounting`.
+- Cycle timestamp: `2026-07-28T18:02:52Z`.
+
+Repository state:
+
+- Audit worktree: `/tmp/secp256k1-oracles-next`, branch `codex/fuzz-oracles`.
+- Disposable Core worktree: `/tmp/bitcoin-goal84-113`, detached at
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+- Disposable Core build: `/tmp/bitcoin-goal84-113-build`, GCC 16.1 release
+  build with wallet and tests enabled.
+- Protected Core was not modified and retains exactly its pre-existing
+  `src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and `fuzz-1.log` paths.
+- The disposable Core worktree was clean after restoration. The restored
+  `src/txmempool.cpp` hash was
+  `68552be0be58fe9343f4eca54585de48a806691d7b321e5088ad865338d80651`.
+
+Hypothesis and trust boundary:
+
+`Expire()` or the block-disconnect reinsertion path may leave stale graph
+links, counters, or fee/size totals when an old parent has newer shared
+descendants, when the expiry threshold is exactly an entry timestamp, or when
+`removeForBlock()` leaves children in the mempool and the parent is later
+reaccepted. The trust boundary is local policy/state-management code reached
+by expiry, block connection, and reorg handling. This is a local correctness
+and accounting claim, not a consensus claim.
+
+Source and oracle trace:
+
+- `src/txmempool.cpp:811-825` selects entries strictly older than the cutoff,
+  unions all descendants, and removes the staged closure.
+- `src/txmempool.cpp:405-430` removes transactions confirmed in a block while
+  retaining unrelated mempool children; `src/txmempool.cpp:91-116`
+  `UpdateTransactionsFromBlock()` reconstructs dependencies for reaccepted
+  parents and trims any resulting oversized cluster.
+- `src/txmempool.cpp:263-305` updates `mapNextTx`, randomized entries,
+  `totalTxSize`, `m_total_fee`, cached usage, unbroadcast state, and the
+  transaction-update counter for each removal.
+- The independent oracle compared expected set closure, strict timestamp
+  behavior, parent/child links, cluster ancestry, total fees, total serialized
+  size, repeated-removal idempotence, and final recursive cleanup.
+
+Independent verification:
+
+1. A temporary `mempool_tests/MempoolExpiryAndReorgAccounting` case created a
+   four-entry diamond-shaped graph. It checked `Expire(10s)` retained entries
+   at the boundary, `Expire(20s)` removed the old root and all four descendants,
+   and repeated expiry was a no-op. A second two-entry graph checked equal
+   timestamps and removal at `51s`. It then removed a four-entry parent from a
+   block, verified detached children and preserved descendant links, readded
+   the parent, called `UpdateTransactionsFromBlock()`, and verified the full
+   topology plus exact total fee and transaction-size restoration.
+
+2. The focused temporary test passed after one transparent harness correction:
+   `GetTransactionAncestry()` returns cluster size in its second output, not
+   direct descendant count. The corrected run reported `*** No errors
+   detected` for one test case.
+
+3. Valgrind Memcheck with `--leak-check=full --track-origins=yes` passed the
+   same test with no diagnostics and exit code 0.
+
+4. A temporary mutation removed the single
+   `m_txgraph->AddDependency(parent, child)` call in
+   `UpdateTransactionsFromBlock()`. The test failed with the restored
+   grandchild losing its ancestor and cluster membership and final cleanup
+   leaving three transactions, proving the oracle detects the relevant defect.
+   The mutation was restored.
+
+5. After removing all temporary edits, the release build passed
+   `mempool_tests,txpackage_tests,rbf_tests,txgraph_tests`: 24 test cases with
+   `*** No errors detected`. The clean disposable worktree and source hash
+   were rechecked afterward.
+
+Verdict:
+
+Dismissed for this exact expiry-boundary and `removeForBlock()`/
+`UpdateTransactionsFromBlock()` reinsertion cell. The production graph and
+accounting state matched the independent model across the exercised sequences,
+including shared descendants, strict cutoff behavior, repeated expiry, and
+round-trip totals. This does not prove the full `removeForReorg()` callback
+matrix, sequence-lock/maturity filtering, cluster trimming after reorg, or
+the separate unbroadcast-memory accounting finding. Exclude this exact cell
+from immediate rediscovery.
+
+Next queue:
+
+- Exercise `removeForReorg()` with a mixed final/maturity predicate, shared
+  descendants, invalidated lock points, and an already-missing parent.
+- Revisit the confirmed unbroadcast memory accounting omission only when a
+  disposable source-fix build and maxmempool boundary test are available.
+- Continue with fee-delta retention, eviction ordering, and package-limit
+  accounting after those cells are closed.

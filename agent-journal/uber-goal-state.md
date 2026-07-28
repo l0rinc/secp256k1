@@ -2095,3 +2095,33 @@ state-machine cell, excluding its prior package/RBF graph-accounting evidence.
 It must compare incremental counters and links with a full recomputation,
 exercise failure/reorg/expiry/limit transitions, and preserve a minimized
 sequence plus an independent oracle.
+
+## Cycle 116 Summary
+
+Goal `87`, `bitcoin-mempool-accounting`, dismissed a fresh strict-expiry and
+disconnected-parent reinsertion cell. A disposable Core regression oracle
+checked strict `<` expiry boundaries, recursive closure through shared
+descendants, repeated expiry, `removeForBlock()` detachment, and
+`UpdateTransactionsFromBlock()` restoration of parent/child links, cluster
+ancestry, total fees, and transaction size. The corrected focused test and a
+Valgrind Memcheck run passed. Removing the production `AddDependency` call made
+the oracle fail with lost ancestry and incomplete cleanup, proving sensitivity;
+the mutation was restored. The clean release build then passed all 24
+`mempool_tests,txpackage_tests,rbf_tests,txgraph_tests` cases. No source change
+was justified. Full evidence is in
+`agent-journal/bitcoin-mempool-accounting.md` Cycle 116.
+
+Verdict: **dismissed** for this exact expiry and parent-reinsertion cell.
+Exclude it from future Goal87 work; keep the full `removeForReorg()` predicate
+matrix, unbroadcast-memory boundary repair, fee-delta, eviction, and package
+limit cells eligible.
+
+## Cycle 117 Selection
+
+The controller drew Goal `82`, `secp-field-scalar-matrix`, with random seed
+`10037157811537101154`, index `0`, from the eligible pool `82 87`, at
+`2026-07-28T18:12:08Z`. Goal82 must choose a fresh field/scalar
+representation, backend, normalization, exhaustive, or architecture cell,
+excluding all prior Goal82 evidence and the just-closed Goal87 expiry/reorg
+cell. It must use an independent arithmetic/domain oracle and a mutation or
+cross-backend check where practical.
