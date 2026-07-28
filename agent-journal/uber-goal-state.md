@@ -975,3 +975,30 @@ handoff are in `agent-journal/secp-field-scalar-matrix.md`. This is a focused
 journal-only cycle with no production source change. The next queue remains
 `52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact goal-82 storage
 cell while retaining other field/scalar representation cells.
+
+The sixty-fourth controller cycle selected catalog goal `52`,
+`integer-arithmetic-audit`, with draw seed `1851309276` over the 12-entry
+eligible pool `52,53,72,74,77,81,82,84,87,89,95,97`; index 0 selected goal 52.
+The distinct hypothesis was a wrong trailing-zero result in the 32/64-bit
+de Bruijn fallback tables or compiler-selected ctz builtins at an extreme bit
+position. The source contract is nonzero input, and the relevant modinv
+callers use sentinel bits to preserve it. The DER-length, scratch-size,
+scalar-inverse, and ecmult-count families were excluded as already indexed.
+
+A disposable independent loop-oracle harness checked all 32 and 64 single-bit
+values plus 100,000 deterministic randomized nonzero values at each width.
+Clang 22.1.7 and GCC 16.1.0 builtin and forced-fallback builds all printed
+`ok values32=100032 values64=100064 digest=bd480fdd8c6e1c9f`. Clang
+`VERIFY`+ASan/UBSan and GCC `VERIFY`+UBSan fallback runs matched. The native,
+forced-int64, and MSan project binaries each passed the focused `ctz_tests`
+and `modinv_tests`. A deliberate fallback mutation failed immediately at
+`x=00000001`, proving the oracle sensitivity.
+
+The hypothesis is dismissed: no table-index, width-selection, undefined
+behavior, or modinv defect was found. Master-relative severity is none. No
+production source change is justified; the exact harness hash, commands,
+caller scope, outputs, limitations, and reopen conditions are in
+`agent-journal/integer-arithmetic-audit.md`. This is a focused journal-only
+cycle. The next queue remains
+`52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact goal-52 ctz cell
+while retaining other integer-arithmetic cells.
