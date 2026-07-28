@@ -2068,3 +2068,30 @@ batch-operation cells. It must use an engine-neutral trace, explicit allowed
 backend differences, crash/corruption or iterator/snapshot evidence where
 relevant, and must not repeat the recent Goal77, Goal82, Goal84, or Goal87
 cells.
+
+## Cycle 115 Summary
+
+Goal `95`, `database-semantics-differential`, dismissed a fresh raw binary-key
+comparator and lower-bound seek hypothesis. A disposable Core test used an
+independent `std::map<std::vector<uint8_t>, uint32_t>` model across three
+seeds, empty/prefix/0xff keys, 160-key populations, compaction, reopen, and
+both obfuscation modes. It passed `289610` modeled observations with digest
+`ee8bb2e735ebd69`; Memcheck and the permanent 9-case database wrapper suite
+passed. A `SeekToFirst` mutation failed at the first nonempty lower-bound
+query. Two transparent harness corrections modeled the serialized obfuscation
+metadata key correctly. No production change was justified. Full evidence is
+in `agent-journal/database-semantics-differential.md` Cycle 115; exclude this
+exact binary raw-key seek matrix.
+
+The protected Bitcoin Core checkout was not modified and retains exactly its
+three pre-existing dirty paths.
+
+## Cycle 116 Selection
+
+The controller drew Goal `87`, `bitcoin-mempool-accounting`, with random seed
+`15998097309927226073`, index `1`, from the eligible pool `82 87`, at
+`2026-07-28T18:02:52Z`. Goal87 must choose a fresh mempool/package/eviction
+state-machine cell, excluding its prior package/RBF graph-accounting evidence.
+It must compare incremental counters and links with a full recomputation,
+exercise failure/reorg/expiry/limit transitions, and preserve a minimized
+sequence plus an independent oracle.

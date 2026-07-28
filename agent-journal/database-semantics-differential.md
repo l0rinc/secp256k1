@@ -631,3 +631,102 @@ This cycle did not exercise filesystem power loss, injected short writes or
 execution, or a full node restart between each mutation. Those remain valid
 distinct Goal95 cells. The earlier iterator-status, ordered-batch, WAL
 sync/recovery, and malformed initial-key cells remain excluded.
+
+## Cycle 115 - Binary comparator and seek lower-bound differential
+
+Status: **dismissed for this bounded bytewise seek cell**. No current Core
+source defect or repair is justified.
+
+### Selection and scope
+
+The controller selected Goal `95`, `database-semantics-differential`, with
+seed `7059996709055303807`, index `2`, from the eligible pool `82 87 95`, at
+`2026-07-28T17:50:26Z`. Prior Goal95 cells for iterator status, ordered
+batches, WAL sync/recovery, malformed initial chainstate keys, and persistent
+iterator snapshots were excluded.
+
+The fresh hypothesis was that `CDBIterator::Seek` could diverge from the
+embedded LevelDB bytewise comparator for binary, empty, prefix, or 0xff keys,
+especially when the wrapper serializes a custom key type directly into a
+`DataStream`. The trust boundary is local serialized database keys and
+caller-provided seek keys. The relevant Core path is
+`src/dbwrapper.h:153-157` followed by `src/dbwrapper.cpp:385-389`, which
+passes the serialized bytes directly to LevelDB `Seek`. The authoritative
+engine contract is `src/leveldb/include/leveldb/comparator.h:24-60`: bytewise
+lexicographic ordering and lower-bound seek. Existing tests cover numeric
+uint8 ordering and decimal repeated-string ordering, but not arbitrary binary
+raw keys through compaction and reopen.
+
+### Independent model
+
+A temporary `dbwrapper_tests/iterator_binary_seek_model` case in disposable
+Core worktree `/tmp/bitcoin-goal84-113` used a `std::map<std::vector<uint8_t>,
+uint32_t>` with the default unsigned-byte lexicographic ordering as the
+engine-neutral model. A `StringContentsSerializer` wrote raw bytes without a
+CompactSize frame, matching the custom key contract. Three deterministic
+seeds generated 160 keys each with lengths 0 through 7 and arbitrary byte
+values; duplicate writes updated the model. Queries included empty keys,
+every generated key, one-byte prefixes, a 0xff successor, and 256 additional
+deterministic arbitrary queries. Each seed ran with obfuscation disabled and
+enabled, `max_file_size=1<<10`, full compaction, and a close/reopen boundary.
+The oracle checked complete iteration, every lower-bound seek, key/value
+decoding, and termination. It skipped only the known serialized obfuscation
+metadata entry when obfuscation was enabled.
+
+The first runtime mismatch was a harness mistake: the metadata was compared
+as the unframed payload instead of its serialized `0e` length-prefixed key,
+which correctly appeared as `0e006f...`. A second harness mistake constructed
+the prefix with an initializer-list form, producing `010e` rather than one
+byte `0e`. Both were corrected with explicit serialized-entry modeling and
+the full matrix was rerun. No production failure was hidden by either
+correction.
+
+### Verification
+
+The disposable Release test binary was built with GCC 16.1.0. The focused
+command was:
+
+    /tmp/bitcoin-goal84-113-build/bin/test_bitcoin --run_test=dbwrapper_tests/iterator_binary_seek_model --log_level=message
+
+It passed:
+
+    PASS binary-seek cases=289610 digest=ee8bb2e735ebd69b
+    *** No errors detected
+
+The matrix covered `289,610` modeled entries and seek observations. An
+independent Valgrind Memcheck run of the same focused case exited 0 with no
+diagnostics. The temporary test plus the existing wrapper tests ran 10 cases
+and ended with `*** No errors detected`.
+
+For oracle sensitivity, a disposable mutation changed
+`m_impl_iter->iter->Seek(slKey)` to `SeekToFirst()`. The focused matrix
+failed at seed `9764865`, non-obfuscated mode, with the first nonempty query:
+
+    error: ... binary key mismatch ... actual= expected=04
+    *** 1 failure is detected in the test module
+
+The mutation and temporary test were removed. The restored `dbwrapper.cpp`
+hash matched its `HEAD` blob, `git diff --check` passed, and the clean rebuilt
+permanent `dbwrapper_tests` suite passed all `9` cases. The protected Bitcoin
+Core checkout was not modified and retains exactly its three pre-existing
+dirty paths.
+
+### Verdict and limitations
+
+**Dismissed.** Core's raw serialized seek behavior matched the independent
+bytewise model across binary boundaries, obfuscation metadata, compaction,
+reopen, and all tested lower-bound queries. No production source change,
+regression-test commit, or severity finding is justified.
+
+This is a Linux x86_64 embedded-LevelDB differential, not an alternate-engine
+comparison. It does not cover arbitrary-length keys, Windows/32-bit ordering,
+custom comparator changes, MANIFEST/CURRENT interruption, partial writes,
+power loss, or corrupted table checksums. The earlier iterator-status and
+snapshot cells remain excluded. Reopen Goal95 only for a distinct MANIFEST,
+partial-I/O, corruption, or installed alternate-backend contract.
+
+### Handoff
+
+Exclude this exact binary raw-key lower-bound matrix from future Goal95 work.
+No source or production test file was changed; the temporary probe and
+mutation are gone and no process remains running.
