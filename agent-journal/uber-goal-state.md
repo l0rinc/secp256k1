@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 97 (`cpp-defect-taxonomy`)
+- Current status: active rotating cycle goal 95 (`database-semantics-differential`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -34,22 +34,29 @@
 - Previous cycle selected index: `1`
 - Previous cycle draw: `81`
 - Previous cycle draw timestamp: `2026-07-28T11:16:51Z`
-- Completed cycle draw seed: `14643566124539001421`
-- Completed cycle: goal 82, normalized field comparison across 5x52 and 10x26
-  limb representations, dismissed by an independent byte-order oracle,
-  compiler/backend matrix, integration tests, and a sign-flip mutation.
-- Current draw seed: `18403467706833038537`
-- Current eligible pool: `77 95 97`
-- Current selected index: `2`
-- Current draw: `97`
-- Current draw timestamp: `2026-07-28T11:46:56Z`
+- Previous completed cycle draw seed: `14643566124539001421`
+- Previous completed cycle: goal 82, normalized field comparison across 5x52
+  and 10x26 limb representations, dismissed by an independent byte-order
+  oracle, compiler/backend matrix, integration tests, and a sign-flip
+  mutation.
+- Completed cycle draw seed: `18403467706833038537`
+- Completed cycle: goal 97, hsort heap-index and stride arithmetic, dismissed
+  by an independent insertion-sort oracle, canaries, sanitizer/static
+  controls, in-tree caller tests, and a heap-child mutation.
+- Current draw seed: `13524800685825278971`
+- Current eligible pool: `77 95`
+- Current selected index: `1`
+- Current draw: `95`
+- Current draw timestamp: `2026-07-28T12:00:09Z`
 
 ## Selection rules
 
-The current selected cycle is goal 97 (cpp-defect-taxonomy), drawn with seed
-18403467706833038537 from pool 77 95 97 at index 2. The completed Goal82
-cycle remains pending for distinct field/scalar representation cells; its
-normalized comparison cell is excluded from immediate rediscovery. Goal81
+The current selected cycle is goal 95 (database-semantics-differential), drawn
+with seed 13524800685825278971 from pool 77 95 at index 1. Goal97 remains
+pending for distinct C/C++ defect classes; its hsort index/stride cell is
+excluded from immediate rediscovery. The completed Goal82 cycle remains
+pending for distinct field/scalar representation cells; its normalized
+comparison cell is excluded from immediate rediscovery. Goal81
 also remains pending for distinct BIP342, vector-provenance, and future-
 specification cells; its annex/hash-type cell remains excluded.
 
@@ -69,8 +76,7 @@ shutdown, and accounting cells. Its outbound transaction-inventory queue
 admission cell is excluded from immediate rediscovery.
 
 Goals `0` through `48` and `50` through `60`, plus `62` through `72`, `74`
-through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; this was the eligible
-set used for the latest draw after prior-cycle exclusions. Goal `61` is
+through `77`, `79` through `87`, `89` through `91`, and `94` through `98`, remain `pending`; the immediate draw pool is now `77 95` after the Goal97 hsort cell exclusion. Goal `61` is
 `exhausted` for its bounded stateful-fuzzer cycle. Goal
 `78` is `exhausted` for the completed scalar compiler/representation helper
 queue, with its journal at `agent-journal/translation-validation.md`; reopen
@@ -93,18 +99,16 @@ source of titles, slugs, and campaign scope.
 
 ## Latest Cycle Summary
 
-Goal 82 tested a fresh normalized field-comparison representation cell:
-`secp256k1_fe_cmp_var` was compared against an independent byte-order oracle
-using 25,800 pairs covering zero, `p-1` through `p-3`, high bits, every power
-of two through bit 255, adjacent values, and deterministic random values.
-Native 5x52 and forced 10x26 Clang/GCC builds matched the same
-`CMP_RESULT PASS pairs=25800 seed=0x8b6f14ea9fbf8b0b` across O0/O2/O3/Os,
-LTO, VERIFY, and ASan/UBSan controls; Clang AArch64 syntax checks passed.
-Field and EC integration modules passed in default and no-VERIFY ASan builds.
-A temporary sign-flip mutation failed immediately in both backends, proving
-oracle sensitivity. No backend mismatch or current-master defect was found;
-no production fix commit resulted. Full evidence is in
-`agent-journal/secp-field-scalar-matrix.md`; the next randomized goal is 97.
+Goal 97 tested the custom hsort's `size_t` child-index and stride arithmetic
+against a byte-wise insertion-sort oracle over nine element sizes, every count
+through 257, 128 random counts per size, `SIZE_MAX` child boundaries, and
+canary-protected arrays. Clang ASan/UBSan, GCC warning controls, Clang/GCC
+LTO, Clang static analysis, and the in-tree utils/EC/Silent Payments caller
+tests passed. A disposable inverted child-comparison mutation failed at
+`sort mismatch count=3 size=1`. Caller tracing showed that both production
+paths use fixed pointer-sized strides and require valid caller-owned arrays;
+no reachable overflow or out-of-bounds defect was found. Full evidence is in
+`agent-journal/cpp-defect-taxonomy.md`; the next randomized goal is 95.
 
 ## Historical Cycle Summaries
 
@@ -1538,3 +1542,25 @@ The selected goal remains active for other lifecycle and wrapper cells; this
 exact randomized/clone context matrix is excluded. Scratch artifacts and
 processes were cleaned. The next queue is `74,77,81,82,87,89,95,97` after
 excluding the just-selected goal for the next draw.
+
+## Cycle 97 Summary
+
+Goal `97`, `cpp-defect-taxonomy`, tested the custom hsort's `size_t`
+child-index and `index * stride` arithmetic with an independent byte-wise
+insertion-sort oracle. Nine element sizes, every count through 257, 128
+random counts per size, `SIZE_MAX` child boundaries, and canary-protected
+arrays passed under Clang ASan/UBSan, GCC warning controls, Clang/GCC LTO,
+and Clang static analysis. The in-tree utils hsort tests, EC caller tests,
+and targeted Silent Payments recipient-sort test passed. A disposable
+inverted child-comparison mutation failed at `sort mismatch count=3 size=1`.
+Caller tracing proved the production paths use fixed pointer-sized strides and
+valid caller-owned arrays. The hypothesis was **dismissed** with no
+production change; details are in
+`agent-journal/cpp-defect-taxonomy.md`.
+
+## Cycle 98 Selection
+
+The controller drew goal `95`, `database-semantics-differential`, with seed
+`13524800685825278971`, index `1`, from the immediate pool `77 95`, at
+`2026-07-28T12:00:09Z`. Goal95 is now the active rotating cycle. The Goal97
+hsort cell is excluded while other C/C++ defect classes remain eligible.
