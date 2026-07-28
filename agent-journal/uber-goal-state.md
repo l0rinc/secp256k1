@@ -569,6 +569,21 @@ with no source change. Full evidence is in
 tweak-output family and select `354ffa33`, `d907ebc0`, or a fresh unindexed
 production-impact history seed after duplicate search.
 
+The fifty-first controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `1785204375023205436` over a
+fresh one-entry pool containing `e82144ed`, selecting the historical
+`Fixup skew before global Z fixup` commit. Parent and fix ECDH-enabled builds
+passed their historical test suites; a deterministic 10,000-sample arbitrary
+peer `2G` callback probe found no parent/fix mismatch. Current native and
+forced-int64 targeted tests, all current ecmult-const and ECDH corpus inputs,
+and the independent affine/generic multiplication oracles exited `0`. Core's
+current transport path uses ElligatorSwift ECDH rather than the optional
+public ECDH module. The seed is dismissed as obsolete hardening with no
+current finding or source change; the negative historical differential is
+recorded as a limitation. The next draw must exclude the skew/global-Z and
+already-covered ecmult-const family and widen to a fresh unindexed
+production-impact history seed.
+
 The forty-ninth controller cycle continued catalog goal `49`,
 `critical-history-sweep`, with random seed `2987336874` over the ordered
 two-entry pool `354ffa33`, `d907ebc0`, selecting

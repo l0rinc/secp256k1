@@ -1274,6 +1274,99 @@ The next draw must exclude `bbe67d8b` and its direct infinity-serialization
 family. Continue from the remaining widened pool or add a fresh unindexed
 production-impact history seed after duplicate search.
 
+## Cycle 16: historical ECDH skew and global-Z fixup
+
+The fifty-first controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from audit HEAD `1cbe2886` with origin baseline
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The fresh-history scan used draw
+seed `1785204375023205436`. After exact-hash, subject, source, README, and
+prior-finding searches, the ordered eligible pool contained the unindexed
+candidate `e82144edfb7673d9a5eeb2b556d08be5223835ac`; its direct parent is
+`40b624c90bff7a40aa28c4d942b0382c3003868b8`. The selected commit, dated
+2021-12-26, is `Fixup skew before global Z fixup` and changes
+`src/ecmult_const_impl.h` so wNAF skew correction uses the precomputed
+same-denominator point before the final global-Z multiplication.
+
+### Historical parent/fix reproduction
+
+Disposable worktrees `/tmp/critical-history-54/old-ecdh-parent` and
+`/tmp/critical-history-54/old-ecdh-fixed` were built independently with the
+ECDH module enabled. The first builds used:
+
+```sh
+./autogen.sh
+./configure --enable-module-ecdh --disable-tests --disable-benchmark
+make -j2
+```
+
+Both exited `0`. They were then rebuilt with tests enabled using the same ECDH
+configuration; both also exited `0`. The historical `tests 2` run completed
+with `no problems found` in both worktrees.
+
+A standalone C probe installed a custom callback that returned the raw
+uncompressed shared point. It compared each historical ECDH result for peer
+`2G` with a generator multiplication of `2 * scalar`, using an independent
+big-endian reduction modulo the exact group order. Ten thousand deterministic
+256-bit xorshift-derived scalar samples completed in both builds:
+
+```text
+parent: no_mismatch peer=2G samples=10000
+fix:    no_mismatch peer=2G samples=10000
+```
+
+This probe did not produce a parent/fix divergence; it is retained as a
+negative result rather than being presented as a reproducer.
+
+### Current independent controls
+
+The current forced-int64 and native ASan/UBSan test binaries both passed:
+
+```sh
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=ecmult_const_tests --target=ecdh --iterations=2 --seed=1785204375023205436
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=ecmult_const_tests --target=ecdh --iterations=2 --seed=1785204375023205436
+```
+
+The native and forced-int64 current `fuzz_ecmult_const` binaries each ran
+all 11 `src/fuzz/corpora/ecmult_const` inputs, and the matching `fuzz_ecdh`
+binaries each ran all 9 `src/fuzz/corpora/ecdh` inputs; every run exited `0`.
+The focused `generator-2g` and `affine-arbitrary-scalar-reference` inputs
+also exited `0` in both backends. Current `src/fuzz/ecmult_const.c` has an
+affine double-and-add reference (`:22-140`) plus generic `ecmult`
+comparisons (`:230`, `:543-544`), while `src/fuzz/ecdh.c:62-110` checks the
+fixed `2G` result against standalone field arithmetic. These controls are
+independent of the historical ECDH callback probe's expected-point path.
+
+### Bitcoin Core reachability audit
+
+The dirty `/mnt/my_storage/bitcoin` checkout was inspected without changes.
+Its transport ECDH path uses `CKey::ComputeBIP324ECDHSecret` from
+`src/bip324.cpp`, which operates on ElligatorSwift keys; no direct call to
+the optional public `secp256k1_ecdh` module was found outside the vendored
+library, examples, tests, and benchmarks. The current Core key fuzz tests
+cover the BIP324 secret symmetry and invalid-peer cases. The checkout still
+contains unrelated `src/test/blockencodings_tests.cpp`, `fuzz-0.log`, and
+`fuzz-1.log` changes, none of which were touched.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening with no current finding.** The
+selected code is already present in the current library, current affine and
+generic multiplication oracles cover the affected arithmetic family, and the
+native/forced-int64 ECDH and ecmult corpus controls pass. No production source
+change is justified. The historical parent/fix sample was negative, so the
+exact triggering scalar or a stronger historical differential remains an
+explicit limitation rather than an invented claim.
+
+### Limitations and handoff
+
+The historical comparison used x86_64 GMP-backed builds and a fixed peer
+`2G`; it did not exhaustively search all arbitrary points, scalar split
+boundaries, or skew combinations. The current Core reachability audit was
+static because its checkout is intentionally dirty. The disposable worktrees
+and probe files must be removed after this entry is staged. The next draw must
+exclude this skew/global-Z and already-covered ecmult-const family, then widen
+to a fresh unindexed production-impact history seed after duplicate search.
+
 ## Cycle 15: historical field-setter bounds and public-key aliasing
 
 ### Selection and provenance
