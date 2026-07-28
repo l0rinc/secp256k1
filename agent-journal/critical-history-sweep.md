@@ -1807,3 +1807,124 @@ The historical worktrees and probe sources are disposable and must be removed
 after this entry is committed. The next draw must exclude the oversized-secret
 and public-key-creation family, then choose `d907ebc0` or a fresh unindexed
 production-impact history seed after duplicate search.
+
+## Cycle 17: historical point-multiplication cleanup
+
+### Pre-cycle audit and random draw
+
+The worktree was clean on `codex/fuzz-oracles` at `e1aaba96c0bb453f77430d182bf53d885bd35555`, based on `origin/master=0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The controller continued catalog goal `49`, `critical-history-sweep`. It searched the current journal, `src/fuzz/README.md`, source history, current source, and the Bitcoin Core caller tree before drawing. The candidate pool was reduced to one eligible production-impact history seed after semantic deduplication:
+
+    a82287fb Schnorr masked-secret cleanup: already covered by the nonce and
+                       secret-lifetime ledgers
+    0c729ba7 scalar x86_64 early-clobber fix: covered by the scalar
+                       translation-validation cycles
+    7fa51955 FE_CONST VERIFY metadata: covered by the field/backend matrix
+    0a40a486 fixed-input ecmult tests: test-only maintenance
+    765ef533 point-multiplication Jacobian cleanup: eligible
+
+The random seed was `1785205910014061620`, with draw index `0` from the
+one-entry eligible pool, selecting `765ef53335a3e0fafdafe1e757f6fe0789f2797f`,
+"Clear _gej instances after point multiplication to avoid potential leaks".
+The historical parent was `349e6ab916b3dd106fea9b56dacec065df5fa457`.
+
+### Hypothesis and contract
+
+The parent performed secret-dependent point multiplication into temporary
+Jacobian values and converted them to affine values, but left the Jacobian
+objects in stack memory at return. The selected fix added `gej_clear` calls
+for the ECDH result, MuSig nonce points, Schnorr signing result, and public
+key creation result. The hypothesis was that the parent left reachable
+secret-derived or shared-secret material in reusable stack memory, while the
+fix changed no public output or arithmetic contract.
+
+The affected contracts are: ECDH must return the documented shared-point
+hash and clear secret intermediates; Schnorr and ECDSA signing must preserve
+signature correctness while minimizing secret residue; MuSig nonce
+generation must preserve its public nonce output while clearing the private
+nonce-derived Jacobian; and public-key creation must preserve the affine
+public key while clearing the temporary multiplication result. The risk is
+confidentiality hardening against stack/memory residue, not an automatic
+remote disclosure primitive.
+
+### Historical verification
+
+Both parent and fix were checked out in disposable worktrees and configured
+with:
+
+    ./autogen.sh
+    ./configure --enable-tests --disable-benchmark \
+        --enable-module-ecdh --enable-module-schnorrsig --enable-module-musig
+    make -j2
+
+All configure and build commands exited `0`. On both revisions:
+
+    ./tests 2
+    ./noverify_tests 2
+    ./libtool --mode=execute valgrind --quiet --error-exitcode=99 ./ctime_tests
+
+The first two commands printed `no problems found`; the Valgrind-wrapped ctime
+test exited `0` with no diagnostics. The direct `ctime_tests` invocation
+correctly refused to run outside Valgrind; the system `libtool` command was
+not on PATH, so the repository's generated `./libtool` wrapper was used.
+There was no parent/fix behavioral divergence in the tested public modules.
+
+### Current source and independent controls
+
+Current history contains `a3296d5e23f1475575cb8f0aa8209349cc9a6cfb`,
+"refactor: introduce `_ecmult_gen_ge` helper (preventing accidental gej
+leaks)". That helper performs generator multiplication, affine conversion,
+and `secp256k1_gej_clear` in one internal operation. Current Schnorr signing
+and public-key creation no longer expose the former `rj` and `pj` temporaries;
+current MuSig clears each `nonce_ptj[i]`, and current ECDH clears `res` after
+hashing. This later helper is stronger evidence than merely observing the
+original four call-site clears because it reduces recurrence risk.
+
+The current native and forced-int64 controls, all with seed
+`765ef533000000000000000000000000`, exited `0`:
+
+    /mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests \
+        --target=ecdh --target=schnorrsig --target=musig --iterations=2
+    /mnt/my_storage/secp256k1-build/current-full-int64-20260726/bin/tests \
+        --target=ecdh --target=schnorrsig --target=musig --iterations=2
+
+The current corpora also exited `0` in both backends. ECDH covered 9 files
+and 10 runs, Schnorr covered 18 files and 19 runs, and MuSig covered 81 files
+and 82 runs. The native MuSig run completed in 100 seconds and the forced
+int64 run in 173 seconds. No sanitizer, fuzzer, test, or profiling process
+remained after the controls.
+
+### Bitcoin Core caller audit
+
+The dirty `/mnt/my_storage/bitcoin` checkout was not modified. Its status
+remained `M src/test/blockencodings_tests.cpp` plus untracked `fuzz-0.log`
+and `fuzz-1.log`. Current Core directly reaches public-key creation and
+Schnorr signing/verification from `src/key.cpp`, and reaches MuSig nonce and
+aggregation APIs from `src/musig.cpp`. No direct `secp256k1_ecdh` call was
+found in Core's own source; the ECDH matches were vendored-library headers,
+implementation, tests, and benchmarks. Thus the historical cleanup was
+relevant to library consumers and current Core's Schnorr/MuSig paths, but no
+current Core caller exposes the old uncleared ECDH path.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening.** The parent had a credible
+secret-residue weakness in temporary Jacobian objects, and the selected fix
+was correct. Current source retains the cleanup at the direct ECDH and MuSig
+sites and centralizes generator cleanup with `_ecmult_gen_ge`; current Core
+Schnorr/MuSig callers therefore use the repaired paths. Historical parent/fix
+tests, Valgrind ctime, current API tests, current native/forced-int64 corpus
+replays, and source/history inspection found no current master defect. No
+production source change or regression test is justified.
+
+### Limitations and handoff
+
+The evidence is about stack/memory residue and does not prove erasure against
+every compiler, optimizer, register spill, allocator, or physical-memory
+adversary. No dedicated stack-reuse disclosure reproducer was established;
+the historical commit rationale and centralized helper are the independent
+contract evidence. The current Core audit was static because its checkout is
+intentionally dirty. The disposable parent/fix worktrees and generated build
+outputs are to be removed after this journal entry is committed. The next
+draw must exclude the `765ef533` Jacobian-clear family, `_ecmult_gen_ge`, and
+the already covered Schnorr/MuSig/ECDH secret-lifetime family, then widen to a
+fresh unindexed production-impact history seed.

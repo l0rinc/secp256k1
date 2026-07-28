@@ -615,3 +615,20 @@ as already-covered historical hardening with no source change. Full evidence
 is in `agent-journal/critical-history-sweep.md`; the next draw must exclude
 the field-setter, `p + 1`, modular-aliasing, and SEC1 parser family and choose
 a fresh unindexed production-impact history seed after duplicate search.
+
+The fifty-second controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `1785205910014061620` over a
+one-entry eligible pool after semantic deduplication. It selected historical
+`765ef53335a3e0fafdafe1e757f6fe0789f2797f`, the Jacobian point-multiplication
+cleanup fix. Parent and fix builds, normal and no-VERIFY tests, and Valgrind
+ctime tests all passed. Current native and forced-int64 ECDH/Schnorr/MuSig
+tests and all 9 ECDH, 18 Schnorr, and 81 MuSig corpus files also passed. The
+parent's four uncleared Jacobian temporaries were a credible historical secret
+residue weakness, but current source has the original clears and the later
+`_ecmult_gen_ge` helper (`a3296d5e`) that centralizes generator conversion and
+cleanup. Bitcoin Core directly uses current Schnorr and MuSig paths but has no
+direct ECDH caller. The seed is dismissed as obsolete hardening with no
+production source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the next draw must exclude the
+Jacobian-clear/helper and secret-lifetime family and choose a fresh unindexed
+production-impact history seed.
