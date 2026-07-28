@@ -237,6 +237,9 @@ static int secp256k1_keypair_load(const secp256k1_context* ctx, secp256k1_scalar
             secp256k1_ge expected_pk;
 
             secp256k1_keypair_derive_pubkey(ctx, &expected_pk, sk);
+            /* The derived point is compared only with the already declassified
+             * public half of the opaque keypair. */
+            secp256k1_declassify(ctx, &expected_pk, sizeof(expected_pk));
             ret = secp256k1_ge_eq_var(pk, &expected_pk);
             secp256k1_ge_clear(&expected_pk);
             secp256k1_declassify(ctx, &ret, sizeof(ret));

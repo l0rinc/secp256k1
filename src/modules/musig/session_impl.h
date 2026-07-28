@@ -79,9 +79,9 @@ static int secp256k1_musig_secnonce_load(const secp256k1_context* ctx, secp256k1
     ARG_CHECK(secp256k1_memcmp_var(&secnonce->data[0], secp256k1_musig_secnonce_magic, 4) == 0);
     secp256k1_scalar_set_b32(&k[0], &secnonce->data[4], &overflow0);
     secp256k1_scalar_set_b32(&k[1], &secnonce->data[36], &overflow1);
-    invalid = overflow0 || overflow1
-           || secp256k1_scalar_is_zero(&k[0])
-           || secp256k1_scalar_is_zero(&k[1]);
+    invalid = overflow0 | overflow1
+        | secp256k1_scalar_is_zero(&k[0])
+        | secp256k1_scalar_is_zero(&k[1]);
     secp256k1_declassify(ctx, &invalid, sizeof(invalid));
     ARG_CHECK(!invalid);
     return secp256k1_musig_ge_load(ctx, pk, &secnonce->data[68], 0);
@@ -446,7 +446,7 @@ static int secp256k1_musig_nonce_gen_internal(const secp256k1_context* ctx, secp
     secp256k1_eckey_pubkey_serialize33(&pk, pk_ser);
 
     secp256k1_nonce_function_musig(secp256k1_get_hash_context(ctx), k, input_nonce, msg32, seckey, pk_ser, aggpk_ser_ptr, extra_input32);
-    invalid_nonce = secp256k1_scalar_is_zero(&k[0]) || secp256k1_scalar_is_zero(&k[1]);
+    invalid_nonce = secp256k1_scalar_is_zero(&k[0]) | secp256k1_scalar_is_zero(&k[1]);
     secp256k1_declassify(ctx, &invalid_nonce, sizeof(invalid_nonce));
     if (invalid_nonce) {
         secp256k1_musig_secnonce_invalidate(ctx, secnonce, 1);

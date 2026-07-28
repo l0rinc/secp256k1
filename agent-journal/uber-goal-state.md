@@ -910,3 +910,39 @@ and reopen conditions are in `agent-journal/filesystem-crash-consistency.md`.
 No protected Core or libsecp256k1 file changed. The next queue is
 `52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact active-block
 flush-ordering cell while retaining other goal-72 durable-boundary cells.
+
+The sixty-second controller cycle selected catalog goal `53`,
+`statistical-timing-side-channel`, with draw seed `1794593845` over the
+12-entry eligible pool `52,53,72,74,77,81,82,84,87,89,95,97`; index 1 selected
+goal 53. The fresh hypothesis measured `secp256k1_ec_pubkey_create` for low
+and high Hamming-weight secret scalars and separately checked whether recent
+opaque-key and MuSig validation changes crossed a ctime boundary. A pinned
+120,000-sample-per-class harness produced equal medians/p95 values and Welch
+t-statistics `0.671323`, `-0.451355`, `-0.879812`, and `-0.241282`; scheduler
+outliers polluted means. This timing candidate was dismissed as a measurable
+signal in the tested environment, with the explicit limitation that timing
+statistics are not proof.
+
+The audit-branch ctime control before repair exited 99 under Valgrind with
+reports through `keypair_load`/`ge_eq_var`, MuSig nonce and partial-signing,
+and silent-payment paths. A disposable worktree at clean `origin/master`
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a` passed the identical ctime run, so
+the regression was attributed to earlier audit-branch changes rather than
+clean upstream master. The smallest repair declassified the derived public
+point before comparing it to the public half of an opaque keypair and replaced
+secret-derived MuSig `||` validity aggregation with bitwise `|`, declassifying
+only the final flag before the public error branch. The repaired ctime run
+exited 0 with no Memcheck output. The same Release/Valgrind-enabled build's
+normal test binary built and passed 16 iterations in 61.264s (random seed
+`2924b30fd7983a2288cba2cbdbe347ac`).
+
+This is a confirmed audit-branch constant-time validation regression, not a
+clean-origin finding: master-relative severity is none for current upstream,
+with Medium branch-local constant-time hygiene risk if the short-circuit code
+were retained. No remote timing primitive or key disclosure was shown. The
+per-goal evidence, source/history trace, exact commands/output, limitations,
+and reopen conditions are in `agent-journal/timing-side-channel.md`. The
+source repair and this state update are pending as one self-contained audit
+commit. The next queue remains
+`52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact goal-53 cell while
+retaining other goal-53 secret-operation cells.
