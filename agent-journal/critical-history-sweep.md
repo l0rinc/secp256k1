@@ -490,6 +490,120 @@ or an unindexed contribution parser changes the trust boundary. Prefer
 callers and exact semantic hashes against the finding ledger; otherwise draw
 from an older unindexed production-impact fix.
 
+## Cycle 7: obsolete fixed-WNAF initialization seed
+
+### Selection and current-surface check
+
+The next draw used seed `2365800521` over the three remaining preferred
+history seeds, selecting index `2` (`2365800521 % 3`):
+
+```text
+2277af5ff07322dca6efb0474aea863b21d82279
+45f37b650635e46865104f37baed26ef8d2cfb97
+248f0466112c96b9851c662fa829f20d28d16344
+```
+
+The selected commit `248f0466112c96b9851c662fa829f20d28d16344`, "Make sure
+we're not using an uninitialized variable in `secp256k1_wnaf_const(...)`",
+adds `VERIFY_CHECK(w > 0)` and `VERIFY_CHECK(size > 0)` and changes the old
+helper's loop from `while` to `do ... while`. The old code could skip the
+loop for `size == 0` and then write `wnaf[word] = u * global_sign` with
+`u` uninitialized.
+
+The current surface is materially different. `git log -S'secp256k1_wnaf_const'`
+shows that the helper was removed by `115fdc72` (`Remove unused
+secp256k1_wnaf_const`). Current `src/ecmult_const_impl.h:123-276` has the
+fixed signed-bit table implementation with no `size` parameter and no
+`secp256k1_wnaf_const` caller. The current `src/fuzz/README.md:7516-7555`
+already records an independent fixed-WNAF byte oracle and mutation proof, and
+the later ecmult-const state matrix at `:30865-30935` covers the replacement
+implementation. This prevents treating the old helper's historical issue as
+a current source variant.
+
+### Historical reproduction and trust boundary
+
+The historical parent `452d8e4d2a2f9f1b5be6b02e18f1ba102e5ca0b4` was checked
+out in the isolated worktree `/tmp/critical-history-49/old-wnaf`. Its generated
+context setup was:
+
+```sh
+./autogen.sh
+./configure --disable-shared --enable-ecmult-static-precomputation \
+  --disable-tests --disable-benchmark
+make -j2 src/ecmult_static_context.h
+```
+
+The direct static-helper probe
+`/tmp/critical-history-49/wnaf_uninitialized_probe_old.c` initializes a scalar
+to one, passes `w = 4` and `size = 0`, and preinitializes two output words.
+The successful compile and replay were:
+
+```sh
+clang -O0 -g -std=c99 -fPIE -pie \
+  -fsanitize=memory -fsanitize-memory-track-origins=2 \
+  -fno-omit-frame-pointer -Wno-unused-function -DHAVE_CONFIG_H \
+  -I/tmp/critical-history-49/old-wnaf \
+  -I/tmp/critical-history-49/old-wnaf/include \
+  -I/tmp/critical-history-49/old-wnaf/src \
+  /tmp/critical-history-49/wnaf_uninitialized_probe_old.c -lgmp \
+  -o /tmp/critical-history-49/wnaf_uninitialized_old_o0
+MSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exit_code=86 \
+  /tmp/critical-history-49/wnaf_uninitialized_old_o0
+```
+
+MemorySanitizer reported:
+
+```text
+==1650175==WARNING: MemorySanitizer: use-of-uninitialized-value
+```
+
+The sanitizer process did not terminate cleanly after the warning under this
+container's MSan runtime and was stopped with Ctrl-C; the warning occurs at
+the old `wnaf[word] = u * global_sign` use. A separate optimized `-O1` MSan
+build did not preserve the uninitialized state, so the `-O0` diagnostic is
+the retained historical witness. This is a direct internal invalid-domain
+reproducer, not a public-input proof: the old production caller passed a
+positive `size` (`128` for split values or its positive caller-supplied
+width), and no current caller can reach this removed helper.
+
+### Current replacement controls
+
+The current native and forced-int64 unit slices passed:
+
+```text
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=ecmult_const_tests --iterations=4 --seed=248
+exit 0; Total execution time: 0.035 seconds
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=wnaf --iterations=4 --seed=248
+exit 0; Total execution time: 0.000 seconds
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=ecmult_const_tests --iterations=2 --seed=248
+exit 0; Total execution time: 0.097 seconds
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=wnaf --iterations=2 --seed=248
+exit 0; Total execution time: 0.001 seconds
+```
+
+The current 11-file, 406-byte `ecmult_const` corpus passed with
+`-runs=1 -timeout=120` in the forced-int64 and native fuzzer builds. Both
+completed 12 runs with exit 0 (`cov: 4299` and `cov: 2658`). The current MSan
+build replayed the same corpus and completed 12 runs with exit 0 and
+`cov: 399`, with no diagnostic. These controls exercise the replacement
+fixed-WNAF and table-selection paths, not the removed helper.
+
+### Verdict
+
+**Excluded as obsolete historical hardening.** The historical parent has a
+real uninitialized use for an invalid internal `size == 0` call, but the
+helper and its call graph were later removed. The current replacement has
+independent WNAF oracles, mutation coverage, native/forced-int64 tests, and an
+MSan corpus replay. There is no current production defect, caller, or source
+change to commit, and no severity gate is met.
+
+### Next history slice
+
+Do not redraw `248f0466` or the removed `wnaf_const` family. The RFC6979
+message-reduction and ecmult-multi large-count seeds are already represented
+by current transcript/batch ledgers; draw from older unindexed production
+history after checking exact semantic fingerprints and current callers.
+
 ## Handoff
 
 Verify the current worktree, remotes, history range, existing findings, and
