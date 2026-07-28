@@ -1273,3 +1273,170 @@ committed. No fuzz, sanitizer, daemon, or profiling process remains.
 The next draw must exclude `bbe67d8b` and its direct infinity-serialization
 family. Continue from the remaining widened pool or add a fresh unindexed
 production-impact history seed after duplicate search.
+
+## Cycle 13: historical tweak failure-output consistency
+
+### Selection and provenance
+
+The forty-eighth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `b5c82802` on branch
+`codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. Before drawing, the controller
+searched the catalog journal, `src/fuzz/README.md`, current source, and the
+Bitcoin Core caller tree for semantic and hash duplicates. The ordered
+eligible pool was:
+
+```text
+354ffa33e6b0d6c1270a6d9d228f692b70ad7ff4
+d907ebc0e386ea17a96d34cd3008be9207b6f94f
+bb5aa4df557c5abfabf25c72144a1a071c69aa83
+```
+
+Random seed `3643183100` selected index `2`,
+`bb5aa4df557c5abfabf25c72144a1a071c69aa83`, parent
+`4a243da47c8070322c98e42202fe2d12aabdb432`, dated 2015-10-21, with subject
+`Make the tweak function zeroize-output-on-fail behavior consistent.` The
+selected patch changes private-key tweak add/mul to clear the caller's
+32-byte output before restoring a successful scalar, and changes public-key
+tweak add/mul to clear the opaque output before attempting the operation.
+The parent had already cleared public outputs when the group operation itself
+failed, but left both private outputs unchanged on failure and left public
+outputs unchanged when the tweak overflowed before key loading.
+
+The current history also contains later direct output-cleanup families such as
+`b3fe5d69` (`api: clear variable outputs on failures`), `95272693`
+(`ec: clear tweak outputs on NULL tweak`), and `5af572cb`; these are current
+source duplicates/descendants, not independent clean-master findings.
+
+### Historical parent/fix reproduction
+
+Disposable worktrees `/tmp/critical-history-50/old-tweak-parent` and
+`/tmp/critical-history-50/old-tweak-fixed` were built separately with:
+
+```sh
+./autogen.sh
+./configure --disable-tests --disable-benchmark
+make -j2
+```
+
+Both x86_64 GMP-backed builds exited `0`; the only notable output was the
+repository's obsolete-autoconf-macro warning. A standalone `tweak_probe.c`
+used signing and verification contexts, secret key `1`, an overflowing
+group-order tweak, and a zero tweak. It compared private and public opaque
+outputs with their pre-call state and checked all-zero cleanup.
+
+The historical parent printed:
+
+```text
+priv_add_overflow ret=0 unchanged=1 zero=0
+priv_mul_zero ret=0 unchanged=1 zero=0
+pub_add_overflow ret=0 unchanged=1 zero=0
+pub_mul_zero ret=0 unchanged=0 zero=1
+pub_bytes_changed_after_mul=64
+```
+
+The selected fix printed:
+
+```text
+priv_add_overflow ret=0 unchanged=0 zero=1
+priv_mul_zero ret=0 unchanged=0 zero=1
+pub_add_overflow ret=0 unchanged=0 zero=1
+pub_mul_zero ret=0 unchanged=0 zero=1
+pub_bytes_changed_after_mul=64
+```
+
+This reproduces the historical API contract difference independently on the
+parent and fix, including the overflow-before-load public path and both
+private-key failure classes.
+
+### Current implementation and tests
+
+Current `src/secp256k1.c:807-877` validates the secret scalar, uses
+`secp256k1_scalar_cmov` to replace failed private results with the zero scalar,
+and serializes that result back to the caller. Current public tweak add/mul
+clear the opaque `secp256k1_pubkey` before saving only a successful result.
+The current `src/tests.c:6695-6751` explicitly checks zero-multiply,
+overflowing secret/tweak inputs, exact-add cancellation, public parse failure,
+and zeroized outputs for every failed private/public tweak operation.
+
+A modern standalone probe compiled against the forced-int64 library at
+`/mnt/my_storage/secp256k1-build/oracles-next-int64/lib` and the native
+sanitizer library at
+`/mnt/my_storage/secp256k1-build/current-full-native-20260726/lib`. Both
+used a dynamically created sign/verify context and printed exactly:
+
+```text
+priv_add_overflow ret=0 zero=1
+priv_mul_zero ret=0 zero=1
+pub_add_overflow ret=0 zero=1
+pub_mul_zero ret=0 zero=1
+```
+
+The first probe attempt used the static verification-only context and hit the
+expected `secp256k1_ecmult_gen_context_is_built` illegal-argument guard; it
+was corrected before the result above. The native probe was linked with
+`-fsanitize=address,undefined` to match its instrumented library.
+
+The focused current tests were:
+
+```text
+/mnt/my_storage/secp256k1-build/oracles-next-int64/bin/tests --target=eckey_edge_case_test --iterations=2 --seed=3643183100
+/mnt/my_storage/secp256k1-build/current-full-native-20260726/bin/tests --target=eckey_edge_case_test --iterations=2 --seed=3643183100
+```
+
+Both exited `0` (reported total times 0.001 and 0.006 seconds). The
+forced-int64 and native ASan/UBSan `fuzz_api_roundtrip` replays of
+`independent-tweak-order-boundary` and `secret-tweak-input-output-overlap`
+each executed two inputs and exited `0` (208/152 ms and 134/91 ms,
+respectively). The `fuzz_group` invalid opaque-public-key tweak-multiply
+input exited `0` on forced-int64 and native (55 and 35 ms), and the native
+`fuzz_xonly_tweak` `zero-and-order-tweaks` input exited `0` (655 ms).
+
+The selected `oracles-next-int64` build did not contain `fuzz_api_roundtrip`
+or `fuzz_group` binaries (both commands returned `127`); the known full
+forced-int64 sanitizer build supplied those controls. No sanitizer, fuzz,
+daemon, or profiling process remained.
+
+### Bitcoin Core caller audit
+
+The surveyed Bitcoin Core checkout was dirty and was not modified. Its
+generic tweak callers are:
+
+* `src/key.cpp:306`: private BIP32 derivation calls
+  `secp256k1_ec_seckey_tweak_add`, then calls `ClearKeyData()` when the return
+  value is false.
+* `src/pubkey.cpp:355-356`: public BIP32 derivation checks
+  `secp256k1_ec_pubkey_tweak_add` and returns failure before serializing a
+  failed result.
+* `src/pubkey.cpp:262-271`: x-only tweak checking and creation also check
+  their return values and return false/nullopt on failure.
+* `src/musig.cpp:215-223` uses MuSig-specific tweak functions and returns
+  `std::nullopt` when a tweak fails; no generic private multiply or public
+  multiply caller was found in the Core source tree.
+
+The current Core checkout had unrelated `M src/test/blockencodings_tests.cpp`
+and untracked `fuzz-0.log`/`fuzz-1.log` files; none were touched. Current Core
+therefore has explicit failure handling at the reachable private and public
+derivation boundaries, and the historical nonzero failed buffer cannot remain
+as a usable child key through those paths.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening.** The parent has a real direct
+API failure-output inconsistency, and the selected fix corrects it. Current
+private and public tweak implementations, unit boundaries, focused fuzz
+oracles, and Bitcoin Core callers all enforce or safely consume the repaired
+contract. The issue is low-severity API state hygiene rather than a current
+consensus, cryptographic, memory-safety, or remotely reachable Bitcoin Core
+defect. No production source change is justified.
+
+### Limitations and handoff
+
+Historical reproduction used the 2015 API and GMP-backed builds; current
+controls used modern native and forced-int64 sanitizer builds. No direct Core
+test was run because its checkout is intentionally dirty and this cycle was
+scoped to the libsecp API migration boundary. The historical worktrees and
+probe sources are disposable and must be removed after this entry is
+committed. The next draw must exclude this private/public tweak-output family
+and its direct descendants, then choose `354ffa33`, `d907ebc0`, or a fresh
+unindexed production-impact history seed after duplicate search.

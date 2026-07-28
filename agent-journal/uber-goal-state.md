@@ -552,3 +552,19 @@ source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the next draw must exclude this
 infinity-serialization family and select a fresh unindexed production-impact
 history seed after duplicate search.
+
+The forty-eighth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `3643183100` over the ordered
+three-entry pool `354ffa33`, `d907ebc0`, `bb5aa4df`, selecting
+`bb5aa4df557c5abfabf25c72144a1a071c69aa83`, the historical tweak
+failure-output consistency fix. Parent/fix probes showed private add/mul and
+overflowing public add leaving valid bytes unchanged before the fix, while
+the selected fix zeroized all failed outputs. Current native/forced-int64
+probes, edge-case tests, and focused API/group/x-only sanitizer corpus inputs
+all exited 0. Bitcoin Core's reachable BIP32 private/public derivation paths
+check failures and clear/discard failed child state; its checkout remained
+dirty and untouched. The seed is dismissed as obsolete historical hardening
+with no source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the next draw must exclude this
+tweak-output family and select `354ffa33`, `d907ebc0`, or a fresh unindexed
+production-impact history seed after duplicate search.
