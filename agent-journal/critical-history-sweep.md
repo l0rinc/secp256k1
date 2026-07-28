@@ -851,3 +851,150 @@ b0be6aba910392e06aa85a87d2240a1aadb2fff5
 Search the finding ledger and current callers again before drawing, because
 later allocation, callback, and arithmetic fixes may make a different
 historical variant reachable.
+
+## Cycle 10: historical secret-key validation inversion
+
+### Selection and provenance
+
+The forty-fifth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `5bde4df4` on branch
+`codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. The ordered eligible pool was:
+
+```text
+ad52495d723648948970850f01a9445d061e85f7
+b0be6aba910392e06aa85a87d2240a1aadb2fff5
+603c33bc8079f7e1a4851dbef629a2b91e13bbef
+```
+
+Random seed `4254972856` selected index `1` (`4254972856 % 3`) and
+`b0be6aba910392e06aa85a87d2240a1aadb2fff5`, parent
+`634bc1820c63f0d2e49309d087b9fab956979589`, dated 2013-07-13, subject
+`Invert buggy logic in secp256k1_ecdsa_seckey_verify`. The parent returned
+true for zero or overflowing secret keys and false for valid keys; the
+selected two-line change inverted both predicates to the documented
+`0 < secret < group_order` contract.
+
+### Historical reproduction
+
+Disposable worktrees `/tmp/critical-history-49/old-seckey-parent` and
+`/tmp/critical-history-49/old-seckey-fixed` were configured and built with:
+
+```sh
+./configure --disable-tests --disable-benchmark
+make -j2
+```
+
+A shared scratch probe called the old public
+`secp256k1_ecdsa_seckey_verify` API on four exact vectors: all-zero, one,
+the 32-byte group order, and all-`ff`. It was compiled with:
+
+```sh
+gcc -O0 -g -I. -Iinclude seckey_probe.c libsecp256k1.a -lgmp -o seckey_probe
+./seckey_probe
+```
+
+The historical parent printed:
+
+```text
+zero=1
+one=0
+order=1
+maximum=1
+```
+
+The selected fix printed:
+
+```text
+zero=0
+one=1
+order=0
+maximum=0
+```
+
+This is a direct before/after proof of a real historical key-validation
+defect. It could make Bitcoin Core accept invalid private-key material while
+rejecting valid material if linked against the parent. No historical test or
+caller search in the parent found a boundary oracle; the parent contained
+only the public declaration and implementation. The absence of zero/order
+tests explains why the inverted return convention reached the fix commit.
+
+### Current implementation and callers
+
+Current `src/secp256k1.c:726-734` calls
+`secp256k1_scalar_set_b32_seckey`, whose `src/scalar_impl.h:34-40`
+implementation returns `(!overflow) & (!secp256k1_scalar_is_zero(r))` and
+clears the temporary scalar before returning. The public documentation at
+`include/secp256k1.h:713-730` states the same nonzero, strictly-less-than-
+order contract.
+
+The current direct public-API probe used the forced-int64 CMake library and
+the same four vectors:
+
+```sh
+cc -std=c99 -O2 -Wall -Wextra -Werror -Iinclude \
+  -L/mnt/my_storage/secp256k1-build/oracles-next-int64/lib \
+  -Wl,-rpath,/mnt/my_storage/secp256k1-build/oracles-next-int64/lib \
+  seckey_current_probe.c -lsecp256k1 -o /tmp/seckey-current-probe
+/tmp/seckey-current-probe
+```
+
+It printed:
+
+```text
+zero=0
+one=1
+order=0
+maximum=0
+```
+
+The current API-roundtrip oracle at `src/fuzz/api_roundtrip.c:1831-1875`
+independently computes validity from bytes and checks both normal and static
+contexts for zero, one, order-minus-one, order, field-overflow, a generated
+key, and a fuzz-derived candidate. Native ASan/UBSan replay of the 62-file
+corpus completed 63 runs with exit `0` and `cov: 4253 ft: 9535`; the
+forced-int64 replay completed 63 runs with exit `0` and `cov: 6227 ft: 15743`.
+The focused forced-int64 context test also exited `0`:
+
+```text
+tests --target=all_proper_context_tests --iterations=2 --seed=4254972856
+```
+
+Actual Bitcoin Core callers are visible in the separate checkout
+`/mnt/my_storage/bitcoin`: `src/key.cpp:38-82` validates DER-imported private
+keys and zeroes the output on failure, while `src/key.cpp:158-166` uses the
+predicate for `CKey::Check` and the random-key generation loop. The message
+signing and raw-transaction RPCs reject `CKey` values for which `IsValid()` is
+false at `src/rpc/signmessage.cpp:88-90` and
+`src/rpc/rawtransaction.cpp:758-761`. That checkout was dirty with unrelated
+user files and was not modified or used for a source patch.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening.** The parent contains a real
+historical key-validity inversion with key-integrity and key-availability
+impact, but the selected fix is already in current history. Current source,
+the independent byte-level fuzzer oracle, native and forced-int64 corpus
+replays, and the direct public probe all agree on the documented contract.
+There is no current clean-master defect, no source change is justified, and
+the historical issue is not a current Bitcoin Core vulnerability. The
+current clean-master controls also provide stronger boundary coverage than
+the historical parent tests.
+
+### Limitations and handoff
+
+The historical probes use the old API and GMP-backed 2013 build; the current
+direct probe uses the forced-int64 library, while native behavior is covered
+by the sanitized fuzzer replay. No direct Bitcoin Core test was run because
+its checkout is intentionally dirty and this cycle was scoped to the
+libsecp256k1 history boundary. Temporary historical worktrees and the scratch
+probe were removed after collection. No fuzz, sanitizer, daemon, or profiling
+process remains.
+
+The next random draw must exclude `b0be6aba` and its direct validation family
+and choose from:
+
+```text
+ad52495d723648948970850f01a9445d061e85f7
+603c33bc8079f7e1a4851dbef629a2b91e13bbef
+```

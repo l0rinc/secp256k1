@@ -495,3 +495,24 @@ production change; full evidence is in
 `agent-journal/critical-history-sweep.md`. The next draw must exclude this
 malloc family and select from `ad52495d`, `b0be6aba`, or `603c33bc` after a
 fresh duplicate/current-caller search.
+
+The forty-fifth controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `4254972856` over the ordered
+three-entry pool `ad52495d`, `b0be6aba`, `603c33bc`, selecting
+`b0be6aba910392e06aa85a87d2240a1aadb2fff5`, the 2013 secret-key validation
+logic inversion. The historical parent and selected fix were built in
+disposable worktrees and an exact zero/one/order/maximum probe printed
+`1/0/1/1` before the fix and `0/1/0/0` after it. Current
+`secp256k1_ec_seckey_verify` delegates to the scalar validity predicate and a
+direct current public probe printed `zero=0`, `one=1`, `order=0`,
+`maximum=0`. Native and forced-int64 ASan/UBSan API-roundtrip corpus replays
+each completed 63 runs with exit `0` (`cov: 4253 ft: 9535` and
+`cov: 6227 ft: 15743`), and the focused context test passed. Bitcoin Core's
+current callers were checked in `src/key.cpp` and the signing/raw-transaction
+RPCs without modifying its dirty checkout. The historical inversion is a
+real key-integrity/availability defect, but current history and current
+oracles already contain the repair; it is dismissed as obsolete hardening
+with no source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`. The next draw must exclude this
+secret-key validation family and choose from `ad52495d` or `603c33bc` after a
+fresh duplicate/current-caller search.
