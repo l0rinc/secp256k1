@@ -1732,3 +1732,25 @@ The controller drew goal `81`, `spec-vector-drift`, with seed
 provenance, BIP342 code-separator, and annex/hash-type cells remain excluded;
 the next cycle must choose a distinct specification, vector, or formal-model
 drift hypothesis.
+
+## Cycle 103 Summary
+
+Goal `81`, `spec-vector-drift`, completed a BIP340 vector-parity cell. The
+authoritative CSV and Core's normalized local copy matched exactly; the local
+file contains 19 rows. Core's Python consumer passed all rows, a standalone
+affine secp256k1/BIP340 oracle passed all 19 verification rows and regenerated
+all 8 signing rows, and its message/signature mutation controls rejected the
+mutations. The native libsecp256k1 vector test rebuilt and exited successfully
+after 16 randomized iterations. No cryptographic or vector drift was shown.
+
+Verdict: **dismissed** for this exact Goal81 cell, with no production source
+change or repair commit. Details, hashes, and limitations are in
+`agent-journal/spec-vector-drift.md`.
+
+## Cycle 104 Selection
+
+The controller drew goal `95`, `database-semantics-differential`, with seed
+`1228823428`, index `4`, from the post-Goal81 pool `77 82 84 87 95 97`, at
+`2026-07-28T13:24:31Z`. Goal95's prior WAL sync/recovery cell remains
+excluded; the next cycle must choose a distinct comparator, snapshot,
+partial-I/O, MANIFEST, corruption, or alternate-backend semantics hypothesis.

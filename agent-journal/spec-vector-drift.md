@@ -455,3 +455,122 @@ Keep Goal81 pending and exclude this BIP341 vector-provenance cell, the
 annex/hash-type cell, and the BIP342 code-separator cell from immediate
 rediscovery. Future-specification changes affecting sighash caching or new
 authoritative vector sets remain eligible.
+
+## Cycle 103: BIP340 vector provenance and implementation parity
+
+### Cycle metadata
+
+- Selected by controller seed `8445943498763641849`, pool `77 81 82 84 95 97`,
+  index `1`, at `2026-07-28T13:16:49Z`.
+- Audit branch: `codex/fuzz-oracles`, HEAD before this journal commit
+  `37963fba`.
+- Bitcoin Core evidence base: protected branch `codex/btc-fuzz-oracles`, HEAD
+  `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+- Protected Core retained only its pre-existing
+  `M src/test/blockencodings_tests.cpp`, `?? fuzz-0.log`, and `?? fuzz-1.log`.
+
+### Hypothesis and trust boundary
+
+Hypothesis: Bitcoin Core's checked-in BIP340 CSV, Python functional consumer,
+and embedded libsecp256k1 vector consumer could drift from the authoritative
+BIP340 vectors, especially in the variable-length message cases added later
+or in invalid-public-key, infinity, field-size, and scalar-order rejection
+cases. The trust boundary is the Schnorr key/signature implementation used by
+wallet and Taproot validation. A mismatch could cause a signature to be
+accepted or rejected differently across implementations.
+
+This is distinct from the completed BIP341 wallet-vector provenance,
+BIP341 annex/hash-type, and BIP342 code-separator cells. It tests the BIP340
+base signing/verifying contract and vector consumers directly.
+
+### Specification and implementation evidence
+
+The authoritative source is the BIP340 vector file:
+
+https://github.com/bitcoin/bips/blob/master/bip-0340/test-vectors.csv
+
+The local file `test/functional/test_framework/bip340_test_vectors.csv` has 19
+rows. Its source history is `b184f5c87c` (`test: update BIP340 test vectors and
+implementation (variable-length messages)`), matching the later rows for
+message sizes 0, 1, 17, and 100. The Python consumer at
+`test/functional/test_framework/key.py:315-345` reads every row, regenerates
+the public key and signature when a secret key is present, and verifies every
+row, including invalid cases.
+
+The embedded libsecp256k1 consumer contains 19 native vector blocks in
+`src/secp256k1/src/modules/schnorrsig/tests_impl.h:210` onward. Its verifier
+checks the field and scalar bounds, x-only public-key parsing, infinity, even-Y
+R, and the exact R.x result in `src/secp256k1/src/modules/schnorrsig/main_impl.h`.
+
+### Independent verification
+
+1. The raw official download has different line-ending bytes, so raw hashes
+   are not a useful semantic comparison: local SHA256 was
+   `01c8cabba63b4c9b2f44c975902990086a4fe56eee9d265b187d1e2c1d98ccfb` and
+   the raw download SHA256 was `34c9d1d9c3a88d524bc80778540dc43f8306ec249a7485293063c376db851c2d`.
+   After removing CR bytes, both hashes were
+   `01c8cabba63b4c9b2f44c975902990086a4fe56eee9d265b187d1e2c1d98ccfb`, and
+   `diff` reported `NORMALIZED_EXACT=1`.
+
+2. The repository Python consumer passed:
+
+   `PYTHONPATH=test/functional python3 -m unittest test_framework.key.TestFrameworkKey.test_schnorr_testvectors`
+
+   with one test and `OK`.
+
+3. A standalone Python oracle used no Core or libsecp code. It implemented
+   secp256k1 affine point addition/multiplication, x-only lift, tagged SHA256,
+   BIP340 nonce derivation/signing, and the exact verification equation. It
+   parsed the local CSV with Python's CSV parser and reported:
+
+   `BIP340_PURE_ORACLE vectors=19 verify_checks=19 signing_checks=8 result=PASS`
+
+   The oracle also rejected both a one-byte message mutation and a one-byte
+   signature mutation:
+
+   `BIP340_MUTATION_ORACLE message_flip=reject signature_flip=reject`
+
+4. The native libsecp256k1 consumer was rebuilt and run:
+
+   `cmake --build /mnt/my_storage/secp256k1/build --target tests -j2 && /mnt/my_storage/secp256k1/build/bin/tests`
+
+   It exited successfully after 16 randomized iterations with random seed
+   `99a9e86951d7b744c4d5b255cda82498`; the output ended with
+   `Total execution time: 47.033 seconds`. The resulting test binary SHA256
+   was `7b225a74634a120dd1c77d498723e8e719d02f637344396601f06a79b0fda010`.
+
+The local vector SHA256 is
+`01c8cabba63b4c9b2f44c975902990086a4fe56eee9d265b187d1e2c1d98ccfb`, the
+Python consumer SHA256 is
+`733b2eb9e5ffd71efddb0f7b52c164d6a6fd59230251fa0609e5bb0bd8dfab4c`, the
+native vector-test source SHA256 is
+`a056bea351db4e337b1718f67fe3b2d2ef703ed85a732bae1fc0965077ae1f70`, and
+the verifier implementation SHA256 is
+`24e5cbbaaf25cfa613b42c4b0d2e146ab85188a9a262fded6cbc40024a77c440`.
+
+### Verdict
+
+Dismissed for this BIP340 vector-parity cell. The normalized authoritative
+file, Core's Python consumer, an independent affine arithmetic oracle, and
+the native libsecp256k1 tests agree on all 19 verification rows and all 8
+signing rows. The mutation controls prove the independent oracle is sensitive
+to realistic wrong inputs. No production bug, cryptographic divergence, or
+fix commit is claimed.
+
+### Limitations and handoff
+
+- The pure Python implementation is a bounded executable model, not a formal
+  proof, and its affine arithmetic is not suitable for production use.
+- Evidence is Linux x86_64; the native test binary used its configured
+  current backend and did not add a 32-bit or alternate compiler matrix.
+- The official comparison normalizes only line endings; the semantic rows and
+  all fields otherwise compare byte-for-byte.
+- The protected Core checkout was not modified. The audit worktree remains
+  the only commit target, and no relevant process remains running.
+
+### Next queue
+
+Keep Goal81 pending and exclude this BIP340 vector-parity cell along with the
+completed BIP341/BIP342 cells. Remaining candidates include specification
+drift in BIP324/ellswift test-vector provenance, BIP68/CSV boundary vectors,
+and any new vector or formal-model changes introduced by current history.
