@@ -1002,3 +1002,34 @@ caller scope, outputs, limitations, and reopen conditions are in
 cycle. The next queue remains
 `52,53,72,74,77,81,82,84,87,89,95,97`, excluding this exact goal-52 ctz cell
 while retaining other integer-arithmetic cells.
+
+The sixty-fifth controller cycle selected catalog goal `53`,
+`statistical-timing-side-channel`, with draw seed `3987825996` over the
+11-entry post-cycle pool `53,72,74,77,81,82,84,87,89,95,97`; index 0 selected
+goal 53. The prior public-key-create timing and branch-local ctime cells were
+excluded. ECDH timing and historical ecmult timing families were also excluded
+as already covered by `critical-history-sweep.md`. The fresh hypothesis was a
+stable secret-MSB timing difference in public Schnorr signing through
+Bitcoin Core's `KeyPair::SignSchnorr` path at `src/key.cpp:426-439`.
+
+A clean CMake Release shared library was built from cycle-start HEAD with all
+modules, x86_64 assembly, GCC 16.1.0, and `-O2`. The independent matrix
+harness created 32 valid deterministic keypairs per class, randomized key
+selection and class order, pinned CPU 0, fixed the public message and aux
+inputs, and measured 60,000 samples per class. Clang runs produced Welch
+statistics `-0.402522`, `-0.100478`, and `1.009761`; GCC runs produced
+`0.619772` and `-1.173609`. Median/p95 differences remained within roughly
+64 cycles, scheduler outliers reached millions of cycles, and every run
+returned digest `d66d86584fdffd74`. The final harness SHA-256 is
+`f7e3be25bd25d46afe8a00c42de7a60c5e24ef99d944ae666faa226e21b966fc`.
+
+Release disassembly showed fixed `0x100`/`0x20` loop bounds in
+`secp256k1_ecmult_gen_gej` and `sete`/mask-based table selection. The
+hypothesis is dismissed: no stable timing signal or clean-master defect was
+found, and no source change is justified. Master-relative severity is none.
+This is x86_64 evidence rather than a proof for every backend or
+microarchitecture. The exact commands, caller scope, outputs, assembly notes,
+limitations, and reopen conditions are in
+`agent-journal/timing-side-channel.md`. This is a focused journal-only cycle.
+The next queue is `53,72,74,77,81,82,84,87,89,95,97`, excluding this exact
+randomized Schnorr signing cell and the prior cycle-62 timing cells.
