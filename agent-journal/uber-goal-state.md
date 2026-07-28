@@ -1422,6 +1422,32 @@ Cycle 79 selected goal `74`, `memory-pressure-allocator`, with draw seed
 excluded from this immediate draw because its randomized/clone context cell
 was just completed; its other lifecycle and wrapper cells remain pending.
 
+## Cycle 79 Summary
+
+Cycle 79 confirmed a distinct goal-74 RPC memory-pressure cell: an
+authenticated client could hold one blocking `waitforblockheight` request and
+pipeline 100,000 `getblockcount` requests on the same keep-alive connection.
+The unmodified Core daemon's RSS grew from `50,792` KiB to `104,880` KiB,
+and the retained per-client request deque survived client disconnect while
+the active request remained blocked. Static tracing showed that the global
+`-rpcworkqueue` check did not cover this per-client deque.
+
+A disposable Core worktree produced repair commit `0cb250e09b`
+(`http: bound per-client pipelined request queue`), authored by
+`Lőrinc <pap.lorinc@gmail.com>`. The fix caps per-client parsing at the
+configured queue depth and disconnects/clears a busy client that continues
+to send after the cap. The new production-socket regression test, all six
+`httpserver_tests` cases, a complete disposable `test_bitcoin` build, and a
+patched 100,000-request runtime replay passed. Patched RSS stayed at
+`50,728` KiB baseline versus `50,804` KiB after the burst.
+
+Verdict: **confirmed authenticated/local RPC resource exhaustion**, with no
+unauthenticated P2P or consensus impact shown. The protected Core checkout
+was not edited and its pre-existing dirty files remain untouched. Goal 74
+stays active for allocation-failure, recovery, full-node, and other workload
+cells; this exact per-client HTTP queue cell is excluded from future draws.
+Detailed evidence is in `agent-journal/memory-pressure-allocator.md`.
+
 ## Cycle 78 Summary
 
 Cycle 78 continued goal `84`, `secp-nonce-session`, with draw seed

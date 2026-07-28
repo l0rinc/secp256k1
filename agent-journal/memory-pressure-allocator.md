@@ -372,3 +372,117 @@ caller; do not repeat this exact corpus replay.
 
 Next queue: retain goal 74's allocation-failure, recovery, full-node, and
 other wallet/RPC cells, followed by `77,81,82,84,87,89,95,97`.
+
+## Cycle 79
+
+Status: confirmed resource-exhaustion defect for the selected HTTP RPC
+per-client request-queue cell; repaired in a disposable Core worktree.
+
+Controller draw:
+
+- Draw seed: `2009882816`.
+- Eligible pool: `74 77 81 82 87 89 95 97`.
+- Selected index: `0`.
+- Selected goal: `74`, `memory-pressure-allocator`.
+- Audit worktree at cycle start: `/tmp/secp256k1-oracles-next`, branch
+  `codex/fuzz-oracles`, HEAD `0d0f148a`.
+
+Hypothesis and trust boundary:
+
+An authenticated HTTP/RPC client can pipeline requests on one keep-alive
+connection while the first request is busy, causing the per-client
+`HTTPRemoteClient::m_req_queue` to retain an unbounded number of parsed
+`HTTPRequest` objects. The global `-rpcworkqueue` limit only applies when a
+request reaches the worker thread pool; it does not bound requests retained
+behind an active request on the same connection. The trust boundary is a
+configured RPC client with valid credentials or an otherwise permitted local
+RPC caller. This is a local/authenticated RPC resource-exhaustion issue, not
+an unauthenticated P2P or consensus defect.
+
+Source and history evidence:
+
+- `src/httpserver.h:464-474` declares the receive buffer, unbounded
+  `m_req_queue`, and serialized `m_req_busy` state for each remote client.
+- `src/httpserver.cpp:976-1050` parsed complete requests and pushed them into
+  `m_req_queue` without a per-client count or byte bound. The loop continued
+  even while `m_req_busy` was true.
+- `src/httpserver.cpp:146-195` checked `g_threadpool_http.WorkQueueSize()` only
+  when dispatching a request to a worker. Requests waiting in the client deque
+  bypassed that check until the active handler completed.
+- `src/httpserver.cpp:1241-1257` initialized the shared limit from
+  `-rpcworkqueue`; the configured default is 64. `git show 7ee7df988e` shows
+  that the per-client queue was introduced for HTTP pipelining without a
+  matching queue bound.
+- Existing parser limits (`MAX_HEADERS_SIZE=8192` and `MAX_BODY_SIZE=32MiB`)
+  bound individual messages, not the number of complete messages retained.
+
+Independent verification:
+
+1. Static trace: the code path above showed that the configured work-queue
+   bound was not a bound on the client deque. The blocking `waitforblockheight`
+   RPC path at `src/httpserver.cpp:420-473` supplies a production handler that
+   keeps the first request active while follow-up requests accumulate.
+
+2. Runtime reproduction on the unmodified protected Core binary
+   `v31.99.0-b08815bbb523`: a scratch regtest daemon used
+   `-rpcthreads=1 -rpcworkqueue=64 -rpcservertimeout=600`, and a raw loopback
+   HTTP client sent one `waitforblockheight` request followed by 10,000
+   `getblockcount` requests on one keep-alive connection. RSS grew from
+   `50,756` KiB to `56,164` KiB. A 100,000-request run grew from `50,792` KiB
+   to `104,880` KiB. After the client was killed while the first request
+   remained blocked, the daemon retained the increased RSS and the queued
+   requests until the active request completed; this was not only transient
+   socket receive buffering. The scratch datadir and processes were removed.
+
+Repair and regression proof:
+
+- Disposable Core worktree: `/mnt/my_storage/bitcoin-goal74-fix`, detached
+  from protected HEAD `00c4bb06ae9bf903af6ff72dbd6b097f36830ce6`.
+- Repair commit: `0cb250e09b`
+  (`http: bound per-client pipelined request queue`), authored as
+  `Lőrinc <pap.lorinc@gmail.com>`.
+- `MaybeDispatchRequestsFromClient` now stops parsing at the configured queue
+  depth. If an active request is already busy and more bytes remain once the
+  queue is full, it disconnects the client and clears the unread buffer and
+  pending deque. If no request is active, it leaves unread bytes for the next
+  I/O iteration after the first queued request is dispatched. The static
+  default is aligned with `DEFAULT_HTTP_WORKQUEUE`.
+- New `http_server_request_queue_limit_tests` sends
+  `DEFAULT_HTTP_WORKQUEUE + 2` pipelined requests through the production
+  socket path, holds the first request, and asserts that the client is
+  disconnected with an empty pending deque.
+- Disposable `test_bitcoin` build passed. The focused regression command
+  `TMPDIR=/mnt/my_storage/bitcoin-tmp-goal74
+  /mnt/my_storage/bitcoin-build-goal74-fix/bin/test_bitcoin
+  --run_test=httpserver_tests/http_server_request_queue_limit_tests
+  --log_level=test_suite --catch_system_errors=no` ran one case and ended
+  with `*** No errors detected`.
+- The full `httpserver_tests` suite ran all six cases and ended with
+  `*** No errors detected`.
+- A patched `bitcoind` runtime replay with the same 100,000-request stream
+  disconnected the client while RSS stayed at `50,728` KiB baseline versus
+  `50,804` KiB after the burst. No daemon or client process remained.
+
+Verdict:
+
+The hypothesis is **confirmed** as a bounded per-client RPC memory-retention
+defect. The source repair is independently buildable and tested, and the
+before/after runtime behavior supports the expected bound. Impact is limited
+by RPC authentication/allow-list policy and by the configured queue depth;
+the finding should be reported as an authenticated/local RPC resource
+exhaustion issue rather than a network-wide DoS. The protected Core checkout
+was not edited and retains its pre-existing `blockencodings_tests.cpp` and
+`fuzz-*.log` changes.
+
+Limitations and handoff:
+
+Evidence is Linux x86_64, loopback HTTP/1.1, one worker, a blocking regtest
+RPC, and a raw client. It does not cover alternate transports, remote
+latency, multiple workers, Windows socket behavior, or allocation-failure
+injection. The fix bounds request count, not aggregate configured request
+size; individual header/body limits remain separate controls. Reopen goal 74
+for a distinct allocation-failure seam, wallet/recovery, full-node/IBD, or
+other RPC workload. Do not repeat this exact per-client HTTP queue cell.
+
+Next queue: goal 74 remains active for its other cells; immediate rotation
+should exclude this selected cell and draw from `77,81,82,87,89,95,97`.
