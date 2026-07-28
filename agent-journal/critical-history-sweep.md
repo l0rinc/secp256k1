@@ -1142,3 +1142,134 @@ The next draw must widen to an unindexed production-impact history pool after
 searching the finding ledger for duplicate short-buffer, signing, and API
 migration variants. Do not redraw `603c33bc` or `ad52495d` without new caller
 or source evidence.
+
+## Cycle 12: historical infinity public-key serialization
+
+### Selection and provenance
+
+The forty-seventh controller cycle continued catalog goal `49`,
+`critical-history-sweep`, from clean HEAD `9cd216cd` on branch
+`codex/fuzz-oracles`, with `origin/master` at
+`0f6baf319fcae0d7f11a44fc9b4d4899b3f8082a`. After the immediate two-entry
+pool was exhausted, the widened ordered pool was:
+
+```text
+354ffa33e6b0d6c1270a6d9d228f692b70ad7ff4
+d907ebc0e386ea17a96d34cd3008be9207b6f94f
+bbe67d8b29f31b140d6987d82912f48539c8bcb7
+bb5aa4df557c5abfabf25c72144a1a071c69aa83
+```
+
+Random seed `2796178318` selected index `2` (`2796178318 % 4`) and
+`bbe67d8b29f31b140d6987d82912f48539c8bcb7`, parent
+`11a78460f427c0ca396f7e99e7abda2c657528dd`, dated 2014-11-18, subject
+`Make secp256k1_eckey_pubkey_serialize fail for infinity`. The selected patch
+changed the internal serializer to reject the point at infinity and threaded
+that result through public creation, decompression, recovery, and tweak
+callers.
+
+### Historical reproduction
+
+Disposable worktrees `/tmp/critical-history-49/old-infinity-parent` and
+`/tmp/critical-history-49/old-infinity-fixed` were built with:
+
+```sh
+./autogen.sh
+./configure --disable-tests --disable-benchmark
+make -j2
+```
+
+A scratch probe passed the exact group-order scalar to the old public
+`secp256k1_ec_pubkey_create` API, prefilled the 65-byte output with `0xa5`,
+and counted changes:
+
+```sh
+gcc -O0 -g -I. -Iinclude infinity_probe.c .libs/libsecp256k1.a \
+  -lgmp -o infinity_probe
+./infinity_probe
+```
+
+The historical parent printed:
+
+```text
+ret=1 publen=65 prefix=04 changed=65
+```
+
+The selected fix printed:
+
+```text
+ret=0 publen=65 prefix=a5 changed=0
+```
+
+The parent converted the scalar modulo the group order to the point at
+infinity, serialized it as though it were a normal point, and unconditionally
+returned success. The resulting bytes are not a valid public key, while the
+documented API promises `0` for an invalid secret. The parent test suite only
+used generated valid private keys for `ec_pubkey_create`; no group-order or
+infinity output oracle was present. This is a direct historical false-success
+and invalid-output proof, not a pattern-only finding.
+
+### Current implementation and controls
+
+Current `src/secp256k1.c:747-762` validates the secret through
+`secp256k1_scalar_set_b32_seckey`, initializes the opaque public-key output to
+zero, saves the computed point, zeroizes the output when validation fails,
+and returns the validation result. Current public serialization at
+`src/secp256k1.c:318-351` rejects invalid opaque public keys and handles
+output capacity before serialization. The internal serializers at
+`src/eckey_impl.h:38-55` require a non-infinity point under `VERIFY`.
+
+A current public-API probe against the forced-int64 library passed the same
+group-order scalar and printed:
+
+```text
+ret=0 changed=64 all_zero=1
+```
+
+The current unit boundary at `src/tests.c:6636-6664` explicitly checks that
+group order, maximum, and zero secrets make `secp256k1_ec_pubkey_create`
+return `0` and leave the opaque output all-zero. Native and forced-int64
+`eckey_edge_case_test` plus `ecdsa_edge_cases` both exited `0` with two
+iterations and seed `2796178318`. Focused native and forced-int64 ASan/UBSan
+`fuzz_api_roundtrip` replays of
+`src/fuzz/corpora/api_roundtrip/invalid-seckey-nonce-domain` each executed one
+input and exited `0` (95 ms and 157 ms respectively).
+
+### Bitcoin Core caller audit
+
+Current Bitcoin Core calls the modern opaque API in multiple paths. DER key
+export at `src/key.cpp:97-101` rejects a failed `secp256k1_ec_pubkey_create`;
+`CKey::GetPubKey` at `src/key.cpp:182-191` asserts success for a valid key
+object and then serializes the opaque key. `src/pubkey.cpp:300-317` checks
+recoverable-signature recovery before serializing, and the key/pubkey paths
+use fixed 33/65-byte capacities. The current Core checkout was dirty with
+unrelated user files and was not modified or used for a source patch.
+
+There is no current caller of the removed internal
+`secp256k1_eckey_pubkey_serialize` function. Current public callers receive
+the corrected invalid-output and return-value contract; no current Core
+acceptance path is reopened by this historical seed.
+
+### Verdict
+
+**Dismissed as obsolete historical hardening.** The historical parent could
+report success and emit an invalid serialized public key for a group-order
+secret, and the selected fix corrected every affected caller. Current opaque
+key creation, public serialization, unit boundaries, and focused sanitized
+fuzz input all enforce the failure contract. The historical issue is an API
+correctness and invalid-key propagation defect, not a current consensus,
+cryptographic, or Bitcoin Core vulnerability. No production source change is
+justified.
+
+### Limitations and handoff
+
+The historical probes use the 2014 API and GMP-backed builds; current controls
+use the modern forced-int64 and native libraries. No direct Bitcoin Core test
+was run because its checkout is intentionally dirty and this cycle was scoped
+to the libsecp API migration boundary. The temporary infinity worktrees and
+probe sources are disposable and must be removed after this entry is
+committed. No fuzz, sanitizer, daemon, or profiling process remains.
+
+The next draw must exclude `bbe67d8b` and its direct infinity-serialization
+family. Continue from the remaining widened pool or add a fresh unindexed
+production-impact history seed after duplicate search.

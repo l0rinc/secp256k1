@@ -536,3 +536,19 @@ with no source change. Full evidence is in
 `agent-journal/critical-history-sweep.md`; the immediate two-entry pool is
 exhausted and the next draw must widen to a new unindexed production-impact
 history pool.
+
+The forty-seventh controller cycle continued catalog goal `49`,
+`critical-history-sweep`, with random seed `2796178318` over the ordered
+four-entry pool `354ffa33`, `d907ebc0`, `bbe67d8b`, `bb5aa4df`, selecting
+`bbe67d8b29f31b140d6987d82912f48539c8bcb7`, the historical infinity
+public-key serialization fix. The parent/fix probe on the group-order
+secret printed `ret=1 publen=65 prefix=04 changed=65` before and
+`ret=0 publen=65 prefix=a5 changed=0` after. Current opaque key creation
+returned `ret=0 changed=64 all_zero=1`; native/forced-int64 edge-case
+tests and the focused sanitized invalid-seckey fuzzer input exited 0.
+Current Bitcoin Core callers were checked without modifying its dirty
+checkout. The seed is dismissed as obsolete historical hardening with no
+source change. Full evidence is in
+`agent-journal/critical-history-sweep.md`; the next draw must exclude this
+infinity-serialization family and select a fresh unindexed production-impact
+history seed after duplicate search.
