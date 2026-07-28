@@ -7,7 +7,7 @@
 - State initialized: 2026-07-27
 - Repository worktree: `/tmp/secp256k1-oracles-next`
 - Existing audit branch: `codex/fuzz-oracles`
-- Current status: active rotating cycle goal 82 (`secp-field-scalar-matrix`)
+- Current status: active rotating cycle goal 97 (`cpp-defect-taxonomy`)
 - First draw seed: `4179223777703642971`
 - First draw: `61`
 - First draw timestamp: `2026-07-27`
@@ -34,23 +34,24 @@
 - Previous cycle selected index: `1`
 - Previous cycle draw: `81`
 - Previous cycle draw timestamp: `2026-07-28T11:16:51Z`
-- Completed cycle draw seed: `13671422447867256256`
-- Completed cycle: goal 81, BIP341 annex/spend-type and hash-type drift
-  hypothesis, dismissed by an independent serialization model, a direct Core
-  probe, rejection cases, and a mutation sensitivity control.
-- Current draw seed: `14643566124539001421`
-- Current eligible pool: `77 82 95 97`
-- Current selected index: `1`
-- Current draw: `82`
-- Current draw timestamp: `2026-07-28T11:31:30Z`
+- Completed cycle draw seed: `14643566124539001421`
+- Completed cycle: goal 82, normalized field comparison across 5x52 and 10x26
+  limb representations, dismissed by an independent byte-order oracle,
+  compiler/backend matrix, integration tests, and a sign-flip mutation.
+- Current draw seed: `18403467706833038537`
+- Current eligible pool: `77 95 97`
+- Current selected index: `2`
+- Current draw: `97`
+- Current draw timestamp: `2026-07-28T11:46:56Z`
 
 ## Selection rules
 
-The current selected cycle is goal 82 (secp-field-scalar-matrix), drawn with
-seed 14643566124539001421 from pool 77 82 95 97 at index 1. The completed
-Goal81 cycle remains pending for distinct BIP342, vector-provenance, and
-future-specification cells; its annex/hash-type cell is excluded from
-immediate rediscovery.
+The current selected cycle is goal 97 (cpp-defect-taxonomy), drawn with seed
+18403467706833038537 from pool 77 95 97 at index 2. The completed Goal82
+cycle remains pending for distinct field/scalar representation cells; its
+normalized comparison cell is excluded from immediate rediscovery. Goal81
+also remains pending for distinct BIP342, vector-provenance, and future-
+specification cells; its annex/hash-type cell remains excluded.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -84,7 +85,7 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 82. The exact annex/hash-type cell of goal 81 and the
+rotating cycle is goal 97. The exact annex/hash-type cell of goal 81 and the
 exact unbroadcast-memory cell of goal 87 are
 excluded from immediate rediscovery. Goal87's remaining package, RBF, graph,
 fee, eviction, reorg, and expiry cells remain pending. The catalog is the
@@ -92,16 +93,18 @@ source of titles, slugs, and campaign scope.
 
 ## Latest Cycle Summary
 
-Goal 81 tested a fresh BIP341 specification/vector-drift cell: annex
-serialization, spend_type, all four applicable hash-type families, the
-CompactSize boundary, undefined hash types, and SIGHASH_SINGLE without an
-output. An independent structured Python model matched all five component
-hashes and seven official vector sigmsgs/sighashes, and generated four annex
-hashes. A disposable Core probe matched all four and rejected all three
-invalid cases. A zero-annex-hash mutation failed the first positive case with
-exit code 3. The current Core script_tests suite passed all 21 script cases;
-no production bug or fix commit is claimed. Full evidence is in
-`agent-journal/spec-vector-drift.md`; the next randomized goal is 82.
+Goal 82 tested a fresh normalized field-comparison representation cell:
+`secp256k1_fe_cmp_var` was compared against an independent byte-order oracle
+using 25,800 pairs covering zero, `p-1` through `p-3`, high bits, every power
+of two through bit 255, adjacent values, and deterministic random values.
+Native 5x52 and forced 10x26 Clang/GCC builds matched the same
+`CMP_RESULT PASS pairs=25800 seed=0x8b6f14ea9fbf8b0b` across O0/O2/O3/Os,
+LTO, VERIFY, and ASan/UBSan controls; Clang AArch64 syntax checks passed.
+Field and EC integration modules passed in default and no-VERIFY ASan builds.
+A temporary sign-flip mutation failed immediately in both backends, proving
+oracle sensitivity. No backend mismatch or current-master defect was found;
+no production fix commit resulted. Full evidence is in
+`agent-journal/secp-field-scalar-matrix.md`; the next randomized goal is 97.
 
 ## Historical Cycle Summaries
 

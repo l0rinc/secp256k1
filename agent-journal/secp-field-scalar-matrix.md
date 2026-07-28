@@ -216,3 +216,94 @@ formal timing proof. The exact-alias cases pass; partial overlap remains
 outside the documented contract. Reopen this cell for a new backend, ABI,
 compiler diagnostic, caller contract, or runtime failure. Keep malformed raw
 storage validation and other field arithmetic cells in the goal-82 queue.
+
+## Cycle 82: normalized field comparison across limb backends
+
+### Selection and scope
+
+- Draw: `2026-07-28T11:31:30Z`, seed `14643566124539001421`, pool
+  `77 82 95 97`, index 1, goal 82. Cycle execution began from the clean
+  audit HEAD `5abd9bc579e5ed3bb6704dae87603e4a1ea5ade6`; the protected
+  libsecp256k1 checkout and the protected Bitcoin Core checkout were not
+  modified.
+- The fresh hypothesis was that `secp256k1_fe_cmp_var` could compare the
+  representation-specific limbs in the wrong significance order, causing
+  native 5x52 and forced 10x26 to disagree for high-bit, near-modulus, or
+  adjacent normalized values. The public internal contract is at
+  `src/field.h:174-180`: both inputs are valid normalized field elements and
+  the result is the integer order in `[0,p)`. The VERIFY wrapper enforces
+  normalization at `src/field_impl.h:256-264`; the backend implementations
+  scan limbs from their most significant index down (`src/field_5x52_impl.h`
+  and `src/field_10x26_impl.h`).
+- The helper is not dead representation code. ECDSA verification compares an
+  x-coordinate against `p-n` at `src/ecdsa_impl.h:262`, and recoverable ECDSA
+  recovery makes the same boundary decision at
+  `src/modules/recovery/main_impl.h:131`. Existing unit/fuzz checks include
+  comparison behavior, but the current fuzz expected value is derived after
+  production serialization. This cycle used the original canonical input
+  bytes for the expected order and therefore does not reuse `fe_get_b32` as
+  its oracle.
+
+### Independent oracle and schedule
+
+The disposable harness `/tmp/goal82-cmp.c` has SHA-256
+`2057083140de22dc2502cb9ddbb4c2befa3185a42bfaf41e713f1f71667ecb45`. It
+implements only byte-array comparison, one-subtraction reduction for random
+256-bit values, and increment/decrement helpers. Every test input is strictly
+less than the field prime, is loaded with `secp256k1_fe_set_b32_limit`, and is
+then passed to `secp256k1_fe_cmp_var`; expected results come from comparing
+the original 32-byte big-endian values. Guarded field objects check prefix and
+suffix canaries, and every pair also checks antisymmetry and reflexivity.
+
+The schedule covered zero, one, `p-1`, `p-2`, `p-3`, high-bit values, low-byte
+values, the `p`-adjacent tail, every power of two through bit 255 with its
+neighbors where valid, 16 deterministic boundary cross-pairs, and 25,000
+deterministic random pairs. The clean digest was stable in every linked
+configuration:
+
+    CMP_RESULT PASS pairs=25800 seed=0x8b6f14ea9fbf8b0b
+
+### Backend, compiler, and project evidence
+
+Clang 22.1.7 and GCC 16.1.0 passed native 5x52 and forced 10x26 at `O0`,
+`O2`, `O3`, and `Os` where the standalone translation unit linked. GCC native
+`O0` required the harness-only linker cleanup flags
+`-ffunction-sections -fdata-sections -Wl,--gc-sections` to discard unrelated
+unused inline helpers; the forced 10x26 build passed plain `O0`. Clang and GCC
+native/forced `-O2 -flto` builds passed. Clang and GCC native/forced
+`-O1 -DVERIFY -fsanitize=address,undefined -fno-sanitize-recover=all`
+builds passed with no diagnostic. Clang native and forced AArch64
+`-fsyntax-only -O2` checks also passed; this is compile-only evidence.
+
+The existing Clang ASan default and no-VERIFY binaries passed the complete
+`field` module (10 tests) and `ec` module (4 tests), including comparison
+callers and field conversion/overflow cases:
+
+    build-integrated-asan/bin/tests -t=field -i=1 -j=2
+    build-integrated-asan/bin/noverify_tests -t=field -i=1 -j=2
+    build-integrated-asan/bin/tests -t=ec -i=1 -j=2
+    build-integrated-asan/bin/noverify_tests -t=ec -i=1 -j=2
+
+### Mutation and verdict
+
+As an oracle-sensitivity control, the shared VERIFY wrapper was temporarily
+changed from `return secp256k1_fe_impl_cmp_var(a, b)` to its sign-negated
+result. Both native and forced Clang `O1 -DVERIFY` binaries failed on the
+first pair with `mismatch case=0 expected=-1 actual=1` (exit 4). The source
+mutation was restored before the clean status check; no production source or
+regression-test change is justified.
+
+The normalized comparison hypothesis is **dismissed** for the tested Clang/
+GCC x86_64 native 5x52 and forced 10x26 paths, optimization/LTO matrix,
+VERIFY and ASan/UBSan controls, AArch64 syntax lowering, and integrated field
+and EC tests. No backend order mismatch, canary overwrite, invalid result,
+undefined behavior, or reachable production defect was found. The comparator
+has no hunk in `git diff origin/master`; the result is master-relative none.
+
+Limitations are no runtime AArch64/GCC-AArch64, big-endian, 32-bit, or MSVC
+execution. The schedule loads canonical inputs through `set_b32_limit`, so
+the combined parser/order path is tested; the sign-flip mutation isolates the
+comparison wrapper itself. Reopen this cell for a new backend/ABI, a changed
+normalization contract, or a failing caller. Remove the disposable harness
+and binaries after this journal commit; retain this exact command/output
+record as the handoff.
