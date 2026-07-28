@@ -161,3 +161,157 @@ codeseparator serialization, vector-generation provenance, and any future
 specification changes affecting sighash caching. The controller's next draw is
 Goal82 (secp-field-scalar-matrix), seed
 14643566124539001421, pool 77 82 95 97, index 1.
+
+## Cycle 99: BIP342 tapscript code-separator serialization
+
+### Cycle metadata
+
+- Selected by seed 234100655729448865, pool 77 81 82 84 87 89 95 97,
+  index 1.
+- Cycle timestamp: 2026-07-28T12:18:00Z through 2026-07-28T12:35:56Z.
+- Audit branch: codex/fuzz-oracles, audit HEAD before this journal commit:
+  8f05a64eef47edb0c6385aa0395c986def0a0fff.
+- Bitcoin Core evidence base: protected branch codex/btc-fuzz-oracles,
+  HEAD 00c4bb06ae9bf903af6ff72dbd6b097f36830ce6.
+- The protected Core checkout retained its pre-existing dirty state only:
+  M src/test/blockencodings_tests.cpp, ?? fuzz-0.log, and ?? fuzz-1.log.
+
+### Hypothesis and trust boundary
+
+Hypothesis: BIP342 tapscript sighashes could drift at the code-separator
+boundary, for example by serializing a byte offset rather than an opcode
+position, by failing to count parsed opcodes in an unexecuted branch, by
+encoding the 0xffffffff sentinel incorrectly, or by losing the field in a
+sighash-cache path. The trust boundary is an untrusted Taproot witness and
+script executed by Bitcoin Core consensus validation. A mismatch would alter
+the Schnorr message accepted by a node and could cause consensus divergence.
+
+This is a distinct cell from the previous annex/hash-type cycle. The exact
+annex/hash-type cases remain excluded from immediate rediscovery.
+
+### Contract and implementation evidence
+
+The primary specification is BIP342, Common Signature Message Extension:
+
+https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki
+
+BIP342 requires ext_flag=1 for tapscript, key_version=0, and a four-byte
+little-endian `codesep_pos`. The position is the last executed
+OP_CODESEPARATOR, uses 0xffffffff when none executed, starts at zero, counts
+each parsed opcode once including pushes and opcodes in unexecuted branches,
+and does not count push data bytes as opcodes.
+
+The current Core path is:
+
+- src/script/interpreter.cpp:443-445 initializes the sentinel and execution
+  data before parsing.
+- src/script/interpreter.cpp:449-456 increments opcode_pos once per parsed
+  instruction.
+- src/script/interpreter.cpp:1058-1066 updates m_codeseparator_pos only when
+  OP_CODESEPARATOR is executed.
+- src/script/interpreter.cpp:1492-1580 appends spend_type, the BIP342 leaf
+  hash, key version, and m_codeseparator_pos to the TapSighash preimage.
+- test/functional/test_framework/script.py:817-858 independently implements
+  the BIP341 common message and BIP342 leaf/code-separator extension.
+- test/functional/feature_taproot.py:765-784 exercises code separators before
+  signatures, after signatures, and on both conditional branches;
+  1273-1303 exercises 700 signature operations with 100 separators through
+  the tapscript sighash cache.
+
+### Full functional evidence
+
+The deterministic functional command was:
+
+    timeout 300 python3 test/functional/feature_taproot.py --configfile=/mnt/my_storage/bitcoin/build/test/config.ini --randomseed=810342 --portseed=810342 --tmpdir=/mnt/my_storage/goal81-taproot-run-810342 --cachedir=/mnt/my_storage/goal81-taproot-cache-810342 --loglevel=INFO
+
+It completed successfully. Core validated 2,800 generated spending cases,
+then two additional four-case post-activation sets, including the
+code-separator and 700-operation sighash-cache scenarios. The run ended with
+`Tests successful` and no functional failure.
+
+The source hashes for the checked evidence were:
+
+    src/script/interpreter.cpp 57a6f328c7e6202f499e48366a86eb26e09c8ebb78e92eef7e839207230be333
+    test/functional/feature_taproot.py 07837cd34e9f26316ceec6f268870e9f7b5bf76dd3cd3e8dd85da7d973a7adeb
+    test/functional/test_framework/script.py 82e250fadd393b972ae9d5d508f458fc872ea0dd947ca162693a006c3e488bbf
+    build/bin/test_bitcoin 05c3b35c89beb331b45974ba26299355a468572b35ac83a7b14e00f9dff389f5
+
+### Direct Core/Python differential matrix
+
+A disposable C++ harness linked the protected Core consensus library and
+constructed a fixed two-input, two-output transaction plus a tapscript with
+two OP_CODESEPARATOR instructions and a 75-byte push. It captured the actual
+execution positions and called SignatureHashSchnorr for both inputs, all
+valid Taproot hash types 00, 01, 02, 03, 81, 82, and 83, and positions
+0xffffffff, 0, 1, 3, 4, and 0xfffffffe. The independent Python
+`TaprootSignatureHash` model parsed the emitted transaction and UTXOs and
+compared every resulting hash.
+
+The Core execution-position output was:
+
+    CODESEP direct 0
+    CODESEP after_push 2
+    CODESEP unexecuted_branch 4
+
+The differential result was:
+
+    TAPSCRIPT_ORACLE cases=84 mismatches=0 codesep_paths={'direct': 0, 'after_push': 2, 'unexecuted_branch': 4}
+
+The harness source SHA256 was
+170b42d1f5710536a2a5f6c9c709f25a579eff91260bad5671b30f7914d40473; the
+release harness binary SHA256 was
+c1577cd417915ce4aa0f0c92915c5a8656132a613b864c3d064dfa130308bb33; and the
+captured output SHA256 was
+511f7d048e65ec91f2d0bf5b4ac328629a6d1d270ffc01bbd901171d44ce8e27.
+
+### Sanitizer and mutation controls
+
+The same 84-case harness linked the existing address/undefined-sanitized
+fuzz-build archives. With
+`ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1`
+it produced:
+
+    ASAN_UBSAN_ORACLE cases=84 mismatches=0 diagnostics=0
+
+The sanitized binary SHA256 was
+af1958f68a5af97a356fb9a443e62a01d2b7aebbe277f38d88c6759ef7d5e7c3; its
+output matched the release output byte-for-byte.
+
+A disposable Core worktree changed only the final serialized
+`m_codeseparator_pos` to the sentinel. The independent model then reported:
+
+    MUTATION_ORACLE cases=84 mismatches=70 first=(0, 0, 0, 'e603d7edcf28f97f8fcd6efe30e74ddbe2d965ad5462944038e0e25d6ceab45f', '4a26294450496a5b850bb1f3f2e19f01950f6e42f539339bccff61d6925c3912')
+
+The mutated binary SHA256 was
+8e21f6d332bca0766eea9dad7ecc7b365182e5c9b766cc6122f0d3a3d8b1e8fa and
+the mutated output SHA256 was
+f47c9f007c7be847199888f9fd03cbaef6730a33d82dd7d5a0a97c9ffc717ab7.
+This proves the oracle detects a realistic wrong-extension mutation while
+the unmodified implementation passes.
+
+### Verdict
+
+Dismissed for this cell. The authoritative BIP342 contract, the full Core
+functional suite, the independent 84-case Python differential, the direct
+interpreter position capture, and the ASan/UBSan replay all agree. No
+production bug, consensus divergence, or fix commit is claimed.
+
+### Limitations and handoff
+
+- The direct matrix calls SignatureHashSchnorr with prepared execution data;
+  the full functional run supplies the independent witness/script execution
+  and signature-validation coverage.
+- The mutation changes only the final extension field, so it proves hash
+  oracle sensitivity but does not exercise a mutated parser or cache
+  implementation.
+- The matrix is Linux x86_64 and uses the current embedded LevelDB/Core build;
+  it does not provide Windows, 32-bit, or alternate implementation evidence.
+- The protected Core checkout was not modified. All disposable worktrees,
+  binaries, and output files are outside the audit branch.
+
+### Next queue
+
+Keep Goal81 pending and exclude this BIP342 code-separator cell from immediate
+rediscovery. Candidate fresh cells are vector-generation provenance and
+future specification changes affecting sighash caching. The controller should
+draw again from the current eligible pool after committing this handoff.

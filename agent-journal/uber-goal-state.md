@@ -47,22 +47,27 @@
 - Previous completed cycle: goal 95, WAL sync boundary, crash replay, and
   injected sync failure, dismissed by a durable-file model, release and
   ASan/UBSan replays, and an unsynced-byte mutation.
-- Current draw seed: `234100655729448865`
+- Previous draw seed: `234100655729448865`
+- Previous eligible pool: `77 81 82 84 87 89 95 97`
+- Previous selected index: `1`
+- Previous draw: `81`
+- Previous draw timestamp: `2026-07-28T12:18:00Z`
+- Current draw seed: `16832264652730535945`
 - Current eligible pool: `77 81 82 84 87 89 95 97`
 - Current selected index: `1`
 - Current draw: `81`
-- Current draw timestamp: `2026-07-28T12:18:00Z`
+- Current draw timestamp: `2026-07-28T12:35:56Z`
 
 ## Selection rules
 
 The current selected cycle is goal 81 (spec-vector-drift), drawn with seed
-234100655729448865 from pool 77 81 82 84 87 89 95 97 at index 1. Goal97
+16832264652730535945 from pool 77 81 82 84 87 89 95 97 at index 1. Goal97
 remains pending for distinct C/C++ defect classes; its hsort index/stride cell is
 excluded from immediate rediscovery. The completed Goal82 cycle remains
 pending for distinct field/scalar representation cells; its normalized
 comparison cell is excluded from immediate rediscovery. Goal81
-also remains pending for distinct BIP342, vector-provenance, and future-
-specification cells; its annex/hash-type cell remains excluded.
+also remains pending for distinct vector-provenance and future-specification
+cells; its annex/hash-type and BIP342 code-separator cells remain excluded.
 
 1. Draw from goals marked `pending` or `reopened`; record the random seed,
    draw, timestamp, and eligible set.
@@ -95,13 +100,32 @@ hypothesis; reopen it only for new transport, platform, or state-machine
 evidence.
 Goal `49` remains recorded as active from its earlier long-running campaign;
 its cycle journal is `agent-journal/critical-history-sweep.md`. The current
-rotating cycle is goal 81. The exact annex/hash-type cell of goal 81 and the
+rotating cycle is goal 81. The exact annex/hash-type and BIP342 code-separator
+cells of goal 81 and the
 exact unbroadcast-memory cell of goal 87 are
 excluded from immediate rediscovery. Goal87's remaining package, RBF, graph,
 fee, eviction, reorg, and expiry cells remain pending. The catalog is the
 source of titles, slugs, and campaign scope.
 
-## Latest Cycle Summary
+## Current Cycle Summary
+
+Goal `81`, `spec-vector-drift`, tested BIP342 tapscript code-separator
+serialization and execution positions. The deterministic feature_taproot
+functional test passed 2,800 generated spending cases plus two additional
+four-case post-activation sets, including branch-dependent OP_CODESEPARATOR
+and 700-operation sighash-cache scenarios. A direct Core matrix captured
+positions 0, 2, and 4 for direct, post-push, and unexecuted-branch cases, then
+matched an independent Python TaprootSignatureHash model for 84 hashes across
+both inputs, all valid hash types, and sentinel/boundary positions. The
+existing ASan/UBSan fuzz-build archives produced the same output with no
+diagnostics. Replacing the serialized code-separator field with the sentinel
+caused 70/84 model mismatches.
+
+Verdict: **dismissed** for this exact BIP342 code-separator cell. No source
+change or repair commit resulted. Details, commands, hashes, limitations, and
+the excluded-cell handoff are in `agent-journal/spec-vector-drift.md`.
+
+## Prior Cycle Summary
 
 Goal 97 tested the custom hsort's `size_t` child-index and stride arithmetic
 against a byte-wise insertion-sort oracle over nine element sizes, every count
@@ -1595,3 +1619,30 @@ The controller drew goal `81`, `spec-vector-drift`, with seed
 `77 81 82 84 87 89 95 97`, at `2026-07-28T12:18:00Z`. The exact Goal95 WAL
 sync cell is excluded; remaining Goal95 comparator, snapshot, partial-I/O,
 MANIFEST, and alternate-backend cells remain pending.
+
+## Cycle 99 Summary
+
+Goal `81`, `spec-vector-drift`, tested BIP342 tapscript code-separator
+serialization and execution positions. The deterministic feature_taproot
+functional test passed 2,800 generated spending cases plus two additional
+four-case post-activation sets, including branch-dependent OP_CODESEPARATOR
+and 700-operation sighash-cache scenarios. A direct Core matrix captured
+positions 0, 2, and 4 for direct, post-push, and unexecuted-branch cases, then
+matched an independent Python TaprootSignatureHash model for 84 hashes across
+both inputs, all valid hash types, and sentinel/boundary positions. The
+existing ASan/UBSan fuzz-build archives produced the same output with no
+diagnostics. Replacing the serialized code-separator field with the sentinel
+caused 70/84 model mismatches.
+
+Verdict: **dismissed** for this exact BIP342 code-separator cell. No source
+change or repair commit resulted. Goal81 remains pending for vector-generation
+provenance and future specification cells; the annex/hash-type and current
+BIP342 code-separator cells are excluded.
+
+## Cycle 100 Selection
+
+The controller drew Goal `81`, `spec-vector-drift`, with seed
+`16832264652730535945`, index `1`, from the eligible pool
+`77 81 82 84 87 89 95 97`, at `2026-07-28T12:35:56Z`. The next distinct
+Goal81 cell is vector-generation provenance; the completed annex/hash-type and
+BIP342 code-separator cells remain excluded.
