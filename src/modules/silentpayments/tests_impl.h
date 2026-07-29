@@ -547,6 +547,41 @@ static void test_recipient_api(void) {
     CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_prevouts_summary_create(CTX, &ps, SMALLEST_OUTPOINT, NULL, 0, NULL, 0));
     CHECK(secp256k1_silentpayments_recipient_prevouts_summary_create(CTX, &ps, SMALLEST_OUTPOINT, tp, 1, pp, 1));
 
+    {
+        secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
+
+        memset(malformed_ps.data + 5, 0, 64);
+        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject invalid stored prevouts-summary point */
+    }
+#ifndef VERIFY
+    {
+        secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
+
+        make_noncanonical_ge_storage(malformed_ps.data + 5);
+        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject noncanonical stored prevouts-summary point */
+    }
+#endif
+    {
+        secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
+
+        malformed_ps.data[4] = 2;
+        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject unsupported prevouts-summary flag */
+    }
+#ifndef VERIFY
+    {
+        secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
+
+        memset(malformed_ps.data + 5 + 64, 0, 32);
+        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject zero prevouts-summary input hash */
+    }
+#endif
+    {
+        secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
+
+        memset(malformed_ps.data + 5 + 64, 0xFF, 32);
+        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject overflowing prevouts-summary input hash */
+    }
+
     /* check the _recipient_scan_outputs cornercase where internal tweaking would fail;
        this is the case if the recipient spend public key is P = -(create_output_tweak(shared_secret, k))*G */
     {
