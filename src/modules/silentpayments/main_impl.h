@@ -346,6 +346,27 @@ static void secp256k1_silentpayments_sha256_init_label(secp256k1_sha256* hash) {
 
 static const unsigned char secp256k1_silentpayments_label_magic[4] = { 0x27, 0x9d, 0x44, 0xba };
 
+static int secp256k1_silentpayments_ge_storage_is_canonical(const unsigned char *data) {
+    secp256k1_ge_storage storage;
+    secp256k1_fe x, y;
+
+    STATIC_ASSERT(sizeof(storage) == 64);
+    memcpy(&storage, data, sizeof(storage));
+    secp256k1_fe_impl_from_storage(&x, &storage.x);
+    secp256k1_fe_impl_from_storage(&y, &storage.y);
+#ifdef VERIFY
+    x.magnitude = 1;
+    x.normalized = 0;
+    y.magnitude = 1;
+    y.normalized = 0;
+#endif
+    secp256k1_fe_normalize_var(&x);
+    secp256k1_fe_normalize_var(&y);
+    secp256k1_fe_to_storage(&storage.x, &x);
+    secp256k1_fe_to_storage(&storage.y, &y);
+    return secp256k1_memcmp_var(&storage, data, sizeof(storage)) == 0;
+}
+
 /* Saves a group element into a label. Requires that the provided group element is not infinity. */
 static void secp256k1_silentpayments_label_save(secp256k1_silentpayments_label* label, const secp256k1_ge* ge) {
     memcpy(&label->data[0], secp256k1_silentpayments_label_magic, 4);
@@ -355,6 +376,7 @@ static void secp256k1_silentpayments_label_save(secp256k1_silentpayments_label* 
 /* Loads a group element from a label. Returns 1 unless the label wasn't properly initialized. */
 static int secp256k1_silentpayments_label_load(const secp256k1_context* ctx, secp256k1_ge* ge, const secp256k1_silentpayments_label* label) {
     ARG_CHECK(secp256k1_memcmp_var(&label->data[0], secp256k1_silentpayments_label_magic, 4) == 0);
+    ARG_CHECK(secp256k1_silentpayments_ge_storage_is_canonical(label->data + 4));
     secp256k1_ge_from_bytes(ge, label->data + 4);
     return 1;
 }
