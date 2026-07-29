@@ -85,6 +85,24 @@ static unsigned char ALICE_SECKEY[32] = {
     0x8a, 0x4c, 0x53, 0xf6, 0xe0, 0x50, 0x7b, 0x42,
     0x15, 0x42, 0x01, 0xb8, 0xe5, 0xdf, 0xf3, 0xb1
 };
+#ifndef VERIFY
+static const unsigned char FIELD_P_PLUS_ONE[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF, 0xFC, 0x30
+};
+
+static void make_noncanonical_ge_storage(unsigned char *data) {
+    secp256k1_fe x;
+    secp256k1_fe_storage xs;
+
+    STATIC_ASSERT(sizeof(xs) == 32);
+    secp256k1_fe_set_b32_mod(&x, FIELD_P_PLUS_ONE);
+    secp256k1_fe_impl_to_storage(&xs, &x);
+    memcpy(data, &xs, sizeof(xs));
+}
+#endif
 
 struct label_cache_entry {
     unsigned char label[33];
@@ -404,6 +422,22 @@ static void test_label_api(void) {
 
         CHECK(secp256k1_silentpayments_recipient_label_parse(CTX, &parsed_label, invalid_label_ser) == 0);
         CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &parsed_label));
+
+        {
+            secp256k1_silentpayments_label malformed_label = l;
+
+            memset(malformed_label.data + 4, 0, sizeof(malformed_label.data) - 4);
+            CHECK( secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &malformed_label) == 1); /* TODO reject invalid stored label point */
+        }
+#ifndef VERIFY
+        {
+            secp256k1_silentpayments_label malformed_label = l;
+
+            make_noncanonical_ge_storage(malformed_label.data + 4);
+            CHECK( secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &malformed_label) == 1); /* TODO reject noncanonical stored label point */
+            CHECK( secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(CTX, &ls, &s, &malformed_label) == 1); /* TODO reject noncanonical stored label point */
+        }
+#endif
     }
 
     /* Check null values are handled */
