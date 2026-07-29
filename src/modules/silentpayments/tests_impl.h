@@ -425,7 +425,7 @@ static void test_label_api(void) {
             secp256k1_silentpayments_label malformed_label = l;
 
             memset(malformed_label.data + 4, 0, sizeof(malformed_label.data) - 4);
-            CHECK( secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &malformed_label) == 1); /* TODO reject invalid stored label point */
+            CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_label_serialize(CTX, parsed_label_ser, &malformed_label));
         }
         {
             secp256k1_silentpayments_label malformed_label = l;
