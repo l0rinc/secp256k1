@@ -551,35 +551,31 @@ static void test_recipient_api(void) {
         secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
 
         memset(malformed_ps.data + 5, 0, 64);
-        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject invalid stored prevouts-summary point */
+        CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
     }
-#ifndef VERIFY
     {
         secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
 
         make_noncanonical_ge_storage(malformed_ps.data + 5);
-        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject noncanonical stored prevouts-summary point */
+        CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
     }
-#endif
     {
         secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
 
         malformed_ps.data[4] = 2;
-        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject unsupported prevouts-summary flag */
+        CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
     }
-#ifndef VERIFY
     {
         secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
 
         memset(malformed_ps.data + 5 + 64, 0, 32);
-        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject zero prevouts-summary input hash */
+        CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
     }
-#endif
     {
         secp256k1_silentpayments_prevouts_summary malformed_ps = ps;
 
         memset(malformed_ps.data + 5 + 64, 0xFF, 32);
-        CHECK( secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL) == 1); /* TODO reject overflowing prevouts-summary input hash */
+        CHECK_ILLEGAL(CTX, secp256k1_silentpayments_recipient_scan_outputs(CTX, fp, &n_f, tp, 1, ALICE_SECKEY, &malformed_ps, &p, NULL, NULL));
     }
 
     /* check the _recipient_scan_outputs cornercase where internal tweaking would fail;

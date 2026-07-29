@@ -647,6 +647,7 @@ int secp256k1_silentpayments_recipient_scan_outputs(
     uint32_t k, k_max;
     size_t i;
     int found_idx, combined, valid_scan_key, ret;
+    secp256k1_scalar input_hash_scalar;
 
     /* Sanity check inputs */
     VERIFY_CHECK(ctx != NULL);
@@ -666,6 +667,14 @@ int secp256k1_silentpayments_recipient_scan_outputs(
     ARG_CHECK(scan_key32 != NULL);
     ARG_CHECK(prevouts_summary != NULL);
     ARG_CHECK(secp256k1_memcmp_var(&prevouts_summary->data[0], secp256k1_silentpayments_prevouts_summary_magic, 4) == 0);
+    ARG_CHECK(prevouts_summary->data[4] <= 1);
+    if (!secp256k1_silentpayments_ge_load(ctx, &prevouts_pubkey_sum_ge, &prevouts_summary->data[5])) {
+        return 0;
+    }
+    combined = (int)prevouts_summary->data[4];
+    if (!combined) {
+        ARG_CHECK(secp256k1_scalar_set_b32_seckey(&input_hash_scalar, &prevouts_summary->data[5 + 64]));
+    }
     ARG_CHECK(unlabeled_spend_pubkey != NULL);
     /* Passing a context without a lookup function is non-sensical */
     if (label_context != NULL) {
@@ -677,13 +686,9 @@ int secp256k1_silentpayments_recipient_scan_outputs(
         secp256k1_scalar_clear(&scan_key_scalar);
         return 0;
     }
-    secp256k1_ge_from_bytes(&prevouts_pubkey_sum_ge, &prevouts_summary->data[5]);
-    combined = (int)prevouts_summary->data[4];
     /* Note that the "combined" flag can currently only be 0, as we only have support for full nodes, i.e.,
      * the following branch is always taken. "combined" can also be 1 once we add light client support. */
     if (!combined) {
-        secp256k1_scalar input_hash_scalar;
-        secp256k1_scalar_set_b32(&input_hash_scalar, &prevouts_summary->data[5 + 64], NULL);
         secp256k1_scalar_mul(&scan_key_scalar, &scan_key_scalar, &input_hash_scalar);
     }
     ret = secp256k1_pubkey_load(ctx, &unlabeled_spend_pubkey_ge, unlabeled_spend_pubkey);
@@ -692,9 +697,8 @@ int secp256k1_silentpayments_recipient_scan_outputs(
         return 0;
     }
     /* Creating the shared secret requires that the public and secret components are
-     * non-infinity and non-zero, respectively. Note that the involved parts (input hash,
-     * scan secret key, and prevouts public key sum) have all been verified at this point,
-     * assuming that the user hasn't tampered the `prevouts_summary` object manually. */
+     * non-infinity and non-zero, respectively. The input hash, scan secret key,
+     * and prevouts public key sum have all been verified at this point. */
     secp256k1_silentpayments_create_shared_secret(shared_secret, &prevouts_pubkey_sum_ge, &scan_key_scalar);
     /* Clear the scan_key_scalar since we no longer need it and leaking this value would break indistinguishability of the transaction. */
     secp256k1_scalar_clear(&scan_key_scalar);
