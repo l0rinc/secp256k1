@@ -7712,6 +7712,15 @@ static void run_ecdsa_edge_cases(void) {
         outlen = 300;
         CHECK(!ec_privkey_export_der(CTX, privkey, &outlen, seckey, 1));
     }
+
+    /* Privkey import where the sequence length exceeds the input. */
+    {
+        static const unsigned char overflow_len_der[] = {0x30, 0x82, 0xff, 0xff};
+        unsigned char seckey[32];
+        memset(seckey, 0xaa, sizeof(seckey));
+        CHECK(ec_privkey_import_der(CTX, seckey, overflow_len_der, sizeof(overflow_len_der)) == 0);
+        CHECK(all_bytes_equal(seckey, 0, sizeof(seckey)));
+    }
 }
 
 DEFINE_SHA256_TRANSFORM_PROBE(sha256_ecdsa)
