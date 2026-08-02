@@ -276,7 +276,7 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     CHECK(ret == 1);
 
     SECP256K1_CHECKMEM_UNDEFINE(key, 32);
-    /* TODO: Mark auxrnd32 undefined to cover its constant-time guarantee. */
+    SECP256K1_CHECKMEM_UNDEFINE(auxrnd32, sizeof(auxrnd32));
     ret = secp256k1_ellswift_create(ctx, ellswift, key, auxrnd32);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);

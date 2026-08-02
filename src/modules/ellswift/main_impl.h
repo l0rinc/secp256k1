@@ -454,9 +454,9 @@ int secp256k1_ellswift_create(const secp256k1_context *ctx, unsigned char *ell64
     secp256k1_ellswift_sha256_init_create(&hash);
     secp256k1_sha256_write(secp256k1_get_hash_context(ctx), &hash, seckey32, 32);
     secp256k1_sha256_write(secp256k1_get_hash_context(ctx), &hash, zero32, sizeof(zero32));
-    /* Declassify only hash state. seckey32 has been hashed, but copy remains in the hash buffer */
-    secp256k1_declassify(ctx, &hash.s, sizeof(hash.s));
     if (auxrnd32) secp256k1_sha256_write(secp256k1_get_hash_context(ctx), &hash, auxrnd32, 32);
+    /* Declassify only hash state. Secret inputs have been hashed, but copies remain in the hash buffer. */
+    secp256k1_declassify(ctx, &hash.s, sizeof(hash.s));
 
     /* Compute ElligatorSwift encoding and construct output. */
     secp256k1_ellswift_elligatorswift_var(ctx, ell64, &t, &p, &hash); /* puts u in ell64[0..32] */
