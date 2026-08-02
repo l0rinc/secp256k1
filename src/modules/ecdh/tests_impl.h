@@ -36,6 +36,7 @@ static int ecdh_hash_function_custom(unsigned char *output, const unsigned char 
 
 static void test_ecdh_api(void) {
     secp256k1_pubkey point;
+    secp256k1_pubkey invalid_point = {{ 0 }};
     unsigned char res[32];
     unsigned char s_one[32] = { 0 };
     s_one[31] = 1;
@@ -47,6 +48,8 @@ static void test_ecdh_api(void) {
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, NULL, &point, s_one, NULL, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, NULL, s_one, NULL, NULL));
     CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &point, NULL, NULL, NULL));
+    /* Check an invalid public key object is detected */
+    CHECK_ILLEGAL(CTX, secp256k1_ecdh(CTX, res, &invalid_point, s_one, NULL, NULL));
     CHECK(secp256k1_ecdh(CTX, res, &point, s_one, NULL, NULL) == 1);
 }
 

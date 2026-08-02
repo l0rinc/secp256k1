@@ -36,7 +36,8 @@ SECP256K1_API const secp256k1_ecdh_hash_function secp256k1_ecdh_hash_function_de
 /** Compute an EC Diffie-Hellman secret in constant time
  *
  *  Returns: 1: exponentiation was successful
- *           0: scalar was invalid (zero or overflow) or hashfp returned 0
+ *           0: point was invalid, scalar was invalid (zero or overflow), or
+ *              hashfp returned 0
  *  Args:    ctx:        pointer to a context object.
  *  Out:     output:     pointer to an array to be filled by hashfp.
  *  In:      pubkey:     pointer to a secp256k1_pubkey containing an initialized public key.

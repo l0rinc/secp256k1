@@ -879,7 +879,8 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_context_randomize(
 /** Add a number of public keys together.
  *
  *  Returns: 1: the sum of the public keys is valid.
- *           0: the sum of the public keys is not valid.
+ *           0: an input public key is invalid, or the sum of the public keys
+ *              is not valid.
  *  Args:   ctx:        pointer to a context object.
  *  Out:    out:        pointer to a public key object for placing the resulting public key.
  *  In:     ins:        pointer to array of pointers to public keys.
