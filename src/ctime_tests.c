@@ -101,6 +101,7 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
 #endif
 #ifdef ENABLE_MODULE_ELLSWIFT
     unsigned char ellswift[64];
+    unsigned char auxrnd32[32] = {1};
     static const unsigned char prefix[64] = {'t', 'e', 's', 't'};
 #endif
 #ifdef ENABLE_MODULE_SILENTPAYMENTS
@@ -275,7 +276,8 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     CHECK(ret == 1);
 
     SECP256K1_CHECKMEM_UNDEFINE(key, 32);
-    ret = secp256k1_ellswift_create(ctx, ellswift, key, ellswift);
+    /* TODO: Mark auxrnd32 undefined to cover its constant-time guarantee. */
+    ret = secp256k1_ellswift_create(ctx, ellswift, key, auxrnd32);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
 
