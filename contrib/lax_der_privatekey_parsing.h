@@ -71,7 +71,8 @@ SECP256K1_WARN_UNUSED_RESULT int ec_privkey_export_der(
  * Returns: 1 if a private key was extracted.
  * Args: ctx:        pointer to a context object (cannot be NULL).
  * Out:  seckey:     pointer to a 32-byte array for storing the private key.
- *                   (cannot be NULL).
+ *                   (cannot be NULL). Set to zero if no private key was
+ *                   extracted.
  * In:   privkey:    pointer to a private key in DER format (cannot be NULL).
  *       privkeylen: length of the DER private key pointed to be privkey.
  *
