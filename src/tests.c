@@ -7351,8 +7351,19 @@ static void random_ber_signature(unsigned char *sig, size_t *len, int* certainly
     CHECK(tlen == *len);
 }
 
+static void test_ecdsa_der_size_boundary(void) {
+    static const unsigned char non_der[1] = {0};
+    secp256k1_ecdsa_signature parsed;
+
+    memset(&parsed, 0xA5, sizeof(parsed));
+    /* SIZE_MAX used to overflow the end pointer before this byte was read. */
+    CHECK(secp256k1_ecdsa_signature_parse_der(CTX, &parsed, non_der, SIZE_MAX) == 0);
+    CHECK(is_empty_signature(&parsed));
+}
+
 static void run_ecdsa_der_parse(void) {
     int i,j;
+    test_ecdsa_der_size_boundary();
     for (i = 0; i < 200 * COUNT; i++) {
         unsigned char buffer[2048];
         size_t buflen = 0;

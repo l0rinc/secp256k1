@@ -33,15 +33,16 @@ static const secp256k1_fe secp256k1_ecdsa_const_p_minus_order = SECP256K1_FE_CON
     0, 0, 0, 1, 0x45512319UL, 0x50B75FC4UL, 0x402DA172UL, 0x2FC9BAEEUL
 );
 
-static int secp256k1_der_read_len(size_t *len, const unsigned char **sigp, const unsigned char *sigend) {
+static int secp256k1_der_read_len(size_t *len, size_t *pos, const unsigned char *sig, size_t size) {
     size_t lenleft;
     unsigned char b1;
     VERIFY_CHECK(len != NULL);
+    VERIFY_CHECK(pos != NULL);
     *len = 0;
-    if (*sigp >= sigend) {
+    if (*pos >= size) {
         return 0;
     }
-    b1 = *((*sigp)++);
+    b1 = sig[(*pos)++];
     if (b1 == 0xFF) {
         /* X.690-0207 8.1.3.5.c the value 0xFF shall not be used. */
         return 0;
@@ -57,10 +58,10 @@ static int secp256k1_der_read_len(size_t *len, const unsigned char **sigp, const
     }
     /* X.690-207 8.1.3.5 long form length octets */
     lenleft = b1 & 0x7F; /* lenleft is at least 1 */
-    if (lenleft > (size_t)(sigend - *sigp)) {
+    if (lenleft > size - *pos) {
         return 0;
     }
-    if (**sigp == 0) {
+    if (sig[*pos] == 0) {
         /* Not the shortest possible length encoding. */
         return 0;
     }
@@ -70,11 +71,11 @@ static int secp256k1_der_read_len(size_t *len, const unsigned char **sigp, const
         return 0;
     }
     while (lenleft > 0) {
-        *len = (*len << 8) | **sigp;
-        (*sigp)++;
+        *len = (*len << 8) | sig[*pos];
+        (*pos)++;
         lenleft--;
     }
-    if (*len > (size_t)(sigend - *sigp)) {
+    if (*len > size - *pos) {
         /* Result exceeds the length of the passed array.
            (Checking this is the responsibility of the caller but it
            can't hurt do it here, too.) */
@@ -87,80 +88,80 @@ static int secp256k1_der_read_len(size_t *len, const unsigned char **sigp, const
     return 1;
 }
 
-static int secp256k1_der_parse_integer(secp256k1_scalar *r, const unsigned char **sig, const unsigned char *sigend) {
+static int secp256k1_der_parse_integer(secp256k1_scalar *r, size_t *pos, const unsigned char *sig, size_t size) {
     int overflow = 0;
     unsigned char ra[32] = {0};
     size_t rlen;
 
-    if (*sig == sigend || **sig != 0x02) {
+    if (*pos >= size || sig[*pos] != 0x02) {
         /* Not a primitive integer (X.690-0207 8.3.1). */
         return 0;
     }
-    (*sig)++;
-    if (secp256k1_der_read_len(&rlen, sig, sigend) == 0) {
+    (*pos)++;
+    if (secp256k1_der_read_len(&rlen, pos, sig, size) == 0) {
         return 0;
     }
-    if (rlen == 0 || rlen > (size_t)(sigend - *sig)) {
+    if (rlen == 0 || rlen > size - *pos) {
         /* Exceeds bounds or not at least length 1 (X.690-0207 8.3.1).  */
         return 0;
     }
-    if (**sig == 0x00 && rlen > 1 && (((*sig)[1]) & 0x80) == 0x00) {
+    if (sig[*pos] == 0x00 && rlen > 1 && ((sig[*pos + 1]) & 0x80) == 0x00) {
         /* Excessive 0x00 padding. */
         return 0;
     }
-    if (**sig == 0xFF && rlen > 1 && (((*sig)[1]) & 0x80) == 0x80) {
+    if (sig[*pos] == 0xFF && rlen > 1 && ((sig[*pos + 1]) & 0x80) == 0x80) {
         /* Excessive 0xFF padding. */
         return 0;
     }
-    if ((**sig & 0x80) == 0x80) {
+    if ((sig[*pos] & 0x80) == 0x80) {
         /* Negative. */
         overflow = 1;
     }
     /* There is at most one leading zero byte:
      * if there were two leading zero bytes, we would have failed and returned 0
      * because of excessive 0x00 padding already. */
-    if (rlen > 0 && **sig == 0) {
+    if (rlen > 0 && sig[*pos] == 0) {
         /* Skip leading zero byte */
         rlen--;
-        (*sig)++;
+        (*pos)++;
     }
     if (rlen > 32) {
         overflow = 1;
     }
     if (!overflow) {
-        if (rlen) memcpy(ra + 32 - rlen, *sig, rlen);
+        if (rlen) memcpy(ra + 32 - rlen, sig + *pos, rlen);
         secp256k1_scalar_set_b32(r, ra, &overflow);
     }
     if (overflow) {
         secp256k1_scalar_set_int(r, 0);
     }
-    (*sig) += rlen;
+    *pos += rlen;
     return 1;
 }
 
 static int secp256k1_ecdsa_sig_parse(secp256k1_scalar *rr, secp256k1_scalar *rs, const unsigned char *sig, size_t size) {
-    const unsigned char *sigend = sig + size;
+    size_t pos = 0;
     size_t rlen;
-    if (sig == sigend || *(sig++) != 0x30) {
+    if (pos >= size || sig[pos++] != 0x30) {
         /* The encoding doesn't start with a constructed sequence (X.690-0207 8.9.1). */
         return 0;
     }
-    if (secp256k1_der_read_len(&rlen, &sig, sigend) == 0) {
+    if (secp256k1_der_read_len(&rlen, &pos, sig, size) == 0) {
         return 0;
     }
-    if (rlen != (size_t)(sigend - sig)) {
+    if (rlen != size - pos) {
         /* Tuple exceeds bounds or garage after tuple. */
         return 0;
     }
 
-    if (!secp256k1_der_parse_integer(rr, &sig, sigend)) {
+    if (!secp256k1_der_parse_integer(rr, &pos, sig, size)) {
         return 0;
     }
-    if (!secp256k1_der_parse_integer(rs, &sig, sigend)) {
+    if (!secp256k1_der_parse_integer(rs, &pos, sig, size)) {
         return 0;
     }
 
-    if (sig != sigend) {
+    if (pos != size) {
         /* Trailing garbage inside tuple. */
         return 0;
     }
