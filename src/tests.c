@@ -7610,6 +7610,21 @@ static void run_ecdsa_edge_cases(void) {
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_compact(CTX, NULL, signature));
         CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_parse_compact(CTX, &sig, NULL));
         CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, signature) == 1);
+        /* Mutating an initialized opaque signature bypasses the parser bounds. */
+        {
+            secp256k1_ecdsa_signature invalid_sig;
+            int i;
+
+            for (i = 0; i < 2; i++) {
+                invalid_sig = sig;
+                memset(invalid_sig.data + 32 * i, 0xFF, 32);
+                siglen = sizeof(signature);
+                CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_der(CTX, signature, &siglen, &invalid_sig));
+                CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_serialize_compact(CTX, signature, &invalid_sig));
+                CHECK_ILLEGAL(CTX, secp256k1_ecdsa_signature_normalize(CTX, NULL, &invalid_sig));
+                CHECK_ILLEGAL(CTX, secp256k1_ecdsa_verify(CTX, &invalid_sig, msg, &pubkey));
+            }
+        }
         memset(signature, 255, 64);
         CHECK(secp256k1_ecdsa_signature_parse_compact(CTX, &sig, signature) == 0);
     }
