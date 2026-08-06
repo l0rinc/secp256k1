@@ -12,7 +12,13 @@
 #include "../../util.h"
 
 static SECP256K1_INLINE int secp256k1_xonly_pubkey_load(const secp256k1_context* ctx, secp256k1_ge *ge, const secp256k1_xonly_pubkey *pubkey) {
-    return secp256k1_pubkey_load(ctx, ge, (const secp256k1_pubkey *) pubkey);
+    if (!secp256k1_pubkey_load(ctx, ge, (const secp256k1_pubkey *) pubkey)) {
+        return 0;
+    }
+    /* Reject group elements with odd Y coordinate, as per definition of x-only
+     * public keys (ge->y is normalized by pubkey_load, as fe_is_odd requires). */
+    ARG_CHECK(!secp256k1_fe_is_odd(&ge->y));
+    return 1;
 }
 
 static SECP256K1_INLINE void secp256k1_xonly_pubkey_save(secp256k1_xonly_pubkey *pubkey, secp256k1_ge *ge) {
