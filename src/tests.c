@@ -3300,7 +3300,108 @@ static void run_field_half(void) {
     }
 }
 
+static void test_fe_zero_predicates_boundaries(void) {
+    secp256k1_fe one, t;
+
+    /* Construct 4*p: a true-zero value whose top limb is not small, so the
+     * first reduction pass in both zero predicates is exercised. */
+    secp256k1_fe_set_int(&one, 1);
+    secp256k1_fe_negate(&t, &one, 1);
+    secp256k1_fe_add(&t, &one);
+    CHECK(secp256k1_fe_normalizes_to_zero(&t) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 1);
+    secp256k1_fe_add_int(&t, 1);
+    CHECK(secp256k1_fe_normalizes_to_zero(&t) == 0);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 0);
+
+    /* The exact raw representation of p exercises the equality guard against
+     * p's top limb in the zero predicates' reduction. */
+#if defined(SECP256K1_WIDEMUL_INT64)
+    {
+        static const uint32_t plimbs[10] = {
+            0x3FFFC2FUL, 0x3FFFFBFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL,
+            0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x3FFFFFFUL, 0x03FFFFFUL
+        };
+        memcpy(t.n, plimbs, sizeof(plimbs));
+    }
+#else
+    {
+        static const uint64_t plimbs[5] = {
+            0xFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFULL,
+            0xFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFULL
+        };
+        memcpy(t.n, plimbs, sizeof(plimbs));
+    }
+#endif
+#ifdef VERIFY
+    t.magnitude = 1;
+    t.normalized = 0;
+#endif
+    CHECK(secp256k1_fe_normalizes_to_zero(&t) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&t) == 1);
+}
+
+static void test_fe_normalize_preserves_value(void) {
+    int m;
+    /* Compare t and normalize(t) via t - normalize(t). The negated normalized
+     * value has magnitude 2, so m must stay at most 30. */
+    for (m = 1; m <= 30; ++m) {
+        secp256k1_fe t, u, negu;
+
+        secp256k1_fe_get_bounds(&t, m);
+        u = t;
+        secp256k1_fe_normalize(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+
+        u = t;
+        secp256k1_fe_normalize_var(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+
+        u = t;
+        secp256k1_fe_normalize_weak(&u);
+        secp256k1_fe_negate(&negu, &u, 1);
+        secp256k1_fe_add(&negu, &t);
+        CHECK(secp256k1_fe_normalizes_to_zero(&negu) == 1);
+        CHECK(secp256k1_fe_normalizes_to_zero_var(&negu) == 1);
+    }
+}
+
+static void test_fe_set_b32_limit_boundaries(void) {
+    static const unsigned char p_minus_one[32] = {
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xfc, 0x2e
+    };
+    static const unsigned char p[32] = {
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xfc, 0x2f
+    };
+    static const unsigned char all_ones[32] = {
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+    secp256k1_fe t;
+
+    CHECK(secp256k1_fe_set_b32_limit(&t, p_minus_one) == 1);
+    CHECK(secp256k1_fe_set_b32_limit(&t, p) == 0);
+    CHECK(secp256k1_fe_set_b32_limit(&t, all_ones) == 0);
+}
+
 static void run_field_misc(void) {
+    test_fe_zero_predicates_boundaries();
+    test_fe_normalize_preserves_value();
+    test_fe_set_b32_limit_boundaries();
     secp256k1_fe x;
     secp256k1_fe y;
     secp256k1_fe z;
