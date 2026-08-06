@@ -9,19 +9,29 @@
 
 #include "../../../include/secp256k1_recovery.h"
 
-static void secp256k1_ecdsa_recoverable_signature_load(const secp256k1_context* ctx, secp256k1_scalar* r, secp256k1_scalar* s, int* recid, const secp256k1_ecdsa_recoverable_signature* sig) {
-    (void)ctx;
+static int secp256k1_ecdsa_recoverable_signature_load(const secp256k1_context* ctx, secp256k1_scalar* r, secp256k1_scalar* s, int* recid, const secp256k1_ecdsa_recoverable_signature* sig) {
+    int overflow;
+
     if (sizeof(secp256k1_scalar) == 32) {
         /* When the secp256k1_scalar type is exactly 32 byte, use its
          * representation inside secp256k1_ecdsa_signature, as conversion is very fast.
          * Note that secp256k1_ecdsa_signature_save must use the same representation. */
         memcpy(r, &sig->data[0], 32);
+        overflow = secp256k1_scalar_check_overflow(r);
         memcpy(s, &sig->data[32], 32);
     } else {
-        secp256k1_scalar_set_b32(r, &sig->data[0], NULL);
-        secp256k1_scalar_set_b32(s, &sig->data[32], NULL);
+        secp256k1_scalar_set_b32(r, &sig->data[0], &overflow);
     }
+    ARG_CHECK(!overflow);
+    if (sizeof(secp256k1_scalar) == 32) {
+        overflow = secp256k1_scalar_check_overflow(s);
+    } else {
+        secp256k1_scalar_set_b32(s, &sig->data[32], &overflow);
+    }
+    ARG_CHECK(!overflow);
     *recid = sig->data[64];
+    ARG_CHECK(*recid <= 3);
+    return 1;
 }
 
 static void secp256k1_ecdsa_recoverable_signature_save(secp256k1_ecdsa_recoverable_signature* sig, const secp256k1_scalar* r, const secp256k1_scalar* s, int recid) {
@@ -65,7 +75,9 @@ int secp256k1_ecdsa_recoverable_signature_serialize_compact(const secp256k1_cont
     ARG_CHECK(sig != NULL);
     ARG_CHECK(recid != NULL);
 
-    secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, recid, sig);
+    if (!secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, recid, sig)) {
+        return 0;
+    }
     secp256k1_scalar_get_b32(&output64[0], &r);
     secp256k1_scalar_get_b32(&output64[32], &s);
     return 1;
@@ -79,7 +91,9 @@ int secp256k1_ecdsa_recoverable_signature_convert(const secp256k1_context* ctx, 
     ARG_CHECK(sig != NULL);
     ARG_CHECK(sigin != NULL);
 
-    secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, sigin);
+    if (!secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, sigin)) {
+        return 0;
+    }
     secp256k1_ecdsa_signature_save(sig, &r, &s);
     return 1;
 }
@@ -144,8 +158,9 @@ int secp256k1_ecdsa_recover(const secp256k1_context* ctx, secp256k1_pubkey *pubk
     ARG_CHECK(signature != NULL);
     ARG_CHECK(pubkey != NULL);
 
-    secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, signature);
-    VERIFY_CHECK(recid >= 0 && recid < 4);  /* should have been caught in parse_compact */
+    if (!secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, signature)) {
+        return 0;
+    }
     secp256k1_scalar_set_b32(&m, msghash32, NULL);
     if (secp256k1_ecdsa_sig_recover(&r, &s, &q, &m, recid)) {
         secp256k1_pubkey_save(pubkey, &q);

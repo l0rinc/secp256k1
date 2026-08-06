@@ -36,7 +36,7 @@ static void test_exhaustive_recovery_sign(const secp256k1_context *ctx, const se
                 CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &rsig, msg32, sk32, secp256k1_nonce_function_smallint, &k) == 1);
 
                 /* Check directly */
-                secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, &rsig);
+                CHECK(secp256k1_ecdsa_recoverable_signature_load(ctx, &r, &s, &recid, &rsig));
                 r_from_k(&expected_r, group, k, &overflow);
                 CHECK(r == expected_r);
                 CHECK((k * s) % EXHAUSTIVE_TEST_ORDER == (i + r * j) % EXHAUSTIVE_TEST_ORDER ||
