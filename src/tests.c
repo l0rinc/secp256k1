@@ -6365,6 +6365,7 @@ static void run_eckey_edge_case_test(void) {
     unsigned char ctmp2[33];
     secp256k1_pubkey pubkey;
     secp256k1_pubkey pubkey2;
+    secp256k1_pubkey invalid_pubkey = {{ 0 }};
     secp256k1_pubkey pubkey_one;
     secp256k1_pubkey pubkey_negone;
     const secp256k1_pubkey *pubkeys[3];
@@ -6536,6 +6537,12 @@ static void run_eckey_edge_case_test(void) {
     memset(&pubkey, 255, sizeof(secp256k1_pubkey));
     SECP256K1_CHECKMEM_UNDEFINE(&pubkey, sizeof(secp256k1_pubkey));
     CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_combine(CTX, &pubkey, NULL, 1));
+    SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(secp256k1_pubkey));
+    CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) == 0);
+    pubkeys[0] = &invalid_pubkey;
+    memset(&pubkey, 255, sizeof(secp256k1_pubkey));
+    SECP256K1_CHECKMEM_UNDEFINE(&pubkey, sizeof(secp256k1_pubkey));
+    CHECK_ILLEGAL(CTX, secp256k1_ec_pubkey_combine(CTX, &pubkey, pubkeys, 1));
     SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(secp256k1_pubkey));
     CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) == 0);
     pubkeys[0] = &pubkey_negone;
