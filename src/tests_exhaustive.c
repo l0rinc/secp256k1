@@ -107,6 +107,9 @@ static void test_exhaustive_addition(const secp256k1_ge *group, const secp256k1_
             /* add_ge_var */
             secp256k1_gej_add_ge_var(&tmp, &groupj[i], &group[j], NULL);
             CHECK(secp256k1_gej_eq_ge_var(&tmp, &group[(i + j) % EXHAUSTIVE_TEST_ORDER]));
+            tmp = groupj[i];
+            secp256k1_gej_add_ge_var(&tmp, &tmp, &group[j], NULL);
+            CHECK(secp256k1_gej_eq_ge_var(&tmp, &group[(i + j) % EXHAUSTIVE_TEST_ORDER]));
             /* add_zinv_var */
             if (secp256k1_gej_is_infinity(&groupj[j])) {
                 secp256k1_ge_set_infinity(&zless_gej);
@@ -114,6 +117,9 @@ static void test_exhaustive_addition(const secp256k1_ge *group, const secp256k1_
                 secp256k1_ge_set_xy(&zless_gej, &groupj[j].x, &groupj[j].y);
             }
             secp256k1_gej_add_zinv_var(&tmp, &groupj[i], &zless_gej, &fe_inv);
+            CHECK(secp256k1_gej_eq_ge_var(&tmp, &group[(i + j) % EXHAUSTIVE_TEST_ORDER]));
+            tmp = groupj[i];
+            secp256k1_gej_add_zinv_var(&tmp, &tmp, &zless_gej, &fe_inv);
             CHECK(secp256k1_gej_eq_ge_var(&tmp, &group[(i + j) % EXHAUSTIVE_TEST_ORDER]));
         }
     }
