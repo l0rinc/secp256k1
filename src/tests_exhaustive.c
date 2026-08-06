@@ -358,6 +358,10 @@ static void test_exhaustive_sign(const secp256k1_context *ctx, const secp256k1_g
 #include "modules/schnorrsig/tests_exhaustive_impl.h"
 #endif
 
+#if defined(ENABLE_MODULE_MUSIG) && EXHAUSTIVE_TEST_ORDER == 13
+#include "modules/musig/tests_exhaustive_impl.h"
+#endif
+
 #ifdef ENABLE_MODULE_ELLSWIFT
 #include "modules/ellswift/tests_exhaustive_impl.h"
 #endif
@@ -455,6 +459,9 @@ int main(int argc, char** argv) {
 #endif
 #ifdef ENABLE_MODULE_SCHNORRSIG
         test_exhaustive_schnorrsig(ctx);
+#endif
+#if defined(ENABLE_MODULE_MUSIG) && EXHAUSTIVE_TEST_ORDER == 13
+        test_exhaustive_musig(ctx);
 #endif
 #ifdef ENABLE_MODULE_ELLSWIFT
     /* The ellswift algorithm does have additional edge cases when operating on
