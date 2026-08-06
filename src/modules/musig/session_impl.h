@@ -191,6 +191,7 @@ int secp256k1_musig_pubnonce_parse(const secp256k1_context* ctx, secp256k1_musig
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(nonce != NULL);
+    memset(nonce, 0, sizeof(*nonce));
     ARG_CHECK(in66 != NULL);
 
     for (i = 0; i < 2; i++) {
@@ -230,6 +231,7 @@ int secp256k1_musig_aggnonce_parse(const secp256k1_context* ctx, secp256k1_musig
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(nonce != NULL);
+    memset(nonce, 0, sizeof(*nonce));
     ARG_CHECK(in66 != NULL);
 
     for (i = 0; i < 2; i++) {
@@ -264,11 +266,10 @@ int secp256k1_musig_partial_sig_parse(const secp256k1_context* ctx, secp256k1_mu
     int overflow;
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig != NULL);
-    ARG_CHECK(in32 != NULL);
-
     /* Ensure that using the signature will fail if parsing fails (and the user
      * doesn't check the return value). */
     memset(sig, 0, sizeof(*sig));
+    ARG_CHECK(in32 != NULL);
 
     secp256k1_scalar_set_b32(&tmp, in32, &overflow);
     if (overflow) {
@@ -281,6 +282,7 @@ int secp256k1_musig_partial_sig_parse(const secp256k1_context* ctx, secp256k1_mu
 int secp256k1_musig_partial_sig_serialize(const secp256k1_context* ctx, unsigned char *out32, const secp256k1_musig_partial_sig* sig) {
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(out32 != NULL);
+    memset(out32, 0, 32);
     ARG_CHECK(sig != NULL);
     ARG_CHECK(secp256k1_memcmp_var(&sig->data[0], secp256k1_musig_partial_sig_magic, 4) == 0);
 
@@ -431,6 +433,7 @@ static int secp256k1_musig_nonce_gen_internal(const secp256k1_context* ctx, secp
     /* None of the nonce_pts will be infinity because k != 0 with overwhelming
      * probability */
     secp256k1_musig_pubnonce_save(pubnonce, nonce_pts);
+    secp256k1_memczero(pubnonce, sizeof(*pubnonce), !ret);
     return ret;
 }
 
@@ -514,6 +517,7 @@ int secp256k1_musig_nonce_agg(const secp256k1_context* ctx, secp256k1_musig_aggn
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(aggnonce != NULL);
+    memset(aggnonce, 0, sizeof(*aggnonce));
     ARG_CHECK(pubnonces != NULL);
     ARG_CHECK(n_pubnonces > 0);
     for (i = 0; i < n_pubnonces; i++) {
@@ -592,6 +596,7 @@ int secp256k1_musig_nonce_process(const secp256k1_context* ctx, secp256k1_musig_
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(session != NULL);
+    memset(session, 0, sizeof(*session));
     ARG_CHECK(aggnonce != NULL);
     ARG_CHECK(msg32 != NULL);
     ARG_CHECK(keyagg_cache != NULL);
@@ -629,6 +634,15 @@ static void secp256k1_musig_partial_sign_clear(secp256k1_scalar *sk, secp256k1_s
     secp256k1_scalar_clear(&k[1]);
 }
 
+static int secp256k1_musig_partial_sign_arg_check(const secp256k1_context* ctx, int cond, const char *text, secp256k1_scalar *sk, secp256k1_scalar *k) {
+    if (EXPECT(!cond, 0)) {
+        secp256k1_callback_call(&ctx->illegal_callback, text);
+        secp256k1_musig_partial_sign_clear(sk, k);
+        return 0;
+    }
+    return 1;
+}
+
 int secp256k1_musig_partial_sign(const secp256k1_context* ctx, secp256k1_musig_partial_sig *partial_sig, secp256k1_musig_secnonce *secnonce, const secp256k1_keypair *keypair, const secp256k1_musig_keyagg_cache *keyagg_cache, const secp256k1_musig_session *session) {
     secp256k1_scalar sk;
     secp256k1_ge pk, keypair_pk;
@@ -639,6 +653,9 @@ int secp256k1_musig_partial_sign(const secp256k1_context* ctx, secp256k1_musig_p
     int ret;
 
     VERIFY_CHECK(ctx != NULL);
+    if (partial_sig != NULL) {
+        memset(partial_sig, 0, sizeof(*partial_sig));
+    }
 
     ARG_CHECK(secnonce != NULL);
     /* Fails if the magic doesn't match */
@@ -651,17 +668,26 @@ int secp256k1_musig_partial_sign(const secp256k1_context* ctx, secp256k1_musig_p
         return 0;
     }
 
-    ARG_CHECK(partial_sig != NULL);
-    ARG_CHECK(keypair != NULL);
-    ARG_CHECK(keyagg_cache != NULL);
-    ARG_CHECK(session != NULL);
+    if (!secp256k1_musig_partial_sign_arg_check(ctx, partial_sig != NULL, "partial_sig != NULL", &sk, k)) {
+        return 0;
+    }
+    if (!secp256k1_musig_partial_sign_arg_check(ctx, keypair != NULL, "keypair != NULL", &sk, k)) {
+        return 0;
+    }
+    if (!secp256k1_musig_partial_sign_arg_check(ctx, keyagg_cache != NULL, "keyagg_cache != NULL", &sk, k)) {
+        return 0;
+    }
+    if (!secp256k1_musig_partial_sign_arg_check(ctx, session != NULL, "session != NULL", &sk, k)) {
+        return 0;
+    }
 
     if (!secp256k1_keypair_load(ctx, &sk, &keypair_pk, keypair)) {
         secp256k1_musig_partial_sign_clear(&sk, k);
         return 0;
     }
-    ARG_CHECK(secp256k1_fe_equal(&pk.x, &keypair_pk.x)
-              && secp256k1_fe_equal(&pk.y, &keypair_pk.y));
+    if (!secp256k1_musig_partial_sign_arg_check(ctx, secp256k1_fe_equal(&pk.x, &keypair_pk.x) && secp256k1_fe_equal(&pk.y, &keypair_pk.y), "secp256k1_fe_equal(&pk.x, &keypair_pk.x) && secp256k1_fe_equal(&pk.y, &keypair_pk.y)", &sk, k)) {
+        return 0;
+    }
     if (!secp256k1_keyagg_cache_load(ctx, &cache_i, keyagg_cache)) {
         secp256k1_musig_partial_sign_clear(&sk, k);
         return 0;
@@ -768,6 +794,7 @@ int secp256k1_musig_partial_sig_agg(const secp256k1_context* ctx, unsigned char 
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(sig64 != NULL);
+    memset(sig64, 0, 64);
     ARG_CHECK(session != NULL);
     ARG_CHECK(partial_sigs != NULL);
     ARG_CHECK(n_sigs > 0);
