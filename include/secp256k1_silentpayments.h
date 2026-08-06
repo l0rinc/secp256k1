@@ -154,7 +154,7 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_silentpayments_recipien
 
 /** Serialize a Silent Payments label
  *
- *  Returns: 1 always
+ *  Returns: 1 if the label was serialized, 0 if the label is invalid.
  *  Args:    ctx: pointer to a context object
  *  Out:   out33: pointer to a 33-byte array to store the serialized label
  *  In:    label: pointer to the label
