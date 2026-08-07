@@ -3450,6 +3450,48 @@ static void test_fe_mul(const secp256k1_fe* a, const secp256k1_fe* b, int use_sq
     CHECK(secp256k1_memcmp_var(t16, c16, 32) == 0);
 }
 
+/* Check worst-case magnitude-32 normalization against an equivalent low-magnitude reference. */
+static void run_fe_normalize_max_magnitude(void) {
+    secp256k1_fe x, hi, lo, tmp;
+
+    secp256k1_fe_get_bounds(&x, 16);
+    hi = x;
+    secp256k1_fe_add(&hi, &x);
+    lo = x;
+    secp256k1_fe_normalize_var(&lo);
+    secp256k1_fe_add(&lo, &lo);
+    secp256k1_fe_normalize_var(&lo);
+
+    tmp = hi;
+    secp256k1_fe_normalize_var(&tmp);
+    CHECK(fe_identical(&tmp, &lo));
+    tmp = hi;
+    secp256k1_fe_normalize(&tmp);
+    CHECK(fe_identical(&tmp, &lo));
+    tmp = hi;
+    secp256k1_fe_normalize_weak(&tmp);
+    secp256k1_fe_normalize_var(&tmp);
+    CHECK(fe_identical(&tmp, &lo));
+
+    /* Zero detection must also handle worst-case magnitude-32 limbs and a magnitude-32 zero. */
+    CHECK(secp256k1_fe_normalizes_to_zero(&hi) == secp256k1_fe_is_zero(&lo));
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&hi) == secp256k1_fe_is_zero(&lo));
+#ifdef SECP256K1_WIDEMUL_INT64
+    /* This nonzero magnitude-32 input used to wrap to zero in both predicates. */
+    secp256k1_fe_get_bounds(&x, 32);
+    x.n[0] = 0xFFFF0F91UL;
+    x.n[1] = 0xFFFFF040UL;
+    memset(&x.n[2], 0, 7 * sizeof(x.n[0]));
+    x.n[9] = 0x0FC00000UL;
+    CHECK(secp256k1_fe_normalizes_to_zero(&x) == 0);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&x) == 0);
+#endif
+    secp256k1_fe_set_int(&x, 0);
+    secp256k1_fe_negate(&x, &x, 31);
+    CHECK(secp256k1_fe_normalizes_to_zero(&x) == 1);
+    CHECK(secp256k1_fe_normalizes_to_zero_var(&x) == 1);
+}
+
 static void run_fe_mul(void) {
     int i;
     for (i = 0; i < 100 * COUNT; ++i) {
@@ -8059,6 +8101,7 @@ static const struct tf_test_entry tests_field[] = {
     CASE(field_half),
     CASE(field_misc),
     CASE(fe_equal_magnitude_boundaries),
+    CASE(fe_normalize_max_magnitude),
     CASE(field_convert),
     CASE(field_be32_overflow),
     CASE(fe_mul),

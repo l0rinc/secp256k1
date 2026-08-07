@@ -56,19 +56,21 @@ static void secp256k1_fe_impl_normalize(secp256k1_fe *r) {
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
     uint32_t m;
+    uint64_t c; /* 64-bit carry: magnitude-32 limbs leave no uint32 headroom for the reduction/carry */
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
     /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL; m = t2;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL; m &= t3;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL; m &= t4;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL; m &= t5;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL; m &= t6;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL; m &= t7;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL; m &= t8;
+    c = t0 + x * 0x1000003D1ULL;
+    t0 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t1; t1 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t2; t2 = c & 0x3FFFFFFUL; c >>= 26; m  = t2;
+    c += t3; t3 = c & 0x3FFFFFFUL; c >>= 26; m &= t3;
+    c += t4; t4 = c & 0x3FFFFFFUL; c >>= 26; m &= t4;
+    c += t5; t5 = c & 0x3FFFFFFUL; c >>= 26; m &= t5;
+    c += t6; t6 = c & 0x3FFFFFFUL; c >>= 26; m &= t6;
+    c += t7; t7 = c & 0x3FFFFFFUL; c >>= 26; m &= t7;
+    c += t8; t8 = c & 0x3FFFFFFUL; c >>= 26; m &= t8;
+    t9 += (uint32_t)c;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
@@ -104,19 +106,21 @@ static void secp256k1_fe_impl_normalize_weak(secp256k1_fe *r) {
              t5 = r->n[5], t6 = r->n[6], t7 = r->n[7], t8 = r->n[8], t9 = r->n[9];
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
+    uint64_t c; /* 64-bit carry: magnitude-32 limbs leave no uint32 headroom for the reduction/carry */
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
     /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL;
+    c = t0 + x * 0x1000003D1ULL;
+    t0 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t1; t1 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t2; t2 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t3; t3 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t4; t4 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t5; t5 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t6; t6 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t7; t7 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t8; t8 = c & 0x3FFFFFFUL; c >>= 26;
+    t9 += (uint32_t)c;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
@@ -131,19 +135,21 @@ static void secp256k1_fe_impl_normalize_var(secp256k1_fe *r) {
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
     uint32_t m;
+    uint64_t c; /* 64-bit carry: magnitude-32 limbs leave no uint32 headroom for the reduction/carry */
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
     /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL; m = t2;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL; m &= t3;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL; m &= t4;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL; m &= t5;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL; m &= t6;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL; m &= t7;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL; m &= t8;
+    c = t0 + x * 0x1000003D1ULL;
+    t0 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t1; t1 = c & 0x3FFFFFFUL; c >>= 26;
+    c += t2; t2 = c & 0x3FFFFFFUL; c >>= 26; m  = t2;
+    c += t3; t3 = c & 0x3FFFFFFUL; c >>= 26; m &= t3;
+    c += t4; t4 = c & 0x3FFFFFFUL; c >>= 26; m &= t4;
+    c += t5; t5 = c & 0x3FFFFFFUL; c >>= 26; m &= t5;
+    c += t6; t6 = c & 0x3FFFFFFUL; c >>= 26; m &= t6;
+    c += t7; t7 = c & 0x3FFFFFFUL; c >>= 26; m &= t7;
+    c += t8; t8 = c & 0x3FFFFFFUL; c >>= 26; m &= t8;
+    t9 += (uint32_t)c;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
@@ -181,22 +187,23 @@ static int secp256k1_fe_impl_normalizes_to_zero(const secp256k1_fe *r) {
 
     /* z0 tracks a possible raw value of 0, z1 tracks a possible raw value of P */
     uint32_t z0, z1;
+    uint64_t c; /* 64-bit carry: magnitude-32 limbs leave no uint32 headroom for the reduction/carry */
 
     /* Reduce t9 at the start so there will be at most a single carry from the first pass */
     uint32_t x = t9 >> 22; t9 &= 0x03FFFFFUL;
 
     /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL; t1 += (x << 6);
-    t1 += (t0 >> 26); t0 &= 0x3FFFFFFUL; z0  = t0; z1  = t0 ^ 0x3D0UL;
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL; z0 |= t1; z1 &= t1 ^ 0x40UL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL; z0 |= t2; z1 &= t2;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL; z0 |= t3; z1 &= t3;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL; z0 |= t4; z1 &= t4;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL; z0 |= t5; z1 &= t5;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL; z0 |= t6; z1 &= t6;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL; z0 |= t7; z1 &= t7;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL; z0 |= t8; z1 &= t8;
-                                         z0 |= t9; z1 &= t9 ^ 0x3C00000UL;
+    c = t0 + x * 0x1000003D1ULL;
+    t0 = c & 0x3FFFFFFUL; c >>= 26;          z0  = t0; z1  = t0 ^ 0x3D0UL;
+    c += t1; t1 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t1; z1 &= t1 ^ 0x40UL;
+    c += t2; t2 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t2; z1 &= t2;
+    c += t3; t3 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t3; z1 &= t3;
+    c += t4; t4 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t4; z1 &= t4;
+    c += t5; t5 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t5; z1 &= t5;
+    c += t6; t6 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t6; z1 &= t6;
+    c += t7; t7 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t7; z1 &= t7;
+    c += t8; t8 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t8; z1 &= t8;
+    t9 += (uint32_t)c;                       z0 |= t9; z1 &= t9 ^ 0x3C00000UL;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
@@ -208,6 +215,7 @@ static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
     uint32_t t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
     uint32_t z0, z1;
     uint32_t x;
+    uint64_t c; /* 64-bit carry: magnitude-32 limbs leave no uint32 headroom for the reduction/carry */
 
     t0 = r->n[0];
     t9 = r->n[9];
@@ -216,10 +224,10 @@ static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
     x = t9 >> 22;
 
     /* The first pass ensures the magnitude is 1, ... */
-    t0 += x * 0x3D1UL;
+    c = t0 + x * 0x1000003D1ULL;
 
     /* z0 tracks a possible raw value of 0, z1 tracks a possible raw value of P */
-    z0 = t0 & 0x3FFFFFFUL;
+    z0 = c & 0x3FFFFFFUL;
     z1 = z0 ^ 0x3D0UL;
 
     /* Fast return path should catch the majority of cases */
@@ -237,18 +245,17 @@ static int secp256k1_fe_impl_normalizes_to_zero_var(const secp256k1_fe *r) {
     t8 = r->n[8];
 
     t9 &= 0x03FFFFFUL;
-    t1 += (x << 6);
+    c >>= 26;
 
-    t1 += (t0 >> 26);
-    t2 += (t1 >> 26); t1 &= 0x3FFFFFFUL; z0 |= t1; z1 &= t1 ^ 0x40UL;
-    t3 += (t2 >> 26); t2 &= 0x3FFFFFFUL; z0 |= t2; z1 &= t2;
-    t4 += (t3 >> 26); t3 &= 0x3FFFFFFUL; z0 |= t3; z1 &= t3;
-    t5 += (t4 >> 26); t4 &= 0x3FFFFFFUL; z0 |= t4; z1 &= t4;
-    t6 += (t5 >> 26); t5 &= 0x3FFFFFFUL; z0 |= t5; z1 &= t5;
-    t7 += (t6 >> 26); t6 &= 0x3FFFFFFUL; z0 |= t6; z1 &= t6;
-    t8 += (t7 >> 26); t7 &= 0x3FFFFFFUL; z0 |= t7; z1 &= t7;
-    t9 += (t8 >> 26); t8 &= 0x3FFFFFFUL; z0 |= t8; z1 &= t8;
-                                         z0 |= t9; z1 &= t9 ^ 0x3C00000UL;
+    c += t1; t1 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t1; z1 &= t1 ^ 0x40UL;
+    c += t2; t2 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t2; z1 &= t2;
+    c += t3; t3 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t3; z1 &= t3;
+    c += t4; t4 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t4; z1 &= t4;
+    c += t5; t5 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t5; z1 &= t5;
+    c += t6; t6 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t6; z1 &= t6;
+    c += t7; t7 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t7; z1 &= t7;
+    c += t8; t8 = c & 0x3FFFFFFUL; c >>= 26; z0 |= t8; z1 &= t8;
+    t9 += (uint32_t)c;                       z0 |= t9; z1 &= t9 ^ 0x3C00000UL;
 
     /* ... except for a possible carry at bit 22 of t9 (i.e. bit 256 of the field element) */
     VERIFY_CHECK(t9 >> 23 == 0);
