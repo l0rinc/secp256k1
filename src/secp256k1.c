@@ -724,8 +724,9 @@ int secp256k1_ec_pubkey_tweak_add(const secp256k1_context* ctx, secp256k1_pubkey
     ARG_CHECK(tweak32 != NULL);
 
     ret = secp256k1_pubkey_load(ctx, &p, pubkey);
-    memset(pubkey, 0, sizeof(*pubkey));
     ret = ret && secp256k1_ec_pubkey_tweak_add_helper(&p, tweak32);
+    /* Read tweak32 before invalidating pubkey in case they overlap. */
+    memset(pubkey, 0, sizeof(*pubkey));
     if (ret) {
         secp256k1_pubkey_save(pubkey, &p);
     }

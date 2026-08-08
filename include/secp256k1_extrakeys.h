@@ -231,7 +231,8 @@ SECP256K1_API int secp256k1_keypair_xonly_pub(
  *
  *  Args:       ctx: pointer to a context object.
  *  In/Out: keypair: pointer to a keypair to apply the tweak to. Will be set to
- *                   an invalid value if this function returns 0.
+ *                   an invalid value if this function returns 0. Its storage
+ *                   may overlap with tweak32.
  *  In:     tweak32: pointer to a 32-byte tweak, which must be valid according to
  *                   secp256k1_ec_seckey_verify or 32 zero bytes. For uniformly
  *                   random 32-byte tweaks, the chance of being invalid is

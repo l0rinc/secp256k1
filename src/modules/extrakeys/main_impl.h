@@ -270,7 +270,6 @@ int secp256k1_keypair_xonly_tweak_add(const secp256k1_context* ctx, secp256k1_ke
     ARG_CHECK(tweak32 != NULL);
 
     ret = secp256k1_keypair_load(ctx, &sk, &pk, keypair);
-    memset(keypair, 0, sizeof(*keypair));
 
     y_parity = secp256k1_extrakeys_ge_even_y(&pk);
     if (y_parity == 1) {
@@ -280,6 +279,8 @@ int secp256k1_keypair_xonly_tweak_add(const secp256k1_context* ctx, secp256k1_ke
     ret &= secp256k1_ec_seckey_tweak_add_helper(&sk, tweak32);
     ret &= secp256k1_ec_pubkey_tweak_add_helper(&pk, tweak32);
 
+    /* Read tweak32 before invalidating keypair in case they overlap. */
+    memset(keypair, 0, sizeof(*keypair));
     secp256k1_declassify(ctx, &ret, sizeof(ret));
     if (ret) {
         secp256k1_keypair_save(keypair, &sk, &pk);

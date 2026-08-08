@@ -6401,6 +6401,18 @@ static void run_eckey_edge_case_test(void) {
     SECP256K1_CHECKMEM_CHECK(&pubkey, sizeof(pubkey));
     CHECK(secp256k1_memcmp_var(&pubkey, zeros, sizeof(secp256k1_pubkey)) > 0);
     pubkey_one = pubkey;
+    {
+        /* Verify that this 32-byte window is a valid tweak before aliasing it. */
+        secp256k1_pubkey expected = pubkey_one;
+        secp256k1_pubkey actual = pubkey_one;
+        unsigned char tweak_copy[32];
+
+        memcpy(tweak_copy, actual.data, sizeof(tweak_copy));
+        CHECK(secp256k1_ec_seckey_verify(CTX, tweak_copy) == 1);
+        CHECK(secp256k1_ec_pubkey_tweak_add(CTX, &expected, tweak_copy) == 1);
+        CHECK(secp256k1_ec_pubkey_tweak_add(CTX, &actual, actual.data) == 1);
+        CHECK(secp256k1_memcmp_var(&expected, &actual, sizeof(expected)) == 0);
+    }
     /* Group order + 1 is too large, reject. */
     memcpy(ctmp, orderc, 32);
     ctmp[31] = 0x42;
