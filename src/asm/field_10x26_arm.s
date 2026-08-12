@@ -101,7 +101,7 @@ secp256k1_fe_mul_inner:
 	umlal	r5, r6, r0, r14   		@ d += a[9] * b[0]
 	@ r7,r14 used in B
 
-	bic	r0, r5, field_not_M 		@ t9 = d & M
+	bic	r0, r5, #field_not_M 		@ t9 = d & M
 	str     r0, [sp, #4 + 4*9]
 	mov	r5, r5, lsr #26     		@ d >>= 26 
 	orr	r5, r5, r6, asl #6
@@ -112,14 +112,14 @@ secp256k1_fe_mul_inner:
 	adds	r5, r5, r9       		@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u0 = d & M
+	bic	r0, r5, #field_not_M 		@ u0 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u0 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t0 = c & M
+	bic	r14, r3, #field_not_M 		@ t0 = c & M
 	str	r14, [sp, #4 + 0*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -170,14 +170,14 @@ secp256k1_fe_mul_inner:
 	umlal	r9, r10, r0, r14   		@ d' += a[9] * b[3]
 	umlal	r5, r6, r0, r8   		@ d += a[9] * b[2]
 
-	bic	r0, r5, field_not_M 		@ u1 = d & M
+	bic	r0, r5, #field_not_M 		@ u1 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u1 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t1 = c & M
+	bic	r14, r3, #field_not_M 		@ t1 = c & M
 	str	r14, [sp, #4 + 1*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -191,14 +191,14 @@ secp256k1_fe_mul_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u2 = d & M
+	bic	r0, r5, #field_not_M 		@ u2 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u2 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t2 = c & M
+	bic	r14, r3, #field_not_M 		@ t2 = c & M
 	str	r14, [sp, #4 + 2*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -249,14 +249,14 @@ secp256k1_fe_mul_inner:
 	ldr	r8, [r2, #4*4]   		@ b[4]
 	umlal	r5, r6, r7, r8   		@ d += a[9] * b[4]
 
-	bic	r0, r5, field_not_M 		@ u3 = d & M
+	bic	r0, r5, #field_not_M 		@ u3 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u3 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t3 = c & M
+	bic	r14, r3, #field_not_M 		@ t3 = c & M
 	str	r14, [sp, #4 + 3*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -270,14 +270,14 @@ secp256k1_fe_mul_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u4 = d & M
+	bic	r0, r5, #field_not_M 		@ u4 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u4 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t4 = c & M
+	bic	r14, r3, #field_not_M 		@ t4 = c & M
 	str	r14, [sp, #4 + 4*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -328,14 +328,14 @@ secp256k1_fe_mul_inner:
 	umlal	r9, r10, r0, r14   		@ d' += a[9] * b[7]
 	umlal	r5, r6, r0, r8   		@ d += a[9] * b[6]
 
-	bic	r0, r5, field_not_M 		@ u5 = d & M
+	bic	r0, r5, #field_not_M 		@ u5 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u5 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t5 = c & M
+	bic	r14, r3, #field_not_M 		@ t5 = c & M
 	str	r14, [sp, #4 + 5*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -349,14 +349,14 @@ secp256k1_fe_mul_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u6 = d & M
+	bic	r0, r5, #field_not_M 		@ u6 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u6 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t6 = c & M
+	bic	r14, r3, #field_not_M 		@ t6 = c & M
 	str	r14, [sp, #4 + 6*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -407,14 +407,14 @@ secp256k1_fe_mul_inner:
 	umull	r9, r10, r0, r14  		@ d' = a[9] * b[9]
 	umlal	r5, r6, r0, r8   		@ d += a[9] * b[8]
 
-	bic	r0, r5, field_not_M 		@ u7 = d & M
+	bic	r0, r5, #field_not_M 		@ u7 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u7 * R0
 	umlal   r3, r4, r0, r14
 
-	bic	r14, r3, field_not_M 		@ t7 = c & M
+	bic	r14, r3, #field_not_M 		@ t7 = c & M
 	str	r14, [sp, #4 + 7*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -428,7 +428,7 @@ secp256k1_fe_mul_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u8 = d & M
+	bic	r0, r5, #field_not_M 		@ u8 = d & M
 	str	r0, [sp, #4 + 8*4]
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
@@ -458,7 +458,7 @@ secp256k1_fe_mul_inner:
 	add	r1, r0, #3*4
 	stmia	r1, {r2,r7,r8,r9,r10}
 
-	bic	r2, r3, field_not_M 		@ r[8] = c & M
+	bic	r2, r3, #field_not_M 		@ r[8] = c & M
 	str	r2, [r0, #8*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -487,7 +487,7 @@ secp256k1_fe_mul_inner:
 	mla	r6, r14, r4, r6			@ d.hi += c.hi * (R0 >> 4)
 	adc	r6, r6, 0	     		@ d.hi += carry
 
-	bic	r2, r5, field_not_M 		@ r[0] = d & M
+	bic	r2, r5, #field_not_M 		@ r[0] = d & M
 	str	r2, [r0, #0*4]
 
 	mov	r5, r5, lsr #26     		@ d >>= 26
@@ -502,7 +502,7 @@ secp256k1_fe_mul_inner:
 	mla	r2, r14, r4, r2      		@ tmp.hi += c.hi * (R1 >> 4)
 	adc	r6, r6, r2	   		@ d.hi += carry + tmp.hi
 
-	bic	r2, r5, field_not_M 		@ r[1] = d & M
+	bic	r2, r5, #field_not_M 		@ r[1] = d & M
 	str	r2, [r0, #1*4]
 	mov	r5, r5, lsr #26     		@ d >>= 26 (ignore hi)
 	orr	r5, r5, r6, asl #6
@@ -570,7 +570,7 @@ secp256k1_fe_sqr_inner:
 	umlal	r5, r6, r7, r14			@ d += a[4]*2 * a[5]
 	umlal	r9, r10, r14, r14		@ d' += a[5] * a[5]
 
-	bic	r0, r5, field_not_M 		@ t9 = d & M
+	bic	r0, r5, #field_not_M 		@ t9 = d & M
 	str     r0, [sp, #4 + 9*4]
 	mov	r5, r5, lsr #26     		@ d >>= 26 
 	orr	r5, r5, r6, asl #6
@@ -580,13 +580,13 @@ secp256k1_fe_sqr_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u0 = d & M
+	bic	r0, r5, #field_not_M 		@ u0 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u0 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t0 = c & M
+	bic	r14, r3, #field_not_M 		@ t0 = c & M
 	str	r14, [sp, #4 + 0*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -622,13 +622,13 @@ secp256k1_fe_sqr_inner:
 	umlal	r5, r6, r0, r8			@ d += a[5]*2 * a[6]
 	umlal	r9, r10, r8, r8			@ d' += a[6] * a[6]
 
-	bic	r0, r5, field_not_M 		@ u1 = d & M
+	bic	r0, r5, #field_not_M 		@ u1 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u1 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t1 = c & M
+	bic	r14, r3, #field_not_M 		@ t1 = c & M
 	str	r14, [sp, #4 + 1*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -642,13 +642,13 @@ secp256k1_fe_sqr_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u2 = d & M
+	bic	r0, r5, #field_not_M 		@ u2 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u2 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t2 = c & M
+	bic	r14, r3, #field_not_M 		@ t2 = c & M
 	str	r14, [sp, #4 + 2*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -684,13 +684,13 @@ secp256k1_fe_sqr_inner:
 	umlal	r5, r6, r7, r8			@ d += a[6]*2 * a[7]
 	umlal	r9, r10, r8, r8			@ d' += a[7] * a[7]
 
-	bic	r0, r5, field_not_M 		@ u3 = d & M
+	bic	r0, r5, #field_not_M 		@ u3 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u3 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t3 = c & M
+	bic	r14, r3, #field_not_M 		@ t3 = c & M
 	str	r14, [sp, #4 + 3*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -704,13 +704,13 @@ secp256k1_fe_sqr_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u4 = d & M
+	bic	r0, r5, #field_not_M 		@ u4 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u4 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t4 = c & M
+	bic	r14, r3, #field_not_M 		@ t4 = c & M
 	str	r14, [sp, #4 + 4*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -746,13 +746,13 @@ secp256k1_fe_sqr_inner:
 	umlal	r5, r6, r7, r8			@ d += a[7]*2 * a[8]
 	umlal	r9, r10, r8, r8			@ d' += a[8] * a[8]
 
-	bic	r0, r5, field_not_M 		@ u5 = d & M
+	bic	r0, r5, #field_not_M 		@ u5 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u5 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t5 = c & M
+	bic	r14, r3, #field_not_M 		@ t5 = c & M
 	str	r14, [sp, #4 + 5*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -766,13 +766,13 @@ secp256k1_fe_sqr_inner:
 	adds	r5, r5, r9			@ d += d'
 	adc	r6, r6, r10
 
-	bic	r0, r5, field_not_M 		@ u6 = d & M
+	bic	r0, r5, #field_not_M 		@ u6 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u6 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t6 = c & M
+	bic	r14, r3, #field_not_M 		@ t6 = c & M
 	str	r14, [sp, #4 + 6*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -808,13 +808,13 @@ secp256k1_fe_sqr_inner:
 	umlal	r5, r6, r2, r8			@ d += a[8]*2 * a[9]
 	@ r8 will be used in J
 
-	bic	r0, r5, field_not_M 		@ u7 = d & M
+	bic	r0, r5, #field_not_M 		@ u7 = d & M
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
 	mov     r6, r6, lsr #26
 	movw    r14, field_R0			@ c += u7 * R0
 	umlal   r3, r4, r0, r14
-	bic	r14, r3, field_not_M 		@ t7 = c & M
+	bic	r14, r3, #field_not_M 		@ t7 = c & M
 	str	r14, [sp, #4 + 7*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -827,7 +827,7 @@ secp256k1_fe_sqr_inner:
 	adc	r4, r4, r12
 	umlal	r5, r6, r8, r8			@ d += a[9] * a[9]
 
-	bic	r0, r5, field_not_M 		@ u8 = d & M
+	bic	r0, r5, #field_not_M 		@ u8 = d & M
 	str	r0, [sp, #4 + 8*4]
 	mov	r5, r5, lsr #26     		@ d >>= 26
 	orr	r5, r5, r6, asl #6
@@ -857,7 +857,7 @@ secp256k1_fe_sqr_inner:
 	add	r1, r0, #3*4
 	stmia	r1, {r2,r7,r8,r9,r10}
 
-	bic	r2, r3, field_not_M 		@ r[8] = c & M
+	bic	r2, r3, #field_not_M 		@ r[8] = c & M
 	str	r2, [r0, #8*4]
 	mov	r3, r3, lsr #26     		@ c >>= 26
 	orr	r3, r3, r4, asl #6
@@ -886,7 +886,7 @@ secp256k1_fe_sqr_inner:
 	mla	r6, r14, r4, r6			@ d.hi += c.hi * (R0 >> 4)
 	adc	r6, r6, 0	     		@ d.hi += carry
 
-	bic	r2, r5, field_not_M 		@ r[0] = d & M
+	bic	r2, r5, #field_not_M 		@ r[0] = d & M
 	str	r2, [r0, #0*4]
 
 	mov	r5, r5, lsr #26     		@ d >>= 26
@@ -901,7 +901,7 @@ secp256k1_fe_sqr_inner:
 	mla	r2, r14, r4, r2      		@ tmp.hi += c.hi * (R1 >> 4)
 	adc	r6, r6, r2	   		@ d.hi += carry + tmp.hi
 
-	bic	r2, r5, field_not_M 		@ r[1] = d & M
+	bic	r2, r5, #field_not_M 		@ r[1] = d & M
 	str	r2, [r0, #1*4]
 	mov	r5, r5, lsr #26     		@ d >>= 26 (ignore hi)
 	orr	r5, r5, r6, asl #6
