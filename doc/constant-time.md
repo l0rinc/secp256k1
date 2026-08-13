@@ -134,3 +134,35 @@ The model is relevant to callers such as ECDH and ElligatorSwift XDH only when t
 
 Supported constant-time configurations must use integer multiplication with data-independent timing or an audited fixed-latency implementation for secret-derived operands.
 Fixed loop counts and branchless disassembly are insufficient on processors without that property.
+
+## Build and deployment assurance
+
+Constant-time behavior is a property of a complete build tuple and its execution environment.
+A supported tuple must identify:
+
+* The compiler identity and version.
+* The target architecture and CPU feature baseline.
+* The selected field and scalar backends.
+* Optimization, LTO, assembly, and linker settings.
+* Any required data-independent-timing processor mode.
+
+The corresponding assurance record should retain the preprocessed secret-bearing translation units, object files, final linked binary, and annotated disassembly.
+Review must trace each conditional predicate to secret, public, or fixed-loop state.
+Counting branch mnemonics alone produces false positives from public loops and deterministic backedges.
+
+Compiler upgrades, optimization changes, and CPU-baseline changes require renewed review.
+CI can make that boundary visible by building pinned target configurations and rejecting unreviewed changes to secret-bearing final control flow or calls to variable-time runtime helpers.
+The generated-code check should complement existing Valgrind and MemorySanitizer tests rather than replace them.
+
+Target-side execution is required to check instruction behavior that disassembly cannot establish.
+For affected classic PPC32 and other historical targets, the next evidence step is to build the complete library and a representative application, confirm the sites in the linked image, and collect timing, retired-branch, branch-miss, power, or electromagnetic measurements with fixed public multipliers and selected secret witnesses.
+Any key-recovery claim should include stable trace alignment, negative controls, noise classification, and held-out recovery.
+
+There is no verified portable-C rewrite that removes every observed branch across the affected targets.
+Rewriting direct comparisons removed some branches but left multiplication carry branches and other scalar operations on several configurations.
+Where an older target must remain supported, use an audited target-specific primitive that provides data-independent control flow and instruction timing.
+Do not enable an instruction such as PowerPC `isel` unless the configured processor implements it.
+
+Until a tuple satisfies these requirements, claims should be limited to the tested source properties and host configuration rather than generalized to every supported compiler and processor.
+
+Related open discussions include [issue #784](https://github.com/bitcoin-core/secp256k1/issues/784) and [issue #1138](https://github.com/bitcoin-core/secp256k1/issues/1138).
