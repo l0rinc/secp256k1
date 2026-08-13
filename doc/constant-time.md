@@ -135,6 +135,48 @@ The model is relevant to callers such as ECDH and ElligatorSwift XDH only when t
 Supported constant-time configurations must use integer multiplication with data-independent timing or an audited fixed-latency implementation for secret-derived operands.
 Fixed loop counts and branchless disassembly are insufficient on processors without that property.
 
+## Candidate remediations
+
+No single remediation covers compiler-generated branches and operand-dependent instruction latency.
+The following changes can be developed and reviewed independently.
+
+### Replace comparison-based carry extraction
+
+The multiplication macros currently obtain the carry from `a + b` by comparing the wrapped sum with an operand.
+The same carry can be computed with bitwise operations:
+
+```c
+uint32_t sum = a + b;
+uint32_t carry = ((a & b) | ((a | b) & ~sum)) >> 31;
+```
+
+The formula matched a 64-bit reference on boundary inputs and ten million random 32-bit pairs.
+With Clang 22.1.8 `-O2`, an isolated comparison-based helper contains a conditional branch for `powerpc-unknown-linux-gnu`, while the bitwise helper contains only `add`, boolean, shift, and return instructions.
+The bitwise helper is also branchless in the tested `riscv32-unknown-elf`, `thumbv6m-none-eabi`, and `s390x-unknown-linux-gnu` outputs.
+
+This provides a portable-C candidate for the carry operations in `muladd`, `muladd_fast`, `sumadd`, and `sumadd_fast`.
+It is not a complete fix until the full scalar multiplication and reduction paths are checked with the exact affected compiler versions.
+Order comparisons, conditional negation, and other reduction operations require separate treatment, and the additional boolean operations require performance measurements on supported 32-bit targets.
+
+### Add target-specific scalar primitives
+
+Where the portable expression remains unstable or too expensive, use reviewed target-specific helpers for add-with-carry, subtract-with-borrow, and conditional selection.
+Representative instruction families include PowerPC `addc`/`adde`, RISC-V `sltu` or Zicond selection, Thumb `adds`/`adcs`, and SystemZ add-logical-with-carry and conditional-load operations.
+
+These helpers must be selected only for CPU baselines that implement the required instructions.
+Their final inlined call sites must be inspected because a branchless helper does not prevent surrounding scalar code from introducing secret control flow.
+
+### Restrict unsupported build tuples
+
+If an affected target has no reviewed primitive, configuration should reject secret-operation builds for that compiler and CPU baseline instead of inheriting a constant-time claim from the C source.
+A less disruptive first step is a configure-time warning that names the unverified tuple and points to this document, followed by an error once the supported matrix is agreed.
+
+### Require fixed-latency multiplication
+
+The early-multiplier models cannot be repaired by changing a branch predicate.
+Supported secret-operation builds must either require a documented data-independent-timing mode, use a processor with fixed-latency integer multiplication for the relevant operand widths, or replace those products with audited fixed-latency software or assembly.
+Any software replacement must itself be checked in the final binary so the compiler does not reintroduce multiplication or secret-dependent control flow.
+
 ## Build and deployment assurance
 
 Constant-time behavior is a property of a complete build tuple and its execution environment.
