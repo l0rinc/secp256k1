@@ -43,6 +43,7 @@ Implementation details
   * Optimized implementation without data-dependent branches of arithmetic modulo the curve's order.
     * Using 4 64-bit limbs (relying on __int128 support in the compiler).
     * Using 8 32-bit limbs.
+  * Constant-time execution depends on the final compiler output and hardware. See [Constant-time execution](doc/constant-time.md).
 * Modular inverses (both field elements and scalars) based on [safegcd](https://gcd.cr.yp.to/index.html) with some modifications, and a variable-time variant (by Peter Dettman).
 * Group operations
   * Point addition formula specifically simplified for the curve equation (y^2 = x^3 + 7).
