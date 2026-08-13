@@ -32,7 +32,9 @@ typedef struct {
  */
 static void secp256k1_modinv32_var(secp256k1_modinv32_signed30 *x, const secp256k1_modinv32_modinfo *modinfo);
 
-/* Same as secp256k1_modinv32_var, but constant time in x (not in the modulus). */
+/* Same as secp256k1_modinv32_var, but designed to be constant time in x
+ * (not in the modulus). This requires data-independent compiler output and
+ * integer multiplication latency. */
 static void secp256k1_modinv32(secp256k1_modinv32_signed30 *x, const secp256k1_modinv32_modinfo *modinfo);
 
 /* Compute the Jacobi symbol for (x | modinfo->modulus). x must be coprime with modulus (and thus

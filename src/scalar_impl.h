@@ -162,7 +162,9 @@ static void secp256k1_scalar_split_lambda(secp256k1_scalar * SECP256K1_RESTRICT 
     VERIFY_CHECK(r2 != k);
     VERIFY_CHECK(r1 != r2);
 
-    /* these _var calls are constant time since the shift amount is constant */
+    /* The shift amount is constant, so these _var calls have data-independent
+     * source control flow. Constant-time execution also requires data-independent
+     * compiler output and multiplication latency. */
     secp256k1_scalar_mul_shift_var(&c1, k, &g1, 384);
     secp256k1_scalar_mul_shift_var(&c2, k, &g2, 384);
     secp256k1_scalar_mul(&c1, &c1, &minus_b1);

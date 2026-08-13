@@ -99,3 +99,38 @@ An earlier ECDSA recovery model placed the secret key in the first scalar multip
 The implementation computes `public r * secret key` instead.
 The scalar product is algebraically commutative, but the generated carry trace depends on operand order.
 The earlier complete ECDSA recovery is therefore retracted; no corrected complete ECDSA recovery has been validated.
+
+## Operand-dependent multiplication latency
+
+A fixed instruction sequence can still take secret-dependent time when the processor's integer multiplier finishes early for small operands.
+This affects constant-time reasoning even when the compiler emits no secret-dependent branches.
+
+### Fixed-step scalar inversion
+
+The 32-bit safegcd scalar inverse executes a fixed 20 rounds of 30 divsteps.
+Its update routines perform approximately 1,800 multiplications with secret-derived operands during one inverse.
+Software models using documented early-termination rules produced different aggregate costs for different inputs:
+
+| Multiplier model | Modeled aggregate range | Distinct totals in 20,000 samples |
+| --- | ---: | ---: |
+| ARM7TDMI | 4110 through 4662 | 440 |
+| MIPS 4Kc | 2178 through 2637 | 226 |
+
+For 64 verified deterministic ECDSA signatures, the modeled inverse component produced 57 distinct ARM7TDMI totals and 45 distinct MIPS 4Kc totals.
+Repeating a key and message repeats the RFC6979 nonce and therefore the modeled value, creating an averaging target.
+No physical timing distribution, nonce recovery, or signing-key recovery has been demonstrated from this model.
+
+### GLV decomposition
+
+Constant-time arbitrary-point multiplication splits a secret scalar into two approximately 128-bit GLV components.
+The decomposition uses scalar products whose operands depend on the secret.
+
+On the 8x32 scalar backend, a positive small split component has zero high limbs while its negative representation lies near the group order and has high limbs close to `0xffffffff`.
+Under the same early-multiplier models, aggregate modeled multiplication cost classified the sign of the second component with 100% accuracy in the ARM7TDMI model and 99.9992% accuracy in the MIPS 4Kc model over 500,000 valid scalars.
+
+That sign is one predicate of a transformed scalar, not a literal private-key bit.
+No method has converted it into complete key recovery.
+The model is relevant to callers such as ECDH and ElligatorSwift XDH only when the selected scalar backend, compiler operand placement, processor multiplier, and measurement channel match its assumptions.
+
+Supported constant-time configurations must use integer multiplication with data-independent timing or an audited fixed-latency implementation for secret-derived operands.
+Fixed loop counts and branchless disassembly are insufficient on processors without that property.
