@@ -2259,6 +2259,37 @@ static void run_int128_tests(void) {
 
 /***** SCALAR TESTS *****/
 
+#ifdef SECP256K1_WIDEMUL_INT64
+static void test_scalar_u32_add_carry(void) {
+    static const uint32_t CASES[][2] = {
+        {0, 0},
+        {0, UINT32_MAX},
+        {1, UINT32_MAX},
+        {UINT32_MAX, UINT32_MAX},
+        {0x7FFFFFFFU, 1},
+        {0x80000000U, 0x80000000U}
+    };
+    int i;
+
+    for (i = 0; (size_t)i < ARRAY_SIZE(CASES); i++) {
+        uint32_t sum;
+        uint64_t expected = (uint64_t)CASES[i][0] + CASES[i][1];
+        uint32_t carry = secp256k1_scalar_u32_add_carry(&sum, CASES[i][0], CASES[i][1]);
+        CHECK(sum == (uint32_t)expected);
+        CHECK(carry == (uint32_t)(expected >> 32));
+    }
+    for (i = 0; i < 128 * COUNT; i++) {
+        uint32_t a = testrand32();
+        uint32_t b = testrand32();
+        uint32_t sum;
+        uint64_t expected = (uint64_t)a + b;
+        uint32_t carry = secp256k1_scalar_u32_add_carry(&sum, a, b);
+        CHECK(sum == (uint32_t)expected);
+        CHECK(carry == (uint32_t)(expected >> 32));
+    }
+}
+#endif
+
 static void scalar_test(void) {
     secp256k1_scalar s;
     secp256k1_scalar s1;
@@ -2481,6 +2512,9 @@ static void test_scalar_check_overflow(void) {
 static void run_scalar_tests(void) {
     int i;
 
+#ifdef SECP256K1_WIDEMUL_INT64
+    test_scalar_u32_add_carry();
+#endif
     test_scalar_check_overflow();
 
     for (i = 0; i < 128 * COUNT; i++) {

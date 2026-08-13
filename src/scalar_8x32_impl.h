@@ -342,31 +342,52 @@ static int secp256k1_scalar_cond_negate(secp256k1_scalar *r, int flag) {
 
 /* Inspired by the macros in OpenSSL's crypto/bn/asm/x86_64-gcc.c. */
 
+/** Add a and b, and return the carry.
+ * Use explicit carry instructions on 32-bit PowerPC because older Clang
+ * versions otherwise lower the carry comparison to conditional branches. */
+static SECP256K1_FORCE_INLINE uint32_t secp256k1_scalar_u32_add_carry(uint32_t *sum, uint32_t a, uint32_t b) {
+#if defined(__powerpc__) && !defined(__powerpc64__) && defined(__clang__) && __clang_major__ < 20
+    uint32_t carry = 0;
+    __asm__(
+        "addc %0,%2,%3\n\t"
+        "addze %1,%1"
+        : "=r"(*sum), "+r"(carry)
+        : "r"(a), "r"(b)
+        : "xer"
+    );
+    return carry;
+#else
+    uint32_t result = a + b;
+    *sum = result;
+    return result < b;
+#endif
+}
+
 /** Add a*b to the number defined by (c0,c1,c2). c2 must never overflow. */
 #define muladd(a,b) { \
-    uint32_t tl, th; \
+    uint32_t tl, th, over; \
     { \
         uint64_t t = (uint64_t)a * b; \
         th = t >> 32;         /* at most 0xFFFFFFFE */ \
         tl = t; \
     } \
-    c0 += tl;                 /* overflow is handled on the next line */ \
-    th += (c0 < tl);          /* at most 0xFFFFFFFF */ \
-    c1 += th;                 /* overflow is handled on the next line */ \
-    c2 += (c1 < th);          /* never overflows by contract (verified in the next line) */ \
+    over = secp256k1_scalar_u32_add_carry(&c0, c0, tl); \
+    th += over;               /* at most 0xFFFFFFFF */ \
+    over = secp256k1_scalar_u32_add_carry(&c1, c1, th); \
+    c2 += over;               /* never overflows by contract (verified in the next line) */ \
     VERIFY_CHECK((c1 >= th) || (c2 != 0)); \
 }
 
 /** Add a*b to the number defined by (c0,c1). c1 must never overflow. */
 #define muladd_fast(a,b) { \
-    uint32_t tl, th; \
+    uint32_t tl, th, over; \
     { \
         uint64_t t = (uint64_t)a * b; \
         th = t >> 32;         /* at most 0xFFFFFFFE */ \
         tl = t; \
     } \
-    c0 += tl;                 /* overflow is handled on the next line */ \
-    th += (c0 < tl);          /* at most 0xFFFFFFFF */ \
+    over = secp256k1_scalar_u32_add_carry(&c0, c0, tl); \
+    th += over;               /* at most 0xFFFFFFFF */ \
     c1 += th;                 /* never overflows by contract (verified in the next line) */ \
     VERIFY_CHECK(c1 >= th); \
 }
@@ -374,16 +395,14 @@ static int secp256k1_scalar_cond_negate(secp256k1_scalar *r, int flag) {
 /** Add a to the number defined by (c0,c1,c2). c2 must never overflow. */
 #define sumadd(a) { \
     unsigned int over; \
-    c0 += (a);                  /* overflow is handled on the next line */ \
-    over = (c0 < (a)); \
-    c1 += over;                 /* overflow is handled on the next line */ \
-    c2 += (c1 < over);          /* never overflows by contract */ \
+    over = secp256k1_scalar_u32_add_carry(&c0, c0, (a)); \
+    over = secp256k1_scalar_u32_add_carry(&c1, c1, over); \
+    c2 += over;                 /* never overflows by contract */ \
 }
 
 /** Add a to the number defined by (c0,c1). c1 must never overflow, c2 must be zero. */
 #define sumadd_fast(a) { \
-    c0 += (a);                 /* overflow is handled on the next line */ \
-    c1 += (c0 < (a));          /* never overflows by contract (verified the next line) */ \
+    c1 += secp256k1_scalar_u32_add_carry(&c0, c0, (a)); \
     VERIFY_CHECK((c1 != 0) | (c0 >= (a))); \
     VERIFY_CHECK(c2 == 0); \
 }
