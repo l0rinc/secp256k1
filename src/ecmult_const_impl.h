@@ -395,6 +395,8 @@ static int secp256k1_ecmult_const_xonly(secp256k1_fe* r, const secp256k1_fe *n, 
     if (d) secp256k1_fe_mul(&i, &i, d);
     secp256k1_fe_inv(&i, &i);
     secp256k1_fe_mul(r, &rj.x, &i);
+    secp256k1_fe_clear(&i);
+    secp256k1_gej_clear(&rj);
 
     return 1;
 }
