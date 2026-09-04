@@ -761,12 +761,9 @@ int secp256k1_ec_pubkey_tweak_mul(const secp256k1_context* ctx, secp256k1_pubkey
     secp256k1_scalar_set_b32(&factor, tweak32, &overflow);
     ret = !overflow && secp256k1_pubkey_load(ctx, &p, pubkey);
     memset(pubkey, 0, sizeof(*pubkey));
+    ret = ret && secp256k1_eckey_pubkey_tweak_mul(&p, &factor);
     if (ret) {
-        if (secp256k1_eckey_pubkey_tweak_mul(&p, &factor)) {
-            secp256k1_pubkey_save(pubkey, &p);
-        } else {
-            ret = 0;
-        }
+        secp256k1_pubkey_save(pubkey, &p);
     }
 
     return ret;
