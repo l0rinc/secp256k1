@@ -17,6 +17,8 @@
 static int secp256k1_eckey_seckey_tweak_add(secp256k1_scalar *key, const secp256k1_scalar *tweak);
 static int secp256k1_eckey_pubkey_tweak_add(secp256k1_ge *key, const secp256k1_scalar *tweak);
 static int secp256k1_eckey_seckey_tweak_mul(secp256k1_scalar *key, const secp256k1_scalar *tweak);
+/** Set key to tweak*key, in constant time with respect to tweak. key must not be infinity.
+ *  Returns 0 (and sets key to infinity) if tweak is zero. */
 static int secp256k1_eckey_pubkey_tweak_mul(secp256k1_ge *key, const secp256k1_scalar *tweak);
 
 #endif /* SECP256K1_ECKEY_H */

@@ -13,6 +13,7 @@
 #include "scalar.h"
 #include "field.h"
 #include "group.h"
+#include "ecmult_const.h"
 #include "ecmult_gen.h"
 
 static int secp256k1_eckey_seckey_tweak_add(secp256k1_scalar *key, const secp256k1_scalar *tweak) {
@@ -42,14 +43,10 @@ static int secp256k1_eckey_seckey_tweak_mul(secp256k1_scalar *key, const secp256
 
 static int secp256k1_eckey_pubkey_tweak_mul(secp256k1_ge *key, const secp256k1_scalar *tweak) {
     secp256k1_gej pt;
-    if (secp256k1_scalar_is_zero(tweak)) {
-        return 0;
-    }
-
-    secp256k1_gej_set_ge(&pt, key);
-    secp256k1_ecmult(&pt, &pt, tweak, NULL);
+    secp256k1_ecmult_const(&pt, key, tweak);
     secp256k1_ge_set_gej(key, &pt);
-    return 1;
+    secp256k1_gej_clear(&pt);
+    return !secp256k1_ge_is_infinity(key);
 }
 
 #endif /* SECP256K1_ECKEY_IMPL_H */

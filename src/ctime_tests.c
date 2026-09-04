@@ -140,7 +140,7 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
 
     /* Test public-key tweaking. */
     tweaked_pubkey = pubkey;
-    SECP256K1_CHECKMEM_DEFINE(msg, 32); /* TODO: Test multiplication with a secret tweak. */
+    SECP256K1_CHECKMEM_UNDEFINE(msg, 32);
     ret = secp256k1_ec_pubkey_tweak_mul(ctx, &tweaked_pubkey, msg);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);

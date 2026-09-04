@@ -759,9 +759,14 @@ int secp256k1_ec_pubkey_tweak_mul(const secp256k1_context* ctx, secp256k1_pubkey
     ARG_CHECK(tweak32 != NULL);
 
     secp256k1_scalar_set_b32(&factor, tweak32, &overflow);
+    /* Overflow rejects the tweak before loading the public key. */
+    secp256k1_declassify(ctx, &overflow, sizeof(overflow));
     ret = !overflow && secp256k1_pubkey_load(ctx, &p, pubkey);
     memset(pubkey, 0, sizeof(*pubkey));
     ret = ret && secp256k1_eckey_pubkey_tweak_mul(&p, &factor);
+    secp256k1_scalar_clear(&factor);
+    /* ret is not a secret: it is the return value. */
+    secp256k1_declassify(ctx, &ret, sizeof(ret));
     if (ret) {
         secp256k1_pubkey_save(pubkey, &p);
     }
