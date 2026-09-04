@@ -132,7 +132,7 @@ int secp256k1_xonly_pubkey_tweak_add(const secp256k1_context* ctx, secp256k1_pub
     ARG_CHECK(tweak32 != NULL);
 
     if (!secp256k1_xonly_pubkey_load(ctx, &pk, internal_pubkey)
-        || !secp256k1_ec_pubkey_tweak_add_helper(&pk, tweak32)) {
+        || !secp256k1_ec_pubkey_tweak_add_helper(ctx, &pk, tweak32)) {
         return 0;
     }
     secp256k1_pubkey_save(output_pubkey, &pk);
@@ -149,7 +149,7 @@ int secp256k1_xonly_pubkey_tweak_add_check(const secp256k1_context* ctx, const u
     ARG_CHECK(tweak32 != NULL);
 
     if (!secp256k1_xonly_pubkey_load(ctx, &pk, internal_pubkey)
-        || !secp256k1_ec_pubkey_tweak_add_helper(&pk, tweak32)) {
+        || !secp256k1_ec_pubkey_tweak_add_helper(ctx, &pk, tweak32)) {
         return 0;
     }
     secp256k1_fe_normalize_var(&pk.x);
@@ -278,7 +278,7 @@ int secp256k1_keypair_xonly_tweak_add(const secp256k1_context* ctx, secp256k1_ke
     }
 
     ret &= secp256k1_ec_seckey_tweak_add_helper(&sk, tweak32);
-    ret &= secp256k1_ec_pubkey_tweak_add_helper(&pk, tweak32);
+    ret &= secp256k1_ec_pubkey_tweak_add_helper(ctx, &pk, tweak32);
 
     secp256k1_declassify(ctx, &ret, sizeof(ret));
     if (ret) {

@@ -252,7 +252,7 @@ static int secp256k1_musig_pubkey_tweak_add_internal(const secp256k1_context* ct
         secp256k1_scalar_negate(&cache_i.tweak, &cache_i.tweak);
     }
     secp256k1_scalar_add(&cache_i.tweak, &cache_i.tweak, &tweak);
-    if (!secp256k1_eckey_pubkey_tweak_add(&cache_i.pk, &tweak)) {
+    if (!secp256k1_eckey_pubkey_tweak_add(&ctx->ecmult_gen_ctx, &cache_i.pk, &tweak)) {
         return 0;
     }
     /* eckey_pubkey_tweak_add fails if cache_i.pk is infinity */

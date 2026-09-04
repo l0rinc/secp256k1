@@ -290,6 +290,15 @@ SECP256K1_INLINE static void secp256k1_ecmult_gen_ge(const secp256k1_ecmult_gen_
     secp256k1_gej_clear(&rj);
 }
 
+SECP256K1_INLINE static void secp256k1_ecmult_gen_gej_unblinded_fallback(const secp256k1_ecmult_gen_context *ecmult_gen_ctx, secp256k1_gej *r, const secp256k1_scalar *a) {
+    secp256k1_ecmult_gen_context tmp;
+    if (!secp256k1_ecmult_gen_context_is_built(ecmult_gen_ctx)) {
+        secp256k1_ecmult_gen_context_build(&tmp, NULL);
+        ecmult_gen_ctx = &tmp;
+    }
+    secp256k1_ecmult_gen_gej(ecmult_gen_ctx, r, a);
+}
+
 /* Setup blinding values for secp256k1_ecmult_gen. */
 static void secp256k1_ecmult_gen_blind(secp256k1_ecmult_gen_context *ecmult_gen_ctx, const secp256k1_hash_ctx *hash_ctx, const unsigned char *seed32) {
     secp256k1_scalar b;

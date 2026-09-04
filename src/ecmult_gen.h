@@ -139,6 +139,10 @@ static void secp256k1_ecmult_gen_context_clear(secp256k1_ecmult_gen_context *ecm
 /** Multiply with the generator: R = a*G */
 static void secp256k1_ecmult_gen_gej(const secp256k1_ecmult_gen_context *ecmult_gen_ctx, secp256k1_gej *r, const secp256k1_scalar *a);
 static void secp256k1_ecmult_gen_ge(const secp256k1_ecmult_gen_context *ecmult_gen_ctx, secp256k1_ge *r, const secp256k1_scalar *a);
+/** As secp256k1_ecmult_gen_gej, but ecmult_gen_ctx may be unbuilt (e.g., that of
+ *  secp256k1_context_static), in which case a temporary unblinded context is used.
+ *  Constant-time in a either way. */
+static void secp256k1_ecmult_gen_gej_unblinded_fallback(const secp256k1_ecmult_gen_context *ecmult_gen_ctx, secp256k1_gej *r, const secp256k1_scalar *a);
 
 static void secp256k1_ecmult_gen_blind(secp256k1_ecmult_gen_context *ecmult_gen_ctx, const secp256k1_hash_ctx *hash_ctx, const unsigned char *seed32);
 
