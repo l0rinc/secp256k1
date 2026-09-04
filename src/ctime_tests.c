@@ -99,6 +99,7 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
 #endif
 #ifdef ENABLE_MODULE_EXTRAKEYS
     secp256k1_keypair keypair;
+    secp256k1_xonly_pubkey xonly_pubkey;
 #endif
 #ifdef ENABLE_MODULE_ELLSWIFT
     unsigned char ellswift[64];
@@ -139,6 +140,12 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     CHECK(secp256k1_ec_pubkey_serialize(ctx, spubkey, &outputlen, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
 
     /* Test public-key tweaking. */
+    tweaked_pubkey = pubkey;
+    SECP256K1_CHECKMEM_DEFINE(msg, 32); /* TODO: Test addition with a secret tweak. */
+    ret = secp256k1_ec_pubkey_tweak_add(ctx, &tweaked_pubkey, msg);
+    SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
+    CHECK(ret == 1);
+
     tweaked_pubkey = pubkey;
     SECP256K1_CHECKMEM_UNDEFINE(msg, 32);
     ret = secp256k1_ec_pubkey_tweak_mul(ctx, &tweaked_pubkey, msg);
@@ -196,15 +203,22 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
 
-    /* Test keypair_create and keypair_xonly_tweak_add. */
 #ifdef ENABLE_MODULE_EXTRAKEYS
+    /* Test xonly_pubkey_tweak_add. */
+    CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, NULL, &pubkey));
+    SECP256K1_CHECKMEM_DEFINE(msg, 32); /* TODO: Test x-only addition with a secret tweak. */
+    ret = secp256k1_xonly_pubkey_tweak_add(ctx, &tweaked_pubkey, &xonly_pubkey, msg);
+    SECP256K1_CHECKMEM_DEFINE(&tweaked_pubkey, sizeof(tweaked_pubkey));
+    SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
+    CHECK(ret == 1);
+
+    /* Test keypair_create and keypair_xonly_tweak_add. */
     SECP256K1_CHECKMEM_UNDEFINE(key, 32);
     ret = secp256k1_keypair_create(ctx, &keypair, key);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
 
-    /* The tweak is not treated as a secret in keypair_tweak_add */
-    SECP256K1_CHECKMEM_DEFINE(msg, 32);
+    SECP256K1_CHECKMEM_DEFINE(msg, 32); /* TODO: Test keypair addition with a secret tweak. */
     ret = secp256k1_keypair_xonly_tweak_add(ctx, &keypair, msg);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
