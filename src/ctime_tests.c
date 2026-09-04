@@ -204,11 +204,16 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     CHECK(ret == 1);
 
 #ifdef ENABLE_MODULE_EXTRAKEYS
-    /* Test xonly_pubkey_tweak_add. */
+    /* Test xonly_pubkey_tweak_add and xonly_pubkey_tweak_add_check. */
     CHECK(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, NULL, &pubkey));
     SECP256K1_CHECKMEM_UNDEFINE(msg, 32);
     ret = secp256k1_xonly_pubkey_tweak_add(ctx, &tweaked_pubkey, &xonly_pubkey, msg);
     SECP256K1_CHECKMEM_DEFINE(&tweaked_pubkey, sizeof(tweaked_pubkey));
+    SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
+    CHECK(ret == 1);
+    CHECK(secp256k1_ec_pubkey_serialize(ctx, spubkey, &outputlen, &tweaked_pubkey, SECP256K1_EC_COMPRESSED));
+    SECP256K1_CHECKMEM_DEFINE(msg, 32); /* TODO: Test x-only checking with a secret tweak. */
+    ret = secp256k1_xonly_pubkey_tweak_add_check(ctx, &spubkey[1], spubkey[0] == SECP256K1_TAG_PUBKEY_ODD, &xonly_pubkey, msg);
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret == 1);
 
