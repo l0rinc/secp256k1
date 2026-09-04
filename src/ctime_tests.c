@@ -85,6 +85,7 @@ int main(void) {
 static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     secp256k1_ecdsa_signature signature;
     secp256k1_pubkey pubkey;
+    secp256k1_pubkey tweaked_pubkey;
     size_t siglen = 74;
     size_t outputlen = 33;
     int i;
@@ -136,6 +137,15 @@ static void run_tests(secp256k1_context *ctx, unsigned char *key) {
     SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
     CHECK(ret);
     CHECK(secp256k1_ec_pubkey_serialize(ctx, spubkey, &outputlen, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+
+    /* Test public-key tweaking. */
+    tweaked_pubkey = pubkey;
+    SECP256K1_CHECKMEM_DEFINE(msg, 32); /* TODO: Test multiplication with a secret tweak. */
+    ret = secp256k1_ec_pubkey_tweak_mul(ctx, &tweaked_pubkey, msg);
+    SECP256K1_CHECKMEM_DEFINE(&ret, sizeof(ret));
+    CHECK(ret == 1);
+    /* The signing tests below treat the message as public. */
+    SECP256K1_CHECKMEM_DEFINE(msg, 32);
 
     /* Test signing. */
     SECP256K1_CHECKMEM_UNDEFINE(key, 32);
