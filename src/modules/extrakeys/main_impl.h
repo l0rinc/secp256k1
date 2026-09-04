@@ -141,7 +141,7 @@ int secp256k1_xonly_pubkey_tweak_add(const secp256k1_context* ctx, secp256k1_pub
 
 int secp256k1_xonly_pubkey_tweak_add_check(const secp256k1_context* ctx, const unsigned char *tweaked_pubkey32, int tweaked_pk_parity, const secp256k1_xonly_pubkey *internal_pubkey, const unsigned char *tweak32) {
     secp256k1_ge pk;
-    unsigned char pk_expected32[32];
+    secp256k1_fe tweaked_x;
 
     VERIFY_CHECK(ctx != NULL);
     ARG_CHECK(internal_pubkey != NULL);
@@ -149,15 +149,14 @@ int secp256k1_xonly_pubkey_tweak_add_check(const secp256k1_context* ctx, const u
     ARG_CHECK(tweak32 != NULL);
 
     if (!secp256k1_xonly_pubkey_load(ctx, &pk, internal_pubkey)
+        || !secp256k1_fe_set_b32_limit(&tweaked_x, tweaked_pubkey32)
         || !secp256k1_ec_pubkey_tweak_add_helper(ctx, &pk, tweak32)) {
         return 0;
     }
-    secp256k1_fe_normalize_var(&pk.x);
-    secp256k1_fe_normalize_var(&pk.y);
-    secp256k1_fe_get_b32(pk_expected32, &pk.x);
-
-    return secp256k1_memcmp_var(&pk_expected32, tweaked_pubkey32, 32) == 0
-            && secp256k1_fe_is_odd(&pk.y) == tweaked_pk_parity;
+    /* Compare in constant time because pk depends on tweak32. */
+    secp256k1_fe_normalize(&pk.y);
+    return secp256k1_fe_equal(&pk.x, &tweaked_x)
+            & (secp256k1_fe_is_odd(&pk.y) == tweaked_pk_parity);
 }
 
 static void secp256k1_keypair_save(secp256k1_keypair *keypair, const secp256k1_scalar *sk, secp256k1_ge *pk) {
