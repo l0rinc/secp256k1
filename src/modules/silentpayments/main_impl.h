@@ -171,7 +171,7 @@ static int secp256k1_silentpayments_create_output_pubkey(const secp256k1_context
      * to protect against this function being called with malicious inputs, i.e.,
      *     spend_pubkey = -(_create_output_tweak(shared_secret33, k))*G
      */
-    if (!secp256k1_eckey_pubkey_tweak_add(&output_ge, &t_k_scalar)) {
+    if (!secp256k1_eckey_pubkey_tweak_add(&ctx->ecmult_gen_ctx, &output_ge, &t_k_scalar)) {
         secp256k1_scalar_clear(&t_k_scalar);
         return 0;
     }
@@ -701,7 +701,7 @@ int secp256k1_silentpayments_recipient_scan_outputs(
         /* Calculate unlabeled_output = unlabeled_spend_pubkey + t_k * G.
          * This can fail if t_k * G is the negation of unlabeled_spend_pubkey, but this happens only with negligible
          * probability for honestly created unlabeled_spend_pubkey as t_k is the output of a hash function. */
-        if (!secp256k1_eckey_pubkey_tweak_add(&unlabeled_output_ge, &t_k_scalar)) {
+        if (!secp256k1_eckey_pubkey_tweak_add(&ctx->ecmult_gen_ctx, &unlabeled_output_ge, &t_k_scalar)) {
             /* Leaking these values would break indistinguishability of the transaction, so clear them. */
             secp256k1_scalar_clear(&t_k_scalar);
             secp256k1_memclear_explicit(&shared_secret, sizeof(shared_secret));

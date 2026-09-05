@@ -240,6 +240,9 @@ static void test_xonly_pubkey_tweak_check(void) {
     CHECK(secp256k1_xonly_pubkey_serialize(CTX, buf32, &internal_xonly_pk) == 1);
     CHECK(secp256k1_xonly_pubkey_tweak_add_check(CTX, buf32, pk_parity, &internal_xonly_pk, tweak) == 0);
 
+    /* Out-of-range expected x coordinate */
+    CHECK(secp256k1_xonly_pubkey_tweak_add_check(CTX, overflows, pk_parity, &internal_xonly_pk, tweak) == 0);
+
     /* Overflowing tweak not allowed */
     CHECK(secp256k1_xonly_pubkey_tweak_add_check(CTX, output_pk32, pk_parity, &internal_xonly_pk, overflows) == 0);
     CHECK(secp256k1_xonly_pubkey_tweak_add(CTX, &output_pk, &internal_xonly_pk, overflows) == 0);
