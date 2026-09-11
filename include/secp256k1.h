@@ -798,7 +798,8 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_ec_seckey_tweak_add(
  *           secret key). 1 otherwise.
  *  Args:    ctx:   pointer to a context object.
  *  In/Out: pubkey: pointer to a public key object. pubkey will be set to an
- *                  invalid value if this function returns 0.
+ *                  invalid value if this function returns 0. Its storage may
+ *                  overlap with tweak32.
  *  In:    tweak32: pointer to a 32-byte tweak, which must be valid according to
  *                  secp256k1_ec_seckey_verify or 32 zero bytes. For uniformly
  *                  random 32-byte tweaks, the chance of being invalid is
