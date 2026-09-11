@@ -84,6 +84,24 @@ static void test_ecdsa_recovery_api_internal(void) {
     CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, NULL, &recsig));
     CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, NULL));
     CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, &recsig) == 1);
+    /* Mutating an initialized opaque signature bypasses the parser bounds. */
+    {
+        secp256k1_ecdsa_recoverable_signature invalid_recsig;
+        int i;
+
+        for (i = 0; i < 3; i++) {
+            invalid_recsig = recsig;
+            if (i < 2) {
+                memcpy(&invalid_recsig.data[32 * i], over_privkey, 32);
+            } else {
+                invalid_recsig.data[64] = 4;
+            }
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, &invalid_recsig));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_convert(CTX, &normal_sig, &invalid_recsig));
+            CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recover(CTX, &recpubkey, &invalid_recsig, message));
+        }
+    }
+    CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(CTX, sig, &recid, &recsig) == 1);
 
     CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_parse_compact(CTX, NULL, sig, recid));
     CHECK_ILLEGAL(CTX, secp256k1_ecdsa_recoverable_signature_parse_compact(CTX, &recsig, NULL, recid));
