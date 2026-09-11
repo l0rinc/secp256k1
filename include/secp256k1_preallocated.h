@@ -118,6 +118,8 @@ SECP256K1_API secp256k1_context *secp256k1_context_preallocated_clone(
  *  preallocated pointer given to secp256k1_context_preallocated_create or
  *  secp256k1_context_preallocated_clone.
  *
+ *  If ctx is NULL, this function is a no-op.
+ *
  *  Args:   ctx: pointer to a context to destroy, constructed using
  *               secp256k1_context_preallocated_create or
  *               secp256k1_context_preallocated_clone
@@ -125,7 +127,7 @@ SECP256K1_API secp256k1_context *secp256k1_context_preallocated_clone(
  */
 SECP256K1_API void secp256k1_context_preallocated_destroy(
     secp256k1_context *ctx
-) SECP256K1_ARG_NONNULL(1);
+);
 
 #ifdef __cplusplus
 }
