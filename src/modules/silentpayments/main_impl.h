@@ -571,8 +571,8 @@ int secp256k1_silentpayments_recipient_prevouts_summary_create(
 enum { LABEL_BATCH_SIZE = 8 }; /* batch size expressed in number of tx outputs */
 
 /* Check the label cache for each pair of candidates in a batch.
- * Returns the first matching tx output index, or -1 if none has a matching label. */
-static int secp256k1_silentpayments_check_label_batch(
+ * Returns the first matching tx output index, or SIZE_MAX if none has a matching label. */
+static size_t secp256k1_silentpayments_check_label_batch(
     secp256k1_ge *label_ge,
     const unsigned char **label_tweak,
     const secp256k1_gej *label_candidates_gej,
@@ -597,10 +597,10 @@ static int secp256k1_silentpayments_check_label_batch(
         *label_tweak = label_lookup(label33, label_context);
         if (*label_tweak != NULL) {
             *label_ge = label_candidates_ge[i];
-            return (int)(j_start + i / 2);
+            return j_start + i / 2;
         }
     }
-    return -1;
+    return SIZE_MAX;
 }
 
 int secp256k1_silentpayments_recipient_scan_outputs(
@@ -617,8 +617,8 @@ int secp256k1_silentpayments_recipient_scan_outputs(
     secp256k1_ge unlabeled_spend_pubkey_ge, prevouts_pubkey_sum_ge, tx_output_ge;
     unsigned char shared_secret[33];
     uint32_t k, k_max;
-    size_t i;
-    int found_idx, combined, valid_scan_key, ret;
+    size_t i, found_idx;
+    int combined, valid_scan_key, ret;
 
     /* Sanity check inputs */
     VERIFY_CHECK(ctx != NULL);
@@ -671,7 +671,7 @@ int secp256k1_silentpayments_recipient_scan_outputs(
     /* Clear the scan_key_scalar since we no longer need it and leaking this value would break indistinguishability of the transaction. */
     secp256k1_scalar_clear(&scan_key_scalar);
 
-    found_idx = -1;
+    found_idx = SIZE_MAX;
     /* Don't look further than the per-group recipient limit, in order to avoid quadratic scaling issues. */
     k_max = (n_tx_outputs < SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT) ?
              n_tx_outputs : SECP256K1_SILENTPAYMENTS_RECIPIENT_GROUP_LIMIT;
@@ -710,7 +710,7 @@ int secp256k1_silentpayments_recipient_scan_outputs(
         /* Calculate unlabeled_output_negated = -unlabeled_output */
         secp256k1_ge_neg(&unlabeled_output_negated_ge, &unlabeled_output_ge);
 
-        found_idx = -1;
+        found_idx = SIZE_MAX;
         secp256k1_fe_normalize_var(&unlabeled_output_ge.y);
         secp256k1_extrakeys_ge_even_y(&unlabeled_output_ge);
         secp256k1_xonly_pubkey_save(&unlabeled_output_xonly, &unlabeled_output_ge);
@@ -720,10 +720,10 @@ int secp256k1_silentpayments_recipient_scan_outputs(
                 found_idx = j;
                 /* An earlier label match takes precedence over this direct match. */
                 if (label_batch_idx > 0) {
-                    int label_found_idx = secp256k1_silentpayments_check_label_batch(
+                    size_t label_found_idx = secp256k1_silentpayments_check_label_batch(
                         &label_ge, &label_tweak, label_candidates_gej, label_batch_idx,
                         j - label_batch_idx, label_lookup, label_context);
-                    if (label_found_idx != -1) {
+                    if (label_found_idx != SIZE_MAX) {
                         found_idx = label_found_idx;
                     }
                 }
@@ -754,12 +754,12 @@ int secp256k1_silentpayments_recipient_scan_outputs(
                         j + 1 - label_batch_idx, label_lookup, label_context);
                     label_batch_idx = 0;
                 }
-                if (found_idx != -1) {
+                if (found_idx != SIZE_MAX) {
                     break;
                 }
             }
         }
-        if (found_idx != -1) {
+        if (found_idx != SIZE_MAX) {
             found_outputs[k]->output = *tx_outputs[found_idx];
             secp256k1_scalar_get_b32(found_outputs[k]->tweak, &t_k_scalar);
             /* Clear the t_k_scalar since we no longer need it and leaking this value would
