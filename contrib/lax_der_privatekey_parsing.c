@@ -9,42 +9,51 @@
 #include "lax_der_privatekey_parsing.h"
 
 int ec_privkey_import_der(const secp256k1_context* ctx, unsigned char *out32, const unsigned char *privkey, size_t privkeylen) {
-    const unsigned char *end = privkey + privkeylen;
-    int lenb = 0;
-    int len = 0;
+    size_t pos = 0;
+    size_t lenb = 0;
+    size_t len = 0;
+    size_t keylen = 0;
     memset(out32, 0, 32);
     /* sequence header */
-    if (end < privkey+1 || *privkey != 0x30) {
+    if (pos == privkeylen || privkey[pos] != 0x30) {
         return 0;
     }
-    privkey++;
+    pos++;
     /* sequence length constructor */
-    if (end < privkey+1 || !(*privkey & 0x80)) {
+    if (pos == privkeylen || !(privkey[pos] & 0x80)) {
         return 0;
     }
-    lenb = *privkey & ~0x80; privkey++;
+    lenb = privkey[pos++] & ~0x80;
     if (lenb < 1 || lenb > 2) {
         return 0;
     }
-    if (end < privkey+lenb) {
+    if (lenb > privkeylen - pos) {
         return 0;
     }
     /* sequence length */
-    len = privkey[lenb-1] | (lenb > 1 ? privkey[lenb-2] << 8 : 0);
-    privkey += lenb;
-    if (end < privkey+len) {
+    len = privkey[pos];
+    if (lenb > 1) {
+        len = (len << 8) | privkey[pos + 1];
+    }
+    pos += lenb;
+    if (len > privkeylen - pos) {
         return 0;
     }
     /* sequence element 0: version number (=1) */
-    if (end < privkey+3 || privkey[0] != 0x02 || privkey[1] != 0x01 || privkey[2] != 0x01) {
+    if (privkeylen - pos < 3 || privkey[pos] != 0x02 || privkey[pos + 1] != 0x01 || privkey[pos + 2] != 0x01) {
         return 0;
     }
-    privkey += 3;
+    pos += 3;
     /* sequence element 1: octet string, up to 32 bytes */
-    if (end < privkey+2 || privkey[0] != 0x04 || privkey[1] > 0x20 || end < privkey+2+privkey[1]) {
+    if (privkeylen - pos < 2 || privkey[pos] != 0x04) {
         return 0;
     }
-    if (privkey[1]) memcpy(out32 + 32 - privkey[1], privkey + 2, privkey[1]);
+    keylen = privkey[pos + 1];
+    pos += 2;
+    if (keylen > 0x20 || keylen > privkeylen - pos) {
+        return 0;
+    }
+    if (keylen) memcpy(out32 + 32 - keylen, privkey + pos, keylen);
     if (!secp256k1_ec_seckey_verify(ctx, out32)) {
         memset(out32, 0, 32);
         return 0;
