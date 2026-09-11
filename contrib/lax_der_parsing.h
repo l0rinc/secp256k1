@@ -38,6 +38,9 @@
  *   8.3.2.
  * - 127-byte long length descriptors are accepted, even though section
  *   8.1.3.5.c says that they are not.
+ * - Lengths in non-minimal form (e.g. a length below 128 encoded in long
+ *   form, or long form with leading zero bytes) are accepted, even though
+ *   section 10.1 requires the minimal encoding.
  * - Trailing garbage data inside or after the signature is ignored.
  * - The length descriptor of the sequence is ignored.
  *
