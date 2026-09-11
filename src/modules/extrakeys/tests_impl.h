@@ -59,6 +59,11 @@ static void test_xonly_pubkey(void) {
     secp256k1_fe_negate(&y, &pk2.y, 1);
     CHECK(secp256k1_fe_equal(&pk1.y, &y) == 1);
 
+    /* An x-only key must use the even-Y representative: pk has odd Y here
+     * (pk_parity == 1 above), so loading its bytes as an x-only key must fail. */
+    memcpy(&xonly_pk_tmp, &pk, sizeof(xonly_pk_tmp));
+    CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, buf32, &xonly_pk_tmp));
+
     /* Test xonly_pubkey_serialize and xonly_pubkey_parse */
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, NULL, &xonly_pk));
     CHECK_ILLEGAL(CTX, secp256k1_xonly_pubkey_serialize(CTX, buf32, NULL));
